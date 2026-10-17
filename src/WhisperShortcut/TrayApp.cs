@@ -198,6 +198,11 @@ internal sealed class TrayApp : ApplicationContext
                         "Das Zielprogramm läuft als Administrator, dorthin darf WhisperShortcut nicht tippen. Der Text liegt in der Zwischenablage: Strg+V drücken.",
                         ToolTipIcon.Info);
                     break;
+                case PasteOutcome.ClipboardOnlyKeysHeld:
+                    Notify("Bitte selbst einfügen",
+                        "Strg oder Alt war noch gedrückt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
+                        ToolTipIcon.Info);
+                    break;
                 case PasteOutcome.Failed:
                     Sounds.Error();
                     Notify("Einfügen fehlgeschlagen", "Die Zwischenablage war blockiert. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
@@ -306,6 +311,9 @@ internal sealed class TrayApp : ApplicationContext
         _balloonClick = onClick;
         _icon.ShowBalloonTip(6000, title, text, icon);
     }
+
+    /// <summary><c>--settings</c>: open the settings window right away (first setup, VM screenshots).</summary>
+    public void OpenSettingsOnStart() => _ui.Post(_ => ShowSettings(), null);
 
     private void ShowSettings()
     {

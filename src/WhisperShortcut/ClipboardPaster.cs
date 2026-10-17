@@ -9,6 +9,8 @@ internal enum PasteOutcome
     Pasted,
     /// <summary>The target runs as administrator (UIPI would drop our keystrokes): text stays on the clipboard.</summary>
     ClipboardOnlyElevatedTarget,
+    /// <summary>Ctrl/Alt were still held after 3 s: a Ctrl+V now would arrive as Ctrl+Alt+V. Text stays on the clipboard.</summary>
+    ClipboardOnlyKeysHeld,
     /// <summary>Could not write the clipboard at all.</summary>
     Failed,
 }
@@ -21,7 +23,9 @@ internal sealed class ClipboardPaster
 {
     /// <summary>Word and Outlook read the clipboard later than Mac apps do (Mac: 400 ms).</summary>
     private static readonly TimeSpan RestoreDelay = TimeSpan.FromMilliseconds(900);
-    private static readonly TimeSpan ModifierWait = TimeSpan.FromMilliseconds(500);
+    // 500 ms (the plan's first number) was too short: a hand holding the hotkey 600 ms made Ctrl+V arrive
+    // as Ctrl+Alt+V (= AltGr+V, typed "√" in Notepad). Found in the VM with `vm.sh hold 600`.
+    private static readonly TimeSpan ModifierWait = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan CopyDeadline = TimeSpan.FromMilliseconds(500);
 
     private readonly IntPtr _owner;
@@ -35,7 +39,8 @@ internal sealed class ClipboardPaster
     public async Task<PasteOutcome> PasteAsync(string text)
     {
         // The user may still hold Ctrl+Alt from the hotkey: Ctrl+V would arrive as Ctrl+Alt+V.
-        await WaitForModifiersReleasedAsync();
+        if (!await WaitForModifiersReleasedAsync())
+            return WriteText(text) ? PasteOutcome.ClipboardOnlyKeysHeld : PasteOutcome.Failed;
 
         if (ForegroundIsElevated())
         {
@@ -74,7 +79,7 @@ internal sealed class ClipboardPaster
     /// </summary>
     public async Task<string?> CopySelectionAsync()
     {
-        await WaitForModifiersReleasedAsync();
+        if (!await WaitForModifiersReleasedAsync()) return null;
         if (ForegroundIsElevated())
         {
             Core.Log.Info("Copy: foreground window runs elevated, treating as no selection");
@@ -113,21 +118,24 @@ internal sealed class ClipboardPaster
     private static bool AnyModifierDown() => Modifiers.Any(vk => (GetAsyncKeyState(vk) & 0x8000) != 0);
 
     /// <summary>
-    /// Waits (max 500 ms) until Ctrl, Alt, AltGr, Shift and both Win keys are up. We never send an
-    /// Alt key-up ourselves: a lone Alt release opens the menu bar in Word and Notepad.
+    /// Waits (max 3 s) until Ctrl, Alt, AltGr, Shift and both Win keys are up; false when they never were.
+    /// We never send an Alt key-up ourselves: a lone Alt release opens the menu bar in Word and Notepad.
     /// </summary>
-    private static async Task WaitForModifiersReleasedAsync()
+    private static async Task<bool> WaitForModifiersReleasedAsync()
     {
-        var deadline = DateTime.UtcNow + ModifierWait;
+        var start = DateTime.UtcNow;
         while (AnyModifierDown())
         {
-            if (DateTime.UtcNow >= deadline)
+            if (DateTime.UtcNow - start >= ModifierWait)
             {
-                Core.Log.Info("Modifiers still held after 500 ms, sending anyway");
-                return;
+                Core.Log.Info("Modifiers still held after 3 s, not sending keystrokes");
+                return false;
             }
             await Task.Delay(10);
         }
+        var waited = DateTime.UtcNow - start;
+        if (waited.TotalMilliseconds >= 20) Core.Log.Info($"Waited {waited.TotalMilliseconds:0} ms for modifiers to be released");
+        return true;
     }
 
     private static void SendChord(ushort key)

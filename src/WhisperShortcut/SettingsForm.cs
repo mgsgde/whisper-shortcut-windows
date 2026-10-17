@@ -23,7 +23,7 @@ internal sealed class SettingsForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(640, 760);
-        MinimumSize = new Size(560, 620);
+        MinimumSize = new Size(560, 560);
         MaximizeBox = false;
         ShowInTaskbar = true;
         Icon = TrayIcons.Ready;
@@ -122,9 +122,16 @@ internal sealed class SettingsForm : Form
 
         for (int i = 0; i < root.Controls.Count; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         // The template box takes all remaining height.
-        root.RowStyles[root.GetRow(_template)] = new RowStyle(SizeType.Percent, 100);
+        root.RowCount = root.Controls.Count;
+        root.RowStyles[root.Controls.IndexOf(_template)] = new RowStyle(SizeType.Percent, 100);
         Controls.Add(root);
 
+        // Small laptop screens (and the 768 px VM): never taller than the work area, the template box shrinks.
+        Load += (_, _) =>
+        {
+            var area = Screen.FromPoint(Cursor.Position).WorkingArea;
+            if (Height > area.Height) { Height = area.Height; Top = area.Top; }
+        };
         Shown += (_, _) => (string.IsNullOrEmpty(_apiKey.Text) ? (Control)_apiKey : save).Focus();
     }
 

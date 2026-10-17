@@ -26,7 +26,9 @@ internal static class Program
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Core.Log.Error("Unhandled exception", e.ExceptionObject as Exception);
 
         ApplicationConfiguration.Initialize();
-        Application.Run(new TrayApp(testWav, fakeGemini));
+        var app = new TrayApp(testWav, fakeGemini);
+        if (args.Contains("--settings")) app.OpenSettingsOnStart();
+        Application.Run(app);
     }
 
     /// <summary>
