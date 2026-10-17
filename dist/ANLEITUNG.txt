@@ -16,22 +16,37 @@ Was es kann
 
 Einrichtung (ca. 5 Minuten)
 ---------------------------
-1. WhisperShortcut.exe in einen festen Ordner legen, z. B. C:\Programme-Benutzer\WhisperShortcut\
-   (nicht im Download-Ordner lassen). Keine Installation nötig.
+WICHTIG: Ab Schritt 2 alles im Windows-Konto des späteren Nutzers machen, nicht im Admin-Konto.
+Einstellungen, Schlüssel und Autostart gelten nur für das Konto, in dem sie eingerichtet werden.
+Die exe nicht „als Administrator ausführen“.
+
+1. ZIP vorbereiten: Rechtsklick auf die ZIP → Eigenschaften → unten „Zulassen“ ankreuzen → OK.
+   Dann Rechtsklick → „Alle extrahieren“. Die WhisperShortcut.exe in einen festen Ordner legen,
+   z. B. C:\Program Files\WhisperShortcut\ (oder, nur für einen Nutzer,
+   %LOCALAPPDATA%\Programs\WhisperShortcut\). Nicht direkt aus der ZIP starten.
+   Keine Installation nötig.
 2. Doppelklick. Windows zeigt „Der Computer wurde durch Windows geschützt“ (Programm ist noch
    nicht signiert): „Weitere Informationen“ → „Trotzdem ausführen“.
-   Erscheint keine solche Option, ist „Intelligente App-Steuerung“ aktiv: dann bitte Magnus
-   Bescheid geben.
+   (Mit „Zulassen“ aus Schritt 1 kommt die Meldung meist gar nicht.)
+   Erscheint keine solche Option, ist „Intelligente App-Steuerung“ aktiv: bitte NICHT
+   abschalten (lässt sich nicht einfach wieder einschalten), sondern Magnus Bescheid geben.
+   Meldet der Virenscanner die Datei: ebenfalls Magnus Bescheid geben (Fehlalarm bei
+   unsignierten Programmen möglich).
    Der erste Start dauert 10–20 Sekunden (Virenscanner prüft die Datei).
-3. Unten rechts im Infobereich (ggf. Pfeil ^) erscheint ein Mikrofon-Symbol. Rechtsklick →
-   „Einstellungen …“.
-4. Gemini-API-Schlüssel eintragen (bekommst du separat von Magnus). Speichern.
+3. Unten rechts im Infobereich (ggf. hinter dem kleinen Pfeil ^) erscheint ein Mikrofon-Symbol.
+   Bitte anheften, es zeigt an, ob gerade aufgenommen wird: Einstellungen → Personalisierung →
+   Taskleiste → Andere Taskleistensymbole → WhisperShortcut an.
+   Rechtsklick auf das Symbol → „Einstellungen …“.
+4. Gemini-API-Schlüssel eintragen (bekommst du separat von Magnus). Speichern und das Fenster
+   schließen: Solange das Einstellungsfenster offen ist, sind die Tastenkürzel aus.
 5. Mikrofon: Windows-Einstellungen → Datenschutz und Sicherheit → Mikrofon →
-   „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ muss AN sein.
+   „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ muss AN sein. Unter System → Sound das
+   richtige Mikrofon als Eingabegerät wählen.
+   Benachrichtigungen für WhisperShortcut an lassen, „Nicht stören“ aus: Alle Meldungen der App
+   kommen als Windows-Benachrichtigung.
 6. Test: Notepad öffnen, Strg+Umschalt+D, einen Satz sagen, Strg+Umschalt+D.
-7. Automatisch mit Windows starten (empfohlen): Win+R → shell:startup → Enter. In den Ordner
-   eine Verknüpfung zur WhisperShortcut.exe legen (Rechtsklick auf die exe → „Verknüpfung
-   erstellen“, Verknüpfung dorthin ziehen).
+7. Automatisch mit Windows starten (empfohlen): Win+R → shell:startup → Enter. Die exe mit der
+   RECHTEN Maustaste in diesen Ordner ziehen → „Verknüpfungen hier erstellen“.
 
 Einstellungen
 -------------
@@ -41,7 +56,9 @@ Einstellungen
   Am besten mit 1–2 echten Angeboten des Nutzers anpassen (Firmenname, Stundensatz,
   Zahlungsbedingungen).
 - Tastenkürzel änderbar. Kombinationen mit Alt besser meiden (dann öffnen viele Programme ihr
-  Menü).
+  Menü). Solange die App läuft, gehen in Word Strg+Umschalt+D (doppelt unterstreichen) und
+  Strg+Umschalt+P (Schriftgrad) nicht. In Excel gilt bei Strg+Umschalt+P die aktuelle Zelle
+  immer als Markierung.
 
 Gut zu wissen
 -------------
@@ -50,5 +67,7 @@ Gut zu wissen
 - Programme, die als Administrator laufen, nehmen keinen eingefügten Text an. Der Text liegt
   dann in der Zwischenablage: Strg+V.
 - Aufnahmen enden automatisch nach 5 Minuten.
-- Probleme: Rechtsklick auf das Symbol → „Protokoll öffnen“, Datei an Magnus schicken
-  (enthält keine diktierten Texte und keinen Schlüssel).
+- Diktate landen nicht im Zwischenablage-Verlauf (Win+V).
+- Probleme: Die Protokolldatei liegt unter %LOCALAPPDATA%\WhisperShortcut\wsw.log
+  (Rechtsklick auf das Symbol → „Protokoll öffnen“ zeigt sie an). Datei an Magnus schicken.
+  Sie enthält keine diktierten Texte und keinen Schlüssel.

@@ -194,7 +194,7 @@ public sealed class GeminiClient
                     await Task.Delay(RetryDelay, ct).ConfigureAwait(false);
                     continue;
                 }
-                Log.Error($"Gemini {model}: HTTP {code}");
+                Log.Error($"Gemini {model}: HTTP {code} {GoogleError(text)}");
                 throw MapStatus(response.StatusCode, text);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
@@ -215,6 +215,12 @@ public sealed class GeminiClient
     private static GeminiException MapStatus(HttpStatusCode status, string body)
     {
         var code = (int)status;
+        if (body.Contains("SERVICE_DISABLED") || body.Contains("has not been used in project"))
+            return new GeminiException(GeminiErrorKind.InvalidKey,
+                "Die Gemini-API ist im Google-Projekt dieses Schlüssels nicht aktiviert (Generative Language API).");
+        if (body.Contains("BILLING", StringComparison.Ordinal))
+            return new GeminiException(GeminiErrorKind.InvalidKey,
+                "Für das Google-Projekt dieses Schlüssels ist keine Abrechnung eingerichtet.");
         if (code is 401 or 403 || (code == 400 &&
             (body.Contains("API_KEY_INVALID") || body.Contains("API key not valid", StringComparison.OrdinalIgnoreCase))))
             return new GeminiException(GeminiErrorKind.InvalidKey,
@@ -223,6 +229,20 @@ public sealed class GeminiClient
             return new GeminiException(GeminiErrorKind.Quota,
                 "Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen.");
         return new GeminiException(GeminiErrorKind.Server, $"Gemini-Fehler (HTTP {code}). Bitte später erneut versuchen.");
+    }
+
+    /// <summary>Google's error.status and error.message for the log (no request content in there).</summary>
+    internal static string GoogleError(string body)
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(body);
+            var e = doc.RootElement.GetProperty("error");
+            string status = e.TryGetProperty("status", out var s) ? s.GetString() ?? "" : "";
+            string msg = e.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
+            return $"{status}: {(msg.Length > 300 ? msg[..300] : msg)}";
+        }
+        catch { return ""; }
     }
 
     /// <summary>Concatenates candidates[0].content.parts[].text; "" when absent.</summary>

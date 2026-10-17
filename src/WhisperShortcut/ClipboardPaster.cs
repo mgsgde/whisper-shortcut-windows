@@ -251,8 +251,22 @@ internal sealed class ClipboardPaster
                 GlobalFree(handle);
                 return false;
             }
+            // Keep dictations and copied selections out of the Win+V history and the cloud clipboard.
+            SetDword("CanIncludeInClipboardHistory", 0);
+            SetDword("CanUploadToCloudClipboard", 0);
             return true; // the system owns the memory now
         }
         finally { CloseClipboard(); }
+    }
+
+    private static void SetDword(string format, int value)
+    {
+        uint id = RegisterClipboardFormat(format);
+        if (id == 0) return;
+        IntPtr h = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)4);
+        if (h == IntPtr.Zero) return;
+        Marshal.WriteInt32(GlobalLock(h), value);
+        GlobalUnlock(h);
+        if (SetClipboardData(id, h) == IntPtr.Zero) GlobalFree(h);
     }
 }

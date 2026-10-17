@@ -6,7 +6,7 @@ namespace WhisperShortcut;
 internal sealed class MicrophoneUnavailableException : Exception
 {
     public MicrophoneUnavailableException(Exception inner)
-        : base("Kein Mikrofon gefunden. Bitte ein Mikrofon anschließen und in Windows als Standardgerät wählen.", inner) { }
+        : base("Kein Mikrofon gefunden oder Zugriff gesperrt. Bitte ein Mikrofon anschließen und in Windows als Standardgerät wählen. Zugriff prüfen: Einstellungen → Datenschutz → Mikrofon → Desktop-Apps erlauben.", inner) { }
 }
 
 /// <summary>
