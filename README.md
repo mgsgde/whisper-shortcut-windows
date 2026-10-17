@@ -1,7 +1,22 @@
 # WhisperShortcut für Windows (privat, MVP)
 
 Plan: `~/whisper-shortcut-private/windows/PLAN.md`. Hier liegt nur, was zum Bauen gebraucht wird.
-Stand 2026-10-17: **vorbereitet, noch kein App-Code.**
+Stand 2026-10-17 abends: **MVP gebaut, in der VM ohne Gemini getestet.** Schritte 1 und 2 fertig,
+Schritt 3 (echte Gemini-Antworten) wartet auf Magnus' Schlüssel.
+
+- In der VM geprüft (arm64, `--fake-gemini`, `vm.sh hold 600`): Diktat wird eingefügt, alte
+  Zwischenablage kommt zurück; Dictate Prompt ersetzt die Markierung (52 Zeichen per Strg+C
+  erkannt), ohne Markierung wird eingefügt; „Schlüssel fehlt“-Meldung; Einstellungsfenster mit
+  Vorlage. x64-Build startet in der VM (emuliert).
+- Testschalter: `--test-wav <datei>` (statt Mikro), `--fake-gemini` (feste Antwort statt Gemini,
+  zum Testen von Tasten und Zwischenablage ohne Schlüssel), `--settings` (Fenster beim Start öffnen).
+- Bewusste Abweichungen vom Plan: Modifier-Wartezeit 3 s statt 500 ms (bei 600 ms Halten wurde
+  Strg+V sonst zu AltGr+V = „√“); bleiben die Tasten länger gedrückt, wird nichts getippt und der
+  Text liegt in der Zwischenablage. Die Vorlage ersetzt nicht den Bearbeitungs-Prompt, sie wird
+  angehängt und gilt nur ohne Markierung. „Mach das freundlicher“/„korrigiere“ ohne Markierung
+  wird abgelehnt (parallele Transkription prüft das).
+- Nicht geprüft: echte Gemini-Aufrufe, echtes Mikro, DPAPI-Speichern des Schlüssels, Word/Outlook/
+  Browser als Ziel, Admin-Fenster (UIPI), echter x64-PC.
 
 ## Was geprüft ist (2026-10-17)
 
