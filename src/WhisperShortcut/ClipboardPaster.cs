@@ -128,7 +128,8 @@ internal sealed class ClipboardPaster
         {
             if (DateTime.UtcNow - start >= ModifierWait)
             {
-                Core.Log.Info("Modifiers still held after 3 s, not sending keystrokes");
+                Core.Log.Info("Modifiers still held after 3 s, not sending keystrokes: "
+                    + string.Join(",", Modifiers.Where(vk => (GetAsyncKeyState(vk) & 0x8000) != 0).Select(vk => $"0x{vk:X2}")));
                 return false;
             }
             await Task.Delay(10);
