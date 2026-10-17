@@ -4,3 +4,5 @@ out/
 *.user
 .vs/
 .DS_Store
+dist/*.exe
+dist/*.zip

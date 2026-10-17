@@ -1,0 +1,54 @@
+WhisperShortcut für Windows – Einrichtung (Testversion, Stand 17.10.2026)
+========================================================================
+
+Was es kann
+-----------
+1. Diktieren: Strg+Umschalt+D drücken, sprechen, nochmal Strg+Umschalt+D.
+   Der Text steht dort, wo der Cursor blinkt (Word, Outlook, Browser, Notepad …).
+2. Text bearbeiten oder schreiben lassen: Strg+Umschalt+P.
+   - Mit Markierung: Text markieren, Strg+Umschalt+P, Anweisung sprechen
+     („mach das freundlicher“, „übersetze ins Englische“), Strg+Umschalt+P.
+     Die Markierung wird ersetzt.
+   - Ohne Markierung: Strg+Umschalt+P, z. B. „Schreib Herrn Meier ein Angebot für zwei
+     Heizkörper inklusive Montage, Termin nächste Woche Dienstag“, Strg+Umschalt+P.
+     Ein fertiger Text nach der Vorlage in den Einstellungen wird eingefügt.
+   Ein Druck während der Verarbeitung bricht ab.
+
+Einrichtung (ca. 5 Minuten)
+---------------------------
+1. WhisperShortcut.exe in einen festen Ordner legen, z. B. C:\Programme-Benutzer\WhisperShortcut\
+   (nicht im Download-Ordner lassen). Keine Installation nötig.
+2. Doppelklick. Windows zeigt „Der Computer wurde durch Windows geschützt“ (Programm ist noch
+   nicht signiert): „Weitere Informationen“ → „Trotzdem ausführen“.
+   Erscheint keine solche Option, ist „Intelligente App-Steuerung“ aktiv: dann bitte Magnus
+   Bescheid geben.
+   Der erste Start dauert 10–20 Sekunden (Virenscanner prüft die Datei).
+3. Unten rechts im Infobereich (ggf. Pfeil ^) erscheint ein Mikrofon-Symbol. Rechtsklick →
+   „Einstellungen …“.
+4. Gemini-API-Schlüssel eintragen (bekommst du separat von Magnus). Speichern.
+5. Mikrofon: Windows-Einstellungen → Datenschutz und Sicherheit → Mikrofon →
+   „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ muss AN sein.
+6. Test: Notepad öffnen, Strg+Umschalt+D, einen Satz sagen, Strg+Umschalt+D.
+7. Automatisch mit Windows starten (empfohlen): Win+R → shell:startup → Enter. In den Ordner
+   eine Verknüpfung zur WhisperShortcut.exe legen (Rechtsklick auf die exe → „Verknüpfung
+   erstellen“, Verknüpfung dorthin ziehen).
+
+Einstellungen
+-------------
+- Glossar: Namen, Fachbegriffe, Firmennamen (eine Zeile pro Begriff), damit sie richtig
+  geschrieben werden.
+- Vorlage: wie Angebote, Mails usw. aussehen sollen. Vorbefüllt mit einem Angebotsmuster.
+  Am besten mit 1–2 echten Angeboten des Nutzers anpassen (Firmenname, Stundensatz,
+  Zahlungsbedingungen).
+- Tastenkürzel änderbar. Kombinationen mit Alt besser meiden (dann öffnen viele Programme ihr
+  Menü).
+
+Gut zu wissen
+-------------
+- Sprache wird zur Erkennung an Google Gemini geschickt (bezahlte API, keine Nutzung zum
+  Training). Nicht für Patientendaten oder andere besonders geschützte Daten verwenden.
+- Programme, die als Administrator laufen, nehmen keinen eingefügten Text an. Der Text liegt
+  dann in der Zwischenablage: Strg+V.
+- Aufnahmen enden automatisch nach 5 Minuten.
+- Probleme: Rechtsklick auf das Symbol → „Protokoll öffnen“, Datei an Magnus schicken
+  (enthält keine diktierten Texte und keinen Schlüssel).
