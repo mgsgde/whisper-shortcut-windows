@@ -19,9 +19,9 @@ Stand 2026-10-17: **vorbereitet, noch kein App-Code.**
 | # | Wer | Was | Fertig, wenn |
 |---|---|---|---|
 | 1 | Grok 4.7 (sonst Sonnet) | `briefs/01-grok-core.md`: Gerüst, Prompts, GeminiClient, Settings, Audio, Tests | `dotnet test` grün, `win-arm64`-Build läuft |
-| 2 | Opus | HotkeyService, ClipboardPaster (Win32-Stolperfallen aus PLAN.md), Tray, Einstellungsfenster | In der VM: `WSW_TEST_WAV=diktat.wav`, Ctrl+Alt+D zweimal → Text steht in Notepad, alte Zwischenablage wieder da |
+| 2 | Opus | HotkeyService, ClipboardPaster (Win32-Stolperfallen aus PLAN.md), Tray, Einstellungsfenster | In der VM: `vm.sh start diktat.wav`, `vm.sh hold 600 ctrl alt d` zweimal → Text steht in Notepad, alte Zwischenablage wieder da |
 | 3 | Opus | Dictate Prompt verdrahten | Markierter Text + `anweisung-freundlicher.wav` → ersetzt; ohne Markierung + `angebot-ohne-markierung.wav` → Angebot eingefügt |
-| 4 | Magnus | Einmal mit echtem Mikro in Parallels, dann auf einem echten x64-PC | Ein Tester kann es ohne Magnus einrichten |
+| 4 | Magnus | Einmal mit echtem Mikro in Parallels, dann auf einem echten x64-PC | Der Handwerker richtet es mit der Anleitung ohne Magnus ein |
 
 ## Test-Audio
 

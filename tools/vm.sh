@@ -5,15 +5,16 @@
 # Verified 2026-10-17 on Parallels 27.0.3, Windows 11 ARM64.
 #
 #   tools/vm.sh deploy <path/to/App.exe>   copy exe + test-audio/*.wav into %LOCALAPPDATA%\wsw\ via the ~/Downloads share
-#   tools/vm.sh start                      start the deployed exe (detached)
+#   tools/vm.sh start [diktat.wav]         start the deployed exe (detached); with a wav: --test-wav, no mic
 #   tools/vm.sh stop                       kill it
 #   tools/vm.sh notepad                    open an empty Notepad and focus it (paste target)
 #   tools/vm.sh focus <window title>       bring a window to the front
 #   tools/vm.sh type "hello world"         type lowercase letters, digits, space
 #   tools/vm.sh combo ctrl alt d           press keys together, release in reverse
+#   tools/vm.sh hold 600 ctrl alt p        same, but keep them held N ms (a human hand; catches held-modifier bugs)
 #   tools/vm.sh shot [file.png]            screenshot of the VM (default: /tmp/wsw-vm.png)
 #   tools/vm.sh run <cmd...>               run a command as the logged-in user
-#   tools/vm.sh log                        tail the app log (%LOCALAPPDATA%\wsw\wsw.log)
+#   tools/vm.sh log                        tail the app log (%LOCALAPPDATA%\WhisperShortcut\wsw.log)
 set -euo pipefail
 
 VM="${WSW_VM:-Windows 11}"
@@ -53,7 +54,11 @@ case "$cmd" in
     # exec blocks while the GUI process lives, so detach on the Mac side.
     # Absolute path, no cmd /c: going through cmd leaves a console window in the VM.
     lad=$(run "echo %LOCALAPPDATA%" | tr -d '\r')
-    nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" >/dev/null 2>&1 &
+    if [[ -n "${1:-}" ]]; then
+      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" --test-wav "$1" >/dev/null 2>&1 &
+    else
+      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" >/dev/null 2>&1 &
+    fi
     # First launch of a fresh 120 MB single-file exe takes 10-20 s (Defender scans it).
     for _ in $(seq 1 15); do
       sleep 2
@@ -81,10 +86,16 @@ case "$cmd" in
     for k in "$@"; do press "$k"; done
     for ((i = $#; i >= 1; i--)); do release "${!i}"; done
     ;;
+  hold)
+    ms="$1"; shift
+    for k in "$@"; do press "$k"; done
+    sleep "$(echo "scale=3; $ms/1000" | bc)"
+    for ((i = $#; i >= 1; i--)); do release "${!i}"; done
+    ;;
   shot)
     out="${1:-/tmp/wsw-vm.png}"; prlctl capture "$VM" --file "$out" >/dev/null; echo "$out"
     ;;
   run) run "$@" ;;
-  log) run "powershell -NoProfile -Command Get-Content -Tail 40 \$env:LOCALAPPDATA\\wsw\\wsw.log" ;;
-  *) sed -n 2,16p "$0"; exit 2 ;;
+  log) run "powershell -NoProfile -Command Get-Content -Tail 40 \$env:LOCALAPPDATA\\WhisperShortcut\\wsw.log" ;;
+  *) sed -n 2,17p "$0"; exit 2 ;;
 esac
