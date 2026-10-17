@@ -1,7 +1,9 @@
 # WhisperShortcut für Windows (privat, MVP)
 
 Plan: `~/whisper-shortcut-private/windows/PLAN.md`. Hier liegt nur, was zum Bauen gebraucht wird.
-Stand 2026-10-17 abends: **MVP gebaut, in der VM ohne Gemini getestet.** Schritte 1 und 2 fertig,
+Stand 2026-10-17, 19:10: **Diktieren und Dictate Prompt funktionieren in der VM mit echtem Mikro
+und echtem Gemini** (Magnus getestet). Tasten jetzt Ctrl+Shift+D/P (Alt öffnete App-Menüs).
+Ältere Notiz: **MVP gebaut, in der VM ohne Gemini getestet.** Schritte 1 und 2 fertig,
 Schritt 3 (echte Gemini-Antworten) wartet auf Magnus' Schlüssel.
 
 - In der VM geprüft (arm64, `--fake-gemini`, `vm.sh hold 600`): Diktat wird eingefügt, alte
