@@ -14,7 +14,7 @@
 #   tools/vm.sh hold 600 ctrl alt p        same, but keep them held N ms (a human hand; catches held-modifier bugs)
 #   tools/vm.sh shot [file.png]            screenshot of the VM (default: /tmp/wsw-vm.png)
 #   tools/vm.sh run <cmd...>               run a command as the logged-in user
-#   tools/vm.sh log                        tail the app log (%LOCALAPPDATA%\WhisperShortcut\wsw.log)
+#   tools/vm.sh log                        tail the app log (~/Downloads/wsw-test/wsw.log, written by an app started with start)
 set -euo pipefail
 
 VM="${WSW_VM:-Windows 11}"
@@ -55,9 +55,9 @@ case "$cmd" in
     # Absolute path, no cmd /c: going through cmd leaves a console window in the VM.
     lad=$(run "echo %LOCALAPPDATA%" | tr -d '\r')
     if [[ -n "${1:-}" ]]; then
-      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" --test-wav "$1" >/dev/null 2>&1 &
+      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" --test-wav "$1" --log "Z:\\Downloads\\wsw-test\\wsw.log" >/dev/null 2>&1 &
     else
-      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" >/dev/null 2>&1 &
+      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" --log "Z:\\Downloads\\wsw-test\\wsw.log" >/dev/null 2>&1 &
     fi
     # First launch of a fresh 120 MB single-file exe takes 10-20 s (Defender scans it).
     for _ in $(seq 1 15); do
@@ -96,6 +96,6 @@ case "$cmd" in
     out="${1:-/tmp/wsw-vm.png}"; prlctl capture "$VM" --file "$out" >/dev/null; echo "$out"
     ;;
   run) run "$@" ;;
-  log) run "powershell -NoProfile -Command Get-Content -Tail 40 \$env:LOCALAPPDATA\\WhisperShortcut\\wsw.log" ;;
+  log) tail -40 "$SHARE_DIR/wsw.log" ;;  # app started by `start` logs into the share: no console flash in the VM
   *) sed -n 2,17p "$0"; exit 2 ;;
 esac

@@ -91,6 +91,10 @@ internal sealed class HotkeyService : NativeWindow, IDisposable
     {
         if (m.Msg == WM_HOTKEY && _handlers.TryGetValue((int)m.WParam, out var handler))
         {
+            // RegisterHotKey swallows the D/P key, so the focused app sees Alt go down and up alone
+            // and activates its menu bar; our Ctrl+C then lands in the menu. A no-op key while Alt
+            // is still held cancels that (the AutoHotkey "menu mask" trick).
+            ClipboardPaster.MaskAltMenu();
             handler();
             return;
         }

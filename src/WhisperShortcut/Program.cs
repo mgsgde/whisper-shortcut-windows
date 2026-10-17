@@ -5,7 +5,10 @@ internal static class Program
     [STAThread]
     static void Main(string[] args)
     {
-        Core.Log.Init(Core.Log.DefaultPath);
+        // --log <path>: write the log there instead (the VM test loop points it at the shared Downloads
+        // folder, so the Mac reads it without prlctl exec, which flashes a console window in the VM).
+        int logArg = Array.IndexOf(args, "--log");
+        Core.Log.Init(logArg >= 0 && logArg + 1 < args.Length ? args[logArg + 1] : Core.Log.DefaultPath);
 
         // One instance only: a second one could not register the hotkeys anyway.
         using var mutex = new Mutex(true, @"Local\WhisperShortcut.Windows", out bool first);
