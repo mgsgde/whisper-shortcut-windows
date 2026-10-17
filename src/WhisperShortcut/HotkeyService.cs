@@ -2,7 +2,7 @@ using static WhisperShortcut.NativeMethods;
 
 namespace WhisperShortcut;
 
-/// <summary>A parsed hotkey like "Ctrl+Alt+D".</summary>
+/// <summary>A parsed hotkey like "Ctrl+Shift+D".</summary>
 internal readonly record struct Hotkey(uint Modifiers, Keys Key)
 {
     public static bool TryParse(string? text, out Hotkey hotkey)
@@ -31,10 +31,10 @@ internal readonly record struct Hotkey(uint Modifiers, Keys Key)
         return true;
     }
 
-    /// <summary>Storage form, English modifier names ("Ctrl+Alt+D").</summary>
+    /// <summary>Storage form, English modifier names ("Ctrl+Shift+D").</summary>
     public override string ToString() => Format("Ctrl", "Alt", "Shift", "Win");
 
-    /// <summary>German form for the UI ("Strg+Alt+D").</summary>
+    /// <summary>German form for the UI ("Strg+Umschalt+D").</summary>
     public string ToDisplayString() => Format("Strg", "Alt", "Umschalt", "Win");
 
     private string Format(string ctrl, string alt, string shift, string win)
@@ -54,6 +54,10 @@ internal readonly record struct Hotkey(uint Modifiers, Keys Key)
 /// <summary>
 /// Global hotkeys via RegisterHotKey on a hidden message-only window. The window never takes focus,
 /// so the paste target stays the user's app. MOD_NOREPEAT: holding the keys fires once, not every 30 ms.
+/// No Alt in the default hotkeys: RegisterHotKey swallows the letter, so the focused app sees Alt
+/// pressed alone and opens its menu (WinUI Notepad key tips, Chrome's menu button), and our Ctrl+C
+/// lands there. Masking the Alt release (vkE8 from WM_HOTKEY, and a low-level hook) did not stop it
+/// in the VM, 2026-10-17; Ctrl+Shift worked at once.
 /// The same window handle owns the clipboard when we write to it (OpenClipboard needs a non-null owner).
 /// </summary>
 internal sealed class HotkeyService : NativeWindow, IDisposable
@@ -91,10 +95,6 @@ internal sealed class HotkeyService : NativeWindow, IDisposable
     {
         if (m.Msg == WM_HOTKEY && _handlers.TryGetValue((int)m.WParam, out var handler))
         {
-            // RegisterHotKey swallows the D/P key, so the focused app sees Alt go down and up alone
-            // and activates its menu bar; our Ctrl+C then lands in the menu. A no-op key while Alt
-            // is still held cancels that (the AutoHotkey "menu mask" trick).
-            ClipboardPaster.MaskAltMenu();
             handler();
             return;
         }

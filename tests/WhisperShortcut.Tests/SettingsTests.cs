@@ -15,8 +15,8 @@ public class SettingsTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new Reverse());
-        Assert.Equal("Ctrl+Alt+D", s.DictateHotkey);
-        Assert.Equal("Ctrl+Alt+P", s.PromptHotkey);
+        Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
+        Assert.Equal("Ctrl+Shift+P", s.PromptHotkey);
         Assert.Equal("gemini-3.1-flash-lite", s.TranscriptionModel);
         Assert.Equal("gemini-3.8-flash", s.PromptModel);
 

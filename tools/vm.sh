@@ -10,8 +10,8 @@
 #   tools/vm.sh notepad                    open an empty Notepad and focus it (paste target)
 #   tools/vm.sh focus <window title>       bring a window to the front
 #   tools/vm.sh type "hello world"         type lowercase letters, digits, space
-#   tools/vm.sh combo ctrl alt d           press keys together, release in reverse
-#   tools/vm.sh hold 600 ctrl alt p        same, but keep them held N ms (a human hand; catches held-modifier bugs)
+#   tools/vm.sh combo ctrl shift d          press keys together, release in reverse
+#   tools/vm.sh hold 600 ctrl shift p       same, but keep them held N ms (a human hand; catches held-modifier bugs)
 #   tools/vm.sh shot [file.png]            screenshot of the VM (default: /tmp/wsw-vm.png)
 #   tools/vm.sh run <cmd...>               run a command as the logged-in user
 #   tools/vm.sh log                        tail the app log (~/Downloads/wsw-test/wsw.log, written by an app started with start)

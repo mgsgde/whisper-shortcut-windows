@@ -139,13 +139,6 @@ internal sealed class ClipboardPaster
         return true;
     }
 
-    /// <summary>Sends an unassigned virtual key (0xE8) so a lone Alt release does not open the menu bar.</summary>
-    public static void MaskAltMenu()
-    {
-        var inputs = new[] { Key(0xE8, false), Key(0xE8, true) };
-        SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<INPUT>());
-    }
-
     private static void SendChord(ushort key)
     {
         var inputs = new[]

@@ -65,8 +65,8 @@ internal sealed class SettingsForm : Form
         keys.Controls.Add(RowLabel("Text bearbeiten oder schreiben lassen"), 0, 1);
         keys.Controls.Add(_promptKey, 1, 1);
         root.Controls.Add(keys);
-        root.Controls.Add(Hint("Ins Feld klicken und die neue Kombination drücken. Strg+Alt+Ziffer besser meiden: "
-            + "Auf deutschen Tastaturen ist das AltGr und tippt ² oder ³."));
+        root.Controls.Add(Hint("Ins Feld klicken und die neue Kombination drücken. Kombinationen mit Alt besser meiden: "
+            + "Danach öffnen viele Programme ihr Menü, und Markieren und Einfügen klappen nicht mehr."));
 
         // --- glossary ---
         root.Controls.Add(Header("Glossar"));

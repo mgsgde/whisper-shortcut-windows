@@ -200,7 +200,7 @@ internal sealed class TrayApp : ApplicationContext
                     break;
                 case PasteOutcome.ClipboardOnlyKeysHeld:
                     Notify("Bitte selbst einfügen",
-                        "Strg oder Alt war noch gedrückt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
+                        "Strg, Umschalt oder Alt war noch gedrückt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
                         ToolTipIcon.Info);
                     break;
                 case PasteOutcome.Failed:
@@ -324,7 +324,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         if (_state != State.Idle) return;
 
-        // While the window is open the global hotkeys are off, so the hotkey field can record Ctrl+Alt+D itself.
+        // While the window is open the global hotkeys are off, so the hotkey field can record Ctrl+Shift+D itself.
         _hotkeys.UnregisterAll();
         _settingsForm = new SettingsForm(_settings);
         _settingsForm.FormClosed += (_, _) =>

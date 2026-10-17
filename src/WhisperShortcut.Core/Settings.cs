@@ -64,10 +64,10 @@ public sealed class Settings
     public string PromptModel { get; set; } = DefaultPromptModel;
 
     /// <summary>Hotkey for plain dictation.</summary>
-    public string DictateHotkey { get; set; } = "Ctrl+Alt+D";
+    public string DictateHotkey { get; set; } = "Ctrl+Shift+D";
 
     /// <summary>Hotkey for Dictate Prompt.</summary>
-    public string PromptHotkey { get; set; } = "Ctrl+Alt+P";
+    public string PromptHotkey { get; set; } = "Ctrl+Shift+P";
 
     /// <summary>Loads the settings; a missing or corrupt file yields defaults (a corrupt file is kept as .bak).</summary>
     public static Settings Load(string path, ISecretProtector protector)
