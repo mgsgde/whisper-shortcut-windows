@@ -170,7 +170,8 @@ public sealed class GeminiClient
         for (var attempt = 0; ; attempt++)
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(RequestTimeout);
+            // Upload time scales with the body (~40 kB/s floor, e.g. slow DSL).
+            timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(json.Length / 40_000.0));
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, url)
@@ -201,7 +202,7 @@ public sealed class GeminiClient
             {
                 Log.Error($"Gemini {model}: timeout");
                 throw new GeminiException(GeminiErrorKind.Timeout,
-                    "Zeitüberschreitung: Gemini hat nicht innerhalb von 60 Sekunden geantwortet.");
+                    "Zeitüberschreitung: Gemini hat nicht rechtzeitig geantwortet. Bitte Internetverbindung prüfen.");
             }
             catch (HttpRequestException ex)
             {

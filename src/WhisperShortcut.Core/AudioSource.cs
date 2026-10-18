@@ -20,7 +20,7 @@ public sealed class AudioSilentException : Exception
 {
     /// <summary>Creates the error with the German user message.</summary>
     public AudioSilentException()
-        : base("Mikrofon liefert Stille. Bitte in den Windows-Einstellungen unter Datenschutz > Mikrofon den Zugriff erlauben.") { }
+        : base("Mikrofon liefert Stille. Bitte in den Windows-Einstellungen unter Datenschutz (und Sicherheit) → Mikrofon → Desktop-Apps den Zugriff erlauben.") { }
 }
 
 /// <summary>Test source: StopAsync returns the bytes of a given WAV file instead of recording.</summary>

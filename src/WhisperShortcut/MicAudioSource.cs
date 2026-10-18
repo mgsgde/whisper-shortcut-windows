@@ -6,7 +6,7 @@ namespace WhisperShortcut;
 internal sealed class MicrophoneUnavailableException : Exception
 {
     public MicrophoneUnavailableException(Exception inner)
-        : base("Kein Mikrofon gefunden oder Zugriff gesperrt. Bitte ein Mikrofon anschließen und in Windows als Standardgerät wählen. Zugriff prüfen: Einstellungen → Datenschutz → Mikrofon → Desktop-Apps erlauben.", inner) { }
+        : base("Kein Mikrofon gefunden oder Zugriff gesperrt. Bitte ein Mikrofon anschließen und in Windows als Standardgerät wählen. Zugriff prüfen: Einstellungen → Datenschutz (und Sicherheit) → Mikrofon → Desktop-Apps den Zugriff erlauben.", inner) { }
 }
 
 /// <summary>
@@ -19,6 +19,9 @@ internal sealed class MicAudioSource : Core.IAudioSource
 
     /// <summary>Raised (on a background thread) when the recording hits the 5-minute limit.</summary>
     public event Action? MaxDurationReached;
+
+    /// <summary>Raised (on a background thread) when the device vanishes mid-recording (e.g. USB headset unplugged).</summary>
+    public event Action? DeviceLost;
 
     private readonly WaveFormat _format = new(16000, 16, 1);
     private WaveInEvent? _waveIn;
@@ -37,7 +40,15 @@ internal sealed class MicAudioSource : Core.IAudioSource
         _stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _waveIn = new WaveInEvent { DeviceNumber = -1, WaveFormat = _format, BufferMilliseconds = 50 };
         _waveIn.DataAvailable += OnData;
-        _waveIn.RecordingStopped += (_, _) => _stopped.TrySetResult();
+        _waveIn.RecordingStopped += (_, e) =>
+        {
+            _stopped.TrySetResult();
+            if (e.Exception != null)
+            {
+                Core.Log.Error($"Mic: recording stopped by device error ({e.Exception.GetType().Name})");
+                DeviceLost?.Invoke();
+            }
+        };
         try
         {
             _waveIn.StartRecording();
@@ -80,7 +91,8 @@ internal sealed class MicAudioSource : Core.IAudioSource
         _buffer = null;
         Core.Log.Info($"Mic: {bytes.Length} bytes, peak {_peak * 100 / 32768} %");
         // Peak below 1 %: not a quiet room, a blocked device.
-        if (_peak < 328) throw new Core.AudioSilentException();
+        // Ultra-short recordings (< 0.5 s = 16000 bytes at 16 kHz mono 16-bit) are not judged.
+        if (_peak < 328 && bytes.Length > 44 + 16000) throw new Core.AudioSilentException();
         return bytes;
     }
 

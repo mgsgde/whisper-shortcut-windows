@@ -5,7 +5,7 @@ namespace WhisperShortcut;
 
 internal enum PasteOutcome
 {
-    /// <summary>Ctrl+V was sent; the old clipboard comes back after 900 ms.</summary>
+    /// <summary>Ctrl+V was sent; the old clipboard comes back after 2000 ms.</summary>
     Pasted,
     /// <summary>The target runs as administrator (UIPI would drop our keystrokes): text stays on the clipboard.</summary>
     ClipboardOnlyElevatedTarget,
@@ -22,7 +22,7 @@ internal enum PasteOutcome
 internal sealed class ClipboardPaster
 {
     /// <summary>Word and Outlook read the clipboard later than Mac apps do (Mac: 400 ms).</summary>
-    private static readonly TimeSpan RestoreDelay = TimeSpan.FromMilliseconds(900);
+    private static readonly TimeSpan RestoreDelay = TimeSpan.FromMilliseconds(2000);
     // 500 ms (the plan's first number) was too short: a hand holding the hotkey 600 ms made Ctrl+V arrive
     // as Ctrl+Alt+V (= AltGr+V, typed "√" in Notepad). Found in the VM with `vm.sh hold 600`.
     private static readonly TimeSpan ModifierWait = TimeSpan.FromSeconds(3);
@@ -34,7 +34,7 @@ internal sealed class ClipboardPaster
 
     /// <summary>
     /// Puts <paramref name="text"/> at the cursor: save clipboard text, set ours, Ctrl+V, and after
-    /// 900 ms put the old text back, but only when nobody else wrote the clipboard in between.
+    /// 2000 ms put the old text back, but only when nobody else wrote the clipboard in between.
     /// </summary>
     public async Task<PasteOutcome> PasteAsync(string text)
     {
