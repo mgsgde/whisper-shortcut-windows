@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using static WhisperShortcut.NativeMethods;
 
 namespace WhisperShortcut;
 
@@ -13,24 +14,32 @@ internal sealed class SettingsForm : Form
     private readonly HotkeyBox _promptKey;
     private readonly TextBox _glossary;
     private readonly TextBox _template;
+    private readonly List<Label> _hints = new();
 
     public SettingsForm(Core.Settings settings)
     {
         _settings = settings;
 
+        // Designer pattern: all sizes below are written for 96 dpi and scaled once on ResumeLayout,
+        // so 125/150/200 % get the same layout instead of big text in a small window.
+        SuspendLayout();
+        AutoScaleDimensions = new SizeF(96F, 96F);
+        AutoScaleMode = AutoScaleMode.Dpi;
         Text = "WhisperShortcut – Einstellungen";
         Font = new Font("Segoe UI", 9.75f);
-        AutoScaleMode = AutoScaleMode.Dpi;
-        StartPosition = FormStartPosition.CenterScreen;
-        ClientSize = new Size(640, 760);
-        MinimumSize = new Size(560, 560);
+        StartPosition = FormStartPosition.Manual; // centered in Load, after the size is known
+        ClientSize = new Size(640, 720);
+        MinimumSize = new Size(560, 400);
         MaximizeBox = false;
         ShowInTaskbar = true;
-        Icon = TrayIcons.Ready;
+        Icon = TrayIcons.App;
 
+        // Content scrolls; the buttons stay visible below it.
         var root = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill,
+            Dock = DockStyle.Top,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
             Padding = new Padding(20, 16, 20, 12),
             ColumnCount = 1,
         };
@@ -47,8 +56,8 @@ internal sealed class SettingsForm : Form
         keyRow.Controls.Add(_apiKey, 0, 0);
         keyRow.Controls.Add(show, 1, 0);
         root.Controls.Add(keyRow);
-        root.Controls.Add(Hint("Bitte einen Schlüssel aus einem Google-Projekt mit Abrechnung verwenden. "
-            + "Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen."));
+        root.Controls.Add(Hint("Ohne Schlüssel funktioniert nichts. Bitte einen Schlüssel aus einem Google-Projekt "
+            + "mit Abrechnung verwenden: Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen."));
         var link = new LinkLabel { Text = "Schlüssel in Google AI Studio erstellen", AutoSize = true, Margin = new Padding(0, 2, 0, 0) };
         link.LinkClicked += (_, _) => OpenUrl("https://aistudio.google.com/apikey");
         root.Controls.Add(link);
@@ -59,14 +68,15 @@ internal sealed class SettingsForm : Form
         _promptKey = new HotkeyBox(settings.PromptHotkey);
         var keys = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0) };
         keys.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        keys.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
+        keys.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));
         keys.Controls.Add(RowLabel("Diktieren"), 0, 0);
         keys.Controls.Add(_dictateKey, 1, 0);
         keys.Controls.Add(RowLabel("Text bearbeiten oder schreiben lassen"), 0, 1);
         keys.Controls.Add(_promptKey, 1, 1);
         root.Controls.Add(keys);
-        root.Controls.Add(Hint("Ins Feld klicken und die neue Kombination drücken. Kombinationen mit Alt besser meiden: "
-            + "Danach öffnen viele Programme ihr Menü, und Markieren und Einfügen klappen nicht mehr."));
+        root.Controls.Add(Hint("Ins Feld klicken und die neue Kombination drücken, z. B. Strg+Umschalt+D. "
+            + "Kombinationen mit Alt besser meiden, sonst öffnen viele Programme ihr Menü. "
+            + "Solange dieses Fenster im Vordergrund ist, sind die Kürzel aus."));
 
         // --- glossary ---
         root.Controls.Add(Header("Glossar"));
@@ -74,7 +84,7 @@ internal sealed class SettingsForm : Form
         _glossary = new TextBox
         {
             Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill,
-            Height = 90, Text = string.Join("\r\n", settings.Glossary ?? new List<string>()),
+            Height = 96, Text = string.Join("\r\n", settings.Glossary ?? new List<string>()),
         };
         root.Controls.Add(_glossary);
 
@@ -82,18 +92,18 @@ internal sealed class SettingsForm : Form
         var templateHeader = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0, 14, 0, 0) };
         templateHeader.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         templateHeader.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        var templateTitle = Header("Vorlage");
+        var templateTitle = Header("Vorlage für neue Texte");
         templateTitle.Margin = new Padding(0);
         templateHeader.Controls.Add(templateTitle, 0, 0);
         var reset = new LinkLabel { Text = "Beispielvorlage wiederherstellen", AutoSize = true, Anchor = AnchorStyles.Right };
         templateHeader.Controls.Add(reset, 1, 0);
         root.Controls.Add(templateHeader);
-        root.Controls.Add(Hint("Gilt, wenn beim Bearbeiten-Kürzel nichts markiert ist: So soll ein diktiertes Angebot "
-            + "oder eine Mail aussehen. Leer lassen = ohne Vorlage."));
+        root.Controls.Add(Hint("So soll ein Text aussehen, der ohne Markierung geschrieben wird (z. B. ein Angebot "
+            + "oder eine Mail). Leer lassen = ohne Vorlage."));
         _template = new TextBox
         {
             Multiline = true, AcceptsReturn = true, AcceptsTab = false, ScrollBars = ScrollBars.Vertical,
-            Dock = DockStyle.Fill, WordWrap = true,
+            Dock = DockStyle.Fill, WordWrap = true, Height = 220,
             Text = (settings.PromptSystemPrompt ?? "").ReplaceLineEndings("\r\n"),
         };
         reset.LinkClicked += (_, _) =>
@@ -108,38 +118,63 @@ internal sealed class SettingsForm : Form
         root.Controls.Add(_template);
 
         // --- buttons ---
-        var save = new Button { Text = "Speichern", AutoSize = true, MinimumSize = new Size(100, 30) };
-        var cancel = new Button { Text = "Abbrechen", AutoSize = true, MinimumSize = new Size(100, 30), DialogResult = DialogResult.Cancel };
+        var save = new Button { Text = "Speichern", AutoSize = true, MinimumSize = new Size(100, 30), TabIndex = 0 };
+        var cancel = new Button { Text = "Abbrechen", AutoSize = true, MinimumSize = new Size(100, 30), TabIndex = 1 };
         save.Click += (_, _) => Save();
+        // The window is modeless (Show, not ShowDialog), so a DialogResult alone would not close it.
+        cancel.Click += (_, _) => Close();
         var buttons = new FlowLayoutPanel
         {
-            FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Fill, AutoSize = true, Margin = new Padding(0, 12, 0, 0),
+            FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, AutoSize = true,
+            Padding = new Padding(20, 10, 20, 12),
         };
         buttons.Controls.Add(cancel);
         buttons.Controls.Add(save);
-        root.Controls.Add(buttons);
         CancelButton = cancel;
+        AcceptButton = save; // Enter in the key field saves; the multi-line boxes keep their Enter
 
         for (int i = 0; i < root.Controls.Count; i++) root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-        // The template box takes all remaining height.
         root.RowCount = root.Controls.Count;
-        root.RowStyles[root.Controls.IndexOf(_template)] = new RowStyle(SizeType.Percent, 100);
-        Controls.Add(root);
+        var scroll = new Panel { Dock = DockStyle.Fill, AutoScroll = true, TabIndex = 0 };
+        scroll.Controls.Add(root);
+        buttons.TabIndex = 1;
+        // Docking runs in reverse order: the buttons claim the bottom first, the scroll area takes the rest.
+        Controls.Add(scroll);
+        Controls.Add(new Label { Dock = DockStyle.Bottom, Height = 1, BackColor = SystemColors.ControlDark });
+        Controls.Add(buttons);
+        ResumeLayout(false);
+        PerformLayout();
 
-        // Small laptop screens (and the 768 px VM): never taller than the work area, the template box shrinks.
+        // Hints wrap at the visible width (scaled, with or without scroll bar), never wider.
+        scroll.ClientSizeChanged += (_, _) => FitHints(scroll.ClientSize.Width - root.Padding.Horizontal);
+
+        // Fit the window to its content, but never larger than the work area (1366x768 laptops,
+        // 150 % on small screens): then the content scrolls and the buttons stay visible.
         Load += (_, _) =>
         {
             var area = Screen.FromPoint(Cursor.Position).WorkingArea;
-            if (Height > area.Height) { Height = area.Height; Top = area.Top; }
+            Width = Math.Min(Width, area.Width);
+            FitHints(scroll.ClientSize.Width - root.Padding.Horizontal);
+            int chrome = Height - ClientSize.Height;
+            int content = root.GetPreferredSize(new Size(scroll.ClientSize.Width, 0)).Height + 1 + buttons.Height;
+            Height = Math.Min(content + chrome, area.Height);
+            Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
         };
         Shown += (_, _) => (string.IsNullOrEmpty(_apiKey.Text) ? (Control)_apiKey : save).Focus();
     }
 
+    private void FitHints(int width)
+    {
+        width = Math.Max(width, LogicalToDeviceUnits(200));
+        foreach (var hint in _hints) hint.MaximumSize = new Size(width, 0);
+    }
+
     private void Save()
     {
-        if (!Hotkey.TryParse(_dictateKey.Value, out var dictate) || !Hotkey.TryParse(_promptKey.Value, out var prompt))
+        if (!Hotkey.TryParse(_dictateKey.Value, out var dictate) || !Hotkey.TryParse(_promptKey.Value, out var prompt)
+            || !IsSafe(dictate) || !IsSafe(prompt))
         {
-            Warn("Bitte für beide Funktionen ein Tastenkürzel mit Strg oder Alt festlegen.");
+            Warn("Bitte für beide Funktionen ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+D.");
             return;
         }
         if (dictate == prompt)
@@ -168,6 +203,17 @@ internal sealed class SettingsForm : Form
         Close();
     }
 
+    /// <summary>
+    /// Two of Ctrl/Alt/Shift, one of them Ctrl or Alt. Ctrl+V or Alt+F as a global hotkey would take
+    /// that key away from every program.
+    /// </summary>
+    private static bool IsSafe(Hotkey hotkey)
+    {
+        uint m = hotkey.Modifiers;
+        int count = ((m & MOD_CONTROL) != 0 ? 1 : 0) + ((m & MOD_ALT) != 0 ? 1 : 0) + ((m & MOD_SHIFT) != 0 ? 1 : 0);
+        return count >= 2 && (m & (MOD_CONTROL | MOD_ALT)) != 0;
+    }
+
     private void Warn(string text) =>
         MessageBox.Show(this, text, "WhisperShortcut", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
@@ -176,11 +222,16 @@ internal sealed class SettingsForm : Form
         Text = text, AutoSize = true, Font = new Font("Segoe UI Semibold", 11f), Margin = new Padding(0, 14, 0, 4),
     };
 
-    private static Label Hint(string text) => new()
+    private Label Hint(string text)
     {
-        Text = text, AutoSize = true, ForeColor = HintColor, Dock = DockStyle.Top, Margin = new Padding(0, 4, 0, 4),
-        MaximumSize = new Size(600, 0),
-    };
+        var hint = new Label
+        {
+            Text = text, AutoSize = true, ForeColor = HintColor, Margin = new Padding(0, 4, 0, 4),
+            MaximumSize = new Size(600, 0), // replaced by FitHints once the real width is known
+        };
+        _hints.Add(hint);
+        return hint;
+    }
 
     private static Label RowLabel(string text) => new()
     {
@@ -227,9 +278,10 @@ internal sealed class SettingsForm : Form
         {
             e.SuppressKeyPress = true;
             e.Handled = true;
-            if (e.KeyCode == Keys.Tab && e.Modifiers == Keys.None)
+            if (e.KeyCode == Keys.Tab && e.Modifiers is Keys.None or Keys.Shift)
             {
-                Parent?.SelectNextControl(this, true, true, true, true);
+                // Form-wide: the parent is the small hotkey table, where Tab would only bounce between the two boxes.
+                FindForm()?.SelectNextControl(this, e.Modifiers == Keys.None, true, true, true);
                 return;
             }
             Apply(e.KeyCode, e.Modifiers);
@@ -256,18 +308,16 @@ internal sealed class SettingsForm : Form
                 Text = prefix;
                 return;
             }
-            if (!modifiers.HasFlag(Keys.Control) && !modifiers.HasFlag(Keys.Alt))
-            {
-                Text = "Strg oder Alt dazunehmen";
-                return;
-            }
             var stored = (modifiers.HasFlag(Keys.Control) ? "Ctrl+" : "") + (modifiers.HasFlag(Keys.Alt) ? "Alt+" : "")
                 + (modifiers.HasFlag(Keys.Shift) ? "Shift+" : "") + key;
-            if (Hotkey.TryParse(stored, out var parsed))
+            if (!Hotkey.TryParse(stored, out var parsed) || !IsSafe(parsed))
             {
-                Value = parsed.ToString();
-                Text = parsed.ToDisplayString();
+                Text = "Bitte Strg+Umschalt+… verwenden";
+                return;
             }
+            Value = parsed.ToString();
+            Text = parsed.ToDisplayString();
         }
     }
 }
+

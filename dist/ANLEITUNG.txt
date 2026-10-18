@@ -1,4 +1,4 @@
-WhisperShortcut für Windows – Einrichtung (Testversion, Stand 17.10.2026)
+WhisperShortcut für Windows – Einrichtung (Testversion, Stand 18.10.2026)
 ========================================================================
 
 Was es kann
@@ -11,7 +11,7 @@ Was es kann
      Die Markierung wird ersetzt.
    - Ohne Markierung: Strg+Umschalt+P, z. B. „Schreib Herrn Meier ein Angebot für zwei
      Heizkörper inklusive Montage, Termin nächste Woche Dienstag“, Strg+Umschalt+P.
-     Ein fertiger Text nach der Vorlage in den Einstellungen wird eingefügt.
+     Ein fertiger Text nach der „Vorlage für neue Texte“ (Einstellungen) wird eingefügt.
    Ein Druck während der Verarbeitung bricht ab.
 
 Einrichtung (ca. 5 Minuten)
@@ -33,14 +33,16 @@ Die exe nicht „als Administrator ausführen“.
    Meldet der Virenscanner die Datei: ebenfalls Magnus Bescheid geben (Fehlalarm bei
    unsignierten Programmen möglich).
    Der erste Start dauert 10–20 Sekunden (Virenscanner prüft die Datei).
-3. Unten rechts im Infobereich (ggf. hinter dem kleinen Pfeil ^) erscheint ein Mikrofon-Symbol.
-   Bitte anheften, es zeigt an, ob gerade aufgenommen wird: Einstellungen → Personalisierung →
-   Taskleiste → Andere Taskleistensymbole → WhisperShortcut an.
-   Rechtsklick auf das Symbol → „Einstellungen …“.
-4. Gemini-API-Schlüssel eintragen (bekommst du separat von Magnus). Speichern und das Fenster
-   schließen: Solange das Einstellungsfenster offen ist, sind die Tastenkürzel aus.
-5. Mikrofon: Windows-Einstellungen → Datenschutz und Sicherheit → Mikrofon →
-   „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ muss AN sein. Unter System → Sound das
+3. Unten rechts im Infobereich (ggf. hinter dem kleinen Pfeil ^) erscheint ein blaues Symbol
+   (Schallwellen und Klemmbrett). Rot mit Punkt = Aufnahme läuft, orange mit drei Punkten =
+   Text wird verarbeitet. Bitte anheften, damit man das sieht: Einstellungen → Personalisierung →
+   Taskleiste → Andere Taskleistensymbole (Windows 10: „Symbole für die Anzeige auf der
+   Taskleiste auswählen“) → WhisperShortcut an.
+   Ein Klick auf das Symbol öffnet die Einstellungen (Rechtsklick zeigt das Menü).
+4. Gemini-API-Schlüssel eintragen (bekommst du separat von Magnus) → „Speichern“.
+   Solange das Einstellungsfenster im Vordergrund ist, sind die Tastenkürzel aus.
+5. Mikrofon: Windows-Einstellungen → Datenschutz (Windows 11: Datenschutz und Sicherheit) →
+   Mikrofon → „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ muss AN sein. Unter System → Sound das
    richtige Mikrofon als Eingabegerät wählen.
    Benachrichtigungen für WhisperShortcut an lassen, „Nicht stören“ aus: Alle Meldungen der App
    kommen als Windows-Benachrichtigung.
@@ -52,12 +54,12 @@ Einstellungen
 -------------
 - Glossar: Namen, Fachbegriffe, Firmennamen (eine Zeile pro Begriff), damit sie richtig
   geschrieben werden.
-- Vorlage: wie Angebote, Mails usw. aussehen sollen. Vorbefüllt mit einem Angebotsmuster.
-  Am besten mit 1–2 echten Angeboten des Nutzers anpassen (Firmenname, Stundensatz,
+- Vorlage für neue Texte: wie Angebote, Mails usw. aussehen sollen. Vorbefüllt mit einem
+  Angebotsmuster. Am besten mit 1–2 echten Angeboten des Nutzers anpassen (Firmenname, Stundensatz,
   Zahlungsbedingungen).
-- Tastenkürzel änderbar. Kombinationen mit Alt besser meiden (dann öffnen viele Programme ihr
-  Menü). Solange die App läuft, gehen in Word Strg+Umschalt+D (doppelt unterstreichen) und
-  Strg+Umschalt+P (Schriftgrad) nicht. In Excel gilt bei Strg+Umschalt+P die aktuelle Zelle
+- Tastenkürzel änderbar, immer mit zwei Zusatztasten (z. B. Strg+Umschalt+…). Kombinationen
+  mit Alt besser meiden (dann öffnen viele Programme ihr Menü). Solange die App läuft, gehen
+  in Word Strg+Umschalt+D (doppelt unterstreichen) und Strg+Umschalt+P (Schriftgrad) nicht. In Excel gilt bei Strg+Umschalt+P die aktuelle Zelle
   immer als Markierung.
 
 Gut zu wissen
@@ -68,6 +70,8 @@ Gut zu wissen
   dann in der Zwischenablage: Strg+V.
 - Aufnahmen enden automatisch nach 5 Minuten.
 - Diktate landen nicht im Zwischenablage-Verlauf (Win+V).
+- Nach dem Einfügen stellt die App die Zwischenablage wieder her, aber nur reinen Text:
+  Ein vorher kopiertes Bild oder kopierte Dateien sind danach weg.
 - Probleme: Die Protokolldatei liegt unter %LOCALAPPDATA%\WhisperShortcut\wsw.log
   (Rechtsklick auf das Symbol → „Protokoll öffnen“ zeigt sie an). Datei an Magnus schicken.
   Sie enthält keine diktierten Texte und keinen Schlüssel.

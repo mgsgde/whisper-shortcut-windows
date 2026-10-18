@@ -66,7 +66,8 @@ internal sealed class TrayApp : ApplicationContext
 
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         _icon = new NotifyIcon { Icon = TrayIcons.Ready, ContextMenuStrip = menu, Visible = true };
-        _icon.DoubleClick += (_, _) => ShowSettings();
+        // One left click opens the settings (Click alone would also fire on right click, which opens the menu).
+        _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
         _icon.BalloonTipClicked += (_, _) => _balloonClick?.Invoke();
 
         RegisterHotkeys();
@@ -75,14 +76,15 @@ internal sealed class TrayApp : ApplicationContext
         if (string.IsNullOrWhiteSpace(_settings.ApiKey) && !_fakeGemini)
         {
             Notify("Willkommen bei WhisperShortcut",
-                "Bitte zuerst den Gemini-API-Schlüssel eintragen. Hier klicken oder Rechtsklick auf das Symbol → Einstellungen.",
+                "Bitte zuerst den API-Schlüssel eintragen: hier klicken oder auf das blaue Symbol unten rechts.",
                 ToolTipIcon.Info, ShowSettings);
         }
     }
 
     // ---------------- hotkeys ----------------
 
-    private void RegisterHotkeys()
+    /// <param name="notify">false when only re-arming after the settings window lost focus: no repeated warning.</param>
+    private void RegisterHotkeys(bool notify = true)
     {
         _hotkeys.UnregisterAll();
         var failed = new List<string>();
@@ -92,11 +94,12 @@ internal sealed class TrayApp : ApplicationContext
                 failed.Add(Hotkey.Display(stored));
         }
         _dictateInfo.Text = $"Diktieren: {Hotkey.Display(_settings.DictateHotkey)}";
-        _promptInfo.Text = $"Text bearbeiten / schreiben: {Hotkey.Display(_settings.PromptHotkey)}";
-        if (failed.Count > 0)
+        _promptInfo.Text = $"Text bearbeiten oder schreiben lassen: {Hotkey.Display(_settings.PromptHotkey)}";
+        if (failed.Count > 0 && notify)
         {
             Notify("Tastenkürzel belegt",
-                $"{string.Join(" und ", failed)} wird schon von einem anderen Programm benutzt. Bitte in den Einstellungen ein anderes wählen.",
+                $"{string.Join(" und ", failed)} {(failed.Count > 1 ? "werden" : "wird")} schon von einem anderen Programm benutzt. "
+                + "Hier klicken und in den Einstellungen ein anderes wählen.",
                 ToolTipIcon.Warning, ShowSettings);
         }
     }
@@ -126,7 +129,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Info("Hotkey pressed but no API key (Schlüssel fehlt)");
             Sounds.Error();
-            Notify("Schlüssel fehlt", "Kein API-Schlüssel eingetragen. Hier klicken, um ihn in den Einstellungen einzutragen.",
+            Notify("Schlüssel fehlt", "Noch kein API-Schlüssel eingetragen. Hier klicken, um ihn einzutragen.",
                 ToolTipIcon.Warning, ShowSettings);
             return;
         }
@@ -145,7 +148,13 @@ internal sealed class TrayApp : ApplicationContext
             mic.MaxDurationReached += () => _ui.Post(_ =>
             {
                 if (_state != State.Recording) return;
-                Notify("Aufnahme beendet", "Nach 5 Minuten wird die Aufnahme automatisch beendet und verarbeitet.", ToolTipIcon.Info);
+                Notify("Aufnahme beendet", "Nach 5 Minuten endet die Aufnahme automatisch. Der Text wird jetzt verarbeitet.", ToolTipIcon.Info);
+                _ = StopAndProcessAsync();
+            }, null);
+            mic.DeviceLost += () => _ui.Post(_ =>
+            {
+                if (_state != State.Recording) return;
+                Notify("Mikrofon getrennt", "Aufnahme beendet, das Bisherige wird verarbeitet.", ToolTipIcon.Warning);
                 _ = StopAndProcessAsync();
             }, null);
             _audio = mic;
@@ -181,6 +190,12 @@ internal sealed class TrayApp : ApplicationContext
             byte[] wav = await audio.StopAsync();
             double seconds = Core.Wav.DurationSeconds(wav);
             Core.Log.Info($"{_mode}: recorded {seconds:0.0} s");
+            if (seconds < 0.5)
+            {
+                // A double press, not a recording: say so instead of a misleading microphone error.
+                Notify("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", ToolTipIcon.Info);
+                return;
+            }
 
             string text = _mode == Mode.Dictate
                 ? await DictateAsync(wav, seconds, ct)
@@ -225,7 +240,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error($"{_mode}: microphone problem {e.GetType().Name}");
             Sounds.Error();
-            Notify("Mikrofon", e.Message, ToolTipIcon.Warning);
+            Notify("Problem mit dem Mikrofon", e.Message, ToolTipIcon.Warning);
         }
         catch (Exception e)
         {
@@ -295,14 +310,17 @@ internal sealed class TrayApp : ApplicationContext
     private void SetState(State state)
     {
         _state = state;
+        string key = Hotkey.Display(_mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey);
         (string status, Icon icon) = state switch
         {
-            State.Recording => (_mode == Mode.Dictate ? "Nimmt auf (Diktat) …" : "Nimmt Anweisung auf …", TrayIcons.Recording),
-            State.Processing => ("Verarbeitet …", TrayIcons.Processing),
+            State.Recording => ($"Aufnahme läuft – {key} beendet sie", TrayIcons.Recording),
+            State.Processing => ("Wird verarbeitet …", TrayIcons.Processing),
+            _ when string.IsNullOrWhiteSpace(_settings.ApiKey) && !_fakeGemini => ("Kein API-Schlüssel eingetragen", TrayIcons.Ready),
             _ => ("Bereit", TrayIcons.Ready),
         };
         _icon.Icon = icon;
-        _icon.Text = $"WhisperShortcut – {status}";
+        string tip = $"WhisperShortcut – {status}";
+        _icon.Text = tip.Length <= 127 ? tip : tip[..127]; // NotifyIcon throws above 127 characters
         _statusItem.Text = status;
     }
 
@@ -319,18 +337,27 @@ internal sealed class TrayApp : ApplicationContext
     {
         if (_settingsForm != null)
         {
+            if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
             _settingsForm.Activate();
             return;
         }
-        if (_state != State.Idle) return;
+        if (_state != State.Idle)
+        {
+            Notify("Aufnahme läuft", "Die Einstellungen gehen erst danach auf. Bitte die Aufnahme beenden, "
+                + "warten, bis der Text da ist, und dann noch einmal klicken.", ToolTipIcon.Info);
+            return;
+        }
 
-        // While the window is open the global hotkeys are off, so the hotkey field can record Ctrl+Shift+D itself.
-        _hotkeys.UnregisterAll();
+        // While the window is in front the global hotkeys are off, so the hotkey field can record
+        // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
         _settingsForm = new SettingsForm(_settings);
+        _settingsForm.Activated += (_, _) => { if (_state == State.Idle) _hotkeys.UnregisterAll(); };
+        _settingsForm.Deactivate += (_, _) => RegisterHotkeys(notify: false);
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
             RegisterHotkeys();
+            SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
         };
         _settingsForm.Show();
         _settingsForm.Activate();

@@ -7,7 +7,15 @@
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationIcon>app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Built by tools/make_icon.py from the macOS app icon. -->
+    <EmbeddedResource Include="app.ico" LogicalName="WhisperShortcut.app.ico" />
+    <EmbeddedResource Include="recording.ico" LogicalName="WhisperShortcut.recording.ico" />
+    <EmbeddedResource Include="processing.ico" LogicalName="WhisperShortcut.processing.ico" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\WhisperShortcut.Core\WhisperShortcut.Core.csproj" />
