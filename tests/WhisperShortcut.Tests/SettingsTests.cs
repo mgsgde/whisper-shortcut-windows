@@ -36,6 +36,28 @@ public class SettingsTests
     }
 
     [Fact]
+    public void OfflineSettings_DefaultsAndRoundTrip()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, "{\"dictateHotkey\":\"Ctrl+Shift+X\"}");
+        var old = Settings.Load(path, new PlainSecretProtector());
+        Assert.False(old.OfflineMode);
+        Assert.Equal("", old.OfflineLlmId);
+
+        old.OfflineMode = true;
+        old.OfflineLlmId = "qwen3-4b-instruct-2507";
+        old.Save();
+        Assert.Contains("\"offlineMode\": true", File.ReadAllText(path));
+        Assert.Contains("\"offlineLlmId\": \"qwen3-4b-instruct-2507\"", File.ReadAllText(path));
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.True(t.OfflineMode);
+        Assert.Equal("qwen3-4b-instruct-2507", t.OfflineLlmId);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
     public void CorruptFile_GivesDefaults()
     {
         var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));

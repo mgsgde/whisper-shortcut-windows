@@ -119,12 +119,8 @@ public sealed class GeminiClient
 
     internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt)
     {
-        var trimmed = customSystemPrompt?.Trim();
-        var system = (string.IsNullOrEmpty(trimmed) ? Prompts.DefaultPromptModeSystemPrompt : trimmed)
-            + Prompts.PromptModeOutputRule;
-        var first = string.IsNullOrEmpty(selection)
-            ? Prompts.DictatePromptComposeMarker
-            : $"{Prompts.ClipboardSelectionHeader}\n\n{selection}";
+        var system = DictatePromptText.SystemPrompt(customSystemPrompt);
+        var first = DictatePromptText.SelectionBlock(selection);
         var root = new JsonObject
         {
             ["systemInstruction"] = new JsonObject

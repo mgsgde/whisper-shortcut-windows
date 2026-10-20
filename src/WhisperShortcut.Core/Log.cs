@@ -25,6 +25,9 @@ public static class Log
     /// <summary>Writes an INFO line.</summary>
     public static void Info(string message) => Write("INFO", message);
 
+    /// <summary>Writes a WARN line.</summary>
+    public static void Warn(string message) => Write("WARN", message);
+
     /// <summary>Writes an ERROR line; for an exception only its type and message are written.</summary>
     public static void Error(string message, Exception? ex = null) =>
         Write("ERROR", ex == null ? message : $"{message} ({ex.GetType().Name}: {ex.Message})");

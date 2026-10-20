@@ -69,6 +69,12 @@ public sealed class Settings
     /// <summary>Hotkey for Dictate Prompt.</summary>
     public string PromptHotkey { get; set; } = "Ctrl+Shift+P";
 
+    /// <summary>Offline mode: dictation and Dictate Prompt run on this PC (Parakeet + local LLM).</summary>
+    public bool OfflineMode { get; set; }
+
+    /// <summary>Id of the chosen local LLM (see <see cref="OfflineCatalog"/>); empty = recommended for this PC.</summary>
+    public string OfflineLlmId { get; set; } = "";
+
     /// <summary>Loads the settings; a missing or corrupt file yields defaults (a corrupt file is kept as .bak).</summary>
     public static Settings Load(string path, ISecretProtector protector)
     {
@@ -89,6 +95,8 @@ public sealed class Settings
             if (!string.IsNullOrWhiteSpace(dto.PromptModel)) s.PromptModel = dto.PromptModel;
             if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
             if (!string.IsNullOrWhiteSpace(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey;
+            s.OfflineMode = dto.OfflineMode ?? false;
+            s.OfflineLlmId = dto.OfflineLlmId ?? "";
         }
         catch (Exception ex)
         {
@@ -112,6 +120,8 @@ public sealed class Settings
             PromptModel = PromptModel,
             DictateHotkey = DictateHotkey,
             PromptHotkey = PromptHotkey,
+            OfflineMode = OfflineMode,
+            OfflineLlmId = OfflineLlmId,
         };
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
@@ -127,5 +137,7 @@ public sealed class Settings
         [JsonPropertyName("promptModel")] public string? PromptModel { get; set; }
         [JsonPropertyName("dictateHotkey")] public string? DictateHotkey { get; set; }
         [JsonPropertyName("promptHotkey")] public string? PromptHotkey { get; set; }
+        [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
+        [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
     }
 }
