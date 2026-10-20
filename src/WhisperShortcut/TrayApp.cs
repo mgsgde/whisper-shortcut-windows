@@ -145,6 +145,13 @@ internal sealed class TrayApp : ApplicationContext
                 ToolTipIcon.Warning, ShowSettings);
             return;
         }
+        if (_settings.OfflineMode && mode == Mode.Prompt && OfflineEngine.LlmUnsupportedCpu)
+        {
+            Core.Log.Info("Hotkey Prompt in offline mode, but this CPU cannot run the language model");
+            Sounds.Error();
+            Notify("Offline-Sprachmodell", Core.LlamaServerHost.UnsupportedCpuMessage, ToolTipIcon.Warning, ShowSettings);
+            return;
+        }
         if (MissingKey)
         {
             Core.Log.Info("Hotkey pressed but no API key (Schlüssel fehlt)");

@@ -43,6 +43,14 @@ internal sealed class OfflineEngine : IDisposable
 
     public static bool SpeechInstalled => Core.ModelDownloader.IsInstalled(Core.OfflineCatalog.Parakeet);
 
+    /// <summary>
+    /// True once llama-server died with an illegal instruction on this PC (e.g. Apple M1 under Parallels).
+    /// Remembered in a file, so the next attempt says so at once instead of loading for minutes and crashing again.
+    /// </summary>
+    public static bool LlmUnsupportedCpu => File.Exists(UnsupportedCpuMarker);
+
+    private static string UnsupportedCpuMarker => Path.Combine(Core.OfflineCatalog.Root, "llm-unsupported-cpu.txt");
+
     public static bool LlmInstalled(Core.LocalLlm llm) =>
         Core.ModelDownloader.IsInstalled(llm.Component)
         && Core.ModelDownloader.IsInstalled(Core.OfflineCatalog.LlamaServer(Arch));
@@ -144,7 +152,7 @@ internal sealed class OfflineEngine : IDisposable
     /// <summary>Starts the language model while the user is still speaking the instruction.</summary>
     public void PrewarmLlm()
     {
-        if (!LlmInstalled(SelectedLlm)) return;
+        if (!LlmInstalled(SelectedLlm) || LlmUnsupportedCpu) return;
         _ = Task.Run(async () =>
         {
             try { await EnsureServerAsync(CancellationToken.None).ConfigureAwait(false); }
@@ -167,6 +175,7 @@ internal sealed class OfflineEngine : IDisposable
     public async Task<string> PromptAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct)
     {
         if (!LlmInstalled(SelectedLlm)) throw new OfflineNotReadyException("Das Offline-Sprachmodell ist noch nicht geladen.");
+        if (LlmUnsupportedCpu) throw new Core.LocalLlmException(Core.LlamaServerHost.UnsupportedCpuMessage);
         var server = await EnsureServerAsync(ct).ConfigureAwait(false);
         server.MarkUsed();
         try
@@ -183,6 +192,8 @@ internal sealed class OfflineEngine : IDisposable
             await Task.Delay(500, CancellationToken.None).ConfigureAwait(false);
             if (!server.CrashedOnUnsupportedCpu) throw;
             Core.Log.Error("llama-server crashed with an illegal instruction: this CPU cannot run the llama.cpp build");
+            try { File.WriteAllText(UnsupportedCpuMarker, $"llama-server crashed with 0xC000001D on {DateTime.Now:yyyy-MM-dd HH:mm}. Delete this file to try again.\r\n"); }
+            catch (Exception m) { Core.Log.Error("Could not write the unsupported-CPU marker", m); }
             throw new Core.LocalLlmException(Core.LlamaServerHost.UnsupportedCpuMessage, e);
         }
     }
