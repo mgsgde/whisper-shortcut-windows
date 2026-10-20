@@ -8,6 +8,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <ApplicationIcon>app.ico</ApplicationIcon>
+    <!-- sherpa-onnx ships native DLLs (onnxruntime, sherpa-onnx-c-api); a single-file exe must carry them. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
   </PropertyGroup>
 
   <ItemGroup>
@@ -15,6 +17,11 @@
     <EmbeddedResource Include="app.ico" LogicalName="WhisperShortcut.app.ico" />
     <EmbeddedResource Include="recording.ico" LogicalName="WhisperShortcut.recording.ico" />
     <EmbeddedResource Include="processing.ico" LogicalName="WhisperShortcut.processing.ico" />
+    <!-- llama.cpp's Windows builds need the VC++ runtime, which a fresh Windows lacks. Taken from
+         Microsoft's vc_redist (app-local deployment is allowed); OfflineEngine puts them beside llama-server.exe. -->
+    <EmbeddedResource Include="..\..\third_party\vcruntime\$(RuntimeIdentifier)\*.dll"
+                      LogicalName="WhisperShortcut.vcruntime.%(Filename)%(Extension)"
+                      Condition="'$(RuntimeIdentifier)' != ''" />
   </ItemGroup>
 
   <ItemGroup>

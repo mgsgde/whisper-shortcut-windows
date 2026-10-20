@@ -6,3 +6,4 @@ out/
 .DS_Store
 dist/*.exe
 dist/*.zip
+dist/*/

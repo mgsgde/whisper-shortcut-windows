@@ -3,12 +3,20 @@ using static WhisperShortcut.NativeMethods;
 
 namespace WhisperShortcut;
 
-/// <summary>Settings window: API key, hotkeys, glossary, template. German UI.</summary>
+/// <summary>Settings window: online/offline, API key, offline models, hotkeys, glossary, template. German UI.</summary>
 internal sealed class SettingsForm : Form
 {
     private static readonly Color HintColor = SystemColors.GrayText;
 
     private readonly Core.Settings _settings;
+    private readonly OfflineEngine _offline;
+    private readonly RadioButton _onlineMode;
+    private readonly RadioButton _offlineMode;
+    private readonly Control[] _onlineOnly;
+    private readonly Control[] _offlineOnly;
+    private readonly ModelRow _speechRow;
+    private readonly ModelRow _llmRow;
+    private readonly ComboBox _llmChoice;
     private readonly TextBox _apiKey;
     private readonly HotkeyBox _dictateKey;
     private readonly HotkeyBox _promptKey;
@@ -16,9 +24,10 @@ internal sealed class SettingsForm : Form
     private readonly TextBox _template;
     private readonly List<Label> _hints = new();
 
-    public SettingsForm(Core.Settings settings)
+    public SettingsForm(Core.Settings settings, OfflineEngine offline)
     {
         _settings = settings;
+        _offline = offline;
 
         // Designer pattern: all sizes below are written for 96 dpi and scaled once on ResumeLayout,
         // so 125/150/200 % get the same layout instead of big text in a small window.
@@ -45,8 +54,52 @@ internal sealed class SettingsForm : Form
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
+        // --- online / offline ---
+        root.Controls.Add(Header("Arbeitsweise"));
+        _onlineMode = new RadioButton { Text = "Online mit Gemini", AutoSize = true, Checked = !settings.OfflineMode, Margin = new Padding(0, 2, 0, 0) };
+        var onlineHint = Hint("Beste Qualität und am schnellsten. Braucht Internet und einen API-Schlüssel; "
+            + "Aufnahme und markierter Text gehen an Google.");
+        onlineHint.Margin = new Padding(18, 0, 0, 6);
+        _offlineMode = new RadioButton { Text = "Offline auf diesem PC", AutoSize = true, Checked = settings.OfflineMode, Margin = new Padding(0, 2, 0, 0) };
+        var offlineHint = Hint("Aufnahmen und Texte verlassen den Rechner nie. Die Modelle werden einmal geladen, "
+            + "danach geht alles ohne Internet. „Text bearbeiten“ dauert offline länger, je nach PC einige Sekunden bis eine Minute.");
+        offlineHint.Margin = new Padding(18, 0, 0, 4);
+        root.Controls.Add(_onlineMode);
+        root.Controls.Add(onlineHint);
+        root.Controls.Add(_offlineMode);
+        root.Controls.Add(offlineHint);
+
+        // --- offline models ---
+        var offlineHeader = Header("Offline-Modelle");
+        root.Controls.Add(offlineHeader);
+        var speech = Core.OfflineCatalog.Parakeet;
+        _speechRow = new ModelRow("Spracherkennung", "Für Diktieren und für gesprochene Anweisungen.");
+        root.Controls.Add(_speechRow);
+
+        _llmChoice = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Top, Margin = new Padding(0, 10, 0, 0) };
+        var recommended = Core.OfflineCatalog.Recommended(OfflineEngine.TotalRam);
+        foreach (var llm in Core.OfflineCatalog.Llms) _llmChoice.Items.Add(new LlmItem(llm, llm.Id == recommended.Id));
+        _llmChoice.SelectedItem = _llmChoice.Items.Cast<LlmItem>().First(i => i.Llm.Id == offline.SelectedLlm.Id);
+        _llmRow = new ModelRow("Sprachmodell für „Text bearbeiten oder schreiben lassen“", null);
+        root.Controls.Add(_llmRow);
+        root.Controls.Add(_llmChoice);
+        var ramHint = Hint($"Dieser PC hat {FormatBytes(OfflineEngine.TotalRam, binary: true)} Arbeitsspeicher. "
+            + "Das größere Modell schreibt bessere Texte, braucht aber mehr Speicher und Zeit.");
+        root.Controls.Add(ramHint);
+
+        _speechRow.Action.Click += (_, _) => ToggleDownload("speech", new[] { speech });
+        _speechRow.Remove.LinkClicked += (_, _) => RemoveModel(speech, "die Offline-Spracherkennung");
+        _llmRow.Action.Click += (_, _) => ToggleDownload("llm",
+            new[] { Core.OfflineCatalog.LlamaServer(OfflineEngine.Arch), SelectedLlmChoice.Component });
+        _llmRow.Remove.LinkClicked += (_, _) => RemoveModel(SelectedLlmChoice.Component, SelectedLlmChoice.DisplayName);
+        _llmChoice.SelectedIndexChanged += (_, _) => UpdateModelRows();
+        _offline.DownloadChanged += UpdateModelRows;
+        FormClosed += (_, _) => _offline.DownloadChanged -= UpdateModelRows;
+        _offlineOnly = new Control[] { offlineHeader, _speechRow, _llmRow, _llmChoice, ramHint };
+
         // --- API key ---
-        root.Controls.Add(Header("Gemini-API-Schlüssel"));
+        var keyHeader = Header("Gemini-API-Schlüssel");
+        root.Controls.Add(keyHeader);
         _apiKey = new TextBox { UseSystemPasswordChar = true, Dock = DockStyle.Fill, Text = settings.ApiKey ?? "" };
         var show = new CheckBox { Text = "Anzeigen", AutoSize = true, Margin = new Padding(8, 4, 0, 0) };
         show.CheckedChanged += (_, _) => _apiKey.UseSystemPasswordChar = !show.Checked;
@@ -56,11 +109,14 @@ internal sealed class SettingsForm : Form
         keyRow.Controls.Add(_apiKey, 0, 0);
         keyRow.Controls.Add(show, 1, 0);
         root.Controls.Add(keyRow);
-        root.Controls.Add(Hint("Ohne Schlüssel funktioniert nichts. Bitte einen Schlüssel aus einem Google-Projekt "
-            + "mit Abrechnung verwenden: Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen."));
+        var keyHint = Hint("Ohne Schlüssel funktioniert der Online-Modus nicht. Bitte einen Schlüssel aus einem Google-Projekt "
+            + "mit Abrechnung verwenden: Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen.");
+        root.Controls.Add(keyHint);
         var link = new LinkLabel { Text = "Schlüssel in Google AI Studio erstellen", AutoSize = true, Margin = new Padding(0, 2, 0, 0) };
         link.LinkClicked += (_, _) => OpenUrl("https://aistudio.google.com/apikey");
         root.Controls.Add(link);
+        _onlineOnly = new Control[] { keyHeader, keyRow, keyHint, link };
+        _onlineMode.CheckedChanged += (_, _) => UpdateMode();
 
         // --- hotkeys ---
         root.Controls.Add(Header("Tastenkürzel"));
@@ -80,7 +136,8 @@ internal sealed class SettingsForm : Form
 
         // --- glossary ---
         root.Controls.Add(Header("Glossar"));
-        root.Controls.Add(Hint("Ein Begriff pro Zeile: Namen, Produkte und Fachwörter, die richtig geschrieben werden sollen."));
+        root.Controls.Add(Hint("Ein Begriff pro Zeile: Namen, Produkte und Fachwörter, die richtig geschrieben werden sollen. "
+            + "Gilt nur online; die Offline-Spracherkennung kennt noch kein Glossar."));
         _glossary = new TextBox
         {
             Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill,
@@ -160,7 +217,146 @@ internal sealed class SettingsForm : Form
             Height = Math.Min(content + chrome, area.Height);
             Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
         };
-        Shown += (_, _) => (string.IsNullOrEmpty(_apiKey.Text) ? (Control)_apiKey : save).Focus();
+        UpdateMode();
+        UpdateModelRows();
+        Shown += (_, _) => (string.IsNullOrEmpty(_apiKey.Text) && _onlineMode.Checked ? (Control)_apiKey : save).Focus();
+    }
+
+    // ---------------- offline models ----------------
+
+    private Core.LocalLlm SelectedLlmChoice => ((LlmItem)_llmChoice.SelectedItem!).Llm;
+
+    /// <summary>Online shows the key, offline shows the models. Hidden, not greyed out: one way of working at a time.</summary>
+    private void UpdateMode()
+    {
+        SuspendLayout();
+        foreach (var c in _onlineOnly) c.Visible = _onlineMode.Checked;
+        foreach (var c in _offlineOnly) c.Visible = _offlineMode.Checked;
+        ResumeLayout(true);
+    }
+
+    private void ToggleDownload(string id, IReadOnlyList<Core.OfflineComponent> components)
+    {
+        var running = _offline.CurrentDownload;
+        if (running != null)
+        {
+            if (running.Id == id) running.Cancel.Cancel();
+            return;
+        }
+        _offline.StartDownload(id, components);
+    }
+
+    private void RemoveModel(Core.OfflineComponent component, string name)
+    {
+        if (MessageBox.Show(this, $"{name} wird von diesem PC gelöscht. Für den Offline-Modus muss es danach neu geladen werden.",
+                "Modell entfernen?", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+        try { _offline.Delete(component); }
+        catch (Exception e)
+        {
+            Core.Log.Error("Deleting model failed", e);
+            Warn("Das Modell konnte nicht gelöscht werden: " + e.Message);
+        }
+        UpdateModelRows();
+    }
+
+    private void UpdateModelRows()
+    {
+        if (IsDisposed) return;
+        var download = _offline.CurrentDownload;
+        var llm = SelectedLlmChoice;
+        var llmParts = new[] { Core.OfflineCatalog.LlamaServer(OfflineEngine.Arch), llm.Component };
+        UpdateRow(_speechRow, "speech", OfflineEngine.SpeechInstalled, ComponentSize(Core.OfflineCatalog.Parakeet), download);
+        UpdateRow(_llmRow, "llm", OfflineEngine.LlmInstalled(llm), llmParts.Sum(ComponentSize), download);
+        _llmChoice.Enabled = download?.Id != "llm";
+    }
+
+    private void UpdateRow(ModelRow row, string id, bool installed, long size, OfflineEngine.Download? download)
+    {
+        bool mine = download?.Id == id;
+        string? error = download == null && _offline.LastFinished is { Error: { } e } last && last.Id == id ? e : null;
+        row.Progress.Visible = mine;
+        row.Remove.Visible = installed && !mine;
+        row.Action.Visible = !installed || mine;
+        row.Action.Enabled = download == null || mine;
+        row.Action.Text = mine ? "Abbrechen" : "Laden";
+        if (mine)
+        {
+            int percent = (int)Math.Round(download!.Fraction * 100);
+            row.Progress.Value = Math.Clamp(percent, 0, 100);
+            row.SetStatus($"Wird geladen … {percent} % von {FormatBytes(size)}", SystemColors.GrayText);
+        }
+        else if (installed)
+        {
+            row.SetStatus($"Geladen ({FormatBytes(size)} auf diesem PC)", Color.FromArgb(0, 120, 60));
+        }
+        else if (error != null)
+        {
+            row.SetStatus(error, Color.FromArgb(180, 30, 30));
+        }
+        else
+        {
+            row.SetStatus($"Noch nicht geladen, ca. {FormatBytes(size)}", SystemColors.GrayText);
+        }
+    }
+
+    private static long ComponentSize(Core.OfflineComponent c) => c.Files.Sum(f => f.Size);
+
+    /// <summary>"670 MB", "5,7 GB" (German decimal comma). <paramref name="binary"/> for RAM (16 GB, not 17,2).</summary>
+    private static string FormatBytes(long bytes, bool binary = false)
+    {
+        var de = System.Globalization.CultureInfo.GetCultureInfo("de-DE");
+        double unit = binary ? 1024.0 * 1024 * 1024 : 1e9;
+        if (bytes >= unit) return (bytes / unit).ToString(binary ? "0" : "0.0", de) + " GB";
+        return (bytes / (binary ? 1024.0 * 1024 : 1e6)).ToString("0", de) + " MB";
+    }
+
+    private sealed record LlmItem(Core.LocalLlm Llm, bool Recommended)
+    {
+        public override string ToString() => $"{Llm.DisplayName}{(Recommended ? " (empfohlen für diesen PC)" : "")} – {Llm.Description}";
+    }
+
+    /// <summary>One model: name, status line, Laden/Abbrechen button, progress bar, "Entfernen" link.</summary>
+    private sealed class ModelRow : TableLayoutPanel
+    {
+        private readonly Label _status;
+        public Button Action { get; }
+        public LinkLabel Remove { get; }
+        public ProgressBar Progress { get; }
+
+        public ModelRow(string title, string? subtitle)
+        {
+            ColumnCount = 2;
+            Dock = DockStyle.Top;
+            AutoSize = true;
+            Margin = new Padding(0, 4, 0, 0);
+            ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+
+            var text = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false, Margin = new Padding(0), Dock = DockStyle.Fill };
+            text.Controls.Add(new Label { Text = title, AutoSize = true, Font = new Font("Segoe UI Semibold", 9.75f), Margin = new Padding(0, 2, 0, 0) });
+            if (subtitle != null) text.Controls.Add(new Label { Text = subtitle, AutoSize = true, ForeColor = SystemColors.GrayText, Margin = new Padding(0) });
+            _status = new Label { AutoSize = true, Margin = new Padding(0, 2, 0, 0) };
+            text.Controls.Add(_status);
+
+            Action = new Button { Text = "Laden", AutoSize = true, MinimumSize = new Size(100, 30), Anchor = AnchorStyles.Right | AnchorStyles.Top, Margin = new Padding(12, 2, 0, 0) };
+            Remove = new LinkLabel { Text = "Entfernen", AutoSize = true, Anchor = AnchorStyles.Right | AnchorStyles.Top, Margin = new Padding(12, 6, 0, 0) };
+            var actions = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+            actions.Controls.Add(Action);
+            actions.Controls.Add(Remove);
+
+            Progress = new ProgressBar { Dock = DockStyle.Top, Height = 8, Margin = new Padding(0, 6, 0, 0), Visible = false };
+
+            Controls.Add(text, 0, 0);
+            Controls.Add(actions, 1, 0);
+            Controls.Add(Progress, 0, 1);
+            SetColumnSpan(Progress, 2);
+        }
+
+        public void SetStatus(string text, Color color)
+        {
+            _status.Text = text;
+            _status.ForeColor = color;
+        }
     }
 
     private void FitHints(int width)
@@ -183,6 +379,8 @@ internal sealed class SettingsForm : Form
             return;
         }
 
+        _settings.OfflineMode = _offlineMode.Checked;
+        _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _apiKey.Text.Trim();
         _settings.DictateHotkey = dictate.ToString();
         _settings.PromptHotkey = prompt.ToString();
@@ -198,7 +396,7 @@ internal sealed class SettingsForm : Form
             Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
             return;
         }
-        Core.Log.Info($"Settings saved (key set: {_settings.ApiKey.Length > 0}, glossary {_settings.Glossary.Count}, template {_settings.PromptSystemPrompt.Length} chars)");
+        Core.Log.Info($"Settings saved (offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, glossary {_settings.Glossary.Count}, template {_settings.PromptSystemPrompt.Length} chars)");
         DialogResult = DialogResult.OK;
         Close();
     }

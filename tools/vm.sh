@@ -14,6 +14,7 @@
 #   tools/vm.sh hold 600 ctrl shift p       same, but keep them held N ms (a human hand; catches held-modifier bugs)
 #   tools/vm.sh shot [file.png]            screenshot of the VM (default: /tmp/wsw-vm.png)
 #   tools/vm.sh run <cmd...>               run a command as the logged-in user
+#   tools/vm.sh uia list|select <name>|invoke <name> [i]   drive the settings window via UI Automation
 #   tools/vm.sh log                        tail the app log (~/Downloads/wsw-test/wsw.log, written by an app started with start)
 set -euo pipefail
 
@@ -67,7 +68,8 @@ case "$cmd" in
     echo "not running after 30 s" >&2; exit 1
     ;;
   stop) run "taskkill /im $EXE_NAME /f" || true ;;
-  notepad) nohup prlctl exec "$VM" --current-user notepad.exe >/dev/null 2>&1 & sleep 4; "$0" focus Notepad ;;
+  # Notepad restores the last session's tabs; a fresh tab keeps test pastes out of real files.
+  notepad) nohup prlctl exec "$VM" --current-user notepad.exe >/dev/null 2>&1 & sleep 4; "$0" focus Notepad; "$0" combo ctrl n ;;
   focus)
     # Windows blocks focus stealing for processes started from outside; AppActivate gets around it.
     # -EncodedCommand: prlctl mangles parentheses/quotes in plain arguments. First PowerShell
@@ -96,6 +98,11 @@ case "$cmd" in
     out="${1:-/tmp/wsw-vm.png}"; prlctl capture "$VM" --file "$out" >/dev/null; echo "$out"
     ;;
   run) run "$@" ;;
+  uia)
+    # UI Automation in the VM (tools/uia.ps1): select a radio, invoke a button, list the window's elements.
+    cp "$(dirname "$0")/uia.ps1" "$SHARE_DIR/uia.ps1"
+    prlctl exec "$VM" --current-user powershell -NoProfile -ExecutionPolicy Bypass -File 'Z:\Downloads\wsw-test\uia.ps1' "$@" 2>&1 | tr -d '\r'
+    ;;
   log) tail -40 "$SHARE_DIR/wsw.log" ;;  # app started by `start` logs into the share: no console flash in the VM
   *) sed -n 2,17p "$0"; exit 2 ;;
 esac

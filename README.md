@@ -1,6 +1,26 @@
 # WhisperShortcut für Windows (privat, MVP)
 
 Plan: `~/whisper-shortcut-private/windows/PLAN.md`. Hier liegt nur, was zum Bauen gebraucht wird.
+
+**Stand 2026-10-20: Offline-Modus eingebaut** (Einstellungen → Arbeitsweise → „Offline auf diesem
+PC“). Spracherkennung Parakeet TDT 0.6B v3 (sherpa-onnx, im Prozess), Sprachmodell Qwen3 4B
+oder 9B über `llama-server` (llama.cpp b11755, Kindprozess am Job-Objekt, stoppt nach 15 min
+Leerlauf). Modelle lädt die App selbst nach `%LOCALAPPDATA%\WhisperShortcut\Offline`
+(Fortsetzen, SHA-256-Prüfung).
+
+- In der VM geprüft (arm64): Download beider Zeilen über das Einstellungsfenster (UIA,
+  `vm.sh uia`), Offline-Diktat in Notepad (7 s Audio → 1,7 s, Text korrekt). Dictate Prompt
+  offline: llama-server startet, aber das **M1 im Mac kann den arm64-Build nicht ausführen**
+  (Illegal Instruction, braucht I8MM: Snapdragon X und Apple M2+ ja, M1/8cx nein). Die App sagt
+  das jetzt klar statt „hat nicht geantwortet“; Diktieren geht offline weiter.
+- x64-Paket (Vulkan-Build + VC-Laufzeit) in der VM unter Emulation gestartet: antwortet korrekt,
+  emuliert aber nur 0,4 Token/s. Echte Geschwindigkeit nur auf einem x64-PC messbar.
+- Gefunden und behoben: llama.cpp braucht `msvcp140.dll`/`vcruntime140.dll`, die ein frisches
+  Windows nicht hat (Exit 0xC0000135). Die DLLs aus Microsofts vc_redist liegen in
+  `third_party/vcruntime/<rid>/`, stecken in der exe und werden neben `llama-server.exe` gelegt.
+- Offen: Glossar offline (Parakeet kennt keins), Test auf echtem x64-PC (Ladezeit 4B/9B,
+  Antwortzeit), Test mit echter Stimme offline.
+
 Stand 2026-10-17, 19:10: **Diktieren und Dictate Prompt funktionieren in der VM mit echtem Mikro
 und echtem Gemini** (Magnus getestet). Tasten jetzt Ctrl+Shift+D/P (Alt öffnete App-Menüs).
 Ältere Notiz: **MVP gebaut, in der VM ohne Gemini getestet.** Schritte 1 und 2 fertig,

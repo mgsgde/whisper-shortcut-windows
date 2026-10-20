@@ -20,6 +20,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ClipboardPaster _paster;
     private readonly Core.Settings _settings;
     private readonly Core.GeminiClient _gemini;
+    private readonly OfflineEngine _offline;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _dictateInfo;
     private readonly ToolStripMenuItem _promptInfo;
@@ -46,6 +47,8 @@ internal sealed class TrayApp : ApplicationContext
             TrySave();
         }
         _gemini = new Core.GeminiClient(_settings);
+        _offline = new OfflineEngine(_settings);
+        _offline.Prewarm();
 
         _hotkeys = new HotkeyService();
         _paster = new ClipboardPaster(_hotkeys.Handle);
@@ -72,8 +75,10 @@ internal sealed class TrayApp : ApplicationContext
 
         RegisterHotkeys();
         SetState(State.Idle);
+        // A finished download changes the idle status ("Modelle noch nicht geladen" → "Bereit").
+        _offline.DownloadChanged += () => { if (_state == State.Idle) SetState(State.Idle); };
 
-        if (string.IsNullOrWhiteSpace(_settings.ApiKey) && !_fakeGemini)
+        if (MissingKey)
         {
             Notify("Willkommen bei WhisperShortcut",
                 "Bitte zuerst den API-Schlüssel eintragen: hier klicken oder auf das blaue Symbol unten rechts.",
@@ -123,9 +128,24 @@ internal sealed class TrayApp : ApplicationContext
 
     // ---------------- recording ----------------
 
+    /// <summary>Online mode without a Gemini key. The offline mode needs none.</summary>
+    private bool MissingKey => !_settings.OfflineMode && string.IsNullOrWhiteSpace(_settings.ApiKey) && !_fakeGemini;
+
     private void StartRecording(Mode mode)
     {
-        if (string.IsNullOrWhiteSpace(_settings.ApiKey) && !_fakeGemini)
+        if (_settings.OfflineMode && !OfflineModelsReady(mode))
+        {
+            Core.Log.Info($"Hotkey {mode} in offline mode, models missing");
+            Sounds.Error();
+            Notify("Offline-Modelle fehlen",
+                (mode == Mode.Dictate || !OfflineEngine.SpeechInstalled
+                    ? "Die Offline-Spracherkennung ist noch nicht geladen."
+                    : "Das Sprachmodell für „Text bearbeiten“ ist noch nicht geladen.")
+                + " Hier klicken und in den Einstellungen unter „Offline-Modelle“ laden.",
+                ToolTipIcon.Warning, ShowSettings);
+            return;
+        }
+        if (MissingKey)
         {
             Core.Log.Info("Hotkey pressed but no API key (Schlüssel fehlt)");
             Sounds.Error();
@@ -137,6 +157,8 @@ internal sealed class TrayApp : ApplicationContext
         _mode = mode;
         // Copy the selection right away, while the user's selection is still there. It runs while recording.
         _selection = mode == Mode.Prompt ? _paster.CopySelectionAsync() : null;
+        // Loading the language model takes seconds to half a minute; do it while the user speaks.
+        if (mode == Mode.Prompt && _settings.OfflineMode) _offline.PrewarmLlm();
 
         if (_testWav != null)
         {
@@ -229,6 +251,18 @@ internal sealed class TrayApp : ApplicationContext
             Core.Log.Info($"{_mode}: cancelled by user");
             Notify("Abgebrochen", "Die Verarbeitung wurde abgebrochen.", ToolTipIcon.None);
         }
+        catch (OfflineNotReadyException e)
+        {
+            Core.Log.Error($"{_mode}: offline model missing");
+            Sounds.Error();
+            Notify("Offline-Modelle fehlen", e.Message + " Hier klicken, um es in den Einstellungen zu laden.", ToolTipIcon.Warning, ShowSettings);
+        }
+        catch (Core.LocalLlmException e)
+        {
+            Core.Log.Error($"{_mode}: local LLM failed", e);
+            Sounds.Error();
+            Notify("Offline-Sprachmodell", e.Message, ToolTipIcon.Error);
+        }
         catch (Core.GeminiException e)
         {
             Core.Log.Error($"{_mode}: Gemini {e.Kind}");
@@ -261,7 +295,10 @@ internal sealed class TrayApp : ApplicationContext
     {
         string raw = _fakeGemini
             ? "das ist ein test diktat aus der virtuellen maschine"
-            : await _gemini.TranscribeAsync(wav, _settings.Glossary, ct);
+            : _settings.OfflineMode
+                // Parakeet writes a spoken "Doppelpunkt" / "neuer Absatz" out as words; Gemini does not.
+                ? Core.SpokenPunctuation.Apply(await _offline.TranscribeAsync(wav, ct))
+                : await _gemini.TranscribeAsync(wav, _settings.Glossary, ct);
         string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), seconds);
         Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup");
         if (text.Length == 0) Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
@@ -281,6 +318,7 @@ internal sealed class TrayApp : ApplicationContext
         }
 
         string systemPrompt = QuoteTemplate.BuildSystemPrompt(_settings.PromptSystemPrompt) ?? "";
+        if (_settings.OfflineMode) return await PromptOfflineAsync(wav, selection, systemPrompt, ct);
         var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct);
 
         if (selection == null)
@@ -305,6 +343,39 @@ internal sealed class TrayApp : ApplicationContext
         return text;
     }
 
+    /// <summary>
+    /// Offline Dictate Prompt, as on the Mac: a local text model cannot hear, so the instruction is
+    /// transcribed first and then sent as text with the selection.
+    /// </summary>
+    private async Task<string> PromptOfflineAsync(byte[] wav, string? selection, string systemPrompt, CancellationToken ct)
+    {
+        string instruction = Core.SpokenPunctuation.Apply(await _offline.TranscribeAsync(wav, ct)).Trim();
+        Core.Log.Info($"Prompt offline: instruction {instruction.Length} chars");
+        if (instruction.Length == 0)
+        {
+            Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
+            return "";
+        }
+        if (selection == null && Core.BareEditCommand.Matches(instruction))
+        {
+            Core.Log.Info("Prompt: bare edit command without selection, refused");
+            Sounds.Error();
+            Notify("Bitte erst Text markieren", "Zum Bearbeiten zuerst den Text markieren, dann das Kürzel drücken und die Anweisung sprechen.",
+                ToolTipIcon.Info);
+            return "";
+        }
+
+        if (!_offline.LlmReady) SetStatusText("Sprachmodell wird geladen …");
+        var sw = Stopwatch.StartNew();
+        string text = Core.TextCleanup.Normalize(await _offline.PromptAsync(selection, instruction, systemPrompt, ct));
+        Core.Log.Info($"Prompt offline: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
+        if (text.Length == 0) Notify("Nichts erkannt", "Das Sprachmodell hat keinen Text geliefert. Bitte die Anweisung noch einmal sprechen.", ToolTipIcon.Info);
+        return text;
+    }
+
+    private bool OfflineModelsReady(Mode mode) =>
+        OfflineEngine.SpeechInstalled && (mode == Mode.Dictate || OfflineEngine.LlmInstalled(_offline.SelectedLlm));
+
     // ---------------- UI ----------------
 
     private void SetState(State state)
@@ -315,10 +386,17 @@ internal sealed class TrayApp : ApplicationContext
         {
             State.Recording => ($"Aufnahme läuft – {key} beendet sie", TrayIcons.Recording),
             State.Processing => ("Wird verarbeitet …", TrayIcons.Processing),
-            _ when string.IsNullOrWhiteSpace(_settings.ApiKey) && !_fakeGemini => ("Kein API-Schlüssel eingetragen", TrayIcons.Ready),
+            _ when MissingKey => ("Kein API-Schlüssel eingetragen", TrayIcons.Ready),
+            _ when _settings.OfflineMode && !OfflineModelsReady(Mode.Dictate) => ("Offline – Modelle noch nicht geladen", TrayIcons.Ready),
+            _ when _settings.OfflineMode => ("Bereit (offline, nichts verlässt diesen PC)", TrayIcons.Ready),
             _ => ("Bereit", TrayIcons.Ready),
         };
         _icon.Icon = icon;
+        SetStatusText(status);
+    }
+
+    private void SetStatusText(string status)
+    {
         string tip = $"WhisperShortcut – {status}";
         _icon.Text = tip.Length <= 127 ? tip : tip[..127]; // NotifyIcon throws above 127 characters
         _statusItem.Text = status;
@@ -350,7 +428,7 @@ internal sealed class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        _settingsForm = new SettingsForm(_settings);
+        _settingsForm = new SettingsForm(_settings, _offline);
         _settingsForm.Activated += (_, _) => { if (_state == State.Idle) _hotkeys.UnregisterAll(); };
         _settingsForm.Deactivate += (_, _) => RegisterHotkeys(notify: false);
         _settingsForm.FormClosed += (_, _) =>
@@ -358,6 +436,7 @@ internal sealed class TrayApp : ApplicationContext
             _settingsForm = null;
             RegisterHotkeys();
             SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
+            _offline.Prewarm(); // offline mode may just have been switched on
         };
         _settingsForm.Show();
         _settingsForm.Activate();
@@ -382,6 +461,7 @@ internal sealed class TrayApp : ApplicationContext
         _icon.Visible = false;
         _icon.Dispose();
         _hotkeys.Dispose();
+        _offline.Dispose();
         ExitThread();
     }
 }

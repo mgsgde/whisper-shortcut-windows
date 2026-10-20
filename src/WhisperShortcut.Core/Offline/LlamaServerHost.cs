@@ -51,6 +51,23 @@ public sealed class LlamaServerHost : IDisposable
 
     private bool IsRunningLocked => _ready && _process is { HasExited: false };
 
+    /// <summary>STATUS_ILLEGAL_INSTRUCTION: the CPU lacks an instruction the llama.cpp build uses.</summary>
+    private const int IllegalInstruction = unchecked((int)0xC000001D);
+
+    /// <summary>User text for <see cref="CrashedOnUnsupportedCpu"/>.</summary>
+    public const string UnsupportedCpuMessage =
+        "Der Prozessor dieses PCs kann das Offline-Sprachmodell nicht ausführen. Diktieren geht offline weiter; " +
+        "für „Text bearbeiten“ bitte in den Einstellungen auf „Online mit Gemini“ wechseln.";
+
+    /// <summary>
+    /// True when the server died with an illegal instruction, typically on the first request. The ARM64
+    /// llama.cpp build needs ARMv8.6 (I8MM): Snapdragon X and Apple M2+ have it, Apple M1 and Snapdragon 8cx do not.
+    /// </summary>
+    public bool CrashedOnUnsupportedCpu
+    {
+        get { lock (_gate) return _process is { } p && Exited(p) && ExitCode(p) == IllegalInstruction; }
+    }
+
     /// <summary>Starts the server if needed and waits until it is healthy. Concurrent callers share one start.</summary>
     public Task EnsureStartedAsync(CancellationToken ct)
     {
@@ -155,7 +172,8 @@ public sealed class LlamaServerHost : IDisposable
         var sw = Stopwatch.StartNew();
         while (sw.Elapsed < StartTimeout)
         {
-            if (Exited(p)) Fail("llama-server exited");
+            // 0xC0000135 = a DLL is missing (e.g. the VC++ runtime): the loader fails before any output.
+            if (Exited(p)) Fail($"llama-server exited (code 0x{ExitCode(p):X8})", ExitCode(p) == IllegalInstruction);
             try
             {
                 using var resp = await _health.GetAsync(new Uri(_baseUrl!, "health")).ConfigureAwait(false);
@@ -182,13 +200,19 @@ public sealed class LlamaServerHost : IDisposable
         catch (InvalidOperationException) { return true; }
     }
 
-    private void Fail(string why)
+    private static int ExitCode(Process p)
+    {
+        try { return p.ExitCode; }
+        catch (InvalidOperationException) { return 0; }
+    }
+
+    private void Fail(string why, bool unsupportedCpu = false)
     {
         string[] lines;
         lock (_gate) lines = _ring.ToArray();
         Log.Error($"{why}; last output: {string.Join(" | ", lines)}");
         Stop();
-        throw new LocalLlmException("Das lokale Sprachmodell ließ sich nicht starten. Details im Protokoll.");
+        throw new LocalLlmException(unsupportedCpu ? UnsupportedCpuMessage : "Das lokale Sprachmodell ließ sich nicht starten. Details im Protokoll.");
     }
 
     private void Ring(string? line)

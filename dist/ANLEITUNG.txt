@@ -50,6 +50,22 @@ Die exe nicht „als Administrator ausführen“.
 7. Automatisch mit Windows starten (empfohlen): Win+R → shell:startup → Enter. Die exe mit der
    RECHTEN Maustaste in diesen Ordner ziehen → „Verknüpfungen hier erstellen“.
 
+Offline-Modus (nichts verlässt den PC)
+--------------------------------------
+Für Patientendaten und andere geschützte Inhalte: Einstellungen → Arbeitsweise →
+„Offline auf diesem PC“. Dann braucht es keinen API-Schlüssel und kein Internet.
+1. Unter „Offline-Modelle“ einmal die Spracherkennung laden (ca. 670 MB) und das Sprachmodell
+   für „Text bearbeiten“ (ca. 2,5 GB, mit 16 GB Arbeitsspeicher besser das größere, ca. 5,7 GB).
+   Das Laden läuft weiter, wenn das Fenster zu ist. Danach „Speichern“.
+2. Diktieren geht offline genauso schnell wie online. „Neuer Absatz“, „neue Zeile“ und
+   „Doppelpunkt“ werden als Zeichen gesetzt.
+3. „Text bearbeiten oder schreiben lassen“ dauert offline länger: beim ersten Mal 10–30 Sekunden,
+   bis das Sprachmodell geladen ist, danach je nach PC einige Sekunden bis eine Minute.
+   Nach 15 Minuten ohne Nutzung gibt die App den Speicher wieder frei.
+4. Das Glossar gilt offline noch nicht.
+Die Modelle liegen unter %LOCALAPPDATA%\WhisperShortcut\Offline (in den Einstellungen per
+„Entfernen“ löschbar).
+
 Einstellungen
 -------------
 - Glossar: Namen, Fachbegriffe, Firmennamen (eine Zeile pro Begriff), damit sie richtig
@@ -64,8 +80,8 @@ Einstellungen
 
 Gut zu wissen
 -------------
-- Sprache wird zur Erkennung an Google Gemini geschickt (bezahlte API, keine Nutzung zum
-  Training). Nicht für Patientendaten oder andere besonders geschützte Daten verwenden.
+- Online wird Sprache zur Erkennung an Google Gemini geschickt (bezahlte API, keine Nutzung zum
+  Training). Für Patientendaten oder andere besonders geschützte Daten den Offline-Modus nehmen.
 - Programme, die als Administrator laufen, nehmen keinen eingefügten Text an. Der Text liegt
   dann in der Zwischenablage: Strg+V.
 - Aufnahmen enden automatisch nach 5 Minuten.
