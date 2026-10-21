@@ -17,6 +17,7 @@ public class SettingsTests
         var s = Settings.Load(path, new Reverse());
         Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
         Assert.Equal("Ctrl+Shift+P", s.PromptHotkey);
+        Assert.Equal("Ctrl+Shift+G", s.GlossaryHotkey);
         Assert.Equal("gemini-3.1-flash-lite", s.TranscriptionModel);
         Assert.Equal("gemini-3.8-flash", s.PromptModel);
 
@@ -24,14 +25,18 @@ public class SettingsTests
         s.Glossary = new() { "Kubernetes", "Müller" };
         s.PromptSystemPrompt = "Mein Prompt";
         s.DictateHotkey = "Ctrl+Shift+X";
+        s.GlossaryHotkey = "Ctrl+Alt+G";
         s.Save();
 
         Assert.DoesNotContain("abc123SECRET", File.ReadAllText(path));
+        // '+' is written as \u002B, so the raw hotkey text is not in the file. The name is.
+        Assert.Contains("\"glossaryHotkey\":", File.ReadAllText(path));
         var t = Settings.Load(path, new Reverse());
         Assert.Equal("abc123SECRET", t.ApiKey);
         Assert.Equal(new[] { "Kubernetes", "Müller" }, t.Glossary);
         Assert.Equal("Mein Prompt", t.PromptSystemPrompt);
         Assert.Equal("Ctrl+Shift+X", t.DictateHotkey);
+        Assert.Equal("Ctrl+Alt+G", t.GlossaryHotkey);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
@@ -45,15 +50,18 @@ public class SettingsTests
         var old = Settings.Load(path, new PlainSecretProtector());
         Assert.False(old.OfflineMode);
         Assert.Equal("", old.OfflineLlmId);
+        Assert.Equal("Ctrl+Shift+G", old.GlossaryHotkey);
 
         old.OfflineMode = true;
         old.OfflineLlmId = "qwen3-4b-instruct-2507";
         old.Save();
         Assert.Contains("\"offlineMode\": true", File.ReadAllText(path));
         Assert.Contains("\"offlineLlmId\": \"qwen3-4b-instruct-2507\"", File.ReadAllText(path));
+        Assert.Contains("\"glossaryHotkey\":", File.ReadAllText(path));
         var t = Settings.Load(path, new PlainSecretProtector());
         Assert.True(t.OfflineMode);
         Assert.Equal("qwen3-4b-instruct-2507", t.OfflineLlmId);
+        Assert.Equal("Ctrl+Shift+G", t.GlossaryHotkey);
         Directory.Delete(dir, true);
     }
 

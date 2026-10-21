@@ -15,9 +15,13 @@ internal sealed class MicrophoneUnavailableException : Exception
 /// </summary>
 internal sealed class MicAudioSource : Core.IAudioSource
 {
-    public static readonly TimeSpan MaxDuration = TimeSpan.FromMinutes(5);
+    /// <summary>Dictation can run this long; the recording is split into chunks before it is sent.</summary>
+    public static readonly TimeSpan DictateLimit = TimeSpan.FromMinutes(30);
 
-    /// <summary>Raised (on a background thread) when the recording hits the 5-minute limit.</summary>
+    /// <summary>Dictate Prompt sends the audio inline in one request, so it stays at 5 minutes.</summary>
+    public static readonly TimeSpan PromptLimit = TimeSpan.FromMinutes(5);
+
+    /// <summary>Raised (on a background thread) when the recording hits <see cref="MaxDuration"/>.</summary>
     public event Action? MaxDurationReached;
 
     /// <summary>Raised (on a background thread) when the device vanishes mid-recording (e.g. USB headset unplugged).</summary>
@@ -29,13 +33,31 @@ internal sealed class MicAudioSource : Core.IAudioSource
     private WaveFileWriter? _writer;
     private TaskCompletionSource? _stopped;
     private int _peak;
+    private volatile float _level;
     private bool _limitHit;
+
+    /// <summary>Records until <paramref name="maxDuration"/>, then raises <see cref="MaxDurationReached"/>.</summary>
+    public MicAudioSource(TimeSpan maxDuration) => MaxDuration = maxDuration;
+
+    /// <summary>Stops the recording on its own once this time is reached.</summary>
+    public TimeSpan MaxDuration { get; }
+
+    /// <summary>
+    /// Peak of the most recent capture buffer, 0..1. The overlay timer reads it every 50 ms
+    /// from the UI thread while capture writes it, so the backing field is volatile.
+    /// </summary>
+    public float Level => _level;
+
+    /// <summary>Loudest sample since <see cref="Start"/>, as 0..1. The overlay uses it to notice a blocked microphone.</summary>
+    public float PeakSoFar => Volatile.Read(ref _peak) / 32768f;
 
     public void Start()
     {
         _buffer = new MemoryStream();
         _writer = new WaveFileWriter(new NAudio.Utils.IgnoreDisposeStream(_buffer), _format);
-        _peak = 0;
+        // Level is read from the UI thread; publish the reset so the meter does not show the previous take.
+        Volatile.Write(ref _peak, 0);
+        _level = 0;
         _limitHit = false;
         _stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         _waveIn = new WaveInEvent { DeviceNumber = -1, WaveFormat = _format, BufferMilliseconds = 50 };
@@ -66,11 +88,16 @@ internal sealed class MicAudioSource : Core.IAudioSource
         var writer = _writer;
         if (writer == null || _limitHit) return;
         writer.Write(e.Buffer, 0, e.BytesRecorded);
+        int bufferPeak = 0;
+        int peak = _peak;
         for (int i = 0; i + 1 < e.BytesRecorded; i += 2)
         {
             int sample = Math.Abs((int)BitConverter.ToInt16(e.Buffer, i));
-            if (sample > _peak) _peak = sample;
+            if (sample > bufferPeak) bufferPeak = sample;
+            if (sample > peak) peak = sample;
         }
+        if (peak != _peak) Volatile.Write(ref _peak, peak);
+        _level = bufferPeak / 32768f;
         if (writer.TotalTime >= MaxDuration)
         {
             _limitHit = true;
@@ -80,6 +107,7 @@ internal sealed class MicAudioSource : Core.IAudioSource
 
     public async Task<byte[]> StopAsync()
     {
+        _level = 0;
         if (_waveIn == null || _writer == null || _buffer == null) return Array.Empty<byte>();
         _waveIn.StopRecording();
         await Task.WhenAny(_stopped!.Task, Task.Delay(2000));
@@ -89,10 +117,12 @@ internal sealed class MicAudioSource : Core.IAudioSource
         _writer = null;
         var bytes = _buffer.ToArray();
         _buffer = null;
-        Core.Log.Info($"Mic: {bytes.Length} bytes, peak {_peak * 100 / 32768} %");
+        var peak = Volatile.Read(ref _peak);
+        Core.Log.Info($"Mic: {bytes.Length} bytes, peak {peak * 100 / 32768} %");
         // Peak below 1 %: not a quiet room, a blocked device.
         // Ultra-short recordings (< 0.5 s = 16000 bytes at 16 kHz mono 16-bit) are not judged.
-        if (_peak < 328 && bytes.Length > 44 + 16000) throw new Core.AudioSilentException();
+        if (peak < 328 && bytes.Length > 44 + 16000) throw new Core.AudioSilentException();
+        _level = 0;
         return bytes;
     }
 
@@ -104,5 +134,6 @@ internal sealed class MicAudioSource : Core.IAudioSource
         _writer?.Dispose();
         _writer = null;
         _buffer = null;
+        _level = 0;
     }
 }

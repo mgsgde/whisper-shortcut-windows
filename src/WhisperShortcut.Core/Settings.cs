@@ -69,6 +69,9 @@ public sealed class Settings
     /// <summary>Hotkey for Dictate Prompt.</summary>
     public string PromptHotkey { get; set; } = "Ctrl+Shift+P";
 
+    /// <summary>Hotkey that appends the selected text to the Glossary.</summary>
+    public string GlossaryHotkey { get; set; } = "Ctrl+Shift+G";
+
     /// <summary>Offline mode: dictation and Dictate Prompt run on this PC (Parakeet + local LLM).</summary>
     public bool OfflineMode { get; set; }
 
@@ -95,6 +98,7 @@ public sealed class Settings
             if (!string.IsNullOrWhiteSpace(dto.PromptModel)) s.PromptModel = dto.PromptModel;
             if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
             if (!string.IsNullOrWhiteSpace(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey;
+            if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
             s.OfflineMode = dto.OfflineMode ?? false;
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
         }
@@ -120,6 +124,7 @@ public sealed class Settings
             PromptModel = PromptModel,
             DictateHotkey = DictateHotkey,
             PromptHotkey = PromptHotkey,
+            GlossaryHotkey = GlossaryHotkey,
             OfflineMode = OfflineMode,
             OfflineLlmId = OfflineLlmId,
         };
@@ -137,6 +142,7 @@ public sealed class Settings
         [JsonPropertyName("promptModel")] public string? PromptModel { get; set; }
         [JsonPropertyName("dictateHotkey")] public string? DictateHotkey { get; set; }
         [JsonPropertyName("promptHotkey")] public string? PromptHotkey { get; set; }
+        [JsonPropertyName("glossaryHotkey")] public string? GlossaryHotkey { get; set; }
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
         [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
     }
