@@ -31,11 +31,16 @@ internal sealed class TrayApp : ApplicationContext
     // In memory only: in a practice a dictation must not stay behind in a file.
     private readonly Core.RecentTexts _recent = new();
     private static readonly Hotkey Escape = new(0, Keys.Escape);
+    // Ctrl+1–5 while a Dictate Prompt recording runs: apply a quick instruction (Settings.QuickActions).
+    private static readonly Hotkey[] QuickKeys =
+        Enumerable.Range(0, Core.QuickActionList.Max).Select(i => new Hotkey(NativeMethods.MOD_CONTROL, Keys.D1 + i)).ToArray();
 
     private State _state = State.Idle;
     private Mode _mode;
     private Core.IAudioSource? _audio;
     private Task<string?>? _selection;
+    private string? _quickAction;
+    private IReadOnlyList<string> _unsupported = Array.Empty<string>();
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
     private Action? _balloonClick;
@@ -99,6 +104,7 @@ internal sealed class TrayApp : ApplicationContext
         SetState(State.Idle);
         // A finished download changes the idle status ("Modelle noch nicht geladen" → "Bereit").
         _offline.DownloadChanged += () => { if (_state == State.Idle) SetState(State.Idle); };
+        _overlay.QuickActionClicked += OnQuickAction;
 
         if (MissingKey)
         {
@@ -125,7 +131,7 @@ internal sealed class TrayApp : ApplicationContext
             if (!Hotkey.TryParse(stored, out var key) || !_hotkeys.Register(key, action))
                 failed.Add(Hotkey.Display(stored));
         }
-        if (_state != State.Idle) _hotkeys.Register(Escape, OnEscape);
+        SyncSessionHotkeys();
         _dictateInfo.Text = $"Diktieren: {Hotkey.Display(_settings.DictateHotkey)}";
         _promptInfo.Text = $"Text bearbeiten oder schreiben lassen: {Hotkey.Display(_settings.PromptHotkey)}";
         _glossaryInfo.Text = $"Markierung ins Glossar: {Hotkey.Display(_settings.GlossaryHotkey)}";
@@ -178,6 +184,18 @@ internal sealed class TrayApp : ApplicationContext
         }
     }
 
+    /// <summary>
+    /// A quick instruction was picked while recording (Ctrl+N or a click on the card): stop and apply
+    /// it to the selection, or with nothing marked to what was just said.
+    /// </summary>
+    private void OnQuickAction(int index)
+    {
+        if (_state != State.Recording || _mode != Mode.Prompt || index >= _settings.QuickActions.Count) return;
+        Core.Log.Info($"Quick action {index + 1}");
+        _quickAction = _settings.QuickActions[index];
+        _ = StopAndProcessAsync();
+    }
+
     // ---------------- recording ----------------
 
     /// <summary>Online mode without a Gemini key. The offline mode needs none.</summary>
@@ -214,6 +232,7 @@ internal sealed class TrayApp : ApplicationContext
         }
 
         _mode = mode;
+        _quickAction = null;
         // Copy the selection right away, while the user's selection is still there. It runs while recording.
         _selection = mode == Mode.Prompt ? _paster.CopySelectionAsync() : null;
         // Loading the language model takes seconds to half a minute; do it while the user speaks.
@@ -258,7 +277,7 @@ internal sealed class TrayApp : ApplicationContext
         Sounds.Start();
         SetState(State.Recording);
         _overlay.ShowRecording(mode, Hotkey.Display(mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey),
-            limit, mic != null ? () => mic.Level : null, mic != null ? () => mic.PeakSoFar : null);
+            limit, mic != null ? () => mic.Level : null, mic != null ? () => mic.PeakSoFar : null, _settings.QuickActions);
         if (_selection != null)
         {
             var pending = _selection;
@@ -276,16 +295,27 @@ internal sealed class TrayApp : ApplicationContext
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         SetState(State.Processing);
-        _overlay.ShowProcessing();
+        _overlay.ShowProcessing(_quickAction != null ? $"{_quickAction} …" : "Wird verarbeitet …");
         Sounds.Stop();
+        _unsupported = Array.Empty<string>();
         bool done = false;
 
         try
         {
-            byte[] wav = await audio.StopAsync();
-            double seconds = Core.Wav.DurationSeconds(wav);
+            byte[] wav;
+            try
+            {
+                wav = await audio.StopAsync();
+            }
+            catch (Core.AudioSilentException) when (_quickAction != null)
+            {
+                // Text marked, Ctrl+1 pressed without a word: the instruction applies to the selection alone.
+                wav = Array.Empty<byte>();
+            }
+            double seconds = wav.Length == 0 ? 0 : Core.Wav.DurationSeconds(wav);
             Core.Log.Info($"{_mode}: recorded {seconds:0.0} s");
-            if (seconds < 0.5)
+            // A quick instruction needs no speech: mark text, press the hotkey and right away Ctrl+1.
+            if (seconds < 0.5 && _quickAction == null)
             {
                 // A double press, not a recording: say so instead of a misleading microphone error.
                 Notify("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", ToolTipIcon.Info);
@@ -294,7 +324,7 @@ internal sealed class TrayApp : ApplicationContext
 
             string text = _mode == Mode.Dictate
                 ? await DictateAsync(wav, seconds, ct)
-                : await PromptAsync(wav, ct);
+                : await PromptAsync(wav, seconds, ct);
             ct.ThrowIfCancellationRequested();
 
             if (text.Length == 0) return; // already reported
@@ -304,8 +334,17 @@ internal sealed class TrayApp : ApplicationContext
             Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars");
             switch (outcome)
             {
+                case PasteOutcome.Pasted when _unsupported.Count > 0:
+                    _overlay.ShowWarning(_unsupported, pasted: true);
+                    done = true;
+                    break;
                 case PasteOutcome.Pasted:
                     _overlay.ShowDone("Eingefügt");
+                    done = true;
+                    break;
+                case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld when _unsupported.Count > 0:
+                    // The balloon would bury the warning; the card says both.
+                    _overlay.ShowWarning(_unsupported, pasted: false);
                     done = true;
                     break;
                 case PasteOutcome.ClipboardOnlyElevatedTarget:
@@ -365,6 +404,7 @@ internal sealed class TrayApp : ApplicationContext
             _cts.Dispose();
             _cts = null;
             _selection = null;
+            _quickAction = null;
             if (!done) _overlay.HideOverlay();
             SetState(State.Idle);
         }
@@ -386,10 +426,13 @@ internal sealed class TrayApp : ApplicationContext
         return text;
     }
 
-    private async Task<string> PromptAsync(byte[] wav, CancellationToken ct)
+    private async Task<string> PromptAsync(byte[] wav, double seconds, CancellationToken ct)
     {
         string? selection = _selection != null ? await _selection : null;
         Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
+
+        string systemPrompt = QuoteTemplate.BuildSystemPrompt(_settings.PromptSystemPrompt) ?? "";
+        if (_quickAction != null) return await QuickActionAsync(_quickAction, wav, seconds, selection, systemPrompt, ct);
 
         if (_fakeGemini)
         {
@@ -398,15 +441,15 @@ internal sealed class TrayApp : ApplicationContext
                 : $"Bearbeitet (Testmodus ohne Gemini): {selection.Length} Zeichen markiert";
         }
 
-        string systemPrompt = QuoteTemplate.BuildSystemPrompt(_settings.PromptSystemPrompt) ?? "";
         if (_settings.OfflineMode) return await PromptOfflineAsync(wav, selection, systemPrompt, ct);
         var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct);
 
+        string? instruction = null;
         if (selection == null)
         {
             // Nothing selected and the instruction is only "korrigiere" / "mach das freundlicher":
             // there is nothing to edit, and the model would invent a text. Transcribe in parallel to check.
-            string instruction = await _gemini.TranscribeAsync(wav, _settings.Glossary, ct);
+            instruction = await _gemini.TranscribeAsync(wav, _settings.Glossary, ct);
             if (Core.BareEditCommand.Matches(instruction))
             {
                 Core.Log.Info("Prompt: bare edit command without selection, refused");
@@ -418,7 +461,8 @@ internal sealed class TrayApp : ApplicationContext
             }
         }
 
-        string text = Core.TextCleanup.Normalize(await answer);
+        // With a selection Gemini hears the instruction itself; there is no transcript to compare with.
+        string text = Reply(await answer, instruction == null ? null : new[] { instruction, systemPrompt });
         Core.Log.Info($"Prompt: answer {text.Length} chars");
         if (text.Length == 0) Notify("Nichts erkannt", "Gemini hat keinen Text geliefert. Bitte die Anweisung noch einmal sprechen.", ToolTipIcon.Info);
         return text;
@@ -452,9 +496,72 @@ internal sealed class TrayApp : ApplicationContext
             _overlay.ShowProcessing("Sprachmodell wird geladen …");
         }
         var sw = Stopwatch.StartNew();
-        string text = Core.TextCleanup.Normalize(await _offline.PromptAsync(selection, instruction, systemPrompt, ct));
+        string text = Reply(await _offline.PromptAsync(selection, instruction, systemPrompt, ct), new[] { instruction, selection, systemPrompt });
         Core.Log.Info($"Prompt offline: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
         if (text.Length == 0) Notify("Nichts erkannt", "Das Sprachmodell hat keinen Text geliefert. Bitte die Anweisung noch einmal sprechen.", ToolTipIcon.Info);
+        return text;
+    }
+
+    /// <summary>
+    /// A quick instruction (Ctrl+1–5 or a click while recording). Whatever was said is transcribed and
+    /// goes along as text, so this path always has a transcript to check the reply against.
+    /// </summary>
+    private async Task<string> QuickActionAsync(string quick, byte[] wav, double seconds, string? selection, string systemPrompt, CancellationToken ct)
+    {
+        // Under a second nothing was said yet; a recognizer would only guess at the silence.
+        string transcript = seconds < 1.0 ? ""
+            : _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen"
+            : _settings.OfflineMode ? await TranscribeOfflineAsync(wav, ct)
+            : await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav),
+                (chunk, c) => _gemini.TranscribeAsync(chunk, _settings.Glossary, c), maxParallel: 4, ct);
+        var request = Core.QuickActionRequest.Build(quick, selection, transcript);
+        Core.Log.Info($"Prompt quick action: transcript {transcript.Trim().Length} chars, selection {selection?.Length ?? 0} chars");
+        if (request == null)
+        {
+            Sounds.Error();
+            Notify("Nichts zum Anwenden", "Erst Text markieren oder etwas diktieren, dann Strg+1 bis Strg+5 drücken.", ToolTipIcon.Info);
+            return "";
+        }
+        var (target, instruction) = request.Value;
+
+        string raw;
+        var sw = Stopwatch.StartNew();
+        if (_fakeGemini)
+        {
+            // Test mode: Markdown and an invented drug, so the plain-text cleanup and the warning show.
+            raw = "## Anamnese\nKopfschmerzen seit drei Tagen\n\n**Therapie:**\n* Ibuprofen 400 mg";
+        }
+        else if (_settings.OfflineMode)
+        {
+            if (!_offline.LlmReady)
+            {
+                SetStatusText("Sprachmodell wird geladen …");
+                _overlay.ShowProcessing("Sprachmodell wird geladen …");
+            }
+            raw = await _offline.PromptAsync(target, instruction, systemPrompt, ct);
+        }
+        else
+        {
+            raw = await _gemini.PromptTextAsync(target, instruction, systemPrompt, ct);
+        }
+        string text = Reply(raw, new[] { transcript, selection, quick, systemPrompt });
+        Core.Log.Info($"Prompt quick action: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
+        if (text.Length == 0) Notify("Nichts erkannt", "Es kam kein Text zurück. Bitte noch einmal versuchen.", ToolTipIcon.Info);
+        return text;
+    }
+
+    /// <summary>
+    /// Cleans a language-model reply for a plain text field and, when there is a transcript to compare
+    /// with, collects the words nobody dictated (<see cref="_unsupported"/>, shown after the paste).
+    /// The template is a source too, so its own wording (greeting, company name) is not flagged.
+    /// </summary>
+    private string Reply(string raw, string?[]? sources)
+    {
+        string text = Core.TextCleanup.StripMarkdown(Core.TextCleanup.Normalize(raw));
+        if (sources == null || text.Length == 0) return text;
+        _unsupported = Core.DictationFidelityCheck.UnsupportedWords(text, sources);
+        // Count only: the words are patient data and stay out of the log.
+        if (_unsupported.Count > 0) Core.Log.Info($"Prompt: {_unsupported.Count} word(s) in the reply are not in the dictation, warning shown");
         return text;
     }
 
@@ -547,12 +654,31 @@ internal sealed class TrayApp : ApplicationContext
 
     // ---------------- UI ----------------
 
+    /// <summary>
+    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording or
+    /// processing, Ctrl+1–5 only while a Dictate Prompt recording runs.
+    /// </summary>
+    private void SyncSessionHotkeys()
+    {
+        if (_state == State.Idle) _hotkeys.Unregister(Escape);
+        else if (!_hotkeys.IsRegistered(Escape)) _hotkeys.Register(Escape, OnEscape);
+        bool quick = _state == State.Recording && _mode == Mode.Prompt;
+        for (int i = 0; i < QuickKeys.Length; i++)
+        {
+            if (!quick || i >= _settings.QuickActions.Count) _hotkeys.Unregister(QuickKeys[i]);
+            else if (!_hotkeys.IsRegistered(QuickKeys[i]))
+            {
+                int index = i;
+                // Taken by another program: the card still works with a click.
+                if (!_hotkeys.Register(QuickKeys[i], () => OnQuickAction(index))) Core.Log.Info($"Ctrl+{i + 1} is taken");
+            }
+        }
+    }
+
     private void SetState(State state)
     {
         _state = state;
-        // Esc belongs to the other programs except while we record or process.
-        if (state == State.Idle) _hotkeys.Unregister(Escape);
-        else if (!_hotkeys.IsRegistered(Escape)) _hotkeys.Register(Escape, OnEscape);
+        SyncSessionHotkeys();
         string key = Hotkey.Display(_mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey);
         (string status, Icon icon) = state switch
         {

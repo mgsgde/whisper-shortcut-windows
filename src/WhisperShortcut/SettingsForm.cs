@@ -24,6 +24,7 @@ internal sealed class SettingsForm : Form
     private readonly CheckBox _autoStart;
     private readonly TextBox _glossary;
     private readonly TextBox _template;
+    private readonly TextBox _quickActions;
     private readonly List<Label> _hints = new();
 
     public SettingsForm(Core.Settings settings, OfflineEngine offline)
@@ -151,13 +152,25 @@ internal sealed class SettingsForm : Form
         root.Controls.Add(Header("Glossar"));
         root.Controls.Add(Hint("Ein Begriff pro Zeile: Namen, Produkte und Fachwörter, die richtig geschrieben werden sollen. "
             + $"Schneller: das richtig geschriebene Wort irgendwo markieren und {Hotkey.Display(settings.GlossaryHotkey)} drücken. "
-            + "Gilt nur online; die Offline-Spracherkennung kennt noch kein Glossar."));
+            + "Gilt auch offline; dort braucht die Spracherkennung nach einer Änderung einige Sekunden."));
         _glossary = new TextBox
         {
             Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill,
             Height = 96, Text = string.Join("\r\n", settings.Glossary ?? new List<string>()),
         };
         root.Controls.Add(_glossary);
+
+        // --- quick instructions ---
+        root.Controls.Add(Header("Schnellanweisungen"));
+        root.Controls.Add(Hint($"Erscheinen beim Bearbeiten ({Hotkey.Display(settings.PromptHotkey)}) unter der Anzeige. "
+            + "Strg+1 bis Strg+5 oder ein Klick wendet sie sofort an: auf die Markierung oder, ohne Markierung, "
+            + "auf das gerade Diktierte. Eine pro Zeile, höchstens fünf."));
+        _quickActions = new TextBox
+        {
+            Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill,
+            Height = 100, Text = string.Join("\r\n", settings.QuickActions),
+        };
+        root.Controls.Add(_quickActions);
 
         // --- template ---
         var templateHeader = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0, 14, 0, 0) };
@@ -394,6 +407,18 @@ internal sealed class SettingsForm : Form
             return;
         }
 
+        var quickLines = _quickActions.Lines.Where(l => l.Trim().Length > 0).ToList();
+        if (quickLines.Any(l => l.Trim().Length > Core.QuickActionList.MaxLength))
+        {
+            Warn($"Eine Schnellanweisung ist länger als {Core.QuickActionList.MaxLength} Zeichen. Bitte kürzer fassen.");
+            return;
+        }
+        if (quickLines.Count > Core.QuickActionList.Max)
+        {
+            Warn($"Höchstens {Core.QuickActionList.Max} Schnellanweisungen (Strg+1 bis Strg+{Core.QuickActionList.Max}). Bitte eine Zeile entfernen.");
+            return;
+        }
+
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _apiKey.Text.Trim();
@@ -401,6 +426,7 @@ internal sealed class SettingsForm : Form
         _settings.PromptHotkey = prompt.ToString();
         _settings.GlossaryHotkey = glossary.ToString();
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
+        _settings.QuickActions = Core.QuickActionList.Clean(quickLines);
         _settings.PromptSystemPrompt = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
         try
         {
@@ -417,7 +443,7 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, glossary {_settings.Glossary.Count}, template {_settings.PromptSystemPrompt.Length} chars)");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars)");
         DialogResult = DialogResult.OK;
         Close();
     }

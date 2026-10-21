@@ -2,6 +2,29 @@
 
 Plan: `~/whisper-shortcut-private/windows/PLAN.md`. Hier liegt nur, was zum Bauen gebraucht wird.
 
+**Stand 2026-10-21, abends: Paket „Praxis-Doku“ eingebaut** (für den Praxisfall).
+
+- **Schnellanweisungen:** Während einer Dictate-Prompt-Aufnahme wird die Anzeige zur Karte mit fünf
+  Anweisungen (Einstellungen → „Schnellanweisungen“, vorbelegt: „Als Anamnese, Befund und Therapie
+  gliedern“, „In Stichpunkten zusammenfassen“, „Rechtschreibung und Grammatik korrigieren“, „Kürzer
+  fassen“, „Freundlicher formulieren“). Strg+1–5 (nur während dieser Aufnahme belegt) oder ein Klick
+  (die Karte nimmt dabei keinen Fokus) wendet sie an: auf die Markierung, Gesagtes geht als
+  „Zusätzlich gesagt“ mit; ohne Markierung auf das gerade Diktierte („Befund diktieren, Strg+1“).
+  Markieren und sofort Strg+1 geht ohne ein Wort.
+- **„Nicht in deinem Diktat“:** deterministischer Wortabgleich (Port von
+  `DictationFidelityCheck.swift` samt Tests) zwischen Antwort und Diktat/Markierung/Anweisung/Vorlage.
+  Gefundene Wörter (bis 8) stehen nach dem Einfügen 20 s in einer bernsteinfarbenen Karte, Klick
+  schließt. Läuft überall, wo es ein Transkript gibt: offline immer, online ohne Markierung und bei
+  jeder Schnellanweisung (online mit Markierung hört Gemini selbst, da gibt es keins). Im Log nur die
+  Anzahl. Schwäche: Weil die Vorlage als Quelle zählt, fallen Beispielwörter aus einer eigenen
+  Vorlage nicht auf.
+- **Reiner Text:** Antworten verlieren Markdown (`## Befund` → „Befund:“, `**x**` → x, `* ` → `- `,
+  Code-Zäune weg), weil Praxisprogramme und Word die Zeichen sonst roh zeigen.
+- In der VM geprüft (arm64, echtes Gemini, Test-WAV „Herr Goedde … Ramipril … Pantoprazol“): Karte
+  mit und ohne Markierung; Strg+1 ohne Markierung → Anamnese/Befund/Therapie als Klartext, Warnung
+  mit 2 Wörtern; Klick auf Zeile 2 mit Markierung → Stichpunkte ersetzen die Markierung, Fokus blieb
+  in Notepad, keine Warnung. Einstellungsfeld per UIA. Offline-Sprachmodell nicht (M1, siehe unten).
+
 **Stand 2026-10-21: Paket 1 „Alltagstauglich“ eingebaut.**
 
 - Aufnahme-Anzeige unten mittig (nimmt keinen Fokus): roter Punkt, Pegelbalken, Zeit, „Esc

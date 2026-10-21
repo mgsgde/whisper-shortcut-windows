@@ -13,6 +13,15 @@ Was es kann
      Heizkörper inklusive Montage, Termin nächste Woche Dienstag“, Strg+Umschalt+P.
      Ein fertiger Text nach der „Vorlage für neue Texte“ (Einstellungen) wird eingefügt.
    Ein Druck während der Verarbeitung bricht ab.
+   - Schnellanweisungen: Während dieser Aufnahme zeigt die Anzeige fünf fertige Anweisungen,
+     z. B. „Als Anamnese, Befund und Therapie gliedern“. Strg+1 bis Strg+5 oder ein Klick darauf
+     wendet sie sofort an: auf die Markierung, oder ohne Markierung auf das gerade Diktierte.
+     Beispiel: Strg+Umschalt+P, Befund diktieren, Strg+1 → gegliederter Befund.
+     Text markieren und gleich Strg+1 drücken geht auch, ganz ohne Sprechen.
+   - „Nicht in deinem Diktat“: Schreibt das Sprachmodell Wörter, die so nicht diktiert wurden
+     (z. B. ein Medikament), zeigt die Anzeige sie nach dem Einfügen 20 Sekunden lang an. Der Text
+     ist trotzdem eingefügt; diese Stellen vor dem Speichern prüfen. Ein Klick schließt den Hinweis.
+   Antworten kommen als reiner Text, ohne Sternchen oder Rauten.
 3. Wort ins Glossar: ein Wort markieren (z. B. einen Namen, der falsch erkannt wurde),
    Strg+Umschalt+G. Ab dann wird es so geschrieben, auch offline.
 4. Letzte Texte: Rechtsklick auf das Symbol → „Letzten Text kopieren“ oder „Letzte Texte“
@@ -80,6 +89,8 @@ Einstellungen
 -------------
 - Glossar: Namen, Fachbegriffe, Firmennamen (eine Zeile pro Begriff), damit sie richtig
   geschrieben werden. Strg+Umschalt+G fügt ein markiertes Wort direkt hinzu.
+- Schnellanweisungen: die fünf Anweisungen für Strg+1 bis Strg+5, eine pro Zeile, frei
+  änderbar (z. B. „Als Arztbrief formulieren“).
 - Vorlage für neue Texte: wie Angebote, Mails usw. aussehen sollen. Vorbefüllt mit einem
   Angebotsmuster. Am besten mit 1–2 echten Angeboten des Nutzers anpassen (Firmenname, Stundensatz,
   Zahlungsbedingungen).

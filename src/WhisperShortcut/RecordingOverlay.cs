@@ -7,12 +7,15 @@ namespace WhisperShortcut;
 /// The pill at the bottom of the screen, the Windows counterpart of the Mac's recording pill:
 /// shows that a recording runs, that the microphone hears something, how long it runs, how to stop
 /// or cancel it, and then "Wird verarbeitet …" and a short check mark when the text is in.
-/// It never takes focus and lets clicks through (WS_EX_NOACTIVATE | WS_EX_TRANSPARENT), otherwise
-/// Ctrl+V would land in the pill instead of the user's window.
+/// During Dictate Prompt it grows into a card with the quick instructions (Ctrl+1–5 or a click), and
+/// after a language-model reply it can show the "Nicht in deinem Diktat" warning.
+/// It never takes focus (WS_EX_NOACTIVATE, MA_NOACTIVATE), otherwise Ctrl+V would land in the pill
+/// instead of the user's window. Clicks pass through (WS_EX_TRANSPARENT) except while the card or the
+/// warning is up, which are meant to be clicked.
 /// </summary>
 internal sealed class RecordingOverlay : Form
 {
-    private enum Phase { Hidden, Recording, Processing, Done }
+    private enum Phase { Hidden, Recording, Processing, Done, Warning }
 
     private static readonly Color Back = Color.FromArgb(30, 30, 30);
     private static readonly Color Border = Color.FromArgb(62, 62, 62);
@@ -28,6 +31,9 @@ internal sealed class RecordingOverlay : Form
     private const float SilentPeak = 0.01f;
     private static readonly TimeSpan SilentAfter = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan LimitWarning = TimeSpan.FromSeconds(60);
+    // Long enough to read eight words and compare them with the note; a click closes it earlier.
+    private static readonly TimeSpan WarningShown = TimeSpan.FromSeconds(20);
+    private const int WarningMaxWords = 8;
 
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 50 };
     private readonly float[] _levels = new float[Bars];
@@ -48,6 +54,15 @@ internal sealed class RecordingOverlay : Form
     private int _levelHead;
     private float _smoothed;
     private int _tick;
+    private IReadOnlyList<string> _quick = Array.Empty<string>();
+    private string _quickLabel = "";
+    private readonly List<RectangleF> _rowRects = new();
+    private int _hover = -1;
+    private string _warningWords = "";
+    private DateTime _warningUntil;
+
+    /// <summary>A quick instruction row was clicked (index into the list given to ShowRecording).</summary>
+    public event Action<int>? QuickActionClicked;
 
     public RecordingOverlay()
     {
@@ -86,16 +101,33 @@ internal sealed class RecordingOverlay : Form
         DwmSetWindowAttribute(Handle, 34, ref border, sizeof(int));
     }
 
+    protected override void WndProc(ref Message m)
+    {
+        // A click on the card must not activate it: the user's window keeps focus for the paste.
+        const int WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
+        if (m.Msg == WM_MOUSEACTIVATE)
+        {
+            m.Result = MA_NOACTIVATE;
+            return;
+        }
+        base.WndProc(ref m);
+    }
+
     // ---------------- API for TrayApp ----------------
 
     /// <param name="level">Live level 0..1 (null for a test WAV: no bars, no silence warning).</param>
-    public void ShowRecording(Mode mode, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar)
+    /// <param name="quickActions">Dictate Prompt: the instructions offered as Ctrl+1–5 rows (empty: plain pill).</param>
+    public void ShowRecording(Mode mode, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar,
+        IReadOnlyList<string>? quickActions = null)
     {
         _phase = Phase.Recording;
         _title = mode == Mode.Dictate ? "Diktat läuft" : "Anweisung sprechen";
         _hint = $"{stopKey} beendet · Esc bricht ab";
-        // Dictate Prompt: what will be edited is known only after Ctrl+C (up to 0.5 s), see SetContext.
+        // Dictate Prompt: what will be edited is known only after Ctrl+C (up to 0.5 s), see SetSelection.
         _context = mode == Mode.Prompt ? "Markierung wird gelesen …" : null;
+        _quick = mode == Mode.Prompt ? quickActions ?? Array.Empty<string>() : Array.Empty<string>();
+        _quickLabel = "Oder direkt anwenden:";
+        _hover = -1;
         _contextWarn = false;
         _level = level;
         _peakSoFar = peakSoFar;
@@ -112,13 +144,17 @@ internal sealed class RecordingOverlay : Form
         if (_phase != Phase.Recording || _context == null) return;
         if (selection == null)
         {
+            // Nothing to edit: what the user says is the text (a finding, a letter) or a request for one.
+            _title = "Text oder Anweisung sprechen";
             _context = "Nichts markiert: schreibt neuen Text an die Cursorstelle";
             _contextWarn = true;
+            _quickLabel = "Oder auf das Gesprochene anwenden:";
         }
         else
         {
             _context = $"Bearbeitet die Markierung ({selection.Length:N0} Zeichen)";
             _contextWarn = false;
+            _quickLabel = "Oder direkt auf die Markierung anwenden:";
         }
         Present();
     }
@@ -147,6 +183,22 @@ internal sealed class RecordingOverlay : Form
         Present();
     }
 
+    /// <summary>
+    /// Words of a language-model reply that were not dictated (<see cref="Core.DictationFidelityCheck"/>).
+    /// Stays up for a while and closes on a click: the text is already in, this is a reminder to check it.
+    /// </summary>
+    public void ShowWarning(IReadOnlyList<string> words, bool pasted)
+    {
+        _phase = Phase.Warning;
+        _title = "Nicht in deinem Diktat";
+        _warningWords = string.Join(", ", words.Take(WarningMaxWords))
+            + (words.Count > WarningMaxWords ? $" und {words.Count - WarningMaxWords} weitere" : "");
+        _hint = (pasted ? "Eingefügt." : "In der Zwischenablage, mit Strg+V einfügen.") + " Vor dem Speichern prüfen.";
+        _context = null;
+        _warningUntil = DateTime.UtcNow + WarningShown;
+        Present();
+    }
+
     public void HideOverlay()
     {
         _phase = Phase.Hidden;
@@ -166,16 +218,39 @@ internal sealed class RecordingOverlay : Form
         return Math.Clamp(text + (int)((38 + 20) * S), (int)(150 * S), (int)(400 * S));
     }
 
+    private bool ShowsCard => _phase == Phase.Recording && _quick.Count > 0;
+
+    // Card: header (34), context (20), divider (10), label (20), rows (24 each), gap (6), hint (20), bottom (8).
+    private const float RowHeight = 24, CardTop = 84;
+
+    private Size Measure()
+    {
+        float s = S;
+        if (_phase == Phase.Done) return new Size(DoneWidth(), (int)(44 * s));
+        if (_phase == Phase.Warning) return new Size((int)(460 * s), (int)((34 + WarningWordLines() * 19 + 4 + 20 + 8) * s));
+        if (ShowsCard) return new Size((int)(440 * s), (int)((CardTop + _quick.Count * RowHeight + 6 + 20 + 8) * s));
+        int lines = _context != null ? 2 : 1;
+        return new Size((int)(400 * s), (int)((34 + 20 * lines + 8) * s));
+    }
+
+    private int WarningWordLines()
+    {
+        using var g = CreateGraphics();
+        int width = (int)(460 * S - (18 + 20 + 18) * S);
+        var size = TextRenderer.MeasureText(g, _warningWords, _textFont, new Size(width, int.MaxValue), TextFormatFlags.WordBreak | TextFormatFlags.NoPadding);
+        return size.Height > 22 * S ? 2 : 1;
+    }
+
     private void Present()
     {
-        int rows = _phase == Phase.Done ? 0 : _context != null ? 2 : 1;
-        var size = new Size(_phase == Phase.Done ? DoneWidth() : (int)(400 * S), (int)((rows switch { 0 => 44, 1 => 62, _ => 82 }) * S));
+        var size = Measure();
         // On the screen the user is working on, centered above the taskbar.
         var screen = Screen.FromHandle(NativeMethods.GetForegroundWindow());
         var area = screen.WorkingArea;
         var location = new Point(area.Left + (area.Width - size.Width) / 2, area.Bottom - size.Height - (int)(28 * S));
         if (Size != size || Location != location) SetBounds(location.X, location.Y, size.Width, size.Height);
         if (!Visible) Show();
+        SetClickThrough(!(ShowsCard || _phase == Phase.Warning));
         _timer.Start();
         Invalidate();
         Core.Log.Info($"Overlay: {_phase} at {Bounds}, visible {Visible}");
@@ -184,7 +259,7 @@ internal sealed class RecordingOverlay : Form
     private void OnTick()
     {
         _tick++;
-        if (_phase == Phase.Done && DateTime.UtcNow >= _doneUntil)
+        if ((_phase == Phase.Done && DateTime.UtcNow >= _doneUntil) || (_phase == Phase.Warning && DateTime.UtcNow >= _warningUntil))
         {
             HideOverlay();
             return;
@@ -233,10 +308,21 @@ internal sealed class RecordingOverlay : Form
 
         float y = row1 + 13 * s;
         int width = (int)(right - textX);
+        if (_phase == Phase.Warning)
+        {
+            int lines = WarningWordLines();
+            TextRenderer.DrawText(g, _warningWords, _textFont, new Rectangle((int)textX, (int)y, width, (int)(lines * 19 * s)), Primary,
+                TextFormatFlags.NoPadding | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
+            y += (lines * 19 + 4) * s;
+        }
         if (_context != null)
         {
             DrawLine(g, _context, _contextWarn ? Amber : Secondary, textX, y, width);
             y += 20 * s;
+        }
+        if (ShowsCard)
+        {
+            y = DrawQuickActions(g, y, s);
         }
 
         string hint = _hint;
@@ -249,10 +335,112 @@ internal sealed class RecordingOverlay : Form
         if (hint.Length > 0) DrawLine(g, hint, hintColor, textX, y, width);
     }
 
+    /// <summary>Divider, label and one row per quick instruction; returns the y below the last row.</summary>
+    private float DrawQuickActions(Graphics g, float y, float s)
+    {
+        float pad = 18 * s;
+        using (var line = new Pen(Border, 1f))
+            g.DrawLine(line, pad, y + 3 * s, Width - pad, y + 3 * s);
+        y += 10 * s;
+        // Same column as title and context; the indicator gutter stays empty.
+        float x = pad + 20 * s, right = Width - pad;
+        DrawLine(g, _quickLabel, Muted, x, y, (int)(right - x));
+        y += 20 * s;
+
+        _rowRects.Clear();
+        float keyWidth = TextRenderer.MeasureText(g, "Strg+5", _textFont, Size.Empty, TextFormatFlags.NoPadding).Width + 12 * s;
+        for (int i = 0; i < _quick.Count; i++)
+        {
+            var row = new RectangleF(x - 8 * s, y, right - x + 16 * s, RowHeight * s - 2 * s);
+            _rowRects.Add(row);
+            if (i == _hover)
+            {
+                using var fill = new SolidBrush(Color.FromArgb(52, 52, 52));
+                using var path = Rounded(row, 6 * s);
+                g.FillPath(fill, path);
+            }
+            float mid = row.Y + row.Height / 2;
+            string key = $"Strg+{i + 1}";
+            var keySize = TextRenderer.MeasureText(g, key, _textFont, Size.Empty, TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, key, _textFont, new Point((int)x, (int)(mid - keySize.Height / 2f)), Muted, TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, _quick[i], _textFont,
+                new Rectangle((int)(x + keyWidth), (int)(mid - keySize.Height / 2f), (int)(right - x - keyWidth), keySize.Height + 2),
+                i == _hover ? Primary : Secondary, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
+            y += RowHeight * s;
+        }
+        return y + 6 * s;
+    }
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        int hover = ShowsCard ? _rowRects.FindIndex(r => r.Contains(e.Location)) : -1;
+        Cursor = hover >= 0 || _phase == Phase.Warning ? Cursors.Hand : Cursors.Default;
+        if (hover == _hover) return;
+        _hover = hover;
+        Invalidate();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (_hover < 0) return;
+        _hover = -1;
+        Invalidate();
+    }
+
+    protected override void OnMouseClick(MouseEventArgs e)
+    {
+        base.OnMouseClick(e);
+        if (_phase == Phase.Warning)
+        {
+            HideOverlay();
+            return;
+        }
+        if (!ShowsCard) return;
+        int row = _rowRects.FindIndex(r => r.Contains(e.Location));
+        if (row >= 0) QuickActionClicked?.Invoke(row);
+    }
+
+    private void SetClickThrough(bool through)
+    {
+        const int GWL_EXSTYLE = -20, WS_EX_TRANSPARENT = 0x20;
+        int ex = GetWindowLong(Handle, GWL_EXSTYLE);
+        int want = through ? ex | WS_EX_TRANSPARENT : ex & ~WS_EX_TRANSPARENT;
+        if (want != ex) SetWindowLong(Handle, GWL_EXSTYLE, want);
+    }
+
+    private static GraphicsPath Rounded(RectangleF r, float radius)
+    {
+        var path = new GraphicsPath();
+        float d = radius * 2;
+        path.AddArc(r.X, r.Y, d, d, 180, 90);
+        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+        path.CloseFigure();
+        return path;
+    }
+
     private void DrawIndicator(Graphics g, PointF c, float s)
     {
         switch (_phase)
         {
+            case Phase.Warning:
+            {
+                // Amber triangle with an exclamation mark: look again, nothing failed.
+                float r = 8.5f * s;
+                using var tri = new GraphicsPath();
+                tri.AddPolygon(new[] { new PointF(c.X, c.Y - r), new PointF(c.X + r, c.Y + r * 0.8f), new PointF(c.X - r, c.Y + r * 0.8f) });
+                using var fill = new SolidBrush(Amber);
+                g.FillPath(fill, tri);
+                using var mark = new Pen(Back, 1.9f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                g.DrawLine(mark, c.X, c.Y - 3.2f * s, c.X, c.Y + 1.6f * s);
+                using var dot = new SolidBrush(Back);
+                float d = 1.15f * s;
+                g.FillEllipse(dot, c.X - d, c.Y + 4.4f * s - d, d * 2, d * 2);
+                break;
+            }
             case Phase.Recording:
             {
                 // Slow pulse: alive, but not nervous.
@@ -344,6 +532,12 @@ internal sealed class RecordingOverlay : Form
         }
         base.Dispose(disposing);
     }
+
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
+    private static extern int GetWindowLong(IntPtr hwnd, int index);
+
+    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
+    private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
