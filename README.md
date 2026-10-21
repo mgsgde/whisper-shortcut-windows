@@ -2,6 +2,24 @@
 
 Plan: `~/whisper-shortcut-private/windows/PLAN.md`. Hier liegt nur, was zum Bauen gebraucht wird.
 
+**Stand 2026-10-21: Paket 1 „Alltagstauglich“ eingebaut.**
+
+- Aufnahme-Anzeige unten mittig (nimmt keinen Fokus): roter Punkt, Pegelbalken, Zeit, „Esc
+  bricht ab“; bei Dictate Prompt, ob eine Markierung bearbeitet wird; Warnung nach 3 s ohne Ton;
+  danach Spinner und kurz „Eingefügt“. Esc ist nur während Aufnahme/Verarbeitung belegt.
+- Lange Diktate bis 30 min: Gemini in 2-min-Stücken (4 parallel), Parakeet offline in 30-s-Stücken
+  (auf dem M1 gemessen: 5,5 min Audio in 14,6 s statt 24 s mit 100-s-Stücken), Schnitt in der
+  leisesten Stelle. Dictate Prompt bleibt bei 5 min (eine Anfrage).
+- Tray: „Letzten Text kopieren“ und „Letzte Texte“ (5, nur im Arbeitsspeicher).
+- Ctrl+Shift+G: Markierung ins Glossar (Dubletten, Anführungszeichen, Satzzeichen abgefangen).
+- „Mit Windows starten“ (HKCU Run, beim ersten Start an; Pfad wird nachgezogen, wenn die exe
+  wandert).
+- In der VM geprüft (arm64): Anzeige für Diktat/Prompt mit und ohne Markierung, Esc, Glossar
+  (neu, Dublette, leer), Prompt mit `--fake-gemini`, Diktat online mit echtem Gemini.
+- Offen: langes Diktat in der VM (Mac war durch andere Builds ausgelastet), Tray-Untermenü und
+  Autostart-Haken von Hand, Pegel mit echtem Mikro, echter x64-PC. Offline nutzt Parakeet das
+  Glossar weiterhin nicht.
+
 **Stand 2026-10-20: Offline-Modus eingebaut** (Einstellungen → Arbeitsweise → „Offline auf diesem
 PC“). Spracherkennung Parakeet TDT 0.6B v3 (sherpa-onnx, im Prozess), Sprachmodell Qwen3 4B
 oder 9B über `llama-server` (llama.cpp b11755, Kindprozess am Job-Objekt, stoppt nach 15 min

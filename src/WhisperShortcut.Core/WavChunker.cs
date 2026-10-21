@@ -23,6 +23,14 @@ public static class WavChunker
         Split(wav, ChunkLength, SearchWindow, SplitAbove);
 
     /// <summary>
+    /// Shorter pieces for the on-device recognizer: Parakeet's cost grows faster than the length
+    /// (5.5 min on an M1: 24 s in 100 s pieces, 15 s in 30 s pieces), and in a slow VM a 100 s
+    /// piece ran for minutes.
+    /// </summary>
+    public static IReadOnlyList<byte[]> SplitForLocal(byte[] wav) =>
+        Split(wav, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(40));
+
+    /// <summary>
     /// Same split with explicit boundaries, so tests can use a short synthetic file.
     /// A recording no longer than <paramref name="splitAbove"/> is returned as the same array:
     /// copying it would only burn memory before a single request.

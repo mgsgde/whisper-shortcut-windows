@@ -24,6 +24,13 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _dictateInfo;
     private readonly ToolStripMenuItem _promptInfo;
+    private readonly ToolStripMenuItem _glossaryInfo;
+    private readonly ToolStripMenuItem _copyLast;
+    private readonly ToolStripMenuItem _recentMenu;
+    private readonly RecordingOverlay _overlay = new();
+    // In memory only: in a practice a dictation must not stay behind in a file.
+    private readonly Core.RecentTexts _recent = new();
+    private static readonly Hotkey Escape = new(0, Keys.Escape);
 
     private State _state = State.Idle;
     private Mode _mode;
@@ -32,6 +39,7 @@ internal sealed class TrayApp : ApplicationContext
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
     private Action? _balloonClick;
+    private bool _glossaryBusy;
     private readonly SynchronizationContext _ui;
 
     public TrayApp(string? testWav, bool fakeGemini)
@@ -41,10 +49,18 @@ internal sealed class TrayApp : ApplicationContext
 
         bool firstRun = !File.Exists(Core.Settings.DefaultPath);
         _settings = Core.Settings.Load(Core.Settings.DefaultPath, new DpapiProtector());
+        bool testRun = testWav != null || fakeGemini;
         if (firstRun)
         {
             _settings.PromptSystemPrompt = QuoteTemplate.Default;
             TrySave();
+            // On by default: otherwise the app is simply gone after the next restart and the user
+            // thinks it broke. Off in the settings. Not for test runs, which would autostart a test build.
+            if (!testRun) AutoStart.Enable();
+        }
+        else
+        {
+            AutoStart.RefreshPathIfEnabled(); // the .exe may have been moved out of Downloads
         }
         _gemini = new Core.GeminiClient(_settings);
         _offline = new OfflineEngine(_settings);
@@ -56,6 +72,9 @@ internal sealed class TrayApp : ApplicationContext
         _statusItem = new ToolStripMenuItem("Bereit") { Enabled = false };
         _dictateInfo = new ToolStripMenuItem { Enabled = false };
         _promptInfo = new ToolStripMenuItem { Enabled = false };
+        _glossaryInfo = new ToolStripMenuItem { Enabled = false };
+        _copyLast = new ToolStripMenuItem("Letzten Text kopieren", null, (_, _) => CopyRecent(_recent.Latest));
+        _recentMenu = new ToolStripMenuItem("Letzte Texte");
         var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings());
         var logItem = new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog());
@@ -63,9 +82,12 @@ internal sealed class TrayApp : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.AddRange(new ToolStripItem[]
         {
-            title, _statusItem, new ToolStripSeparator(), _dictateInfo, _promptInfo, new ToolStripSeparator(),
+            title, _statusItem, new ToolStripSeparator(), _dictateInfo, _promptInfo, _glossaryInfo, new ToolStripSeparator(),
+            _copyLast, _recentMenu, new ToolStripSeparator(),
             settingsItem, logItem, new ToolStripSeparator(), quitItem,
         });
+        menu.Opening += (_, _) => UpdateRecentMenu();
+        UpdateRecentMenu();
 
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         _icon = new NotifyIcon { Icon = TrayIcons.Ready, ContextMenuStrip = menu, Visible = true };
@@ -93,13 +115,20 @@ internal sealed class TrayApp : ApplicationContext
     {
         _hotkeys.UnregisterAll();
         var failed = new List<string>();
-        foreach (var (stored, mode) in new[] { (_settings.DictateHotkey, Mode.Dictate), (_settings.PromptHotkey, Mode.Prompt) })
+        foreach (var (stored, action) in new (string, Action)[]
         {
-            if (!Hotkey.TryParse(stored, out var key) || !_hotkeys.Register(key, () => OnHotkey(mode)))
+            (_settings.DictateHotkey, () => OnHotkey(Mode.Dictate)),
+            (_settings.PromptHotkey, () => OnHotkey(Mode.Prompt)),
+            (_settings.GlossaryHotkey, () => _ = AddSelectionToGlossaryAsync()),
+        })
+        {
+            if (!Hotkey.TryParse(stored, out var key) || !_hotkeys.Register(key, action))
                 failed.Add(Hotkey.Display(stored));
         }
+        if (_state != State.Idle) _hotkeys.Register(Escape, OnEscape);
         _dictateInfo.Text = $"Diktieren: {Hotkey.Display(_settings.DictateHotkey)}";
         _promptInfo.Text = $"Text bearbeiten oder schreiben lassen: {Hotkey.Display(_settings.PromptHotkey)}";
+        _glossaryInfo.Text = $"Markierung ins Glossar: {Hotkey.Display(_settings.GlossaryHotkey)}";
         if (failed.Count > 0 && notify)
         {
             Notify("Tastenkürzel belegt",
@@ -119,6 +148,29 @@ internal sealed class TrayApp : ApplicationContext
                 break;
             case State.Recording:
                 _ = StopAndProcessAsync();
+                break;
+            case State.Processing:
+                _cts?.Cancel();
+                break;
+        }
+    }
+
+    /// <summary>
+    /// Esc is a global hotkey only while a recording or its processing runs, so it never takes Esc
+    /// away from other programs otherwise. Recording: discard it. Processing: cancel.
+    /// </summary>
+    private void OnEscape()
+    {
+        Core.Log.Info($"Esc in state {_state}");
+        switch (_state)
+        {
+            case State.Recording:
+                (_audio as MicAudioSource)?.Cancel();
+                _audio = null;
+                _selection = null;
+                Sounds.Stop();
+                _overlay.HideOverlay();
+                SetState(State.Idle);
                 break;
             case State.Processing:
                 _cts?.Cancel();
@@ -167,17 +219,19 @@ internal sealed class TrayApp : ApplicationContext
         // Loading the language model takes seconds to half a minute; do it while the user speaks.
         if (mode == Mode.Prompt && _settings.OfflineMode) _offline.PrewarmLlm();
 
+        var limit = mode == Mode.Dictate ? MicAudioSource.DictateLimit : MicAudioSource.PromptLimit;
+        MicAudioSource? mic = null;
         if (_testWav != null)
         {
             _audio = new Core.FileAudioSource(_testWav);
         }
         else
         {
-            var mic = new MicAudioSource();
+            mic = new MicAudioSource(limit);
             mic.MaxDurationReached += () => _ui.Post(_ =>
             {
                 if (_state != State.Recording) return;
-                Notify("Aufnahme beendet", "Nach 5 Minuten endet die Aufnahme automatisch. Der Text wird jetzt verarbeitet.", ToolTipIcon.Info);
+                Notify("Aufnahme beendet", $"Nach {limit.TotalMinutes:0} Minuten endet die Aufnahme automatisch. Der Text wird jetzt verarbeitet.", ToolTipIcon.Info);
                 _ = StopAndProcessAsync();
             }, null);
             mic.DeviceLost += () => _ui.Post(_ =>
@@ -203,6 +257,16 @@ internal sealed class TrayApp : ApplicationContext
         }
         Sounds.Start();
         SetState(State.Recording);
+        _overlay.ShowRecording(mode, Hotkey.Display(mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey),
+            limit, mic != null ? () => mic.Level : null, mic != null ? () => mic.PeakSoFar : null);
+        if (_selection != null)
+        {
+            var pending = _selection;
+            _ = pending.ContinueWith(t =>
+            {
+                if (_selection == pending && t.IsCompletedSuccessfully) _overlay.SetSelection(t.Result);
+            }, TaskScheduler.FromCurrentSynchronizationContext());
+        }
     }
 
     private async Task StopAndProcessAsync()
@@ -212,7 +276,9 @@ internal sealed class TrayApp : ApplicationContext
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         SetState(State.Processing);
+        _overlay.ShowProcessing();
         Sounds.Stop();
+        bool done = false;
 
         try
         {
@@ -232,11 +298,16 @@ internal sealed class TrayApp : ApplicationContext
             ct.ThrowIfCancellationRequested();
 
             if (text.Length == 0) return; // already reported
+            _recent.Add(text);
 
             var outcome = await _paster.PasteAsync(text);
             Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars");
             switch (outcome)
             {
+                case PasteOutcome.Pasted:
+                    _overlay.ShowDone("Eingefügt");
+                    done = true;
+                    break;
                 case PasteOutcome.ClipboardOnlyElevatedTarget:
                     Notify("Bitte selbst einfügen",
                         "Das Zielprogramm läuft als Administrator, dorthin darf WhisperShortcut nicht tippen. Der Text liegt in der Zwischenablage: Strg+V drücken.",
@@ -255,8 +326,8 @@ internal sealed class TrayApp : ApplicationContext
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
+            // The pill disappearing is the feedback; a balloon on top of it would be noise.
             Core.Log.Info($"{_mode}: cancelled by user");
-            Notify("Abgebrochen", "Die Verarbeitung wurde abgebrochen.", ToolTipIcon.None);
         }
         catch (OfflineNotReadyException e)
         {
@@ -294,6 +365,7 @@ internal sealed class TrayApp : ApplicationContext
             _cts.Dispose();
             _cts = null;
             _selection = null;
+            if (!done) _overlay.HideOverlay();
             SetState(State.Idle);
         }
     }
@@ -303,9 +375,11 @@ internal sealed class TrayApp : ApplicationContext
         string raw = _fakeGemini
             ? "das ist ein test diktat aus der virtuellen maschine"
             : _settings.OfflineMode
-                // Parakeet writes a spoken "Doppelpunkt" / "neuer Absatz" out as words; Gemini does not.
-                ? Core.SpokenPunctuation.Apply(await _offline.TranscribeAsync(wav, ct))
-                : await _gemini.TranscribeAsync(wav, _settings.Glossary, ct);
+                ? await TranscribeOfflineAsync(wav, ct)
+                // Above 2.5 min the recording goes out in ~2-minute pieces, cut in pauses, four at a
+                // time: one request would hit Gemini's inline size limit and take as long as all of it.
+                : await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav),
+                    (chunk, c) => _gemini.TranscribeAsync(chunk, _settings.Glossary, c), maxParallel: 4, ct);
         string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), seconds);
         Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup");
         if (text.Length == 0) Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
@@ -356,7 +430,7 @@ internal sealed class TrayApp : ApplicationContext
     /// </summary>
     private async Task<string> PromptOfflineAsync(byte[] wav, string? selection, string systemPrompt, CancellationToken ct)
     {
-        string instruction = Core.SpokenPunctuation.Apply(await _offline.TranscribeAsync(wav, ct)).Trim();
+        string instruction = (await TranscribeOfflineAsync(wav, ct)).Trim();
         Core.Log.Info($"Prompt offline: instruction {instruction.Length} chars");
         if (instruction.Length == 0)
         {
@@ -372,12 +446,99 @@ internal sealed class TrayApp : ApplicationContext
             return "";
         }
 
-        if (!_offline.LlmReady) SetStatusText("Sprachmodell wird geladen …");
+        if (!_offline.LlmReady)
+        {
+            SetStatusText("Sprachmodell wird geladen …");
+            _overlay.ShowProcessing("Sprachmodell wird geladen …");
+        }
         var sw = Stopwatch.StartNew();
         string text = Core.TextCleanup.Normalize(await _offline.PromptAsync(selection, instruction, systemPrompt, ct));
         Core.Log.Info($"Prompt offline: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
         if (text.Length == 0) Notify("Nichts erkannt", "Das Sprachmodell hat keinen Text geliefert. Bitte die Anweisung noch einmal sprechen.", ToolTipIcon.Info);
         return text;
+    }
+
+    /// <summary>
+    /// Parakeet, in 30-second pieces above 40 s, one at a time (the recognizer is serialized anyway).
+    /// Spoken "Doppelpunkt" / "neuer Absatz" become punctuation; Gemini does that itself.
+    /// </summary>
+    private async Task<string> TranscribeOfflineAsync(byte[] wav, CancellationToken ct) =>
+        Core.SpokenPunctuation.Apply(await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
+            (chunk, c) => _offline.TranscribeAsync(chunk, c), maxParallel: 1, ct));
+
+    // ---------------- glossary ----------------
+
+    /// <summary>
+    /// Copies the selection and appends it to the Glossary as is: the way to teach the spelling of a
+    /// name from a document or the practice software, with no model in between (works offline too).
+    /// </summary>
+    private async Task AddSelectionToGlossaryAsync()
+    {
+        if (_state != State.Idle || _glossaryBusy)
+        {
+            Sounds.Error();
+            return;
+        }
+        _glossaryBusy = true;
+        try
+        {
+            string? selection = await _paster.CopySelectionAsync();
+            var result = Core.GlossaryEdit.TryAdd(_settings.Glossary, selection, out string term);
+            Core.Log.Info($"Glossary add: {result} ({term.Length} chars)");
+            switch (result)
+            {
+                case Core.GlossaryAddResult.Added:
+                    TrySave();
+                    _settingsForm?.AppendGlossaryTerm(term);
+                    _overlay.ShowDone($"„{term}“ steht jetzt im Glossar");
+                    break;
+                case Core.GlossaryAddResult.Duplicate:
+                    _overlay.ShowDone($"„{term}“ stand schon im Glossar", neutral: true);
+                    break;
+                case Core.GlossaryAddResult.Empty:
+                    Sounds.Error();
+                    Notify("Nichts markiert", $"Erst ein Wort oder einen Namen markieren, dann {Hotkey.Display(_settings.GlossaryHotkey)} drücken.", ToolTipIcon.Info);
+                    break;
+                default:
+                    Sounds.Error();
+                    Notify("Zu viel markiert", $"Bitte nur ein Wort oder einen Namen markieren (eine Zeile, höchstens {Core.GlossaryEdit.MaxTermLength} Zeichen).", ToolTipIcon.Info);
+                    break;
+            }
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error("Glossary add failed", e);
+            Sounds.Error();
+        }
+        finally
+        {
+            _glossaryBusy = false;
+        }
+    }
+
+    // ---------------- recent texts ----------------
+
+    private void UpdateRecentMenu()
+    {
+        _copyLast.Enabled = _recent.Latest != null;
+        _recentMenu.DropDownItems.Clear();
+        _recentMenu.Enabled = _recent.Items.Count > 0;
+        foreach (var text in _recent.Items)
+        {
+            var item = new ToolStripMenuItem(Core.RecentTexts.Preview(text).Replace("&", "&&"), null, (_, _) => CopyRecent(text));
+            _recentMenu.DropDownItems.Add(item);
+        }
+        if (_recent.Items.Count == 0) return;
+        _recentMenu.DropDownItems.Add(new ToolStripSeparator());
+        _recentMenu.DropDownItems.Add(new ToolStripMenuItem("Liste leeren", null, (_, _) => _recent.Clear()));
+        _recentMenu.DropDownItems.Add(new ToolStripMenuItem("Die Liste steht nur im Arbeitsspeicher und ist nach dem Beenden weg.") { Enabled = false });
+    }
+
+    private void CopyRecent(string? text)
+    {
+        if (text == null) return;
+        if (_paster.CopyToClipboard(text)) _overlay.ShowDone("In der Zwischenablage, mit Strg+V einfügen");
+        else Notify("Kopieren fehlgeschlagen", "Die Zwischenablage war blockiert. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
     }
 
     private bool OfflineModelsReady(Mode mode) =>
@@ -388,6 +549,9 @@ internal sealed class TrayApp : ApplicationContext
     private void SetState(State state)
     {
         _state = state;
+        // Esc belongs to the other programs except while we record or process.
+        if (state == State.Idle) _hotkeys.Unregister(Escape);
+        else if (!_hotkeys.IsRegistered(Escape)) _hotkeys.Register(Escape, OnEscape);
         string key = Hotkey.Display(_mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey);
         (string status, Icon icon) = state switch
         {
@@ -467,6 +631,7 @@ internal sealed class TrayApp : ApplicationContext
         (_audio as MicAudioSource)?.Cancel();
         _icon.Visible = false;
         _icon.Dispose();
+        _overlay.Dispose();
         _hotkeys.Dispose();
         _offline.Dispose();
         ExitThread();

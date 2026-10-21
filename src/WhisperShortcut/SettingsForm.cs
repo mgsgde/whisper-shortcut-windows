@@ -20,6 +20,8 @@ internal sealed class SettingsForm : Form
     private readonly TextBox _apiKey;
     private readonly HotkeyBox _dictateKey;
     private readonly HotkeyBox _promptKey;
+    private readonly HotkeyBox _glossaryKey;
+    private readonly CheckBox _autoStart;
     private readonly TextBox _glossary;
     private readonly TextBox _template;
     private readonly List<Label> _hints = new();
@@ -122,6 +124,7 @@ internal sealed class SettingsForm : Form
         root.Controls.Add(Header("Tastenkürzel"));
         _dictateKey = new HotkeyBox(settings.DictateHotkey);
         _promptKey = new HotkeyBox(settings.PromptHotkey);
+        _glossaryKey = new HotkeyBox(settings.GlossaryHotkey);
         var keys = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0) };
         keys.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         keys.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 200));
@@ -129,14 +132,25 @@ internal sealed class SettingsForm : Form
         keys.Controls.Add(_dictateKey, 1, 0);
         keys.Controls.Add(RowLabel("Text bearbeiten oder schreiben lassen"), 0, 1);
         keys.Controls.Add(_promptKey, 1, 1);
+        keys.Controls.Add(RowLabel("Markiertes Wort ins Glossar"), 0, 2);
+        keys.Controls.Add(_glossaryKey, 1, 2);
         root.Controls.Add(keys);
         root.Controls.Add(Hint("Ins Feld klicken und die neue Kombination drücken, z. B. Strg+Umschalt+D. "
             + "Kombinationen mit Alt besser meiden, sonst öffnen viele Programme ihr Menü. "
-            + "Solange dieses Fenster im Vordergrund ist, sind die Kürzel aus."));
+            + "Esc bricht eine laufende Aufnahme ab. Solange dieses Fenster im Vordergrund ist, sind die Kürzel aus."));
+
+        // --- start ---
+        root.Controls.Add(Header("Start"));
+        _autoStart = new CheckBox { Text = "Mit Windows starten", AutoSize = true, Checked = AutoStart.IsEnabled, Margin = new Padding(0, 2, 0, 0) };
+        root.Controls.Add(_autoStart);
+        var autoStartHint = Hint("Dann ist WhisperShortcut nach jedem Neustart gleich unten rechts im Infobereich da.");
+        autoStartHint.Margin = new Padding(18, 0, 0, 4);
+        root.Controls.Add(autoStartHint);
 
         // --- glossary ---
         root.Controls.Add(Header("Glossar"));
         root.Controls.Add(Hint("Ein Begriff pro Zeile: Namen, Produkte und Fachwörter, die richtig geschrieben werden sollen. "
+            + $"Schneller: das richtig geschriebene Wort irgendwo markieren und {Hotkey.Display(settings.GlossaryHotkey)} drücken. "
             + "Gilt nur online; die Offline-Spracherkennung kennt noch kein Glossar."));
         _glossary = new TextBox
         {
@@ -368,14 +382,15 @@ internal sealed class SettingsForm : Form
     private void Save()
     {
         if (!Hotkey.TryParse(_dictateKey.Value, out var dictate) || !Hotkey.TryParse(_promptKey.Value, out var prompt)
-            || !IsSafe(dictate) || !IsSafe(prompt))
+            || !Hotkey.TryParse(_glossaryKey.Value, out var glossary)
+            || !IsSafe(dictate) || !IsSafe(prompt) || !IsSafe(glossary))
         {
-            Warn("Bitte für beide Funktionen ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+D.");
+            Warn("Bitte für jede Funktion ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+D.");
             return;
         }
-        if (dictate == prompt)
+        if (dictate == prompt || dictate == glossary || prompt == glossary)
         {
-            Warn("Die beiden Tastenkürzel müssen verschieden sein.");
+            Warn("Die Tastenkürzel müssen verschieden sein.");
             return;
         }
 
@@ -384,6 +399,7 @@ internal sealed class SettingsForm : Form
         _settings.ApiKey = _apiKey.Text.Trim();
         _settings.DictateHotkey = dictate.ToString();
         _settings.PromptHotkey = prompt.ToString();
+        _settings.GlossaryHotkey = glossary.ToString();
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
         _settings.PromptSystemPrompt = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
         try
@@ -396,9 +412,24 @@ internal sealed class SettingsForm : Form
             Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
             return;
         }
-        Core.Log.Info($"Settings saved (offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, glossary {_settings.Glossary.Count}, template {_settings.PromptSystemPrompt.Length} chars)");
+        if (_autoStart.Checked != AutoStart.IsEnabled)
+        {
+            if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
+                Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
+        }
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, glossary {_settings.Glossary.Count}, template {_settings.PromptSystemPrompt.Length} chars)");
         DialogResult = DialogResult.OK;
         Close();
+    }
+
+    /// <summary>The glossary hotkey added a term while this window is open: show it, so Save keeps it.</summary>
+    public void AppendGlossaryTerm(string term)
+    {
+        var lines = _glossary.Lines.ToList();
+        if (lines.Any(l => string.Equals(l.Trim(), term, StringComparison.CurrentCultureIgnoreCase))) return;
+        while (lines.Count > 0 && lines[^1].Trim().Length == 0) lines.RemoveAt(lines.Count - 1);
+        lines.Add(term);
+        _glossary.Text = string.Join("\r\n", lines);
     }
 
     /// <summary>

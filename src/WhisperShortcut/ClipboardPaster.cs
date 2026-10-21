@@ -60,6 +60,9 @@ internal sealed class ClipboardPaster
         return PasteOutcome.Pasted;
     }
 
+    /// <summary>Puts text on the clipboard without pasting (tray menu: "Letzten Text kopieren").</summary>
+    public bool CopyToClipboard(string text) => WriteText(text);
+
     private async Task RestoreLaterAsync(string? previous, uint ourSequence)
     {
         await Task.Delay(RestoreDelay);

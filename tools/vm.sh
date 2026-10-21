@@ -29,7 +29,7 @@ run() { prlctl exec "$VM" --current-user cmd /c "$*"; }
 sc() {
   case "$1" in
     ctrl) echo 29 ;; alt) echo 56 ;; shift) echo 42 ;; win) echo 91 ;;
-    enter) echo 28 ;; esc) echo 1 ;; space) echo 57 ;; tab) echo 15 ;; backspace) echo 14 ;;
+    enter) echo 28 ;; esc) echo 1 ;; left) echo 75 ;; home) echo 71 ;; space) echo 57 ;; tab) echo 15 ;; backspace) echo 14 ;;
     a) echo 30 ;; b) echo 48 ;; c) echo 46 ;; d) echo 32 ;; e) echo 18 ;; f) echo 33 ;;
     g) echo 34 ;; h) echo 35 ;; i) echo 23 ;; j) echo 36 ;; k) echo 37 ;; l) echo 38 ;;
     m) echo 50 ;; n) echo 49 ;; o) echo 24 ;; p) echo 25 ;; q) echo 16 ;; r) echo 19 ;;

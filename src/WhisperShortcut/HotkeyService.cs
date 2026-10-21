@@ -63,6 +63,7 @@ internal readonly record struct Hotkey(uint Modifiers, Keys Key)
 internal sealed class HotkeyService : NativeWindow, IDisposable
 {
     private readonly Dictionary<int, Action> _handlers = new();
+    private readonly Dictionary<Hotkey, int> _ids = new();
     private int _nextId = 1;
 
     public HotkeyService()
@@ -81,14 +82,26 @@ internal sealed class HotkeyService : NativeWindow, IDisposable
             return false;
         }
         _handlers[id] = onPressed;
+        _ids[hotkey] = id;
         Core.Log.Info($"Hotkey registered: {hotkey}");
         return true;
     }
+
+    /// <summary>Removes one hotkey (Esc after a recording); no-op when it is not registered.</summary>
+    public void Unregister(Hotkey hotkey)
+    {
+        if (!_ids.Remove(hotkey, out int id)) return;
+        UnregisterHotKey(Handle, id);
+        _handlers.Remove(id);
+    }
+
+    public bool IsRegistered(Hotkey hotkey) => _ids.ContainsKey(hotkey);
 
     public void UnregisterAll()
     {
         foreach (var id in _handlers.Keys) UnregisterHotKey(Handle, id);
         _handlers.Clear();
+        _ids.Clear();
     }
 
     protected override void WndProc(ref Message m)
