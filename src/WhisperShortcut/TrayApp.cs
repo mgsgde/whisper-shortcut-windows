@@ -489,6 +489,7 @@ internal sealed class TrayApp : ApplicationContext
             {
                 case Core.GlossaryAddResult.Added:
                     TrySave();
+                    _offline.GlossaryChanged();
                     _settingsForm?.AppendGlossaryTerm(term);
                     _overlay.ShowDone($"„{term}“ steht jetzt im Glossar");
                     break;
@@ -608,6 +609,7 @@ internal sealed class TrayApp : ApplicationContext
             RegisterHotkeys();
             SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
             _offline.Prewarm(); // offline mode may just have been switched on
+            _offline.GlossaryChanged(); // the Glossary may have been edited
         };
         _settingsForm.Show();
         _settingsForm.Activate();

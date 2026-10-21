@@ -34,6 +34,67 @@ public class ParakeetTests
         Assert.Equal("", t.Transcribe(File.ReadAllBytes(Paths.TestAudio("stille.wav"))));
     }
 
+    [ParakeetFact]
+    public void Hotwords_FixGlossaryTerms_AndDisposeIsSafe()
+    {
+        var work = Path.Combine(Path.GetTempPath(), "wsw-hot-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var t = ParakeetTranscriber.Load(Environment.GetEnvironmentVariable("WSW_PARAKEET_DIR")!, 4,
+                new[] { "Goedde", "Ramipril" }, work);
+            Assert.Equal(new[] { "Goedde", "Ramipril" }, t.Hotwords);
+            var text = t.Transcribe(File.ReadAllBytes(Paths.TestAudio("glossar-goedde.wav")));
+            Assert.Contains("Goedde", text);
+            Assert.Contains("Ramipril", text);
+            t.Dispose();
+            t.Dispose();
+            Assert.Throws<ObjectDisposedException>(() => t.Transcribe(File.ReadAllBytes(Paths.TestAudio("diktat.wav"))));
+        }
+        finally { try { Directory.Delete(work, true); } catch { } }
+    }
+
+    [Fact]
+    public void Load_HotwordsWithoutWorkDir_Throws()
+    {
+        Assert.Throws<ArgumentException>(() => ParakeetTranscriber.Load("nowhere", 1, new[] { "x" }));
+    }
+
+    [Fact]
+    public void FromGlossary_CleansDedupesAndLimits()
+    {
+        var r = ParakeetHotwords.FromGlossary(new[]
+        {
+            "Bachata (not \"Batchata\")", "  ", "", "Re:Zero  Anime", "goedde", "Goedde", "GOEDDE",
+            new string('x', GlossaryEdit.MaxTermLength + 1), "Ramipril",
+        });
+        Assert.Equal(new[] { "Bachata", "Re Zero Anime", "goedde", "Ramipril" }, r);
+    }
+
+    [Fact]
+    public void FromGlossary_CapsAtMaxTerms()
+    {
+        var r = ParakeetHotwords.FromGlossary(Enumerable.Range(0, ParakeetHotwords.MaxTerms + 20).Select(i => "t" + i));
+        Assert.Equal(ParakeetHotwords.MaxTerms, r.Count);
+    }
+
+    [Fact]
+    public void WriteBpeVocab_NegatesIds()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "wsw-vocab-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var tokens = Path.Combine(dir, "tokens.txt");
+            File.WriteAllText(tokens, "<unk> 0\n\u2581o 299\n\u2581a b 7\n");
+            var vocab = Path.Combine(dir, "bpe.vocab");
+            ParakeetHotwords.WriteBpeVocab(tokens, vocab);
+            var bytes = File.ReadAllBytes(vocab);
+            Assert.NotEqual(0xEF, bytes[0]);
+            Assert.Equal("<unk>\t0\n\u2581o\t-299\n\u2581a b\t-7\n", Encoding.UTF8.GetString(bytes));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
     [Fact]
     public void ReadMonoFloat_MonoAndStereo()
     {

@@ -20,7 +20,10 @@ internal sealed class OfflineEngine : IDisposable
     private readonly System.Windows.Forms.Timer _idleTimer = new() { Interval = 60_000 };
     private readonly SemaphoreSlim _parakeetLock = new(1, 1);
 
-    private Core.ParakeetTranscriber? _parakeet;
+    private volatile Core.ParakeetTranscriber? _parakeet;
+    private int _hotwordsLoads;
+    private int _reloadRequested;
+    private int _reloadRunning;
     private Core.LlamaServerHost? _server;
     private string? _serverModelId;
     private Download? _download;
@@ -166,7 +169,16 @@ internal sealed class OfflineEngine : IDisposable
         if (!SpeechInstalled) throw new OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
         var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
         // Decoding cannot be interrupted; a cancel just drops the result (a minute of audio takes ~1 s).
-        var text = await Task.Run(() => parakeet.Transcribe(wav), CancellationToken.None).ConfigureAwait(false);
+        var text = await Task.Run(async () =>
+        {
+            try { return parakeet.Transcribe(wav); }
+            catch (ObjectDisposedException)
+            {
+                // A Glossary reload swapped the instance between fetching and calling: use the new one.
+                var current = await LoadParakeetAsync().ConfigureAwait(false);
+                return current.Transcribe(wav);
+            }
+        }, CancellationToken.None).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         return text;
     }
@@ -209,11 +221,81 @@ internal sealed class OfflineEngine : IDisposable
             var dir = Path.Combine(Core.OfflineCatalog.Root, Core.OfflineCatalog.Parakeet.Directory);
             // Half the cores: decoding stays fast and Word keeps responding while it runs.
             int threads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
-            _parakeet = await Task.Run(() => Core.ParakeetTranscriber.Load(dir, threads)).ConfigureAwait(false);
-            Core.Log.Info($"Parakeet loaded in {sw.ElapsedMilliseconds} ms ({threads} threads)");
-            return _parakeet;
+            var terms = Core.ParakeetHotwords.FromGlossary(_settings.Glossary);
+            var loaded = await Task.Run(() => LoadWithHotwords(dir, threads, terms)).ConfigureAwait(false);
+            _parakeet = loaded;
+            Core.Log.Info($"Parakeet loaded in {sw.ElapsedMilliseconds} ms ({threads} threads, {terms.Count} glossary terms)");
+            return loaded;
         }
         finally { _parakeetLock.Release(); }
+    }
+
+    private static string HotwordsDir => Path.Combine(Core.OfflineCatalog.Root, "parakeet-hotwords");
+
+    private Core.ParakeetTranscriber LoadWithHotwords(string dir, int threads, IReadOnlyList<string> terms)
+    {
+        if (terms.Count == 0) return Core.ParakeetTranscriber.Load(dir, threads);
+        // Own file per load: an older instance may still be reading its hotwords file.
+        var name = $"hotwords-{Interlocked.Increment(ref _hotwordsLoads)}.txt";
+        var loaded = Core.ParakeetTranscriber.Load(dir, threads, terms, HotwordsDir, name);
+        try
+        {
+            foreach (var old in Directory.EnumerateFiles(HotwordsDir, "hotwords-*.txt"))
+                if (!string.Equals(Path.GetFileName(old), name, StringComparison.Ordinal))
+                    try { File.Delete(old); } catch { /* still open or locked: next load cleans up */ }
+        }
+        catch { /* best effort */ }
+        return loaded;
+    }
+
+    /// <summary>
+    /// Call after the Glossary changed. Parakeet bakes the terms in at load time, so a changed list
+    /// loads a new instance in the background and swaps it in; dictation keeps using the old one meanwhile.
+    /// Does nothing while no instance is loaded (the next load reads the Glossary anyway).
+    /// </summary>
+    public void GlossaryChanged()
+    {
+        if (_parakeet == null) return;
+        Volatile.Write(ref _reloadRequested, 1);
+        if (Interlocked.CompareExchange(ref _reloadRunning, 1, 0) != 0) return; // the running loop re-checks
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                while (Interlocked.Exchange(ref _reloadRequested, 0) == 1)
+                    await ReloadParakeetForGlossaryAsync().ConfigureAwait(false);
+            }
+            finally
+            {
+                Volatile.Write(ref _reloadRunning, 0);
+                // A request that arrived after the last check must not be lost.
+                if (Volatile.Read(ref _reloadRequested) == 1) GlossaryChanged();
+            }
+        });
+    }
+
+    private async Task ReloadParakeetForGlossaryAsync()
+    {
+        try
+        {
+            await _parakeetLock.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                var old = _parakeet;
+                if (old == null) return;
+                var terms = Core.ParakeetHotwords.FromGlossary(_settings.Glossary);
+                if (old.Hotwords.SequenceEqual(terms, StringComparer.Ordinal)) return;
+                var sw = System.Diagnostics.Stopwatch.StartNew();
+                var dir = Path.Combine(Core.OfflineCatalog.Root, Core.OfflineCatalog.Parakeet.Directory);
+                int threads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
+                var fresh = await Task.Run(() => LoadWithHotwords(dir, threads, terms)).ConfigureAwait(false);
+                _parakeet = fresh;
+                old.Dispose(); // waits for a running Transcribe; later callers retry on the new instance
+                Core.Log.Info($"Parakeet reloaded for glossary ({terms.Count} terms) in {sw.ElapsedMilliseconds} ms");
+            }
+            finally { _parakeetLock.Release(); }
+        }
+        catch (Exception e) { Core.Log.Error("Parakeet reload for glossary failed; keeping the old instance", e); }
     }
 
     private async Task<Core.LlamaServerHost> EnsureServerAsync(CancellationToken ct)
