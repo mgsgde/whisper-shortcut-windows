@@ -84,6 +84,37 @@ public static class TextCleanup
         return text.Length > max ? "" : text;
     }
 
+    private static readonly Regex HeadingLine = new(@"^\s*#{1,6}\s+(.*?)\s*$", RegexOptions.Compiled);
+    private static readonly Regex Bold = new(@"\*\*(.+?)\*\*|__(.+?)__", RegexOptions.Compiled);
+    private static readonly Regex StarBullet = new(@"^(\s*)[*+] ", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Removes Markdown the model adds although the reply goes into a plain text field (lemniscus,
+    /// Word), where it would show as stray characters. Headings become "Text:", bold markers vanish,
+    /// "* " and "+ " bullets become "- ", code fences are dropped. "- " bullets, single asterisks
+    /// inside words, "2*3" and URLs stay as they are.
+    /// </summary>
+    public static string StripMarkdown(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return text ?? "";
+        var lines = new List<string>();
+        foreach (var raw in text.Split('\n'))
+        {
+            var line = raw;
+            if (line.TrimStart().StartsWith("```", StringComparison.Ordinal)) continue;
+            var heading = HeadingLine.Match(line);
+            if (heading.Success)
+            {
+                line = heading.Groups[1].Value;
+                if (line.Length > 0 && !line.EndsWith(':')) line += ":";
+            }
+            line = Bold.Replace(line, m => m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value);
+            line = StarBullet.Replace(line, "$1- ");
+            lines.Add(line);
+        }
+        return string.Join("\n", lines);
+    }
+
     private static string CleanRemnants(string text)
     {
         var cleaned = StripPreamble(text);

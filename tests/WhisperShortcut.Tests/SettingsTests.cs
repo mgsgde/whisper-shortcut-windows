@@ -110,3 +110,81 @@ public class LogAndAudioTests
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 }
+
+public class QuickActionTests
+{
+    private static string TempFile(string? json)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        if (json != null) File.WriteAllText(path, json);
+        return path;
+    }
+
+    [Fact]
+    public void OldFile_GetsDefaults()
+    {
+        var path = TempFile("{\"dictateHotkey\":\"Ctrl+Shift+X\"}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(QuickActionList.Defaults, s.QuickActions);
+        Assert.Equal(5, s.QuickActions.Count);
+    }
+
+    [Fact]
+    public void RoundTrip_KeepsCustomList()
+    {
+        var path = TempFile(null);
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(QuickActionList.Defaults, s.QuickActions);
+        s.QuickActions = new() { "Eins", "Zwei" };
+        s.Save();
+        Assert.Contains("\"quickActions\":", File.ReadAllText(path));
+        Assert.Equal(new[] { "Eins", "Zwei" }, Settings.Load(path, new PlainSecretProtector()).QuickActions);
+    }
+
+    [Fact]
+    public void ExplicitEmptyList_StaysEmpty()
+    {
+        var path = TempFile(null);
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.QuickActions = new();
+        s.Save();
+        Assert.Empty(Settings.Load(path, new PlainSecretProtector()).QuickActions);
+    }
+
+    [Fact]
+    public void Clean_TrimsCollapsesSkipsDedupesAndCaps()
+    {
+        var cleaned = QuickActionList.Clean(new string?[]
+        {
+            "  Kürzer   fassen ", "", "   ", null, "kürzer fassen", new string('x', 81), new string('y', 80),
+            "A", "B", "C", "D",
+        });
+        Assert.Equal(new[] { "Kürzer fassen", new string('y', 80), "A", "B", "C" }, cleaned);
+    }
+}
+
+public class QuickActionRequestTests
+{
+    [Fact]
+    public void SelectionAndBlankTranscript_UsesActionAlone() =>
+        Assert.Equal(("Text", "Kürzer fassen"), QuickActionRequest.Build("Kürzer fassen", "Text", "  ")!.Value);
+
+    [Fact]
+    public void SelectionAndTranscript_AppendsWhatWasSaid() =>
+        Assert.Equal(("Text", "Kürzer fassen\n\nZusätzlich gesagt: bitte knapp"),
+            QuickActionRequest.Build("Kürzer fassen", "Text", " bitte knapp ")!.Value);
+
+    [Fact]
+    public void NoSelection_DictationBecomesTheText() =>
+        Assert.Equal(("Patient klagt", "Kürzer fassen"),
+            QuickActionRequest.Build("Kürzer fassen", null, " Patient klagt ")!.Value);
+
+    [Fact]
+    public void NothingToApplyTo_IsNull()
+    {
+        Assert.Null(QuickActionRequest.Build("Kürzer fassen", "", " "));
+        Assert.Null(QuickActionRequest.Build("Kürzer fassen", null, ""));
+    }
+}

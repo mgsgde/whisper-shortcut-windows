@@ -93,6 +93,22 @@ public sealed class GeminiClient
         return await SendAsync(model, body, ct).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Dictate Prompt without audio: applies the typed <paramref name="instruction"/> to
+    /// <paramref name="selection"/> (or composes new text when null/empty). Same model, thinking level
+    /// and system prompt as <see cref="PromptAsync"/>. Returns the raw model text.
+    /// </summary>
+    /// <param name="selection">Text to edit, or null/empty for a compose turn.</param>
+    /// <param name="instruction">The instruction as text (a quick action, optionally with spoken additions).</param>
+    /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default)
+    {
+        var model = _promptModel();
+        var body = BuildPromptTextBody(selection, instruction, customSystemPrompt);
+        return await SendAsync(model, body, ct).ConfigureAwait(false);
+    }
+
     internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary)
     {
         var terms = glossary.Select(t => t.Trim()).Where(t => t.Length > 0).ToList();
@@ -117,10 +133,18 @@ public sealed class GeminiClient
         return root.ToJsonString();
     }
 
-    internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt)
+    internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt) =>
+        BuildPromptRequest(customSystemPrompt,
+            new JsonObject { ["text"] = DictatePromptText.SelectionBlock(selection) }, AudioPart(wav));
+
+    internal static string BuildPromptTextBody(string? selection, string instruction, string? customSystemPrompt) =>
+        BuildPromptRequest(customSystemPrompt,
+            new JsonObject { ["text"] = DictatePromptText.LocalUserTurn(selection, instruction) });
+
+    // Shared by the audio and the text-only prompt call so both keep the same system prompt and thinking level.
+    private static string BuildPromptRequest(string? customSystemPrompt, params JsonObject[] userParts)
     {
         var system = DictatePromptText.SystemPrompt(customSystemPrompt);
-        var first = DictatePromptText.SelectionBlock(selection);
         var root = new JsonObject
         {
             ["systemInstruction"] = new JsonObject
@@ -130,7 +154,7 @@ public sealed class GeminiClient
             ["contents"] = new JsonArray(new JsonObject
             {
                 ["role"] = "user",
-                ["parts"] = new JsonArray(new JsonObject { ["text"] = first }, AudioPart(wav)),
+                ["parts"] = new JsonArray(userParts.Select(p => (JsonNode)p).ToArray()),
             }),
             // Deliberate Windows choice: the Mac sends no generationConfig here, but 3.7/3.8 reject "minimal".
             ["generationConfig"] = new JsonObject

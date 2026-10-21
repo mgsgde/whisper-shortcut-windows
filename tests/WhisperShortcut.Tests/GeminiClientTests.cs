@@ -71,6 +71,25 @@ public class GeminiClientTests
     }
 
     [Fact]
+    public async Task PromptText_Shape_NoAudio_SameSystemPromptAndThinking()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        var text = await c.PromptTextAsync("Hallo Welt", "Kürzer fassen", null);
+        Assert.Equal("Hallo Welt", text);
+
+        Assert.Contains("gemini-3.8-flash", h.Calls[0].Request.RequestUri!.AbsolutePath);
+        var j = h.Json(0);
+        Assert.Equal(Prompts.DefaultPromptModeSystemPrompt + Prompts.PromptModeOutputRule,
+            (string)j["systemInstruction"]!["parts"]![0]!["text"]!);
+        Assert.Equal("user", (string)j["contents"]![0]!["role"]!);
+        var parts = j["contents"]![0]!["parts"]!.AsArray();
+        Assert.Single(parts);
+        Assert.Equal(DictatePromptText.LocalUserTurn("Hallo Welt", "Kürzer fassen"), (string)parts[0]!["text"]!);
+        Assert.Equal("low", (string)j["generationConfig"]!["thinkingConfig"]!["thinkingLevel"]!);
+    }
+
+    [Fact]
     public async Task PromptWithoutSelection_UsesComposeMarker_AndCustomPrompt()
     {
         var (c, h) = Make();

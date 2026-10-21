@@ -78,6 +78,9 @@ public sealed class Settings
     /// <summary>Id of the chosen local LLM (see <see cref="OfflineCatalog"/>); empty = recommended for this PC.</summary>
     public string OfflineLlmId { get; set; } = "";
 
+    /// <summary>Quick instructions offered while recording (see <see cref="QuickActionList"/>).</summary>
+    public List<string> QuickActions { get; set; } = new(QuickActionList.Defaults);
+
     /// <summary>Loads the settings; a missing or corrupt file yields defaults (a corrupt file is kept as .bak).</summary>
     public static Settings Load(string path, ISecretProtector protector)
     {
@@ -101,6 +104,10 @@ public sealed class Settings
             if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
             s.OfflineMode = dto.OfflineMode ?? false;
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
+            // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
+            s.QuickActions = dto.QuickActions == null
+                ? new(QuickActionList.Defaults)
+                : QuickActionList.Clean(dto.QuickActions);
         }
         catch (Exception ex)
         {
@@ -127,6 +134,7 @@ public sealed class Settings
             GlossaryHotkey = GlossaryHotkey,
             OfflineMode = OfflineMode,
             OfflineLlmId = OfflineLlmId,
+            QuickActions = QuickActions,
         };
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
@@ -145,5 +153,6 @@ public sealed class Settings
         [JsonPropertyName("glossaryHotkey")] public string? GlossaryHotkey { get; set; }
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
         [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
+        [JsonPropertyName("quickActions")] public List<string>? QuickActions { get; set; }
     }
 }
