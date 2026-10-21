@@ -19,12 +19,13 @@ public static class ParakeetHotwords
 
     /// <summary>
     /// One hotword per Glossary line: the name before a note like <c>Bachata (not "Batchata")</c>,
-    /// whitespace collapsed, duplicates (case-insensitive) dropped, order kept.
+    /// whitespace collapsed, exact duplicates dropped, order kept. A term starting lowercase also gets a
+    /// capitalised variant right after it, because hotwords match cased tokens and Parakeet writes names capitalised.
     /// </summary>
     public static IReadOnlyList<string> FromGlossary(IEnumerable<string> glossary)
     {
         var result = new List<string>();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var line in glossary)
         {
             if (result.Count >= MaxTerms) break;
@@ -36,6 +37,12 @@ public static class ParakeetHotwords
             term = string.Join(' ', term.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
             if (term.Length == 0 || term.Length > GlossaryEdit.MaxTermLength) continue;
             if (seen.Add(term)) result.Add(term);
+            if (char.IsLower(term[0]))
+            {
+                if (result.Count >= MaxTerms) break;
+                var cap = char.ToUpperInvariant(term[0]) + term[1..];
+                if (seen.Add(cap)) result.Add(cap);
+            }
         }
         return result;
     }

@@ -67,7 +67,14 @@ public class ParakeetTests
             "Bachata (not \"Batchata\")", "  ", "", "Re:Zero  Anime", "goedde", "Goedde", "GOEDDE",
             new string('x', GlossaryEdit.MaxTermLength + 1), "Ramipril",
         });
-        Assert.Equal(new[] { "Bachata", "Re Zero Anime", "goedde", "Ramipril" }, r);
+        Assert.Equal(new[] { "Bachata", "Re Zero Anime", "goedde", "Goedde", "GOEDDE", "Ramipril" }, r);
+    }
+
+    [Fact]
+    public void FromGlossary_AddsCapitalisedVariantForLowercaseTerms()
+    {
+        var r = ParakeetHotwords.FromGlossary(new[] { "goedde", "Ramipril", "iPhone" });
+        Assert.Equal(new[] { "goedde", "Goedde", "Ramipril", "iPhone", "IPhone" }, r);
     }
 
     [Fact]
