@@ -116,10 +116,15 @@ public class ChunkedTranscriptionTests
         async Task<string> Transcribe(byte[] chunk, CancellationToken ct)
         {
             if (Interlocked.Increment(ref entered) == chunks.Length) allIn.TrySetResult();
-            await allIn.Task.WaitAsync(ct);
-            if (chunk[0] == 0) throw new InvalidOperationException("boom");
+            if (chunk[0] == 0)
+            {
+                await allIn.Task;
+                throw new InvalidOperationException("boom");
+            }
             try
             {
+                // The cancel may already hit while waiting for the others, so count it there too.
+                await allIn.Task.WaitAsync(ct);
                 // Finite so a missed cancel cannot pin the test host. Long enough that a correct cancel wins.
                 await Task.Delay(TimeSpan.FromSeconds(5), ct);
             }

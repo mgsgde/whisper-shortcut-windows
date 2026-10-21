@@ -17,8 +17,16 @@ Plan: `~/whisper-shortcut-private/windows/PLAN.md`. Hier liegt nur, was zum Baue
 - In der VM geprüft (arm64): Anzeige für Diktat/Prompt mit und ohne Markierung, Esc, Glossar
   (neu, Dublette, leer), Prompt mit `--fake-gemini`, Diktat online mit echtem Gemini.
 - Offen: langes Diktat in der VM (Mac war durch andere Builds ausgelastet), Tray-Untermenü und
-  Autostart-Haken von Hand, Pegel mit echtem Mikro, echter x64-PC. Offline nutzt Parakeet das
-  Glossar weiterhin nicht.
+  Autostart-Haken von Hand, Pegel mit echtem Mikro, echter x64-PC.
+- **Glossar offline** (gleicher Tag): die Glossar-Wörter gehen als „Hotwords“ an Parakeet
+  (sherpa-onnx, `modified_beam_search`, Stärke 2,5; 3,0 verbog schon normale Wörter). Gemessen:
+  „Herrgöde/Ramepril/Vetilego/Chirschwitz“ → „Goedde/Ramipril/Vitiligo/Tschirschwitz“, keine
+  Fehltreffer in normalen Sätzen, 5,5 min Audio gleich schnell (13,8 s statt 15,4 s). Die
+  `bpe.vocab`, die sherpa dafür braucht, wird aus `tokens.txt` abgeleitet. Kleingeschriebene
+  Einträge bekommen eine großgeschriebene Variante dazu (Parakeet schreibt Namen groß). Ändert
+  sich das Glossar, lädt Parakeet im Hintergrund neu (VM: 16 s), bis dahin gilt das alte. In der
+  VM geprüft: Ctrl+Shift+G „ramipril“ → nächstes Diktat schreibt „Ramipril“. Offen: Namen aus
+  zwei Wörtern („Sabaki Dance“) greifen noch nicht.
 
 **Stand 2026-10-20: Offline-Modus eingebaut** (Einstellungen → Arbeitsweise → „Offline auf diesem
 PC“). Spracherkennung Parakeet TDT 0.6B v3 (sherpa-onnx, im Prozess), Sprachmodell Qwen3 4B
