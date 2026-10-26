@@ -2,6 +2,24 @@
 
 Plan: `~/whisper-shortcut-private/windows/PLAN.md`. Hier liegt nur, was zum Bauen gebraucht wird.
 
+**Stand 2026-10-26: UI/UX überarbeitet** (vor der Weitergabe an den ersten Tester).
+
+- **Einstellungsfenster neu:** links Navigation (Allgemein, Tastenkürzel, Glossar,
+  Schnellanweisungen, Vorlage), rechts die Seite, unten Speichern/Abbrechen mit Hinweis
+  „Nicht gespeicherte Änderungen“; Schließen mit Änderungen fragt nach. Ungültige Tastenkürzel
+  springen auf ihre Seite. Glossar und Vorlage füllen die Höhe, das Glossar zählt die Begriffe.
+- **Erster Start:** Einstellungen öffnen sich mit Willkommens-Banner (`--welcome` zum Testen).
+- **Schlüssel prüfen:** `GeminiClient.CheckKeyAsync` (GET models, Header statt Query), Status
+  ✓/✗/keine Verbindung direkt unter dem Feld, 700 ms nach dem Tippen und beim Öffnen.
+- **Mikrofon wählen und testen:** Gerät aus WinMM (`Microphones`, 31-Zeichen-Namen wie WinMM sie
+  liefert; fehlt das Gerät, gilt der Windows-Standard), „Testen“ zeigt einen Pegelbalken
+  (`LevelProbe`). `Settings.Microphone`.
+- **Tray-Menü:** „Offline: nichts verlässt den PC“ als Haken, schaltet nur im Leerlauf und nur,
+  wenn Modell bzw. Schlüssel da sind; die Anzeige bestätigt den Wechsel.
+- **Vorlage:** „Beispiel einsetzen ▾“ mit Praxis-Vorlage (Anamnese/Befund/Therapie, keine
+  erfundenen Diagnosen oder Dosierungen, Marker „(nicht diktiert)“) und Angebots-Vorlage.
+- Gebaut: Plumbing (Mikrofon, Pegel, Schlüsselprüfung) Sonnet 5.5, UI Opus 5.5.
+
 **Stand 2026-10-21, abends: Paket „Praxis-Doku“ eingebaut** (für den Praxisfall).
 
 - **Schnellanweisungen:** Während einer Dictate-Prompt-Aufnahme wird die Anzeige zur Karte mit fünf

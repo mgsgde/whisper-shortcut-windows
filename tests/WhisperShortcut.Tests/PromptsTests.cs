@@ -22,7 +22,7 @@ public class PromptsTests
     [SwiftSourceFact]
     public void PromptsEqualSwiftSource()
     {
-        var t = Swift("AppConstants.swift", 7, 77);
+        var t = Swift("AppConstants.swift", 7, 90);
         Assert.Equal(Multi(t, "defaultTranscriptionSystemPrompt"), Prompts.DefaultTranscriptionSystemPrompt);
         Assert.Equal(Multi(t, "defaultPromptModeSystemPrompt"), Prompts.DefaultPromptModeSystemPrompt);
         Assert.Equal(Single(t, "promptModeOutputRule"), Prompts.PromptModeOutputRule);

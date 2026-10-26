@@ -1,4 +1,4 @@
-WhisperShortcut für Windows – Einrichtung (Testversion, Stand 21.10.2026)
+WhisperShortcut für Windows – Einrichtung (Testversion, Stand 26.10.2026)
 ========================================================================
 
 Was es kann
@@ -11,7 +11,7 @@ Was es kann
      Die Markierung wird ersetzt.
    - Ohne Markierung: Strg+Umschalt+P, z. B. „Schreib Herrn Meier ein Angebot für zwei
      Heizkörper inklusive Montage, Termin nächste Woche Dienstag“, Strg+Umschalt+P.
-     Ein fertiger Text nach der „Vorlage für neue Texte“ (Einstellungen) wird eingefügt.
+     Ein fertiger Text nach der Vorlage (Einstellungen → Vorlage) wird eingefügt.
    Ein Druck während der Verarbeitung bricht ab.
    - Schnellanweisungen: Während dieser Aufnahme zeigt die Anzeige fünf fertige Anweisungen,
      z. B. „Als Anamnese, Befund und Therapie gliedern“. Strg+1 bis Strg+5 oder ein Klick darauf
@@ -56,11 +56,15 @@ Die exe nicht „als Administrator ausführen“.
    Taskleiste → Andere Taskleistensymbole (Windows 10: „Symbole für die Anzeige auf der
    Taskleiste auswählen“) → WhisperShortcut an.
    Ein Klick auf das Symbol öffnet die Einstellungen (Rechtsklick zeigt das Menü).
-4. Gemini-API-Schlüssel eintragen (bekommst du separat von Magnus) → „Speichern“.
+   Beim ersten Start öffnen sich die Einstellungen von selbst.
+4. Arbeitsweise wählen: „Online mit Gemini“ (schnell, braucht den Schlüssel) oder „Offline auf
+   diesem PC“ (für Patientendaten, siehe unten). Online: Gemini-API-Schlüssel eintragen (bekommst
+   du separat von Magnus). Die App prüft ihn sofort: grüner Haken = Schlüssel funktioniert.
    Solange das Einstellungsfenster im Vordergrund ist, sind die Tastenkürzel aus.
-5. Mikrofon: Windows-Einstellungen → Datenschutz (Windows 11: Datenschutz und Sicherheit) →
-   Mikrofon → „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ muss AN sein. Unter System → Sound das
-   richtige Mikrofon als Eingabegerät wählen.
+5. Mikrofon: Unter „Mikrofon“ das Gerät wählen (Headset ist am besten, sonst „Windows-Standard“)
+   und auf „Testen“ klicken: Beim Sprechen muss der grüne Balken ausschlagen. Bleibt er leer:
+   Windows-Einstellungen → Datenschutz (Windows 11: Datenschutz und Sicherheit) → Mikrofon →
+   „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ muss AN sein. Dann „Speichern“.
    Benachrichtigungen für WhisperShortcut an lassen, „Nicht stören“ aus: Alle Meldungen der App
    kommen als Windows-Benachrichtigung.
 6. Test: Notepad öffnen, Strg+Umschalt+D, einen Satz sagen, Strg+Umschalt+D.
@@ -69,8 +73,9 @@ Die exe nicht „als Administrator ausführen“.
 
 Offline-Modus (nichts verlässt den PC)
 --------------------------------------
-Für Patientendaten und andere geschützte Inhalte: Einstellungen → Arbeitsweise →
-„Offline auf diesem PC“. Dann braucht es keinen API-Schlüssel und kein Internet.
+Für Patientendaten und andere geschützte Inhalte: Einstellungen → Allgemein → Arbeitsweise →
+„Offline auf diesem PC“. Dann braucht es keinen API-Schlüssel und kein Internet. Umschalten geht
+auch schnell über Rechtsklick auf das Symbol → „Offline: nichts verlässt den PC“ (Haken = offline).
 1. Unter „Offline-Modelle“ einmal die Spracherkennung laden (ca. 670 MB) und das Sprachmodell
    für „Text bearbeiten“ (ca. 2,5 GB, mit 16 GB Arbeitsspeicher besser das größere, ca. 5,7 GB).
    Das Laden läuft weiter, wenn das Fenster zu ist. Danach „Speichern“.
@@ -87,17 +92,21 @@ Die Modelle liegen unter %LOCALAPPDATA%\WhisperShortcut\Offline (in den Einstell
 
 Einstellungen
 -------------
+Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit ungespeicherten
+Änderungen schließt, wird gefragt.
+- Allgemein: Arbeitsweise (online/offline), Schlüssel, Offline-Modelle, Mikrofon, Autostart.
+- Tastenkürzel: änderbar, immer mit zwei Zusatztasten (z. B. Strg+Umschalt+…). Kombinationen
+  mit Alt besser meiden (dann öffnen viele Programme ihr Menü). Solange die App läuft, gehen
+  in Word Strg+Umschalt+D (doppelt unterstreichen) und Strg+Umschalt+P (Schriftgrad) nicht. In
+  Excel gilt bei Strg+Umschalt+P die aktuelle Zelle immer als Markierung. Esc und Strg+1 bis
+  Strg+5 gelten nur während einer Aufnahme.
 - Glossar: Namen, Fachbegriffe, Firmennamen (eine Zeile pro Begriff), damit sie richtig
   geschrieben werden. Strg+Umschalt+G fügt ein markiertes Wort direkt hinzu.
-- Schnellanweisungen: die fünf Anweisungen für Strg+1 bis Strg+5, eine pro Zeile, frei
-  änderbar (z. B. „Als Arztbrief formulieren“).
-- Vorlage für neue Texte: wie Angebote, Mails usw. aussehen sollen. Vorbefüllt mit einem
-  Angebotsmuster. Am besten mit 1–2 echten Angeboten des Nutzers anpassen (Firmenname, Stundensatz,
-  Zahlungsbedingungen).
-- Tastenkürzel änderbar, immer mit zwei Zusatztasten (z. B. Strg+Umschalt+…). Kombinationen
-  mit Alt besser meiden (dann öffnen viele Programme ihr Menü). Solange die App läuft, gehen
-  in Word Strg+Umschalt+D (doppelt unterstreichen) und Strg+Umschalt+P (Schriftgrad) nicht. In Excel gilt bei Strg+Umschalt+P die aktuelle Zelle
-  immer als Markierung.
+- Schnellanweisungen: die fünf Anweisungen für Strg+1 bis Strg+5, frei änderbar
+  (z. B. „Als Arztbrief formulieren“). „Vorschläge wiederherstellen“ setzt die Vorbelegung zurück.
+- Vorlage: wie neue Texte aussehen sollen. Über „Beispiel einsetzen“ gibt es eine Praxis-Vorlage
+  (Anamnese, Befund, Therapie, Briefe in Sie-Form) und eine Handwerks-Vorlage (Angebot). Am besten
+  mit 1–2 echten Texten des Nutzers anpassen (Praxisname, Stundensatz, Zahlungsbedingungen).
 
 Gut zu wissen
 -------------

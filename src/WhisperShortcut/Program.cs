@@ -31,6 +31,7 @@ internal static class Program
         ApplicationConfiguration.Initialize();
         var app = new TrayApp(testWav, fakeGemini);
         if (args.Contains("--settings")) app.OpenSettingsOnStart();
+        if (args.Contains("--welcome")) app.OpenWelcome();
         Application.Run(app);
     }
 

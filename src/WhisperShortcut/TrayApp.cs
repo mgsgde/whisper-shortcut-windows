@@ -45,6 +45,7 @@ internal sealed class TrayApp : ApplicationContext
     private SettingsForm? _settingsForm;
     private Action? _balloonClick;
     private bool _glossaryBusy;
+    private readonly ToolStripMenuItem _offlineItem;
     private readonly SynchronizationContext _ui;
 
     public TrayApp(string? testWav, bool fakeGemini)
@@ -81,7 +82,8 @@ internal sealed class TrayApp : ApplicationContext
         _copyLast = new ToolStripMenuItem("Letzten Text kopieren", null, (_, _) => CopyRecent(_recent.Latest));
         _recentMenu = new ToolStripMenuItem("Letzte Texte");
         var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
-        var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings());
+        _offlineItem = new ToolStripMenuItem("Offline: nichts verlässt den PC", null, (_, _) => ToggleOffline()) { CheckOnClick = false };
+        var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings()) { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         var logItem = new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog());
         var quitItem = new ToolStripMenuItem("Beenden", null, (_, _) => Quit());
         var menu = new ContextMenuStrip();
@@ -89,9 +91,9 @@ internal sealed class TrayApp : ApplicationContext
         {
             title, _statusItem, new ToolStripSeparator(), _dictateInfo, _promptInfo, _glossaryInfo, new ToolStripSeparator(),
             _copyLast, _recentMenu, new ToolStripSeparator(),
-            settingsItem, logItem, new ToolStripSeparator(), quitItem,
+            _offlineItem, settingsItem, logItem, new ToolStripSeparator(), quitItem,
         });
-        menu.Opening += (_, _) => UpdateRecentMenu();
+        menu.Opening += (_, _) => { UpdateRecentMenu(); _offlineItem.Checked = _settings.OfflineMode; };
         UpdateRecentMenu();
 
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
@@ -106,7 +108,11 @@ internal sealed class TrayApp : ApplicationContext
         _offline.DownloadChanged += () => { if (_state == State.Idle) SetState(State.Idle); };
         _overlay.QuickActionClicked += OnQuickAction;
 
-        if (MissingKey)
+        if (firstRun && !testRun)
+        {
+            OpenWelcome();
+        }
+        else if (MissingKey)
         {
             Notify("Willkommen bei WhisperShortcut",
                 "Bitte zuerst den API-Schlüssel eintragen: hier klicken oder auf das blaue Symbol unten rechts.",
@@ -246,7 +252,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         else
         {
-            mic = new MicAudioSource(limit);
+            mic = new MicAudioSource(limit, _settings.Microphone);
             mic.MaxDurationReached += () => _ui.Post(_ =>
             {
                 if (_state != State.Recording) return;
@@ -709,7 +715,15 @@ internal sealed class TrayApp : ApplicationContext
     /// <summary><c>--settings</c>: open the settings window right away (first setup, VM screenshots).</summary>
     public void OpenSettingsOnStart() => _ui.Post(_ => ShowSettings(), null);
 
-    private void ShowSettings()
+    /// <summary>
+    /// First start (and <c>--welcome</c> for VM screenshots): the settings window with the "what to do
+    /// now" box, so nobody has to find the tray icon first.
+    /// </summary>
+    public void OpenWelcome() => _ui.Post(_ => ShowSettings(welcome: true), null);
+
+    private void ShowSettings() => ShowSettings(welcome: false);
+
+    private void ShowSettings(bool welcome)
     {
         if (_settingsForm != null)
         {
@@ -726,7 +740,7 @@ internal sealed class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        _settingsForm = new SettingsForm(_settings, _offline);
+        _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
         _settingsForm.Activated += (_, _) => { if (_state == State.Idle) _hotkeys.UnregisterAll(); };
         _settingsForm.Deactivate += (_, _) => RegisterHotkeys(notify: false);
         _settingsForm.FormClosed += (_, _) =>
@@ -739,6 +753,32 @@ internal sealed class TrayApp : ApplicationContext
         };
         _settingsForm.Show();
         _settingsForm.Activate();
+    }
+
+    /// <summary>
+    /// Tray switch between online and offline, e.g. before a session with patient data. Without the
+    /// models (or without a key for online) it opens the settings instead of leaving a mode that cannot work.
+    /// </summary>
+    private void ToggleOffline()
+    {
+        if (_state != State.Idle) return;
+        bool offline = !_settings.OfflineMode;
+        if (offline && !OfflineEngine.SpeechInstalled)
+        {
+            Notify("Offline-Modelle fehlen", "Für den Offline-Modus zuerst die Spracherkennung laden: hier klicken.", ToolTipIcon.Info, ShowSettings);
+            return;
+        }
+        if (!offline && string.IsNullOrWhiteSpace(_settings.ApiKey) && !_fakeGemini)
+        {
+            Notify("Schlüssel fehlt", "Für den Online-Modus zuerst den Gemini-Schlüssel eintragen: hier klicken.", ToolTipIcon.Info, ShowSettings);
+            return;
+        }
+        _settings.OfflineMode = offline;
+        TrySave();
+        Core.Log.Info($"Tray: offline mode {(offline ? "on" : "off")}");
+        _offline.Prewarm();
+        SetState(_state);
+        _overlay.ShowDone(offline ? "Offline: nichts verlässt den PC" : "Online mit Gemini", neutral: true);
     }
 
     private void TrySave()

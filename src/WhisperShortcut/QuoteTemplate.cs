@@ -45,6 +45,32 @@ internal static class QuoteTemplate
         Namen, Mengen, Preise und Termine nur übernehmen, wenn ich sie sage. Alles andere bleibt als [Platzhalter] stehen. Nie Preise erfinden, nie selbst rechnen, wenn mir eine Zahl fehlt.
         """;
 
+    /// <summary>
+    /// Sample for practices: a dictated treatment note in three sections. The markers
+    /// are the ones <see cref="Core.DictationFidelityCheck"/> ignores, so a gap shows as a marker
+    /// instead of an invented sentence.
+    /// </summary>
+    public const string Praxis =
+        """
+        Wenn ich eine Behandlung dokumentiere, gliedere das Diktat so (Deutsch, sachlich, Stichpunkte erlaubt):
+
+        Anamnese:
+        [Beschwerden, Verlauf, Vorgeschichte, so wie diktiert]
+
+        Befund:
+        [Untersuchung und Tests, so wie diktiert]
+
+        Therapie:
+        [Behandlung, Empfehlungen, nächster Termin, so wie diktiert]
+
+        Nur übernehmen, was ich diktiere: keine Diagnosen, Medikamente, Dosierungen oder Behandlungen ergänzen.
+        Fehlt zu einem Abschnitt etwas, schreibe „(nicht diktiert)“. Ist unklar, wohin ein Satz gehört, setze „[Zuordnung prüfen]“ dahinter.
+        Ein Wort, das ich vermutlich falsch verstanden habe, bekommt „[?]“. Fachbegriffe, Namen und Zahlen genau so, wie ich sie sage.
+
+        Wenn ich einen Brief oder eine Nachricht diktiere (an Patienten, Ärzte, Kassen): kurz und freundlich, Sie-Form, mit Anrede und Gruß.
+        Immer reiner Text, ohne Sternchen oder Rauten.
+        """;
+
     /// <summary>System prompt for a Dictate Prompt request, or null for the plain Mac default.</summary>
     public static string? BuildSystemPrompt(string? template)
     {
