@@ -63,6 +63,9 @@ public sealed class Settings
     /// <summary>Dictate Prompt model id.</summary>
     public string PromptModel { get; set; } = DefaultPromptModel;
 
+    /// <summary>Product name of the microphone to record from; "" = the Windows default device.</summary>
+    public string Microphone { get; set; } = "";
+
     /// <summary>Hotkey for plain dictation.</summary>
     public string DictateHotkey { get; set; } = "Ctrl+Shift+D";
 
@@ -102,6 +105,7 @@ public sealed class Settings
             if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
             if (!string.IsNullOrWhiteSpace(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey;
             if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
+            s.Microphone = dto.Microphone ?? "";
             s.OfflineMode = dto.OfflineMode ?? false;
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
             // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
@@ -132,6 +136,7 @@ public sealed class Settings
             DictateHotkey = DictateHotkey,
             PromptHotkey = PromptHotkey,
             GlossaryHotkey = GlossaryHotkey,
+            Microphone = Microphone,
             OfflineMode = OfflineMode,
             OfflineLlmId = OfflineLlmId,
             QuickActions = QuickActions,
@@ -151,6 +156,7 @@ public sealed class Settings
         [JsonPropertyName("dictateHotkey")] public string? DictateHotkey { get; set; }
         [JsonPropertyName("promptHotkey")] public string? PromptHotkey { get; set; }
         [JsonPropertyName("glossaryHotkey")] public string? GlossaryHotkey { get; set; }
+        [JsonPropertyName("microphone")] public string? Microphone { get; set; }
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
         [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
         [JsonPropertyName("quickActions")] public List<string>? QuickActions { get; set; }

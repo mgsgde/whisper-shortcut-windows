@@ -200,4 +200,54 @@ public class GeminiClientTests
         var text = await Live().PromptAsync(wav, "Schick mir das bis morgen.", null);
         Assert.False(string.IsNullOrWhiteSpace(text));
     }
+
+    private sealed class ThrowingHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => throw new HttpRequestException("no network");
+    }
+
+    [Fact]
+    public async Task CheckKey_Ok_SendsHeaderNotQueryKey()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, "{}"));
+        Assert.Equal(KeyCheck.Ok, await c.CheckKeyAsync("secret-key"));
+        var req = h.Calls.Single().Request;
+        Assert.Equal(HttpMethod.Get, req.Method);
+        Assert.Equal("secret-key", req.Headers.GetValues("x-goog-api-key").Single());
+        Assert.DoesNotContain("key=", req.RequestUri!.ToString());
+        Assert.DoesNotContain("secret-key", req.RequestUri!.ToString());
+    }
+
+    [Fact]
+    public async Task CheckKey_400_IsInvalid()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.BadRequest, "{\"error\":{\"message\":\"API key not valid\"}}"));
+        Assert.Equal(KeyCheck.Invalid, await c.CheckKeyAsync("bad"));
+    }
+
+    [Fact]
+    public async Task CheckKey_NetworkError_IsNoConnection()
+    {
+        var c = new GeminiClient(() => null, () => "m", () => "m", new HttpClient(new ThrowingHandler()));
+        Assert.Equal(KeyCheck.NoConnection, await c.CheckKeyAsync("k"));
+    }
+
+    [Fact]
+    public async Task CheckKey_500_IsOther()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.InternalServerError, "{}"));
+        Assert.Equal(KeyCheck.Other, await c.CheckKeyAsync("k"));
+    }
+
+    [Fact]
+    public async Task CheckKey_Blank_IsInvalidWithoutRequest()
+    {
+        var (c, h) = Make();
+        Assert.Equal(KeyCheck.Invalid, await c.CheckKeyAsync("  "));
+        Assert.Empty(h.Calls);
+    }
 }

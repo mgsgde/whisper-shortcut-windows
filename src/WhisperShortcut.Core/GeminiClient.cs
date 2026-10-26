@@ -33,6 +33,19 @@ public sealed class GeminiException : Exception
     public GeminiErrorKind Kind { get; }
 }
 
+/// <summary>Result of <see cref="GeminiClient.CheckKeyAsync"/>.</summary>
+public enum KeyCheck
+{
+    /// <summary>Google accepted the key.</summary>
+    Ok,
+    /// <summary>Blank key, or Google rejected it (400/401/403).</summary>
+    Invalid,
+    /// <summary>Google could not be reached (network error or timeout).</summary>
+    NoConnection,
+    /// <summary>Any other answer (e.g. 429, 5xx); the key may still be fine.</summary>
+    Other,
+}
+
 /// <summary>
 /// Gemini generateContent client for dictation and Dictate Prompt. The API key and model ids
 /// are read at call time, so values entered later in the settings window work without restart.
@@ -178,6 +191,43 @@ public sealed class GeminiClient
             ["data"] = Convert.ToBase64String(wav),
         },
     };
+
+    /// <summary>
+    /// Checks an API key with a cheap models-list request before it is saved. Never throws for
+    /// network problems; caller cancellation propagates as <see cref="OperationCanceledException"/>.
+    /// </summary>
+    public async Task<KeyCheck> CheckKeyAsync(string key, CancellationToken ct = default)
+    {
+        key = key?.Trim() ?? "";
+        if (key.Length == 0) return KeyCheck.Invalid;
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(TimeSpan.FromSeconds(10));
+        KeyCheck result;
+        try
+        {
+            // Key goes in the header, not the URL, so it cannot end up in proxy or server logs.
+            using var request = new HttpRequestMessage(HttpMethod.Get, BaseUrl + "?pageSize=1");
+            request.Headers.Add("x-goog-api-key", key);
+            using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
+            result = (int)response.StatusCode switch
+            {
+                200 => KeyCheck.Ok,
+                400 or 401 or 403 => KeyCheck.Invalid,
+                _ => KeyCheck.Other,
+            };
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            result = KeyCheck.NoConnection;
+        }
+        catch (HttpRequestException)
+        {
+            result = KeyCheck.NoConnection;
+        }
+        Log.Info($"Gemini key check: {result}");
+        return result;
+    }
 
     private async Task<string> SendAsync(string model, string json, CancellationToken ct)
     {

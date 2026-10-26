@@ -10,8 +10,8 @@ internal sealed class MicrophoneUnavailableException : Exception
 }
 
 /// <summary>
-/// Records the system default microphone (WAVE_MAPPER, DeviceNumber -1, not device 0) as
-/// 16 kHz mono 16-bit into an in-memory WAV. Stops itself at <see cref="MaxDuration"/>.
+/// Records the chosen microphone (see <see cref="Microphones.DeviceNumber"/>; empty = the Windows
+/// default, WAVE_MAPPER -1, not device 0) as 16 kHz mono 16-bit into an in-memory WAV. Stops itself at <see cref="MaxDuration"/>.
 /// </summary>
 internal sealed class MicAudioSource : Core.IAudioSource
 {
@@ -36,8 +36,17 @@ internal sealed class MicAudioSource : Core.IAudioSource
     private volatile float _level;
     private bool _limitHit;
 
-    /// <summary>Records until <paramref name="maxDuration"/>, then raises <see cref="MaxDurationReached"/>.</summary>
-    public MicAudioSource(TimeSpan maxDuration) => MaxDuration = maxDuration;
+    private readonly string? _microphone;
+
+    /// <summary>
+    /// Records until <paramref name="maxDuration"/>, then raises <see cref="MaxDurationReached"/>.
+    /// <paramref name="microphone"/> is the stored device name; null or "" = Windows default.
+    /// </summary>
+    public MicAudioSource(TimeSpan maxDuration, string? microphone = null)
+    {
+        MaxDuration = maxDuration;
+        _microphone = microphone;
+    }
 
     /// <summary>Stops the recording on its own once this time is reached.</summary>
     public TimeSpan MaxDuration { get; }
@@ -60,7 +69,7 @@ internal sealed class MicAudioSource : Core.IAudioSource
         _level = 0;
         _limitHit = false;
         _stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _waveIn = new WaveInEvent { DeviceNumber = -1, WaveFormat = _format, BufferMilliseconds = 50 };
+        _waveIn = new WaveInEvent { DeviceNumber = Microphones.DeviceNumber(_microphone), WaveFormat = _format, BufferMilliseconds = 50 };
         _waveIn.DataAvailable += OnData;
         _waveIn.RecordingStopped += (_, e) =>
         {

@@ -187,4 +187,21 @@ public class QuickActionRequestTests
         Assert.Null(QuickActionRequest.Build("Kürzer fassen", "", " "));
         Assert.Null(QuickActionRequest.Build("Kürzer fassen", null, ""));
     }
+
+    [Fact]
+    public void Microphone_DefaultsEmptyAndRoundTrips()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, "{\"dictateHotkey\":\"Ctrl+Shift+X\"}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("", s.Microphone);
+
+        s.Microphone = "Headset (USB Audio)";
+        s.Save();
+        Assert.Contains("\"microphone\": \"Headset (USB Audio)\"", File.ReadAllText(path));
+        Assert.Equal("Headset (USB Audio)", Settings.Load(path, new PlainSecretProtector()).Microphone);
+        Directory.Delete(dir, true);
+    }
 }
