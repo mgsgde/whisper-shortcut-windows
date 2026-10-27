@@ -67,7 +67,7 @@ case "$cmd" in
     done
     echo "not running after 30 s" >&2; exit 1
     ;;
-  stop) run "taskkill /im $EXE_NAME /f" || true ;;
+  stop) prlctl exec "$VM" --current-user taskkill /IM "$EXE_NAME" /F || true ;;  # via cmd /c the args arrived mangled ("Invalid argument")
   # Notepad restores the last session's tabs; a fresh tab keeps test pastes out of real files.
   notepad) nohup prlctl exec "$VM" --current-user notepad.exe >/dev/null 2>&1 & sleep 4; "$0" focus Notepad; "$0" combo ctrl n ;;
   focus)
