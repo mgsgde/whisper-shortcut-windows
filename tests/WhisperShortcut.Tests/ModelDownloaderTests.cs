@@ -89,6 +89,20 @@ public class ModelDownloaderTests : IDisposable
     }
 
     [Fact]
+    public async Task NotEnoughDiskSpace_FailsBeforeDownloading()
+    {
+        using var srv = new TestServer { Data = Bytes(10) };
+        // One petabyte: no test machine has that much free.
+        var c = new OfflineComponent("t", "Test", "testcomp",
+            new[] { new ModelFile("m.bin", srv.Url, 1_000_000_000_000_000, Sha(Bytes(10))) }, false);
+        var e = await Assert.ThrowsAsync<OfflineDownloadException>(() =>
+            new ModelDownloader(new HttpClient()).DownloadAsync(c, null, CancellationToken.None));
+        Assert.StartsWith("Nicht genug Speicherplatz: ", e.Message);
+        Assert.EndsWith(" GB nötig.", e.Message);
+        Assert.Equal(0, srv.Requests);
+    }
+
+    [Fact]
     public async Task FreshDownload_Installs_ProgressReachesOne()
     {
         var data = Bytes(500_000);

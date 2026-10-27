@@ -163,7 +163,7 @@ internal sealed class RecordingOverlay : Form
     {
         _phase = Phase.Processing;
         _title = title;
-        _hint = "Esc bricht ab";
+        _hint = "Kürzel drücken bricht ab";
         _context = null;
         Present();
     }

@@ -39,6 +39,7 @@ internal sealed class TrayApp : ApplicationContext
     private Mode _mode;
     private Core.IAudioSource? _audio;
     private Task<string?>? _selection;
+    private CancellationTokenSource? _selectionCts;
     private string? _quickAction;
     private IReadOnlyList<string> _unsupported = Array.Empty<string>();
     private CancellationTokenSource? _cts;
@@ -168,26 +169,27 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     /// <summary>
-    /// Esc is a global hotkey only while a recording or its processing runs, so it never takes Esc
-    /// away from other programs otherwise. Recording: discard it. Processing: cancel.
+    /// Esc is a global hotkey only while a recording runs, so it never takes Esc away from other
+    /// programs otherwise. It discards the recording; processing is cancelled with the record hotkey.
     /// </summary>
     private void OnEscape()
     {
         Core.Log.Info($"Esc in state {_state}");
-        switch (_state)
-        {
-            case State.Recording:
-                (_audio as MicAudioSource)?.Cancel();
-                _audio = null;
-                _selection = null;
-                Sounds.Stop();
-                _overlay.HideOverlay();
-                SetState(State.Idle);
-                break;
-            case State.Processing:
-                _cts?.Cancel();
-                break;
-        }
+        if (_state != State.Recording) return;
+        (_audio as MicAudioSource)?.Cancel();
+        _audio = null;
+        CancelSelectionCopy(); // no Ctrl+C into the user's window after the cancel
+        Sounds.Stop();
+        _overlay.HideOverlay();
+        SetState(State.Idle);
+    }
+
+    private void CancelSelectionCopy()
+    {
+        _selectionCts?.Cancel();
+        _selectionCts?.Dispose();
+        _selectionCts = null;
+        _selection = null;
     }
 
     /// <summary>
@@ -240,7 +242,8 @@ internal sealed class TrayApp : ApplicationContext
         _mode = mode;
         _quickAction = null;
         // Copy the selection right away, while the user's selection is still there. It runs while recording.
-        _selection = mode == Mode.Prompt ? _paster.CopySelectionAsync() : null;
+        _selectionCts = mode == Mode.Prompt ? new CancellationTokenSource() : null;
+        _selection = _selectionCts != null ? _paster.CopySelectionAsync(_selectionCts.Token) : null;
         // Loading the language model takes seconds to half a minute; do it while the user speaks.
         if (mode == Mode.Prompt && _settings.OfflineMode) _offline.PrewarmLlm();
 
@@ -276,6 +279,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error("Recording start failed", e);
             _audio = null;
+            CancelSelectionCopy();
             Sounds.Error();
             Notify("Aufnahme nicht möglich", e.Message, ToolTipIcon.Error);
             return;
@@ -336,7 +340,7 @@ internal sealed class TrayApp : ApplicationContext
             if (text.Length == 0) return; // already reported
             _recent.Add(text);
 
-            var outcome = await _paster.PasteAsync(text);
+            var outcome = await _paster.PasteAsync(text, ct);
             Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars");
             switch (outcome)
             {
@@ -374,6 +378,12 @@ internal sealed class TrayApp : ApplicationContext
             // The pill disappearing is the feedback; a balloon on top of it would be noise.
             Core.Log.Info($"{_mode}: cancelled by user");
         }
+        catch (SelectionUnreadableException)
+        {
+            // Writing a new text now would overwrite the marked one.
+            Sounds.Error();
+            Notify("Nichts geändert", "Markierter Text konnte nicht gelesen werden. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
+        }
         catch (OfflineNotReadyException e)
         {
             Core.Log.Error($"{_mode}: offline model missing");
@@ -409,6 +419,8 @@ internal sealed class TrayApp : ApplicationContext
         {
             _cts.Dispose();
             _cts = null;
+            _selectionCts?.Dispose();
+            _selectionCts = null;
             _selection = null;
             _quickAction = null;
             if (!done) _overlay.HideOverlay();
@@ -587,7 +599,7 @@ internal sealed class TrayApp : ApplicationContext
     /// </summary>
     private async Task AddSelectionToGlossaryAsync()
     {
-        if (_state != State.Idle || _glossaryBusy)
+        if (_state != State.Idle || _glossaryBusy || _selection != null)
         {
             Sounds.Error();
             return;
@@ -604,10 +616,10 @@ internal sealed class TrayApp : ApplicationContext
                     TrySave();
                     _offline.GlossaryChanged();
                     _settingsForm?.AppendGlossaryTerm(term);
-                    _overlay.ShowDone($"„{term}“ steht jetzt im Glossar");
+                    ShowDoneIfFree($"„{term}“ steht jetzt im Glossar");
                     break;
                 case Core.GlossaryAddResult.Duplicate:
-                    _overlay.ShowDone($"„{term}“ stand schon im Glossar", neutral: true);
+                    ShowDoneIfFree($"„{term}“ stand schon im Glossar", neutral: true);
                     break;
                 case Core.GlossaryAddResult.Empty:
                     Sounds.Error();
@@ -618,6 +630,11 @@ internal sealed class TrayApp : ApplicationContext
                     Notify("Zu viel markiert", $"Bitte nur ein Wort oder einen Namen markieren (eine Zeile, höchstens {Core.GlossaryEdit.MaxTermLength} Zeichen).", ToolTipIcon.Info);
                     break;
             }
+        }
+        catch (SelectionUnreadableException)
+        {
+            Sounds.Error();
+            Notify("Nichts geändert", "Markierter Text konnte nicht gelesen werden. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
         }
         catch (Exception e)
         {
@@ -651,8 +668,17 @@ internal sealed class TrayApp : ApplicationContext
     private void CopyRecent(string? text)
     {
         if (text == null) return;
-        if (_paster.CopyToClipboard(text)) _overlay.ShowDone("In der Zwischenablage, mit Strg+V einfügen");
+        if (_paster.CopyToClipboard(text)) ShowDoneIfFree("In der Zwischenablage, mit Strg+V einfügen");
         else Notify("Kopieren fehlgeschlagen", "Die Zwischenablage war blockiert. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
+    }
+
+    /// <summary>
+    /// A short confirmation must not replace the recording or processing card: then a balloon says it.
+    /// </summary>
+    private void ShowDoneIfFree(string title, bool neutral = false)
+    {
+        if (_state == State.Idle) _overlay.ShowDone(title, neutral);
+        else Notify("WhisperShortcut", title, ToolTipIcon.Info);
     }
 
     private bool OfflineModelsReady(Mode mode) =>
@@ -661,12 +687,12 @@ internal sealed class TrayApp : ApplicationContext
     // ---------------- UI ----------------
 
     /// <summary>
-    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording or
-    /// processing, Ctrl+1–5 only while a Dictate Prompt recording runs.
+    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording,
+    /// Ctrl+1–5 only while a Dictate Prompt recording runs.
     /// </summary>
     private void SyncSessionHotkeys()
     {
-        if (_state == State.Idle) _hotkeys.Unregister(Escape);
+        if (_state != State.Recording) _hotkeys.Unregister(Escape);
         else if (!_hotkeys.IsRegistered(Escape)) _hotkeys.Register(Escape, OnEscape);
         bool quick = _state == State.Recording && _mode == Mode.Prompt;
         for (int i = 0; i < QuickKeys.Length; i++)
@@ -796,6 +822,7 @@ internal sealed class TrayApp : ApplicationContext
     private void Quit()
     {
         _cts?.Cancel();
+        _selectionCts?.Cancel();
         (_audio as MicAudioSource)?.Cancel();
         _icon.Visible = false;
         _icon.Dispose();

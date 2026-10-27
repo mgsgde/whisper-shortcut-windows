@@ -60,7 +60,8 @@ public sealed class LocalLlmClient
             text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
-                Log.Error($"local LLM HTTP {(int)resp.StatusCode}: {Truncate(text)}");
+                // Status and length only: the body can echo the patient text.
+                Log.Error($"local LLM HTTP {(int)resp.StatusCode}, {text.Length} chars");
                 throw Failure(null);
             }
         }
@@ -76,18 +77,20 @@ public sealed class LocalLlmClient
             var content = choice?["message"]?["content"]?.GetValue<string>();
             if (content == null) throw new FormatException("no content");
             if (choice?["finish_reason"]?.GetValue<string>() == "length")
-                Log.Warn("local LLM answer cut off at max_tokens");
+            {
+                // A cut-off answer would replace the user's whole selection with half a text.
+                Log.Error("local LLM answer cut off at max_tokens");
+                throw new LocalLlmException("Der Text ist für das Offline-Modell zu lang. Bitte einen kürzeren Abschnitt markieren.");
+            }
             return Think.Replace(content, "").Trim();
         }
         catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException or InvalidOperationException)
         {
-            Log.Error($"local LLM response unreadable: {Truncate(text)}", ex);
+            Log.Error($"local LLM response unreadable ({text.Length} chars)", ex);
             throw Failure(ex);
         }
     }
 
     private static LocalLlmException Failure(Exception? inner) =>
         new("Das lokale Sprachmodell hat nicht geantwortet. Details im Protokoll.", inner);
-
-    private static string Truncate(string s) => s.Length <= 500 ? s : s[..500];
 }

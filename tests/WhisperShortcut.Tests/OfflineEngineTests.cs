@@ -158,11 +158,12 @@ public class LocalLlmTests
     }
 
     [Fact]
-    public async Task LengthFinish_StillReturns()
+    public async Task LengthFinish_Throws_SoThePartialTextNeverReplacesTheSelection()
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, Reply("abgeschnitten", "length")));
-        Assert.Equal("abgeschnitten", await c.CompleteAsync(new Uri("http://x/"), "s", "u", CancellationToken.None));
+        var e = await Assert.ThrowsAsync<LocalLlmException>(() => c.CompleteAsync(new Uri("http://x/"), "s", "u", CancellationToken.None));
+        Assert.Equal("Der Text ist für das Offline-Modell zu lang. Bitte einen kürzeren Abschnitt markieren.", e.Message);
     }
 
     [Fact]

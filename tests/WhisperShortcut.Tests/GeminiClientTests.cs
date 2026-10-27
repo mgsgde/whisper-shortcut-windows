@@ -229,6 +229,14 @@ public class GeminiClientTests
     }
 
     [Fact]
+    public async Task CheckKey_403_IsForbidden_NotInvalid()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.Forbidden, "{\"error\":{\"status\":\"PERMISSION_DENIED\"}}"));
+        Assert.Equal(KeyCheck.Forbidden, await c.CheckKeyAsync("restricted"));
+    }
+
+    [Fact]
     public async Task CheckKey_NetworkError_IsNoConnection()
     {
         var c = new GeminiClient(() => null, () => "m", () => "m", new HttpClient(new ThrowingHandler()));

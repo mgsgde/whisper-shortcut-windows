@@ -85,4 +85,25 @@ public class DictationFidelityCheckTests
     [Fact]
     public void NullAndBlankSources_AreIgnored() =>
         Assert.Empty(Check("Psoas", null, "  ", "psoas"));
+
+    [Fact]
+    public void AddedNegation_IsFlagged() =>
+        Assert.Equal(new[] { "keinen" }, Check("Patient hat keinen Schwindel", "Patient hat Schwindel"));
+
+    [Fact]
+    public void NegationFromTheSource_IsNotFlagged() =>
+        Assert.Empty(Check("kein Fieber", "Patient hat kein Fieber"));
+
+    [Fact]
+    public void RewordedNegation_IsNotFlagged() =>
+        Assert.Empty(Check("nicht Fieber", "Patient hat kein Fieber"));
+
+    [Fact]
+    public void InventedFindingDressedAsHeading_IsFlagged() =>
+        Assert.Equal(new[] { "Verdacht", "Bandscheibenvorfall" },
+            Check("Verdacht auf Bandscheibenvorfall:\nPsoas links", "Psoas links"));
+
+    [Fact]
+    public void KnownHeadingWithColon_IsNotFlagged() =>
+        Assert.Empty(Check("Anamnese:\nPsoas links", "Psoas links"));
 }

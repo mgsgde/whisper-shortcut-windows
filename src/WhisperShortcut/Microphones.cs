@@ -12,7 +12,12 @@ internal static class Microphones
         {
             var names = new List<string>();
             for (int i = 0; i < WaveInEvent.DeviceCount; i++)
-                names.Add(WaveInEvent.GetCapabilities(i).ProductName);
+            {
+                // WinMM cuts names at 31 chars, so two devices can share one. DeviceNumber() finds only
+                // the first, so list each name once: no entry the lookup could not honor.
+                var name = WaveInEvent.GetCapabilities(i).ProductName;
+                if (!names.Contains(name, StringComparer.Ordinal)) names.Add(name);
+            }
             return names;
         }
         catch (Exception e)

@@ -90,9 +90,19 @@ internal sealed class OfflineEngine : IDisposable
                     if (Core.ModelDownloader.IsInstalled(c)) { done += c.Files.Sum(f => f.Size); continue; }
                     long size = c.Files.Sum(f => f.Size);
                     long before = done;
+                    // The downloader reports per 80 KB buffer; the UI needs one update per percent (or 250 ms)
+                    // and must never see the bar move backwards (a restarted file reports 0 again).
+                    int lastPercent = -1;
+                    long lastTick = 0;
                     var progress = new Progress<double>(p =>
                     {
-                        download.Fraction = (before + p * size) / total;
+                        var fraction = Math.Max(download.Fraction, (before + p * size) / total);
+                        var percent = (int)(fraction * 100);
+                        var now = Environment.TickCount64;
+                        if (percent == lastPercent && now - lastTick < 250) return;
+                        lastPercent = percent;
+                        lastTick = now;
+                        download.Fraction = fraction;
                         Changed();
                     });
                     await _downloader.DownloadAsync(c, progress, download.Cancel.Token).ConfigureAwait(false);
@@ -190,9 +200,16 @@ internal sealed class OfflineEngine : IDisposable
         if (LlmUnsupportedCpu) throw new Core.LocalLlmException(Core.LlamaServerHost.UnsupportedCpuMessage);
         var server = await EnsureServerAsync(ct).ConfigureAwait(false);
         server.MarkUsed();
+        // A model switch or Delete can stop the server between the start and here: start it again once.
+        var baseUrl = server.BaseUrl;
+        if (baseUrl == null)
+        {
+            server = await EnsureServerAsync(ct).ConfigureAwait(false);
+            baseUrl = server.BaseUrl ?? throw new Core.LocalLlmException("Das Sprachmodell wurde beendet. Bitte noch einmal versuchen.");
+        }
         try
         {
-            var answer = await _llm.CompleteAsync(server.BaseUrl!,
+            var answer = await _llm.CompleteAsync(baseUrl,
                 Core.DictatePromptText.SystemPrompt(customSystemPrompt),
                 Core.DictatePromptText.LocalUserTurn(selection, instruction), ct).ConfigureAwait(false);
             server.MarkUsed();
@@ -203,11 +220,16 @@ internal sealed class OfflineEngine : IDisposable
             // Give the process a moment to report its exit code; it dies while answering.
             await Task.Delay(500, CancellationToken.None).ConfigureAwait(false);
             if (!server.CrashedOnUnsupportedCpu) throw;
-            Core.Log.Error("llama-server crashed with an illegal instruction: this CPU cannot run the llama.cpp build");
-            try { File.WriteAllText(UnsupportedCpuMarker, $"llama-server crashed with 0xC000001D on {DateTime.Now:yyyy-MM-dd HH:mm}. Delete this file to try again.\r\n"); }
-            catch (Exception m) { Core.Log.Error("Could not write the unsupported-CPU marker", m); }
+            RememberUnsupportedCpu();
             throw new Core.LocalLlmException(Core.LlamaServerHost.UnsupportedCpuMessage, e);
         }
+    }
+
+    private static void RememberUnsupportedCpu()
+    {
+        Core.Log.Error("llama-server crashed with an illegal instruction: this CPU cannot run the llama.cpp build");
+        try { File.WriteAllText(UnsupportedCpuMarker, $"llama-server crashed with 0xC000001D on {DateTime.Now:yyyy-MM-dd HH:mm}. Delete this file to try again.\r\n"); }
+        catch (Exception m) { Core.Log.Error("Could not write the unsupported-CPU marker", m); }
     }
 
     private async Task<Core.ParakeetTranscriber> LoadParakeetAsync()
@@ -308,7 +330,13 @@ internal sealed class OfflineEngine : IDisposable
         _serverModelId = llm.Id;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         bool wasRunning = _server.IsRunning;
-        await _server.EnsureStartedAsync(ct).ConfigureAwait(false);
+        try { await _server.EnsureStartedAsync(ct).ConfigureAwait(false); }
+        catch (Core.UnsupportedCpuException)
+        {
+            // Crashed while loading, before any request: remember it too, so the next try fails at once.
+            RememberUnsupportedCpu();
+            throw;
+        }
         if (!wasRunning) Core.Log.Info($"llama-server ready with {llm.Id} after {sw.ElapsedMilliseconds} ms");
         return _server;
     }

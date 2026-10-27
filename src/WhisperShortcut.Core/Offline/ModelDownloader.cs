@@ -1,5 +1,6 @@
 using System.IO.Compression;
 using System.Net;
+using System.Globalization;
 using System.Net.Http.Headers;
 using System.Security.Cryptography;
 
@@ -47,6 +48,17 @@ public sealed class ModelDownloader
     public async Task DownloadAsync(OfflineComponent c, IProgress<double>? progress, CancellationToken ct)
     {
         if (IsInstalled(c)) { progress?.Report(1.0); return; }
+        var needGb = CheckFreeSpace(c);
+        try { await DownloadCoreAsync(c, progress, ct).ConfigureAwait(false); }
+        catch (IOException ex) when (IsDiskFull(ex))
+        {
+            // A write ran out of space after all (the check is an estimate); the .part file stays for a resume.
+            throw NoSpace(FreeBytes(c.FullPath) ?? 0, needGb, ex);
+        }
+    }
+
+    private async Task DownloadCoreAsync(OfflineComponent c, IProgress<double>? progress, CancellationToken ct)
+    {
         var dir = c.FullPath;
         Directory.CreateDirectory(dir);
         var total = c.Files.Sum(f => f.Size);
@@ -92,6 +104,37 @@ public sealed class ModelDownloader
         progress?.Report(1.0);
         Log.Info($"offline download done: {c.Id}, {SizeOnDisk(c)} bytes on disk");
     }
+
+    private const int DiskFullHResult = unchecked((int)0x80070070);
+
+    private static bool IsDiskFull(IOException ex) => ex.HResult == DiskFullHResult;
+
+    private static long? FreeBytes(string path)
+    {
+        try { return new DriveInfo(Path.GetPathRoot(Path.GetFullPath(path))!).AvailableFreeSpace; }
+        catch (Exception ex) when (ex is ArgumentException or IOException or UnauthorizedAccessException) { return null; } // e.g. a UNC path
+    }
+
+    // Throws when the target drive cannot hold what is still missing, plus 10 %. Returns the need in GB.
+    private static double CheckFreeSpace(OfflineComponent c)
+    {
+        long missing = 0;
+        foreach (var file in c.Files)
+        {
+            var target = Path.Combine(c.FullPath, file.RelativePath);
+            long have = File.Exists(target) ? new FileInfo(target).Length
+                : File.Exists(target + ".part") ? new FileInfo(target + ".part").Length : 0;
+            missing += Math.Max(0, file.Size - have);
+        }
+        var need = missing * 1.1;
+        var needGb = Math.Ceiling(need / 1e8) / 10;
+        if (FreeBytes(c.FullPath) is { } free && free < need) throw NoSpace(free, needGb, null);
+        return needGb;
+    }
+
+    private static OfflineDownloadException NoSpace(long free, double needGb, Exception? inner) =>
+        new(string.Create(CultureInfo.GetCultureInfo("de-DE"),
+            $"Nicht genug Speicherplatz: {free / 1e9:F1} GB frei, {needGb:F1} GB nötig."), inner);
 
     private static double Fraction(long done, long total) => total <= 0 ? 1.0 : Math.Min(1.0, (double)done / total);
 

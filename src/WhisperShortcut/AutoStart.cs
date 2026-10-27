@@ -10,9 +10,14 @@ namespace WhisperShortcut;
 internal static class AutoStart
 {
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    // Task Manager's Autostart tab and Settings → Apps → Startup keep their on/off switch here, not in Run.
+    private const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
     private const string ValueName = "WhisperShortcut";
 
-    /// <summary>True when the Run value exists. A registry failure counts as off, so the settings window can still open.</summary>
+    /// <summary>
+    /// True when the Run value exists and Windows has not switched it off in Task Manager / Settings.
+    /// A registry failure counts as off, so the settings window can still open.
+    /// </summary>
     public static bool IsEnabled
     {
         get
@@ -20,7 +25,11 @@ internal static class AutoStart
             try
             {
                 using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: false);
-                return key?.GetValue(ValueName) != null;
+                if (key?.GetValue(ValueName) == null) return false;
+                using var approved = Registry.CurrentUser.OpenSubKey(ApprovedKey, writable: false);
+                // Enabled entries start with 0x02 or 0x06; 0x03 (and 0x01) mean "disabled by the user".
+                if (approved?.GetValue(ValueName) is byte[] { Length: > 0 } state) return state[0] is 0x02 or 0x06;
+                return true;
             }
             catch (Exception ex)
             {
@@ -38,6 +47,9 @@ internal static class AutoStart
             using var key = Registry.CurrentUser.CreateSubKey(RunKey);
             if (key == null) throw new InvalidOperationException("Run key missing");
             key.SetValue(ValueName, QuotedPath());
+            // A switch-off in Task Manager would keep the new Run value from ever starting.
+            using var approved = Registry.CurrentUser.OpenSubKey(ApprovedKey, writable: true);
+            approved?.DeleteValue(ValueName, throwOnMissingValue: false);
             return true;
         }
         catch (Exception ex)

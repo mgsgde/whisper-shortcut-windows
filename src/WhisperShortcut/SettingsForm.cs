@@ -53,6 +53,7 @@ internal sealed class SettingsForm : Form
     private CancellationTokenSource? _keyCheck;
     private LevelProbe? _probe;
     private string _snapshot = "";
+    private bool _loadedOffline;
     private bool _saved;
 
     public const string General = "Allgemein", Keys_ = "Tastenkürzel", GlossaryPage = "Glossar",
@@ -306,7 +307,7 @@ internal sealed class SettingsForm : Form
         buttons.Controls.Add(cancel);
         buttons.Controls.Add(save);
         buttons.Controls.Add(_dirty);
-        CancelButton = cancel;
+        // No CancelButton: Esc closes through ProcessCmdKey, which asks about unsaved changes.
         AcceptButton = save; // Enter in the key field saves; the multi-line boxes keep their Enter
 
         var content = new Panel { Dock = DockStyle.Fill };
@@ -330,6 +331,7 @@ internal sealed class SettingsForm : Form
             Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
             FitHints();
             _snapshot = Snapshot();
+            _loadedOffline = _settings.OfflineMode;
         };
         UpdateMode();
         UpdateModelRows();
@@ -345,6 +347,9 @@ internal sealed class SettingsForm : Form
         dirtyTimer.Tick += (_, _) => _dirty.Visible = _snapshot.Length > 0 && Snapshot() != _snapshot;
         dirtyTimer.Start();
         FormClosing += OnClosing;
+        Activated += (_, _) => SyncOfflineFromTray();
+        // A running mic test keeps the microphone (and the Windows mic indicator) busy in the background.
+        Deactivate += (_, _) => { if (_probe != null) StopMicTest(); };
         FormClosed += (_, _) =>
         {
             dirtyTimer.Dispose();
@@ -472,11 +477,17 @@ internal sealed class SettingsForm : Form
         Core.KeyCheck result;
         try { result = await _gemini.CheckKeyAsync(key, cts.Token); }
         catch (OperationCanceledException) { return; }
+        catch (Exception e)
+        {
+            Core.Log.Error($"Key check failed: {e.GetType().Name}");
+            result = Core.KeyCheck.Other;
+        }
         if (cts.IsCancellationRequested || IsDisposed) return;
         switch (result)
         {
             case Core.KeyCheck.Ok: SetKeyStatus("✓ Schlüssel funktioniert", Good); break;
             case Core.KeyCheck.Invalid: SetKeyStatus("✗ Google kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Bad); break;
+            case Core.KeyCheck.Forbidden: SetKeyStatus("✗ Google kennt den Schlüssel, lässt ihn aber nicht an Gemini. In Google AI Studio einen neuen Schlüssel erstellen.", Bad); break;
             case Core.KeyCheck.NoConnection: SetKeyStatus("Keine Verbindung zu Google. Internet prüfen; gespeichert werden kann trotzdem.", Caution); break;
             default: SetKeyStatus("Google hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Caution); break;
         }
@@ -705,6 +716,32 @@ internal sealed class SettingsForm : Form
         _glossary.Text, _template.Text,
     }.Concat(_quick.Select(q => q.Text)));
 
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        // Esc out of habit must not throw away typed glossary terms: close the way the X does.
+        // Hotkey fields record Esc themselves, an open dropdown closes itself.
+        if (keyData == Keys.Escape && ActiveControl is not HotkeyBox && ActiveControl is not ComboBox { DroppedDown: true })
+        {
+            Close();
+            return true;
+        }
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    /// <summary>
+    /// The tray menu can switch online/offline while this window is open. Take that over (unless the
+    /// user changed the mode here too), so Save does not quietly switch back.
+    /// </summary>
+    private void SyncOfflineFromTray()
+    {
+        if (_snapshot.Length == 0 || _settings.OfflineMode == _loadedOffline) return;
+        bool userChangedMode = _offlineMode.Checked != _loadedOffline;
+        _loadedOffline = _settings.OfflineMode;
+        if (userChangedMode) return;
+        (_loadedOffline ? _offlineMode : _onlineMode).Checked = true;
+        _snapshot = _onlineMode.Checked + _snapshot[_snapshot.IndexOf('\u0001')..];
+    }
+
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
         if (_saved || _discard || e.CloseReason != CloseReason.UserClosing || Snapshot() == _snapshot) return;
@@ -726,7 +763,7 @@ internal sealed class SettingsForm : Form
             || !IsSafe(dictate) || !IsSafe(prompt) || !IsSafe(glossary))
         {
             ShowPage(Keys_);
-            Warn("Bitte für jede Funktion ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+D.");
+            Warn("Bitte für jede Funktion ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+D. Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.");
             return false;
         }
         if (dictate == prompt || dictate == glossary || prompt == glossary)
@@ -736,6 +773,9 @@ internal sealed class SettingsForm : Form
             return false;
         }
 
+        var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
+            _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
+            _settings.QuickActions, _settings.PromptSystemPrompt);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _apiKey.Text.Trim();
@@ -753,6 +793,9 @@ internal sealed class SettingsForm : Form
         catch (Exception e)
         {
             Core.Log.Error($"Saving settings failed: {e.GetType().Name}");
+            (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
+                _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
+                _settings.QuickActions, _settings.PromptSystemPrompt) = before;
             Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
             return false;
         }
@@ -779,12 +822,14 @@ internal sealed class SettingsForm : Form
 
     /// <summary>
     /// Two of Ctrl/Alt/Shift, one of them Ctrl or Alt. Ctrl+V or Alt+F as a global hotkey would take
-    /// that key away from every program.
+    /// that key away from every program. Ctrl+Alt without Shift is AltGr on German keyboards
+    /// (Ctrl+Alt+Q would swallow every @).
     /// </summary>
     private static bool IsSafe(Hotkey hotkey)
     {
         uint m = hotkey.Modifiers;
         int count = ((m & MOD_CONTROL) != 0 ? 1 : 0) + ((m & MOD_ALT) != 0 ? 1 : 0) + ((m & MOD_SHIFT) != 0 ? 1 : 0);
+        if ((m & (MOD_CONTROL | MOD_ALT)) == (MOD_CONTROL | MOD_ALT) && (m & MOD_SHIFT) == 0) return false;
         return count >= 2 && (m & (MOD_CONTROL | MOD_ALT)) != 0;
     }
 

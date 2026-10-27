@@ -1,4 +1,4 @@
-WhisperShortcut für Windows – Einrichtung (Testversion, Stand 26.10.2026)
+WhisperShortcut für Windows – Einrichtung (Testversion, Stand 27.10.2026)
 ========================================================================
 
 Was es kann
@@ -116,7 +116,11 @@ Gut zu wissen
   dann in der Zwischenablage: Strg+V.
 - Diktate enden automatisch nach 30 Minuten, „Text bearbeiten“ nach 5 Minuten. Eine Minute
   vorher zeigt die Anzeige die Restzeit.
-- Diktate landen nicht im Zwischenablage-Verlauf (Win+V).
+- Diktate landen nicht im Zwischenablage-Verlauf (Win+V). Markierter Text, den die App für
+  Strg+Umschalt+P oder Strg+Umschalt+G kopiert, landet dort aber schon. Bei Patientendaten den
+  Verlauf ausgeschaltet lassen (Windows-Einstellungen → System → Zwischenablage).
+- Setzt ein Admin das Windows-Passwort zurück, ist der gespeicherte Schlüssel nicht mehr lesbar.
+  Dann den Schlüssel einfach neu eintragen.
 - Nach dem Einfügen stellt die App die Zwischenablage wieder her, aber nur reinen Text:
   Ein vorher kopiertes Bild oder kopierte Dateien sind danach weg.
 - Probleme: Die Protokolldatei liegt unter %LOCALAPPDATA%\WhisperShortcut\wsw.log

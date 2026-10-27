@@ -14,7 +14,8 @@ namespace WhisperShortcut.Core;
 /// only shows the returned words as a warning.
 ///
 /// It catches additions only. A removed negation ("kein Schwindel" becoming "Schwindel") is an
-/// omission, so negations sit in the stopword list on purpose.
+/// omission and not looked for. An added negation ("Schwindel" becoming "keinen Schwindel") flips the
+/// meaning, so it is flagged unless some source contains a negation itself.
 /// </summary>
 public static class DictationFidelityCheck
 {
@@ -47,8 +48,18 @@ public static class DictationFidelityCheck
     // matches "kraniosakrale".
     private static readonly string[] Suffixes = { "ern", "em", "en", "er", "es", "e", "n", "s" };
 
-    // Function words, German and English. Folded form (no umlauts). "nicht"/"kein" are here because
-    // dropping a negation is an omission, which this check does not look for.
+    // Words that make a heading line a heading even though they are not content: besides the
+    // section words, the generic labels a note may carry. Only used to judge whole lines.
+    private static readonly HashSet<string> HeadingLineWords = new(HeadingWords)
+    {
+        "diagnose", "diagnosen", "beurteilung", "prozedere", "weitere", "hinweis", "hinweise",
+        "zusammenfassung", "sonstiges", "notizen", "aufgaben",
+    };
+
+    // Negations. Not in the stopwords: one in the output that no source backs is an added negation.
+    private static readonly HashSet<string> Negations = new() { "nicht", "kein", "keine", "keinen", "keiner" };
+
+    // Function words, German and English. Folded form (no umlauts).
     private static readonly HashSet<string> Stopwords = new()
     {
         "und", "oder", "aber", "der", "die", "das", "des", "den", "dem", "ein", "eine", "einer",
@@ -56,7 +67,6 @@ public static class DictationFidelityCheck
         "zum", "von", "vom", "seit", "nach", "vor", "uber", "unter", "aus", "fur", "ohne", "gegen",
         "durch", "als", "wie", "so", "auch", "noch", "nur", "sehr", "ist", "sind", "war", "wird",
         "werden", "wurde", "hat", "haben", "er", "sie", "es", "ich", "wir", "ihr", "man", "sich",
-        "nicht", "kein", "keine", "keinen", "keiner",
         "the", "a", "and", "or", "of", "to", "on", "at", "for", "with", "is", "are", "was", "be",
         "it", "this", "that",
     };
@@ -91,12 +101,16 @@ public static class DictationFidelityCheck
             }
         }
 
+        // "nicht" for a dictated "kein" is a rewording, so any source negation backs any output negation.
+        var sourceHasNegation = sourceForms.Overlaps(Negations);
+
         var seen = new HashSet<string>();
         var result = new List<string>();
-        foreach (var token in OutputContentTokens(output))
+        foreach (var token in OutputContentTokens(output, sourceForms, sourceStems))
         {
             var form = Normalize(token);
-            var supported = sourceForms.Contains(form)
+            var supported = (sourceHasNegation && Negations.Contains(form))
+                || sourceForms.Contains(form)
                 || sourceStems.Contains(Stem(form))
                 || compounds.Contains(form)
                 || compoundStems.Contains(Stem(form));
@@ -108,7 +122,7 @@ public static class DictationFidelityCheck
 
     // Original-spelling tokens of the output that count as content words: no markers, no heading
     // lines, no heading words, no stopwords, no short noise.
-    private static List<string> OutputContentTokens(string output)
+    private static List<string> OutputContentTokens(string output, HashSet<string> sourceForms, HashSet<string> sourceStems)
     {
         var text = output;
         foreach (var marker in Markers)
@@ -116,7 +130,7 @@ public static class DictationFidelityCheck
         var result = new List<string>();
         foreach (var line in NewlineSplit.Split(text))
         {
-            if (IsHeadingLine(line)) continue;
+            if (IsHeadingLine(line, sourceForms, sourceStems)) continue;
             foreach (var token in Tokens(line))
                 if (IsContent(token)) result.Add(token);
         }
@@ -124,15 +138,28 @@ public static class DictationFidelityCheck
     }
 
     // A whole line that is a section heading, with or without Markdown decoration:
-    // "## Befund", "**Therapie:**", "Weitere Hinweise:". "Befund: Psoas rechts" is not one.
-    private static bool IsHeadingLine(string line)
+    // "## Befund", "**Therapie:**", "Weitere Hinweise:". "Befund: Psoas rechts" is not one. Every word
+    // must be a heading word, a function word or from the sources: "Verdacht auf Bandscheibenvorfall:"
+    // is an invented finding dressed up as a heading and stays checked.
+    private static bool IsHeadingLine(string line, HashSet<string> sourceForms, HashSet<string> sourceStems)
     {
         var trimmed = line.Trim(' ', '\t');
-        if (trimmed.StartsWith('#')) return true;
         var core = trimmed.Trim('#', '*', '_', ' ');
-        if (!core.EndsWith(':')) return false;
-        var words = core[..^1].Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
-        return words.Length is >= 1 and <= 3;
+        if (!trimmed.StartsWith('#'))
+        {
+            if (!core.EndsWith(':')) return false;
+            core = core[..^1];
+        }
+        var words = Tokens(core);
+        if (!trimmed.StartsWith('#') && words.Count is < 1 or > 3) return false;
+        foreach (var word in words)
+        {
+            var form = Normalize(word);
+            if (HeadingLineWords.Contains(form) || Stopwords.Contains(form)
+                || sourceForms.Contains(form) || sourceStems.Contains(Stem(form))) continue;
+            return false;
+        }
+        return true;
     }
 
     // Splits on everything that is not a letter or digit, so "L4/L5" and "ISG-Blockade" fall apart

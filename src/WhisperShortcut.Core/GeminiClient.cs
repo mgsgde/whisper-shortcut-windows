@@ -38,8 +38,10 @@ public enum KeyCheck
 {
     /// <summary>Google accepted the key.</summary>
     Ok,
-    /// <summary>Blank key, or Google rejected it (400/401/403).</summary>
+    /// <summary>Blank key, or Google rejected it (400/401).</summary>
     Invalid,
+    /// <summary>403: a real key that may not use the Gemini API (API off, restricted, or blocked).</summary>
+    Forbidden,
     /// <summary>Google could not be reached (network error or timeout).</summary>
     NoConnection,
     /// <summary>Any other answer (e.g. 429, 5xx); the key may still be fine.</summary>
@@ -213,7 +215,8 @@ public sealed class GeminiClient
             result = (int)response.StatusCode switch
             {
                 200 => KeyCheck.Ok,
-                400 or 401 or 403 => KeyCheck.Invalid,
+                400 or 401 => KeyCheck.Invalid,
+                403 => KeyCheck.Forbidden,
                 _ => KeyCheck.Other,
             };
         }

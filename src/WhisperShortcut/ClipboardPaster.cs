@@ -15,6 +15,12 @@ internal enum PasteOutcome
     Failed,
 }
 
+/// <summary>The clipboard changed after Ctrl+C but its text could not be read: there may be a selection we never saw.</summary>
+internal sealed class SelectionUnreadableException : Exception
+{
+    public SelectionUnreadableException() : base("Selection copied but the clipboard could not be read") { }
+}
+
 /// <summary>
 /// Clipboard + synthetic Ctrl+C / Ctrl+V, the Windows port of the Mac's non-destructive paste.
 /// Runs on the UI thread; waits are awaited, never blocking. Only text is saved and restored.
@@ -26,9 +32,16 @@ internal sealed class ClipboardPaster
     // 500 ms (the plan's first number) was too short: a hand holding the hotkey 600 ms made Ctrl+V arrive
     // as Ctrl+Alt+V (= AltGr+V, typed "√" in Notepad). Found in the VM with `vm.sh hold 600`.
     private static readonly TimeSpan ModifierWait = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan CopyDeadline = TimeSpan.FromMilliseconds(500);
+    private static readonly TimeSpan CopyDeadline = TimeSpan.FromMilliseconds(2000);
 
     private readonly IntPtr _owner;
+
+    // The restore that is still waiting: the user's original text, the sequence number our text got,
+    // and the token that cancels it. A second paste inside the 2 s must not take our own text for
+    // the user's clipboard, so it reuses this original and replaces the older restore.
+    private string? _pendingOriginal;
+    private uint _pendingSequence;
+    private CancellationTokenSource? _pendingRestore;
 
     public ClipboardPaster(IntPtr clipboardOwner) => _owner = clipboardOwner;
 
@@ -36,10 +49,12 @@ internal sealed class ClipboardPaster
     /// Puts <paramref name="text"/> at the cursor: save clipboard text, set ours, Ctrl+V, and after
     /// 2000 ms put the old text back, but only when nobody else wrote the clipboard in between.
     /// </summary>
-    public async Task<PasteOutcome> PasteAsync(string text)
+    public async Task<PasteOutcome> PasteAsync(string text, CancellationToken ct = default)
     {
         // The user may still hold Ctrl+Alt from the hotkey: Ctrl+V would arrive as Ctrl+Alt+V.
-        if (!await WaitForModifiersReleasedAsync())
+        bool released = await WaitForModifiersReleasedAsync(ct);
+        ct.ThrowIfCancellationRequested(); // cancelled while waiting: leave the clipboard alone
+        if (!released)
             return WriteText(text) ? PasteOutcome.ClipboardOnlyKeysHeld : PasteOutcome.Failed;
 
         if (ForegroundIsElevated())
@@ -48,41 +63,68 @@ internal sealed class ClipboardPaster
             return WriteText(text) ? PasteOutcome.ClipboardOnlyElevatedTarget : PasteOutcome.Failed;
         }
 
-        bool hadText = TryReadText(out var previous);
+        string? original;
+        if (_pendingRestore != null && GetClipboardSequenceNumber() == _pendingSequence)
+        {
+            // Still our earlier text on the clipboard: the user's own is the one saved back then.
+            original = _pendingOriginal;
+        }
+        else
+        {
+            original = TryReadText(out var previous) ? previous : null;
+        }
         if (!WriteText(text)) return PasteOutcome.Failed;
         uint ourSequence = GetClipboardSequenceNumber();
+        _pendingRestore?.Cancel(); // only the latest paste restores
+        var restore = new CancellationTokenSource();
+        _pendingRestore = restore;
+        _pendingOriginal = original;
+        _pendingSequence = ourSequence;
 
         await Task.Delay(50);
         SendChord(0x56); // V
         Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars)");
 
-        _ = RestoreLaterAsync(hadText ? previous : null, ourSequence);
+        _ = RestoreLaterAsync(original, ourSequence, restore);
         return PasteOutcome.Pasted;
     }
 
     /// <summary>Puts text on the clipboard without pasting (tray menu: "Letzten Text kopieren").</summary>
     public bool CopyToClipboard(string text) => WriteText(text);
 
-    private async Task RestoreLaterAsync(string? previous, uint ourSequence)
+    private async Task RestoreLaterAsync(string? previous, uint ourSequence, CancellationTokenSource self)
     {
-        await Task.Delay(RestoreDelay);
-        if (previous == null) return; // there was no text before; nothing of the user's to bring back
-        if (GetClipboardSequenceNumber() != ourSequence)
+        try
         {
-            Core.Log.Info("Paste: clipboard changed by someone else, not restoring");
-            return;
+            try { await Task.Delay(RestoreDelay, self.Token); }
+            catch (OperationCanceledException) { return; } // a newer paste took over
+            if (previous == null) return; // there was no text before; nothing of the user's to bring back
+            if (GetClipboardSequenceNumber() != ourSequence)
+            {
+                Core.Log.Info("Paste: clipboard changed by someone else, not restoring");
+                return;
+            }
+            Core.Log.Info(WriteText(previous) ? "Paste: restored previous clipboard" : "Paste: restore failed");
         }
-        Core.Log.Info(WriteText(previous) ? "Paste: restored previous clipboard" : "Paste: restore failed");
+        finally
+        {
+            if (_pendingRestore == self) _pendingRestore = null;
+            self.Dispose();
+        }
     }
 
     /// <summary>
     /// Copies the current selection with Ctrl+C and returns it, or null when nothing was selected.
     /// Only a changed clipboard sequence number counts: an unchanged clipboard still holds an old copy
     /// that has nothing to do with this recording. The user's clipboard is put back afterwards.
+    /// Throws <see cref="SelectionUnreadableException"/> when the clipboard changed but stayed unreadable:
+    /// "no selection" would let a new text overwrite the marked one. Cancelling (Esc) sends no Ctrl+C
+    /// when it comes before the keystroke, and puts the clipboard back when it comes after.
     /// </summary>
-    public async Task<string?> CopySelectionAsync()
+    public async Task<string?> CopySelectionAsync(CancellationToken ct = default)
     {
-        if (!await WaitForModifiersReleasedAsync()) return null;
+        if (!await WaitForModifiersReleasedAsync(ct)) return null;
+        ct.ThrowIfCancellationRequested();
         if (ForegroundIsElevated())
         {
             Core.Log.Info("Copy: foreground window runs elevated, treating as no selection");
@@ -94,22 +136,36 @@ internal sealed class ClipboardPaster
         SendChord(0x43); // C
 
         var deadline = DateTime.UtcNow + CopyDeadline;
-        while (DateTime.UtcNow < deadline)
+        try
         {
-            await Task.Delay(15);
-            if (GetClipboardSequenceNumber() == before) continue;
-            // Some apps announce the change before the data is readable; give them a few tries.
-            string? copied = null;
-            for (int i = 0; i < 5 && copied == null; i++)
+            while (DateTime.UtcNow < deadline)
             {
-                if (!TryReadText(out copied)) await Task.Delay(15);
+                await Task.Delay(15, ct);
+                if (GetClipboardSequenceNumber() == before) continue;
+                // Some apps announce the change before the data is readable; give them a few tries.
+                string? copied = null;
+                for (int i = 0; i < 5 && copied == null; i++)
+                {
+                    if (!TryReadText(out copied)) await Task.Delay(15, ct);
+                }
+                if (hadText) WriteText(previous!);
+                if (copied == null)
+                {
+                    Core.Log.Error("Copy: clipboard changed but could not be read");
+                    throw new SelectionUnreadableException();
+                }
+                var trimmed = copied.Trim();
+                Core.Log.Info($"Copy: selection {(trimmed.Length == 0 ? "empty" : trimmed.Length + " chars")}");
+                return trimmed.Length == 0 ? null : trimmed;
             }
-            if (hadText) WriteText(previous!);
-            var trimmed = copied?.Trim();
-            Core.Log.Info($"Copy: selection {(string.IsNullOrEmpty(trimmed) ? "empty" : trimmed.Length + " chars")}");
-            return string.IsNullOrEmpty(trimmed) ? null : trimmed;
         }
-        Core.Log.Info("Copy: clipboard unchanged after 500 ms, no selection");
+        catch (OperationCanceledException)
+        {
+            // Ctrl+C is out already: the selection may have replaced the user's clipboard text.
+            if (hadText && GetClipboardSequenceNumber() != before) WriteText(previous!);
+            throw;
+        }
+        Core.Log.Info("Copy: clipboard unchanged after 2000 ms, no selection");
         return null;
     }
 
@@ -124,7 +180,7 @@ internal sealed class ClipboardPaster
     /// Waits (max 3 s) until Ctrl, Alt, AltGr, Shift and both Win keys are up; false when they never were.
     /// We never send an Alt key-up ourselves: a lone Alt release opens the menu bar in Word and Notepad.
     /// </summary>
-    private static async Task<bool> WaitForModifiersReleasedAsync()
+    private static async Task<bool> WaitForModifiersReleasedAsync(CancellationToken ct = default)
     {
         var start = DateTime.UtcNow;
         while (AnyModifierDown())
@@ -135,7 +191,7 @@ internal sealed class ClipboardPaster
                     + string.Join(",", Modifiers.Where(vk => (GetAsyncKeyState(vk) & 0x8000) != 0).Select(vk => $"0x{vk:X2}")));
                 return false;
             }
-            await Task.Delay(10);
+            await Task.Delay(10, ct);
         }
         var waited = DateTime.UtcNow - start;
         if (waited.TotalMilliseconds >= 20) Core.Log.Info($"Waited {waited.TotalMilliseconds:0} ms for modifiers to be released");

@@ -71,17 +71,21 @@ public sealed class LlamaServerHost : IDisposable
     /// <summary>Starts the server if needed and waits until it is healthy. Concurrent callers share one start.</summary>
     public Task EnsureStartedAsync(CancellationToken ct)
     {
+        // A caller that wants the server counts as use: the idle timer must not kill it before the request arrives.
+        MarkUsed();
         Task start;
+        Process? stale = null;
         lock (_gate)
         {
             if (IsRunningLocked) return Task.CompletedTask;
             if (_startTask == null || _startTask.IsCompleted || (_process?.HasExited ?? false))
             {
-                CleanupLocked();
+                stale = DetachLocked();
                 _startTask = StartAsync();
             }
             start = _startTask;
         }
+        Kill(stale, wait: false);
         // The start itself is not tied to one caller's token: others may still wait for it.
         return start.WaitAsync(ct);
     }
@@ -100,10 +104,13 @@ public sealed class LlamaServerHost : IDisposable
         }
     }
 
-    /// <summary>Kills the server and its child processes.</summary>
+    /// <summary>Kills the server and its child processes and waits (up to 5 s) until it is gone.</summary>
     public void Stop()
     {
-        lock (_gate) CleanupLocked();
+        Process? p;
+        lock (_gate) p = DetachLocked();
+        // Outside the lock: the output handlers take it. The model file stays mapped until the process is gone.
+        Kill(p, wait: true);
     }
 
     /// <inheritdoc />
@@ -113,15 +120,25 @@ public sealed class LlamaServerHost : IDisposable
         _health.Dispose();
     }
 
-    private void CleanupLocked()
+    // Forgets the process and returns it, so the caller kills it outside the lock.
+    private Process? DetachLocked()
     {
         var p = _process;
         _process = null;
         _baseUrl = null;
         _ready = false;
         _startTask = null;
+        return p;
+    }
+
+    private static void Kill(Process? p, bool wait)
+    {
         if (p == null) return;
-        try { if (!p.HasExited) p.Kill(entireProcessTree: true); }
+        try
+        {
+            if (!p.HasExited) p.Kill(entireProcessTree: true);
+            if (wait && !p.WaitForExit(5000)) Log.Error("llama-server did not exit within 5 s of the kill");
+        }
         catch (Exception ex) { Log.Error("llama-server kill failed", ex); }
         p.Dispose();
     }
@@ -142,7 +159,7 @@ public sealed class LlamaServerHost : IDisposable
             RedirectStandardError = true,
         };
         foreach (var a in new[] { "-m", _modelPath, "--host", "127.0.0.1", "--port", port.ToString(),
-                     "-c", "8192", "--jinja", "--no-webui", "-ngl", "99" })
+                     "-c", "16384", "--jinja", "--no-webui", "-ngl", "99" })
             psi.ArgumentList.Add(a);
 
         Process p;
@@ -180,6 +197,7 @@ public sealed class LlamaServerHost : IDisposable
                 if (resp.StatusCode == HttpStatusCode.OK)
                 {
                     lock (_gate) _ready = ReferenceEquals(_process, p);
+                    MarkUsed();
                     Log.Info($"llama-server ready on port {port} after {sw.Elapsed.TotalSeconds:F1} s");
                     return;
                 }
@@ -212,7 +230,8 @@ public sealed class LlamaServerHost : IDisposable
         lock (_gate) lines = _ring.ToArray();
         Log.Error($"{why}; last output: {string.Join(" | ", lines)}");
         Stop();
-        throw new LocalLlmException(unsupportedCpu ? UnsupportedCpuMessage : "Das lokale Sprachmodell ließ sich nicht starten. Details im Protokoll.");
+        if (unsupportedCpu) throw new UnsupportedCpuException(UnsupportedCpuMessage);
+        throw new LocalLlmException("Das lokale Sprachmodell ließ sich nicht starten. Details im Protokoll.");
     }
 
     private void Ring(string? line)
