@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Text;
 using static WhisperShortcut.NativeMethods;
 
 namespace WhisperShortcut;
@@ -11,6 +12,8 @@ internal enum PasteOutcome
     ClipboardOnlyElevatedTarget,
     /// <summary>Ctrl/Alt were still held after 3 s: a Ctrl+V now would arrive as Ctrl+Alt+V. Text stays on the clipboard.</summary>
     ClipboardOnlyKeysHeld,
+    /// <summary>The user switched to another window since the recording started and the old one could not be brought back. Text stays on the clipboard.</summary>
+    ClipboardOnlyTargetChanged,
     /// <summary>Could not write the clipboard at all.</summary>
     Failed,
 }
@@ -23,7 +26,8 @@ internal sealed class SelectionUnreadableException : Exception
 
 /// <summary>
 /// Clipboard + synthetic Ctrl+C / Ctrl+V, the Windows port of the Mac's non-destructive paste.
-/// Runs on the UI thread; waits are awaited, never blocking. Only text is saved and restored.
+/// Runs on the UI thread; waits are awaited, never blocking. The whole clipboard (every memory-based
+/// format, so images and Office content survive too) is saved and restored.
 /// </summary>
 internal sealed class ClipboardPaster
 {
@@ -33,29 +37,103 @@ internal sealed class ClipboardPaster
     // as Ctrl+Alt+V (= AltGr+V, typed "√" in Notepad). Found in the VM with `vm.sh hold 600`.
     private static readonly TimeSpan ModifierWait = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan CopyDeadline = TimeSpan.FromMilliseconds(2000);
+    /// <summary>After the deadline a slow app may still deliver its Ctrl+C; the Mac keeps watching too.</summary>
+    private static readonly TimeSpan LateCopyWindow = TimeSpan.FromMilliseconds(3000);
+    /// <summary>A copy bumps the sequence number more than once (empty, then each format): let it settle.</summary>
+    private static readonly TimeSpan LateCopySettle = TimeSpan.FromMilliseconds(100);
+    /// <summary>Above this the snapshot falls back to text only, so a 200 MB image never sits in memory.</summary>
+    private const long SnapshotCap = 64L * 1024 * 1024;
 
     private readonly IntPtr _owner;
 
-    // The restore that is still waiting: the user's original text, the sequence number our text got,
+    // The restore that is still waiting: the user's original clipboard, the sequence number our text got,
     // and the token that cancels it. A second paste inside the 2 s must not take our own text for
     // the user's clipboard, so it reuses this original and replaces the older restore.
-    private string? _pendingOriginal;
+    private ClipboardSnapshot? _pendingOriginal;
     private uint _pendingSequence;
     private CancellationTokenSource? _pendingRestore;
+
+    // Late-copy watch (see CopySelectionAsync). Only touched on the UI thread.
+    private CancellationTokenSource? _lateWatch;
+    private uint _lateBaseline;
+    private bool _lateCopyArrived;
 
     public ClipboardPaster(IntPtr clipboardOwner) => _owner = clipboardOwner;
 
     /// <summary>
-    /// Puts <paramref name="text"/> at the cursor: save clipboard text, set ours, Ctrl+V, and after
-    /// 2000 ms put the old text back, but only when nobody else wrote the clipboard in between.
+    /// True when a Ctrl+C that missed the 2 s deadline arrived afterwards: there is a selection the
+    /// recording never saw, so composing a new text over it would be wrong.
     /// </summary>
-    public async Task<PasteOutcome> PasteAsync(string text, CancellationToken ct = default)
+    public bool LateCopyArrived => _lateCopyArrived;
+
+    /// <summary>Stops the late-copy watch and clears its flag (new recording, Esc, paste, retry).</summary>
+    public void CancelLateWatch()
+    {
+        _lateWatch?.Cancel();
+        _lateWatch = null;
+        _lateCopyArrived = false;
+    }
+
+    /// <summary>The top-level window in front right now (the paste target Mac keeps as the front app).</summary>
+    public static IntPtr ForegroundRoot()
+    {
+        var hwnd = GetForegroundWindow();
+        if (hwnd == IntPtr.Zero) return IntPtr.Zero;
+        var root = GetAncestor(hwnd, GA_ROOT);
+        return root != IntPtr.Zero ? root : hwnd;
+    }
+
+    /// <summary>
+    /// True for the tray menu, the taskbar and our own windows: after a click on the tray icon one of
+    /// these is in front, never the program the user was typing in.
+    /// </summary>
+    public static bool IsShellOrOwnWindow(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        if (pid == (uint)Environment.ProcessId) return true;
+        var name = new StringBuilder(64);
+        if (GetClassName(hwnd, name, name.Capacity) == 0) return false;
+        string cls = name.ToString();
+        return cls.StartsWith("Shell_", StringComparison.Ordinal) || cls is "NotifyIconOverflowWindow" or "TopLevelWindowForOverflowXamlIsland";
+    }
+
+    /// <summary>
+    /// Puts <paramref name="text"/> at the cursor: save the clipboard, set ours, Ctrl+V, and after
+    /// 2000 ms put the old clipboard back, but only when nobody else wrote it in between.
+    /// Pastes only into <paramref name="target"/> (the window in front when the recording began); when the
+    /// user went elsewhere the text stays on the clipboard. <c>IntPtr.Zero</c> means: no target to check.
+    /// </summary>
+    public async Task<PasteOutcome> PasteAsync(string text, IntPtr target, CancellationToken ct = default)
     {
         // The user may still hold Ctrl+Alt from the hotkey: Ctrl+V would arrive as Ctrl+Alt+V.
         bool released = await WaitForModifiersReleasedAsync(ct);
         ct.ThrowIfCancellationRequested(); // cancelled while waiting: leave the clipboard alone
+        CancelLateWatch(); // our own write below would look like a late copy
         if (!released)
             return WriteText(text) ? PasteOutcome.ClipboardOnlyKeysHeld : PasteOutcome.Failed;
+
+        if (target != IntPtr.Zero && ForegroundRoot() != target)
+        {
+            bool back = false;
+            string why;
+            if (!IsWindow(target)) why = "target window is gone";
+            else if (IsIconic(target)) why = "target window is minimised";
+            else
+            {
+                // Windows may refuse (foreground lock); then the check below simply fails. No input tricks.
+                bool asked = SetForegroundWindow(target);
+                for (int i = 0; i < 10 && ForegroundRoot() != target; i++) await Task.Delay(20, ct);
+                back = ForegroundRoot() == target;
+                why = asked ? "target did not come to the front" : "SetForegroundWindow refused";
+            }
+            if (!back)
+            {
+                Core.Log.Info($"Paste: foreground changed since the recording began ({why}), leaving text on the clipboard");
+                return WriteText(text) ? PasteOutcome.ClipboardOnlyTargetChanged : PasteOutcome.Failed;
+            }
+            Core.Log.Info("Paste: foreground changed, brought the target window back");
+        }
 
         if (ForegroundIsElevated())
         {
@@ -63,7 +141,7 @@ internal sealed class ClipboardPaster
             return WriteText(text) ? PasteOutcome.ClipboardOnlyElevatedTarget : PasteOutcome.Failed;
         }
 
-        string? original;
+        ClipboardSnapshot? original;
         if (_pendingRestore != null && GetClipboardSequenceNumber() == _pendingSequence)
         {
             // Still our earlier text on the clipboard: the user's own is the one saved back then.
@@ -71,7 +149,7 @@ internal sealed class ClipboardPaster
         }
         else
         {
-            original = TryReadText(out var previous) ? previous : null;
+            original = TrySnapshot();
         }
         if (!WriteText(text)) return PasteOutcome.Failed;
         uint ourSequence = GetClipboardSequenceNumber();
@@ -90,21 +168,27 @@ internal sealed class ClipboardPaster
     }
 
     /// <summary>Puts text on the clipboard without pasting (tray menu: "Letzten Text kopieren").</summary>
-    public bool CopyToClipboard(string text) => WriteText(text);
+    public bool CopyToClipboard(string text)
+    {
+        CancelLateWatch();
+        return WriteText(text);
+    }
 
-    private async Task RestoreLaterAsync(string? previous, uint ourSequence, CancellationTokenSource self)
+    private async Task RestoreLaterAsync(ClipboardSnapshot? previous, uint ourSequence, CancellationTokenSource self)
     {
         try
         {
             try { await Task.Delay(RestoreDelay, self.Token); }
             catch (OperationCanceledException) { return; } // a newer paste took over
-            if (previous == null) return; // there was no text before; nothing of the user's to bring back
+            if (previous == null) return; // the clipboard was empty before; nothing of the user's to bring back
             if (GetClipboardSequenceNumber() != ourSequence)
             {
                 Core.Log.Info("Paste: clipboard changed by someone else, not restoring");
                 return;
             }
-            Core.Log.Info(WriteText(previous) ? "Paste: restored previous clipboard" : "Paste: restore failed");
+            Core.Log.Info(Restore(previous) ? "Paste: restored previous clipboard" : "Paste: restore failed");
+            // Our own restore is no late copy: move the watch's baseline along.
+            if (_lateWatch != null) _lateBaseline = GetClipboardSequenceNumber();
         }
         finally
         {
@@ -120,9 +204,11 @@ internal sealed class ClipboardPaster
     /// Throws <see cref="SelectionUnreadableException"/> when the clipboard changed but stayed unreadable:
     /// "no selection" would let a new text overwrite the marked one. Cancelling (Esc) sends no Ctrl+C
     /// when it comes before the keystroke, and puts the clipboard back when it comes after.
+    /// After the deadline it keeps watching for 3 s (<see cref="LateCopyArrived"/>), like the Mac.
     /// </summary>
     public async Task<string?> CopySelectionAsync(CancellationToken ct = default)
     {
+        CancelLateWatch(); // a watch from an earlier recording is obsolete
         if (!await WaitForModifiersReleasedAsync(ct)) return null;
         ct.ThrowIfCancellationRequested();
         if (ForegroundIsElevated())
@@ -131,7 +217,17 @@ internal sealed class ClipboardPaster
             return null;
         }
 
-        bool hadText = TryReadText(out var previous);
+        // A paste restore still waiting means the clipboard holds our own pasted text: the user's is the saved one.
+        ClipboardSnapshot? previous;
+        if (_pendingRestore != null && GetClipboardSequenceNumber() == _pendingSequence)
+        {
+            previous = _pendingOriginal;
+            Core.Log.Info("Copy: paste restore still pending, using the saved clipboard as the user's");
+        }
+        else
+        {
+            previous = TrySnapshot();
+        }
         uint before = GetClipboardSequenceNumber();
         SendChord(0x43); // C
 
@@ -148,7 +244,7 @@ internal sealed class ClipboardPaster
                 {
                     if (!TryReadText(out copied)) await Task.Delay(15, ct);
                 }
-                if (hadText) WriteText(previous!);
+                if (previous != null) Restore(previous);
                 if (copied == null)
                 {
                     Core.Log.Error("Copy: clipboard changed but could not be read");
@@ -161,12 +257,51 @@ internal sealed class ClipboardPaster
         }
         catch (OperationCanceledException)
         {
-            // Ctrl+C is out already: the selection may have replaced the user's clipboard text.
-            if (hadText && GetClipboardSequenceNumber() != before) WriteText(previous!);
+            // Ctrl+C is out already: the selection may have replaced the user's clipboard.
+            if (previous != null && GetClipboardSequenceNumber() != before) Restore(previous);
             throw;
         }
         Core.Log.Info("Copy: clipboard unchanged after 2000 ms, no selection");
+        var watch = new CancellationTokenSource();
+        _lateWatch = watch;
+        _lateBaseline = before;
+        _ = WatchLateCopyAsync(previous, watch);
         return null;
+    }
+
+    /// <summary>
+    /// 3 s more after the deadline: a slow app may still answer our Ctrl+C. Then the user's clipboard goes
+    /// back (the copy is not wanted as clipboard content), and <see cref="LateCopyArrived"/> tells the
+    /// caller not to compose over a selection it never saw.
+    /// </summary>
+    private async Task WatchLateCopyAsync(ClipboardSnapshot? previous, CancellationTokenSource self)
+    {
+        try
+        {
+            var end = DateTime.UtcNow + LateCopyWindow;
+            while (DateTime.UtcNow < end)
+            {
+                await Task.Delay(30, self.Token);
+                if (GetClipboardSequenceNumber() == _lateBaseline) continue;
+                _lateCopyArrived = true;
+                await Task.Delay(LateCopySettle, self.Token);
+                if (previous == null)
+                {
+                    Core.Log.Info("Copy: late clipboard change after deadline, nothing to restore");
+                    return;
+                }
+                Core.Log.Info(Restore(previous)
+                    ? "Copy: late clipboard change after deadline, restored"
+                    : "Copy: late clipboard change after deadline, restore failed");
+                return;
+            }
+        }
+        catch (OperationCanceledException) { /* a new recording, Esc or a paste took over */ }
+        finally
+        {
+            if (_lateWatch == self) _lateWatch = null;
+            self.Dispose();
+        }
     }
 
     // ---- keyboard ----
@@ -272,6 +407,99 @@ internal sealed class ClipboardPaster
         }
         Core.Log.Error("OpenClipboard failed 10 times");
         return false;
+    }
+
+    /// <summary>Everything that was on the clipboard: format id plus the raw bytes of its memory block.</summary>
+    private sealed class ClipboardSnapshot
+    {
+        public readonly List<(uint Format, byte[] Data)> Items = new();
+    }
+
+    /// <summary>
+    /// False for formats whose handle is not a global memory block (CF_BITMAP, CF_METAFILEPICT, CF_PALETTE,
+    /// CF_ENHMETAFILE, the owner-display family) and for 0x200-0x3FF (private formats may hold any handle;
+    /// GDI objects). CF_DIB/CF_DIBV5 are memory and keep images alive; Windows regenerates CF_BITMAP from them.
+    /// </summary>
+    private static bool IsMemoryFormat(uint format) => format switch
+    {
+        2 or 3 or 9 or 14 or 0x80 or 0x82 or 0x83 or 0x8E => false,
+        >= 0x200 and <= 0x3FF => false,
+        _ => true,
+    };
+
+    /// <summary>
+    /// Copies every memory-based format. Null when the clipboard is empty or cannot be opened (nothing to
+    /// bring back). Above 64 MB only the text is kept. The log names sizes, never content.
+    /// </summary>
+    private ClipboardSnapshot? TrySnapshot()
+    {
+        if (!Open()) return null;
+        try
+        {
+            var snap = new ClipboardSnapshot();
+            long total = 0;
+            for (uint format = EnumClipboardFormats(0); format != 0; format = EnumClipboardFormats(format))
+            {
+                if (!IsMemoryFormat(format)) continue;
+                IntPtr handle = GetClipboardData(format);
+                if (handle == IntPtr.Zero) continue;
+                long size = (long)GlobalSize(handle);
+                if (size <= 0) continue; // not a memory block after all
+                total += size;
+                if (total > SnapshotCap)
+                {
+                    Core.Log.Info($"Clipboard snapshot above {SnapshotCap / (1024 * 1024)} MB, keeping text only");
+                    snap.Items.Clear();
+                    IntPtr text = GetClipboardData(CF_UNICODETEXT);
+                    long textSize = text == IntPtr.Zero ? 0 : (long)GlobalSize(text);
+                    if (textSize > 0 && textSize <= SnapshotCap) CopyFormat(snap, CF_UNICODETEXT, text, textSize);
+                    return snap.Items.Count > 0 ? snap : null;
+                }
+                CopyFormat(snap, format, handle, size);
+            }
+            return snap.Items.Count > 0 ? snap : null;
+        }
+        finally { CloseClipboard(); }
+    }
+
+    private static void CopyFormat(ClipboardSnapshot snap, uint format, IntPtr handle, long size)
+    {
+        IntPtr ptr = GlobalLock(handle);
+        if (ptr == IntPtr.Zero) return;
+        try
+        {
+            var bytes = new byte[size];
+            Marshal.Copy(ptr, bytes, 0, bytes.Length);
+            snap.Items.Add((format, bytes));
+        }
+        finally { GlobalUnlock(handle); }
+    }
+
+    /// <summary>
+    /// Writes the snapshot back in one session. No history/cloud markers here: it is the user's own data
+    /// and may belong in Win+V again.
+    /// </summary>
+    private bool Restore(ClipboardSnapshot snap)
+    {
+        if (!Open()) return false;
+        try
+        {
+            EmptyClipboard();
+            int written = 0;
+            foreach (var (format, data) in snap.Items)
+            {
+                IntPtr handle = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)(uint)data.Length);
+                if (handle == IntPtr.Zero) continue;
+                IntPtr ptr = GlobalLock(handle);
+                if (ptr == IntPtr.Zero) { GlobalFree(handle); continue; }
+                Marshal.Copy(data, 0, ptr, data.Length);
+                GlobalUnlock(handle);
+                if (SetClipboardData(format, handle) == IntPtr.Zero) GlobalFree(handle);
+                else written++;
+            }
+            return written > 0;
+        }
+        finally { CloseClipboard(); }
     }
 
     private bool TryReadText(out string? text)
