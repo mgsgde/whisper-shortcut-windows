@@ -295,7 +295,7 @@ public sealed class GeminiClient
                 }
 
                 var code = (int)response.StatusCode;
-                Log.Error($"Gemini {model}: HTTP {code} {GoogleError(text)}");
+                Log.Error($"Gemini {model}: HTTP {code} {GoogleStatus(text)}");
                 failure = MapStatus(response.StatusCode, text);
                 kind = $"HTTP {code}";
                 // A daily quota will not recover within seconds: fail at once.
@@ -389,16 +389,13 @@ public sealed class GeminiClient
         return new GeminiException(GeminiErrorKind.Server, $"Gemini-Fehler (HTTP {code}). Bitte später erneut versuchen.");
     }
 
-    /// <summary>Google's error.status and error.message for the log (no request content in there).</summary>
-    internal static string GoogleError(string body)
+    /// <summary>Only the status word (e.g. RESOURCE_EXHAUSTED) of a Google error body, for the log: the message can quote request content.</summary>
+    internal static string GoogleStatus(string body)
     {
         try
         {
             using var doc = System.Text.Json.JsonDocument.Parse(body);
-            var e = doc.RootElement.GetProperty("error");
-            string status = e.TryGetProperty("status", out var s) ? s.GetString() ?? "" : "";
-            string msg = e.TryGetProperty("message", out var m) ? m.GetString() ?? "" : "";
-            return $"{status}: {(msg.Length > 300 ? msg[..300] : msg)}";
+            return doc.RootElement.GetProperty("error").TryGetProperty("status", out var s) ? s.GetString() ?? "" : "";
         }
         catch { return ""; }
     }

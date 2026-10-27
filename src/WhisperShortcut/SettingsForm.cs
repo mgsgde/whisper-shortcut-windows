@@ -590,8 +590,16 @@ internal sealed class SettingsForm : Form
         var links = new Card();
         links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
             LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
-        links.AddRow(SettingRow("Fehler melden", "Auf GitHub beschreiben, was passiert ist, am besten mit dem Protokoll.",
-            LinkButton("Melden", "https://github.com/mgsgde/whisper-shortcut-windows/issues"), ButtonWidth, out _));
+        var report = new FluentButton("Melden …") { MinimumSize = new Size(96, 32), AccessibleName = "Problem melden" };
+        report.Click += (_, _) => ReportProblem();
+        var reportLog = new FluentButton("Protokoll") { MinimumSize = new Size(96, 32), AccessibleName = "Protokollordner zum Anhängen öffnen" };
+        reportLog.Click += (_, _) => OpenFolder(Core.AppData.LogFolder);
+        var reportButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        reportButtons.Controls.Add(report);
+        reportButtons.Controls.Add(reportLog);
+        links.AddRow(SettingRow("Problem melden", "Öffnet ein GitHub-Issue, schon ausgefüllt mit Version, Windows, Modellen und den "
+            + "letzten Protokollzeilen, ohne diktierte Texte und ohne Schlüssel. Oben eintragen, was passiert ist, und vor dem "
+            + "Absenden durchsehen. Klappt der Link nicht: die Protokolldatei aus dem Ordner anhängen.", reportButtons, 208, out _));
         info.Controls.Add(links);
 
         info.Controls.Add(Section("Lizenz"));
@@ -599,6 +607,33 @@ internal sealed class SettingsForm : Form
     }
 
     private static string AppVersion => Application.ProductVersion.Split('+')[0];
+
+    /// <summary>Opens a prefilled GitHub issue; a body too long for the URL goes to the clipboard instead.</summary>
+    private void ReportProblem()
+    {
+        var info = new Core.ProblemReportInfo(AppVersion, Environment.OSVersion.Version.ToString(),
+            System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(), _settings.OfflineMode,
+            _settings.TranscriptionModel, _settings.PromptModel, _settings.OfflineLlmId);
+        var body = Core.ProblemReport.Body(info, Core.ProblemReport.TailLog(Core.Log.DefaultPath));
+        var (url, bodyInUrl) = Core.ProblemReport.IssueUrl($"Problem in Version {AppVersion}", body);
+        if (!bodyInUrl)
+        {
+            try
+            {
+                Clipboard.SetText(body);
+                MessageBox.Show(this, "Der Bericht ist zu lang für den Link und liegt jetzt in der Zwischenablage. Im Browser ins "
+                    + "Textfeld klicken und Strg+V drücken.", "Problem melden", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception e)
+            {
+                Core.Log.Error($"Copying the problem report failed: {e.GetType().Name}");
+                Warn("Der Bericht konnte nicht in die Zwischenablage. Bitte die Protokolldatei aus dem Ordner an das Issue anhängen.");
+                OpenFolder(Core.AppData.LogFolder);
+            }
+        }
+        Core.Log.Info($"Problem report opened (body in URL: {bodyInUrl})");
+        OpenUrl(url);
+    }
 
     private async Task CheckUpdateAsync()
     {
