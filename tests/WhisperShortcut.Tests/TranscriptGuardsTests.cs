@@ -13,7 +13,21 @@ public class TranscriptGuardsTests
 
     [Fact]
     public void SameWordsSurviveWhenAudioIsShortEnough() =>
-        Assert.Equal("Sabaki Dance", TextCleanup.DiscardGlossaryEcho("Sabaki Dance", 1.5, Glossary));
+        Assert.Equal("Magnus Gödde", TextCleanup.DiscardGlossaryEcho("Magnus Gödde", 1.5, Glossary));
+
+    [Theory]
+    [InlineData("Goedde ramipril.")]
+    [InlineData("Ramipril, Goedde")]
+    [InlineData("RAMIPRIL goedde ramipril!")]
+    public void PureListOfTwoTermsIsDiscardedRegardlessOfLength(string text) =>
+        Assert.Equal("", TextCleanup.DiscardGlossaryEcho(text, 2.16, new[] { "goedde", "ramipril" }));
+
+    [Theory]
+    [InlineData("Ramipril.")]
+    [InlineData("Ramipril und Goedde")]
+    [InlineData("Ramipril 5 mg.")]
+    public void OneTermOrAnyOtherWordIsSpeech(string text) =>
+        Assert.Equal(text, TextCleanup.DiscardGlossaryEcho(text, 2.16, new[] { "goedde", "ramipril" }));
 
     [Fact]
     public void ShortRealSpeechIsNeverDiscarded() =>
@@ -37,7 +51,8 @@ public class TranscriptGuardsTests
 
     [Fact]
     public void UnknownDurationDisablesEchoGate() =>
-        Assert.Equal("sabaki.dance", TextCleanup.DiscardGlossaryEcho("sabaki.dance", 0, Glossary));
+        // One term only: the pure-list rule needs no duration, the length floor does.
+        Assert.Equal("Sabaki", TextCleanup.DiscardGlossaryEcho("Sabaki", 0, Glossary));
 
     [Fact]
     public void TrailingEchoReportAIsStripped()
