@@ -429,4 +429,52 @@ public class GeminiClientTests
         Assert.Equal(KeyCheck.Invalid, await c.CheckKeyAsync("  "));
         Assert.Empty(h.Calls);
     }
+
+    private const string Truncated = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Halb\"}]},\"finishReason\":\"MAX_TOKENS\"}]}";
+    private const string Stopped = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Ganz\"}]},\"finishReason\":\"STOP\"}]}";
+
+    [Fact]
+    public async Task PromptText_MaxTokens_ThrowsTruncated()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("Text", "Mach das freundlicher", null));
+        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+        Assert.Contains("abgeschnitten", ex.Message);
+        Assert.Single(h.Calls); // not retried
+    }
+
+    [Fact]
+    public async Task Prompt_MaxTokens_ThrowsTruncated()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptAsync(Wav, "Text", null));
+        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+    }
+
+    [Fact]
+    public async Task Prompt_StopFinish_ReturnsText()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Stopped));
+        Assert.Equal("Ganz", await c.PromptTextAsync("Text", "Kürzer", null));
+    }
+
+    [Fact]
+    public async Task Prompt_SendsExplicitMaxOutputTokens()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.PromptTextAsync("Text", "Kürzer", null);
+        Assert.Equal(65536, (int)h.Json(0)["generationConfig"]!["maxOutputTokens"]!);
+    }
+
+    [Fact]
+    public async Task Transcribe_MaxTokens_KeepsTextAsBefore()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
+        Assert.Equal("Halb", await c.TranscribeAsync(Wav, Array.Empty<string>()));
+    }
 }

@@ -99,7 +99,9 @@ internal sealed class HotkeyService : NativeWindow, IDisposable
 
     public void UnregisterAll()
     {
+        var count = _handlers.Count;
         foreach (var id in _handlers.Keys) UnregisterHotKey(Handle, id);
+        if (count > 0) Core.Log.Info($"Hotkeys unregistered ({count})");
         _handlers.Clear();
         _ids.Clear();
     }

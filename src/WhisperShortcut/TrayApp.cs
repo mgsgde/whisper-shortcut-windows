@@ -58,6 +58,11 @@ internal sealed class TrayApp : ApplicationContext
     private SettingsForm? _settingsForm;
     private Action? _balloonClick;
     private bool _glossaryBusy;
+    private bool _globalHotkeysOn;
+    private readonly Core.HotkeyPressGate _pressGate = new();
+    private readonly System.Windows.Forms.Timer _keyUpTimer = new() { Interval = 30 };
+    private Keys _armedKey;
+    private long _armedKeyDeadline;
     private readonly ToolStripMenuItem _offlineItem;
     private readonly SynchronizationContext _ui;
 
@@ -121,6 +126,7 @@ internal sealed class TrayApp : ApplicationContext
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
         _icon.BalloonTipClicked += (_, _) => _balloonClick?.Invoke();
 
+        _keyUpTimer.Tick += (_, _) => PollArmedKey();
         RegisterHotkeys();
         SetState(State.Idle);
         // A finished download changes the idle status ("Modelle noch nicht geladen" → "Bereit").
@@ -144,6 +150,7 @@ internal sealed class TrayApp : ApplicationContext
     /// <param name="notify">false when only re-arming after the settings window lost focus: no repeated warning.</param>
     private void RegisterHotkeys(bool notify = true)
     {
+        _globalHotkeysOn = true;
         _hotkeys.UnregisterAll();
         var failed = new List<string>();
         foreach (var (stored, action) in new (string, Action)[]
@@ -172,6 +179,13 @@ internal sealed class TrayApp : ApplicationContext
     private void OnHotkey(Mode mode)
     {
         Core.Log.Info($"Hotkey {mode} in state {_state}");
+        var now = Environment.TickCount64;
+        if (_state != State.Idle && !_pressGate.Accept(now))
+        {
+            Core.Log.Info($"Hotkey {mode} in state {_state} ignored: {(_pressGate.Released ? "within 300 ms" : "key still held")}");
+            return;
+        }
+        var before = _state;
         switch (_state)
         {
             case State.Idle:
@@ -184,15 +198,45 @@ internal sealed class TrayApp : ApplicationContext
                 _cts?.Cancel();
                 break;
         }
+        if (_state != before && Hotkey.TryParse(mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey, out var key))
+            ArmPressGate(key.Key, now);
     }
 
     /// <summary>
-    /// Esc is a global hotkey only while a recording runs, so it never takes Esc away from other
-    /// programs otherwise. It discards the recording; processing is cancelled with the record hotkey.
+    /// The press that changed the state is still down for a moment. Polling its key tells the gate when
+    /// it is up: a second WM_HOTKEY before that is a repeat or a bounce, not a stop or cancel.
+    /// </summary>
+    private void ArmPressGate(Keys key, long now)
+    {
+        _pressGate.Armed(now);
+        _armedKey = key;
+        _armedKeyDeadline = now + 10_000;
+        _keyUpTimer.Start();
+    }
+
+    private void PollArmedKey()
+    {
+        bool down = (NativeMethods.GetAsyncKeyState((int)_armedKey) & 0x8000) != 0;
+        // 10 s at most: a key stuck down must neither keep a timer running nor close the gate for good.
+        if (!down || Environment.TickCount64 >= _armedKeyDeadline)
+        {
+            _pressGate.KeyUp();
+            _keyUpTimer.Stop();
+        }
+    }
+
+    /// <summary>
+    /// Esc is a global hotkey only while a recording or the processing runs, so it never takes Esc away
+    /// from other programs otherwise. It discards the recording or cancels the request (nothing is pasted).
     /// </summary>
     private void OnEscape()
     {
         Core.Log.Info($"Esc in state {_state}");
+        if (_state == State.Processing)
+        {
+            _cts?.Cancel(); // same path as a hotkey press during processing
+            return;
+        }
         if (_state != State.Recording) return;
         (_audio as MicAudioSource)?.Cancel();
         _audio = null;
@@ -392,6 +436,26 @@ internal sealed class TrayApp : ApplicationContext
             _lastFailed = null; // this run worked; the old failure is history
             _recent.Add(text);
 
+            // A quick-action rewrite that lost most of a long selection must not silently replace it. Spoken
+            // instructions are unknown here (Gemini hears them) and "fass zusammen" is a normal request, so
+            // they rely on the MAX_TOKENS check alone.
+            if (_mode == Mode.Prompt && selection != null && _quickAction != null
+                && Core.ReplyGuards.AnswerSuspiciouslyShort(selection.Length, text.Length, _quickAction))
+            {
+                Core.Log.Info($"Prompt: answer {text.Length} chars for a selection of {selection.Length}, not pasted");
+                if (_paster.KeepOnClipboard(text))
+                {
+                    Sounds.Error();
+                    Notify("Bitte prüfen", "Antwort deutlich kürzer als die Markierung – liegt in der Zwischenablage, bitte prüfen.", ToolTipIcon.Warning);
+                }
+                else
+                {
+                    Sounds.Error();
+                    Notify("Einfügen fehlgeschlagen", "Die Zwischenablage war blockiert. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
+                }
+                return;
+            }
+
             var outcome = await _paster.PasteAsync(text, _pasteTarget, ct);
             Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars");
             switch (outcome)
@@ -405,7 +469,7 @@ internal sealed class TrayApp : ApplicationContext
                     done = true;
                     break;
                 case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld or PasteOutcome.ClipboardOnlyTargetChanged
-                    when _unsupported.Count > 0:
+                    or PasteOutcome.ClipboardOnlyOwnWindow when _unsupported.Count > 0:
                     // The balloon would bury the warning; the card says both.
                     _overlay.ShowWarning(_unsupported, pasted: false);
                     done = true;
@@ -423,6 +487,11 @@ internal sealed class TrayApp : ApplicationContext
                 case PasteOutcome.ClipboardOnlyTargetChanged:
                     Notify("Bitte selbst einfügen",
                         "Du hast das Fenster gewechselt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
+                        ToolTipIcon.Info);
+                    break;
+                case PasteOutcome.ClipboardOnlyOwnWindow:
+                    Notify("Bitte selbst einfügen",
+                        "Vorn war ein Fenster von WhisperShortcut. Der Text liegt in der Zwischenablage: Strg+V drücken.",
                         ToolTipIcon.Info);
                     break;
                 case PasteOutcome.Failed:
@@ -542,6 +611,11 @@ internal sealed class TrayApp : ApplicationContext
         }
 
         if (_settings.OfflineMode) return await PromptOfflineAsync(wav, selection, systemPrompt, ct);
+        if (!HasSpeech(wav))
+        {
+            Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
+            return "";
+        }
         var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct);
 
         string? instruction = null;
@@ -676,6 +750,8 @@ internal sealed class TrayApp : ApplicationContext
         var echoTerms = Core.GlossaryPrompt.EchoTerms(glossary);
         return Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav), async (chunk, c) =>
         {
+            // Nothing but room noise: Gemini would answer with the glossary. Also saves the request.
+            if (!HasSpeech(chunk)) return "";
             var text = await _gemini.TranscribeAsync(chunk, glossary, c);
             if (text.Trim().Length == 0
                 || Core.TextCleanup.DiscardGlossaryEcho(text, Core.Wav.DurationSeconds(chunk), echoTerms).Length > 0)
@@ -685,15 +761,26 @@ internal sealed class TrayApp : ApplicationContext
         }, maxParallel: 4, ct);
     }
 
+    /// <summary>Speech gate for a recording or chunk going to Gemini; the file source of --test-wav passes through here too.</summary>
+    private static bool HasSpeech(byte[] wav)
+    {
+        var level = Core.SpeechGate.Analyze(wav);
+        if (Core.SpeechGate.HasSpeech(level)) return true;
+        Core.Log.Info($"No speech (peak {level.PeakDbfs:0} dBFS, loud frames {level.LoudFrames}/{level.Frames}), Gemini skipped");
+        return false;
+    }
+
     /// <summary>
     /// Runs on every transcript, online and offline, as on the Mac: a glossary list tacked onto the end
-    /// is cut off, and a spelling the user rejected (<c>Claude CLI (not "Cloud CLI")</c>) is corrected.
+    /// is cut off, a spelling the user rejected (<c>Claude CLI (not "Cloud CLI")</c>) is corrected, and a
+    /// name Gemini wrote the common way ("Gödde" for "goedde") is set to the glossary spelling.
     /// </summary>
     private string GlossaryBackstops(string raw)
     {
         var glossary = _settings.Glossary.ToList();
         var stripped = Core.TextCleanup.StripTrailingGlossaryEcho(raw, Core.GlossaryPrompt.EchoTerms(glossary));
-        return Core.GlossaryPrompt.CorrectRejectedSpellings(stripped, glossary);
+        var corrected = Core.GlossaryPrompt.CorrectRejectedSpellings(stripped, glossary);
+        return Core.GlossaryPrompt.ApplyTermSpellings(corrected, Core.GlossaryPrompt.EchoTerms(glossary));
     }
 
     /// <summary>
@@ -800,12 +887,12 @@ internal sealed class TrayApp : ApplicationContext
     // ---------------- UI ----------------
 
     /// <summary>
-    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording,
+    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording or processing,
     /// Ctrl+1–5 only while a Dictate Prompt recording runs.
     /// </summary>
     private void SyncSessionHotkeys()
     {
-        if (_state != State.Recording) _hotkeys.Unregister(Escape);
+        if (_state == State.Idle) _hotkeys.Unregister(Escape);
         else if (!_hotkeys.IsRegistered(Escape)) _hotkeys.Register(Escape, OnEscape);
         bool quick = _state == State.Recording && _mode == Mode.Prompt;
         for (int i = 0; i < QuickKeys.Length; i++)
@@ -824,6 +911,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         _state = state;
         SyncSessionHotkeys();
+        SyncGlobalHotkeys();
         string key = Hotkey.Display(_mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey);
         (string status, Icon icon) = state switch
         {
@@ -836,6 +924,31 @@ internal sealed class TrayApp : ApplicationContext
         };
         _icon.Icon = icon;
         SetStatusText(status);
+    }
+
+    /// <summary>
+    /// Idempotent, so the order of the settings window's activate / deactivate / close events cannot
+    /// leave the hotkeys off: every one of them (and every state change) just re-evaluates.
+    /// </summary>
+    private void SyncGlobalHotkeys(bool notify = false)
+    {
+        var f = _settingsForm;
+        // WHY the real foreground and not Form.ActiveForm: a form activated without getting the foreground
+        // (focus-steal prevention) stays "active" while the user works elsewhere. Any window of ours in
+        // front counts, so the settings dialogs (MessageBox) keep the hotkeys off as well.
+        bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow();
+        bool wanted = Core.HotkeyPolicy.WantGlobalHotkeys(settingsInFront, _state == State.Idle);
+        if (wanted == _globalHotkeysOn) return;
+        if (wanted)
+        {
+            RegisterHotkeys(notify);
+        }
+        else
+        {
+            _hotkeys.UnregisterAll();
+            _globalHotkeysOn = false;
+            Core.Log.Info("Hotkeys off: settings window in front");
+        }
     }
 
     private void SetStatusText(string status)
@@ -869,6 +982,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
             _settingsForm.Activate();
+            _settingsForm.BringToFront();
             return;
         }
         if (_state != State.Idle)
@@ -881,18 +995,26 @@ internal sealed class TrayApp : ApplicationContext
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
         _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
-        _settingsForm.Activated += (_, _) => { if (_state == State.Idle) _hotkeys.UnregisterAll(); };
-        _settingsForm.Deactivate += (_, _) => RegisterHotkeys(notify: false);
+        _settingsForm.Activated += (_, _) => SyncGlobalHotkeys();
+        // Posted: while Deactivate runs the new foreground window is not set yet.
+        _settingsForm.Deactivate += (_, _) => _ui.Post(_ => SyncGlobalHotkeys(), null);
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
-            RegisterHotkeys();
+            // Posted so it runs after any activation message still queued for the closing form; forced
+            // because the hotkeys may have been changed in the window.
+            _ui.Post(_ =>
+            {
+                _globalHotkeysOn = false;
+                SyncGlobalHotkeys(notify: true);
+            }, null);
             SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
             _offline.Prewarm(); // offline mode may just have been switched on
             _offline.GlossaryChanged(); // the Glossary may have been edited
         };
         _settingsForm.Show();
         _settingsForm.Activate();
+        _settingsForm.BringToFront();
     }
 
     /// <summary>
@@ -940,6 +1062,7 @@ internal sealed class TrayApp : ApplicationContext
         (_audio as MicAudioSource)?.Cancel();
         _icon.Visible = false;
         _icon.Dispose();
+        _keyUpTimer.Dispose();
         _overlay.Dispose();
         _hotkeys.Dispose();
         _offline.Dispose();

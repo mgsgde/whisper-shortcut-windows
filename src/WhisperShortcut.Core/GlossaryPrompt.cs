@@ -147,6 +147,46 @@ public static class GlossaryPrompt
     public static IReadOnlyList<string> EchoTerms(IReadOnlyList<string> lines) => Parse(lines).Terms;
 
     /// <summary>
+    /// Fixes a single-word term the model spelled the common way: "Herr Gödde" becomes "Herr Goedde"
+    /// for the term "goedde". Matching is whole-word, on the form with ö/oe, ä/ae, ü/ue, ß/ss and case
+    /// folded. Gemini keeps the usual spelling of a near-homophone however the hint is worded, so this
+    /// is done here. No fuzzy matching: a one-letter difference ("Gerade" vs "Goedde") is another word.
+    /// An all-lowercase term takes the capitalization of the word it replaces.
+    /// </summary>
+    public static string ApplyTermSpellings(string text, IReadOnlyList<string> terms)
+    {
+        if (string.IsNullOrEmpty(text) || terms.Count == 0) return text;
+
+        var byKey = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (var term in terms)
+        {
+            if (term.Length == 0 || !term.All(IsLetterOrMark)) continue;
+            byKey.TryAdd(TranslitFold(term), term);
+        }
+        if (byKey.Count == 0) return text;
+
+        var replaced = 0;
+        var result = WordToken.Replace(text, m =>
+        {
+            var word = m.Value;
+            if (!byKey.TryGetValue(TranslitFold(word), out var term) || word == term) return word;
+            replaced++;
+            if (term == term.ToLowerInvariant() && char.IsUpper(word[0]))
+                return char.ToUpperInvariant(term[0]) + term[1..];
+            return term;
+        });
+        if (replaced > 0) Log.Info($"Glossary spelling: {replaced} word(s) set to the glossary spelling");
+        return result;
+    }
+
+    private static readonly Regex WordToken = new(@"[\p{L}\p{M}\p{N}]+", RegexOptions.Compiled);
+
+    // German transliteration key: "Gödde" and "Goedde" meet. Case-folded, other diacritics stay.
+    private static string TranslitFold(string s) =>
+        s.Normalize(NormalizationForm.FormC).ToLowerInvariant()
+            .Replace("ä", "ae").Replace("ö", "oe").Replace("ü", "ue").Replace("ß", "ss");
+
+    /// <summary>
     /// Rewrites a transcript that carries a spelling the user rejected (<c>Claude CLI (not "Cloud CLI")</c>).
     /// Only multi-word rejected forms are rewritten, and a match preceded by a capitalised word is left
     /// alone ("Google Cloud CLI" survives, "die Cloud CLI" becomes "die Claude CLI"). Both rules fail

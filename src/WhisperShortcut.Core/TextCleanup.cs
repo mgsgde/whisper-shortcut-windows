@@ -124,7 +124,17 @@ public static class TextCleanup
     public static string DiscardGlossaryEcho(string text, double audioSeconds, IReadOnlyList<string> glossaryTerms)
     {
         var trimmed = text.Trim();
-        if (trimmed.Length == 0 || audioSeconds <= 0 || glossaryTerms.Count == 0) return text;
+        if (trimmed.Length == 0 || glossaryTerms.Count == 0) return text;
+
+        // Two or more different terms and nothing else is a list read off the prompt, however long
+        // the recording ("Goedde ramipril." for 2 s of silence passes the length floor below).
+        if (IsPureGlossaryList(trimmed, glossaryTerms))
+        {
+            Log.Error($"Discarding glossary-echo transcript ({trimmed.Length} chars, a list of glossary terms only)");
+            return "";
+        }
+
+        if (audioSeconds <= 0) return text;
 
         // Real speech runs 10-20 chars/s; 3 chars/s only trips on near-empty output.
         var minPlausible = audioSeconds * 3.0;
@@ -136,6 +146,26 @@ public static class TextCleanup
 
         Log.Error($"Discarding glossary-echo transcript ({trimmed.Length} chars from {audioSeconds:F1}s audio, min plausible {minPlausible:F0}, all words are glossary terms)");
         return "";
+    }
+
+    /// <summary>
+    /// True when every word of the text belongs to a glossary term and at least two different terms
+    /// appear, in any order. One spoken term ("Ramipril.") or any other word ("Ramipril und Goedde")
+    /// makes it speech.
+    /// </summary>
+    public static bool IsPureGlossaryList(string text, IReadOnlyList<string> glossaryTerms)
+    {
+        var termIndexByWord = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var t = 0; t < glossaryTerms.Count; t++)
+            foreach (var w in EchoWords(glossaryTerms[t])) termIndexByWord.TryAdd(w, t);
+
+        var distinct = new HashSet<int>();
+        foreach (var w in EchoWords(text))
+        {
+            if (!termIndexByWord.TryGetValue(w, out var idx)) return false;
+            distinct.Add(idx);
+        }
+        return distinct.Count >= 2;
     }
 
     /// <summary>

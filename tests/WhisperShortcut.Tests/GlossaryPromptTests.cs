@@ -122,3 +122,38 @@ public class GlossaryPromptTests
         Assert.Equal("", GlossaryPrompt.CorrectRejectedSpellings("", glossary));
     }
 }
+
+public class TermSpellingTests
+{
+    [Theory]
+    [InlineData("Herr Gödde kommt.", "goedde", "Herr Goedde kommt.")]
+    [InlineData("herr gödde kommt.", "goedde", "herr goedde kommt.")]
+    [InlineData("Herr Goedde kommt.", "goedde", "Herr Goedde kommt.")]
+    [InlineData("Göttingen liegt in Niedersachsen.", "goedde", "Göttingen liegt in Niedersachsen.")]
+    [InlineData("Gerade Gödde.", "Goedde", "Gerade Goedde.")]
+    [InlineData("Görde", "goedde", "Görde")] // no fuzzy matching
+    [InlineData("Herr Goedde", "Gödde", "Herr Gödde")] // the glossary spelling wins
+    [InlineData("Die STRASSE ist gesperrt", "Straße", "Die Straße ist gesperrt")]
+    [InlineData("Herr Müller und Herr Mueller", "Müller", "Herr Müller und Herr Müller")]
+    [InlineData("Herr Gödde-Praxis", "goedde", "Herr Goedde-Praxis")]
+    public void SingleWordTermIsSetToTheGlossarySpelling(string text, string term, string expected) =>
+        Assert.Equal(expected, GlossaryPrompt.ApplyTermSpellings(text, new[] { term }));
+
+    [Fact]
+    public void MixedCaseTermKeepsItsOwnCasing() =>
+        Assert.Equal("Ein EnBW Vertrag", GlossaryPrompt.ApplyTermSpellings("Ein enbw Vertrag", new[] { "EnBW" }));
+
+    [Fact]
+    public void MultiWordAndNonLetterTermsAreLeftAlone()
+    {
+        Assert.Equal("Magnus Gödde", GlossaryPrompt.ApplyTermSpellings("Magnus Gödde", new[] { "Magnus Goedde" }));
+        Assert.Equal("sabaki dance", GlossaryPrompt.ApplyTermSpellings("sabaki dance", new[] { "sabaki.dance" }));
+    }
+
+    [Fact]
+    public void EmptyInputsAreUnchanged()
+    {
+        Assert.Equal("", GlossaryPrompt.ApplyTermSpellings("", new[] { "goedde" }));
+        Assert.Equal("Gödde", GlossaryPrompt.ApplyTermSpellings("Gödde", Array.Empty<string>()));
+    }
+}
