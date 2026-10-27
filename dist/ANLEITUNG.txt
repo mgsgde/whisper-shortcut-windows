@@ -23,7 +23,7 @@ Was es kann
      ist trotzdem eingefügt; diese Stellen vor dem Speichern prüfen. Ein Klick schließt den Hinweis.
    Antworten kommen als reiner Text, ohne Sternchen oder Rauten.
 3. Wort ins Glossar: ein Wort markieren (z. B. einen Namen, der falsch erkannt wurde),
-   Strg+Umschalt+G. Ab dann wird es so geschrieben, auch offline.
+   Strg+Umschalt+K. Ab dann wird es so geschrieben, auch offline.
 4. Letzte Texte: Rechtsklick auf das Symbol → „Letzten Text kopieren“ oder „Letzte Texte“
    (die letzten fünf). Praktisch, wenn der Text im falschen Fenster gelandet ist.
    Die Liste steht nur im Arbeitsspeicher und ist nach dem Beenden weg.
@@ -110,7 +110,7 @@ Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit un
   Werkstatt-Vorlage (Auftragsbericht) und eine Handwerks-Vorlage (Angebot). Am besten
   mit 1–2 echten Texten des Nutzers anpassen (Praxisname, Stundensatz, Zahlungsbedingungen).
 - Glossar: Tastenkürzel und die Liste der Namen, Fachbegriffe, Firmennamen (eine Zeile pro
-  Begriff), damit sie richtig geschrieben werden. Strg+Umschalt+G fügt ein markiertes Wort
+  Begriff), damit sie richtig geschrieben werden. Strg+Umschalt+K fügt ein markiertes Wort
   direkt hinzu.
 - Offline: Spracherkennung und Sprachmodell laden oder entfernen, Sprachmodell wählen.
 - Info: Version und „Nach Updates suchen“ (fragt GitHub, installiert nichts selbst),
@@ -134,7 +134,7 @@ Gut zu wissen
 - Diktate enden automatisch nach 30 Minuten, „Text bearbeiten“ nach 5 Minuten. Eine Minute
   vorher zeigt die Anzeige die Restzeit.
 - Diktate landen nicht im Zwischenablage-Verlauf (Win+V). Markierter Text, den die App für
-  Strg+Umschalt+P oder Strg+Umschalt+G kopiert, landet dort aber schon. Bei Patientendaten den
+  Strg+Umschalt+P oder Strg+Umschalt+K kopiert, landet dort aber schon. Bei Patientendaten den
   Verlauf ausgeschaltet lassen (Windows-Einstellungen → System → Zwischenablage).
 - Setzt ein Admin das Windows-Passwort zurück, ist der gespeicherte Schlüssel nicht mehr lesbar.
   Dann den Schlüssel einfach neu eintragen.

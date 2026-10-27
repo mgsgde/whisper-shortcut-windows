@@ -73,6 +73,7 @@ internal sealed class TrayApp : ApplicationContext
 
         bool firstRun = !File.Exists(Core.Settings.DefaultPath);
         _settings = Core.Settings.Load(Core.Settings.DefaultPath, new DpapiProtector());
+        Sounds.Enabled = _settings.Sounds;
         bool testRun = testWav != null || fakeGemini;
         if (firstRun)
         {
@@ -147,7 +148,10 @@ internal sealed class TrayApp : ApplicationContext
 
     // ---------------- hotkeys ----------------
 
+    private string _lastWarnedHotkeys = "";
+
     /// <param name="notify">false when only re-arming after the settings window lost focus: no repeated warning.</param>
+
     private void RegisterHotkeys(bool notify = true)
     {
         _globalHotkeysOn = true;
@@ -167,8 +171,12 @@ internal sealed class TrayApp : ApplicationContext
         _dictateInfo.Text = $"Diktieren: {Hotkey.Display(_settings.DictateHotkey)}";
         _promptInfo.Text = $"Text bearbeiten oder schreiben lassen: {Hotkey.Display(_settings.PromptHotkey)}";
         _glossaryInfo.Text = $"Markierung ins Glossar: {Hotkey.Display(_settings.GlossaryHotkey)}";
-        if (failed.Count > 0 && notify)
+        // WHY remembered: the settings window closing re-registers with notify, which would repeat the same warning.
+        var failedKey = string.Join("|", failed.OrderBy(n => n, StringComparer.Ordinal));
+        if (failed.Count == 0) _lastWarnedHotkeys = "";
+        else if (notify && failedKey != _lastWarnedHotkeys)
         {
+            _lastWarnedHotkeys = failedKey;
             Notify("Tastenkürzel belegt",
                 $"{string.Join(" und ", failed)} {(failed.Count > 1 ? "werden" : "wird")} schon von einem anderen Programm benutzt. "
                 + "Hier klicken und in den Einstellungen ein anderes wählen.",
@@ -1012,6 +1020,7 @@ internal sealed class TrayApp : ApplicationContext
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
+            Sounds.Enabled = _settings.Sounds;
             // Posted so it runs after any activation message still queued for the closing form; forced
             // because the hotkeys may have been changed in the window.
             _ui.Post(_ =>

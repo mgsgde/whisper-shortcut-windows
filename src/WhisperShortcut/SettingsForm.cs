@@ -37,6 +37,7 @@ internal sealed class SettingsForm : Form
     private readonly ToggleSwitch _autoStart;
     private readonly ToggleSwitch _autoPaste;
     private readonly ToggleSwitch _restoreClipboard;
+    private readonly ToggleSwitch _sounds;
     private readonly Banner _welcome;
     private ThemedLabel _updateStatus = null!;
     private FluentButton _updateButton = null!;
@@ -181,7 +182,9 @@ internal sealed class SettingsForm : Form
         micCard.AddRow(micBlock);
         general.Controls.Add(micCard);
         _micTest.Click += (_, _) => ToggleMicTest();
-        _mic.SelectedIndexChanged += (_, _) => { if (_probe != null) { StopMicTest(); ToggleMicTest(); } };
+        _mic.SelectedIndexChanged += (_, _) => { if (!_refillingMics && _probe != null) { StopMicTest(); ToggleMicTest(); } };
+        // A headset plugged in while the window is open shows up when the list is opened.
+        _mic.DropDown += (_, _) => RefreshMicrophones();
         _meterTimer.Tick += (_, _) => _micMeter.Value = _probe?.Level ?? 0;
 
         // --- pasting ---
@@ -197,6 +200,14 @@ internal sealed class SettingsForm : Form
         // Without pasting nothing is restored: the text itself stays in the clipboard.
         _autoPaste.CheckedChanged += (_, _) => _restoreClipboard.Enabled = _autoPaste.Checked;
         _restoreClipboard.Enabled = _autoPaste.Checked;
+
+        // --- sounds ---
+        general.Controls.Add(Section("Töne"));
+        _sounds = new ToggleSwitch { Checked = settings.Sounds, AccessibleName = "Signaltöne" };
+        var soundCard = new Card();
+        soundCard.AddRow(SettingRow("Signaltöne", "Ein kurzer Ton beim Start und Ende einer Aufnahme und bei Fehlern. "
+            + "Aus: Nur das Symbol und die Anzeige am Bildschirm zeigen, was gerade passiert.", _sounds, ToggleWidth, out _));
+        general.Controls.Add(soundCard);
 
         // --- start ---
         general.Controls.Add(Section("Start"));
@@ -441,7 +452,13 @@ internal sealed class SettingsForm : Form
 
         // Any edit: show the "not saved" hint next to the buttons.
         var dirtyTimer = new System.Windows.Forms.Timer { Interval = 400 };
-        dirtyTimer.Tick += (_, _) => _dirty.Visible = _snapshot.Length > 0 && Snapshot() != _snapshot;
+        // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would flicker the hint.
+        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel };
+        dirtyTimer.Tick += (_, _) =>
+        {
+            if (combos.Any(c => c.DroppedDown)) return;
+            _dirty.Visible = _snapshot.Length > 0 && Snapshot() != _snapshot;
+        };
         dirtyTimer.Start();
         FormClosing += OnClosing;
         Activated += (_, _) => { if (!IsDisposed && !_saved && !_discard) SyncOfflineFromTray(); };
@@ -957,6 +974,8 @@ internal sealed class SettingsForm : Form
         public override string ToString() => Label;
     }
 
+    private bool _refillingMics;
+
     private void FillMicrophones(string? selected)
     {
         _mic.Items.Add(new MicItem("", "Windows-Standard"));
@@ -970,6 +989,24 @@ internal sealed class SettingsForm : Form
             _mic.Items.Add(match);
         }
         _mic.SelectedItem = match;
+    }
+
+    private void RefreshMicrophones()
+    {
+        var selected = _mic.SelectedItem is MicItem current ? current.Value : "";
+        var wanted = new List<MicItem> { new("", "Windows-Standard") };
+        wanted.AddRange(Microphones.Names().Select(n => new MicItem(n, n)));
+        if (!wanted.Any(i => i.Value == selected))
+            wanted.Add(new MicItem(selected, $"{selected} (nicht angeschlossen, solange gilt Windows-Standard)"));
+        if (wanted.SequenceEqual(_mic.Items.Cast<MicItem>())) return; // same devices: leave everything untouched
+        _refillingMics = true;
+        try
+        {
+            _mic.Items.Clear();
+            foreach (var item in wanted) _mic.Items.Add(item);
+            _mic.SelectedItem = wanted.First(i => i.Value == selected);
+        }
+        finally { _refillingMics = false; }
     }
 
     private string SelectedMicrophone => ((MicItem)_mic.SelectedItem!).Value;
@@ -1179,7 +1216,7 @@ internal sealed class SettingsForm : Form
         _onlineMode.Checked.ToString(), SelectedLlmChoice.Id, _apiKey.Text.Trim(), SelectedMicrophone,
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
-        _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(),
+        _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
     }.Concat(_quick.Select(q => q.Text)));
 
     private static string SelectedModel(FluentCombo combo) => ((ModelItem)combo.SelectedItem!).Model.Id;
@@ -1250,7 +1287,7 @@ internal sealed class SettingsForm : Form
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
             _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
-            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard);
+            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _apiKey.Text.Trim();
@@ -1267,6 +1304,7 @@ internal sealed class SettingsForm : Form
         _settings.PromptModeSystemPrompt = _promptPrompt.Value;
         _settings.AutoPaste = _autoPaste.Checked;
         _settings.RestoreClipboard = _restoreClipboard.Checked;
+        _settings.Sounds = _sounds.Checked;
         try
         {
             _settings.Save();
@@ -1277,7 +1315,7 @@ internal sealed class SettingsForm : Form
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
                 _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
                 _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
-                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard) = before;
+                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds) = before;
             Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
             return false;
         }
@@ -1286,7 +1324,7 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds})");
         _saved = true;
         DialogResult = DialogResult.OK;
         return true;

@@ -17,7 +17,7 @@ public class SettingsTests
         var s = Settings.Load(path, new Reverse());
         Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
         Assert.Equal("Ctrl+Shift+P", s.PromptHotkey);
-        Assert.Equal("Ctrl+Shift+G", s.GlossaryHotkey);
+        Assert.Equal("Ctrl+Shift+K", s.GlossaryHotkey);
         Assert.Equal("gemini-3.1-flash-lite", s.TranscriptionModel);
         Assert.Equal("gemini-3.8-flash", s.PromptModel);
 
@@ -50,7 +50,7 @@ public class SettingsTests
         var old = Settings.Load(path, new PlainSecretProtector());
         Assert.False(old.OfflineMode);
         Assert.Equal("", old.OfflineLlmId);
-        Assert.Equal("Ctrl+Shift+G", old.GlossaryHotkey);
+        Assert.Equal("Ctrl+Shift+K", old.GlossaryHotkey);
 
         old.OfflineMode = true;
         old.OfflineLlmId = "qwen3-4b-instruct-2507";
@@ -61,7 +61,7 @@ public class SettingsTests
         var t = Settings.Load(path, new PlainSecretProtector());
         Assert.True(t.OfflineMode);
         Assert.Equal("qwen3-4b-instruct-2507", t.OfflineLlmId);
-        Assert.Equal("Ctrl+Shift+G", t.GlossaryHotkey);
+        Assert.Equal("Ctrl+Shift+K", t.GlossaryHotkey);
         Directory.Delete(dir, true);
     }
 
@@ -157,6 +157,22 @@ public class LogAndAudioTests
         int hello = Array.FindIndex(lines, l => l.Contains("INFO hello"));
         int bad = Array.FindIndex(lines, l => l.Contains("ERROR bad (InvalidOperationException: boom)"));
         Assert.True(hello >= 0 && bad > hello);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Sounds_defaults_on_and_round_trips()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.True(s.Sounds);
+
+        s.Sounds = false;
+        s.Save();
+        Assert.False(Settings.Load(path, new PlainSecretProtector()).Sounds);
+
+        File.WriteAllText(path, "{\"glossary\":[\"a\"]}"); // old file without the field
+        Assert.True(Settings.Load(path, new PlainSecretProtector()).Sounds);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 }
