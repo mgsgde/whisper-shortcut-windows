@@ -20,6 +20,8 @@ public enum GeminiErrorKind
     Timeout,
     /// <summary>Any other HTTP/server error.</summary>
     Server,
+    /// <summary>The reply hit the output-token limit and is cut off (finishReason MAX_TOKENS).</summary>
+    Truncated,
 }
 
 /// <summary>Gemini call failed. <see cref="Exception.Message"/> is a German text fit for the user.</summary>
@@ -51,7 +53,9 @@ public enum KeyCheck
 /// <summary>
 /// Gemini generateContent client for dictation and Dictate Prompt. The API key and model ids
 /// are read at call time, so values entered later in the settings window work without restart.
-/// Results are raw model text: run <see cref="TextCleanup"/> on them.
+/// Results are raw model text: run <see cref="TextCleanup"/> on them. Transient failures (429, 500,
+/// 502, 503, 504, network errors, per-attempt timeouts) are retried like on the Mac: up to 5 attempts
+/// (6 for 5xx) with exponential backoff, or Google's own RetryInfo delay on a 429.
 /// </summary>
 public sealed class GeminiClient
 {
@@ -63,8 +67,25 @@ public sealed class GeminiClient
     private readonly Func<string> _transcriptionModel;
     private readonly Func<string> _promptModel;
 
-    /// <summary>Delay before the single retry on 429/500/503 (1 s; tests set it to zero).</summary>
-    public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(1);
+    /// <summary>
+    /// Output-token ceiling of the current Gemini flash models. Set explicitly on edit calls so a long
+    /// selection gets the whole room the model has instead of whatever the server default allows.
+    /// </summary>
+    internal const int MaxOutputTokens = 65536;
+
+    private const int MaxAttempts = 5;
+    private const int MaxServerErrorAttempts = 6;
+    private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan MaxRetryInfoDelay = TimeSpan.FromSeconds(60);
+
+    /// <summary>
+    /// Base of the exponential backoff between retries (1.5 s, doubling per attempt, capped at 15 s;
+    /// tests set it to zero). A 429 with a Google RetryInfo delay waits that delay plus 2 s instead.
+    /// </summary>
+    public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(1.5);
+
+    /// <summary>Safety margin added to a Google RetryInfo delay (2 s; tests set it to zero).</summary>
+    public TimeSpan RetryInfoBuffer { get; set; } = TimeSpan.FromSeconds(2);
 
     /// <summary>Creates a client reading key and models from <paramref name="settings"/> on every call.</summary>
     public GeminiClient(Settings settings, HttpClient? http = null)
@@ -81,7 +102,8 @@ public sealed class GeminiClient
     }
 
     /// <summary>
-    /// Transcribes a WAV. Returns the raw model text, "" if nothing was recognised.
+    /// Transcribes a WAV (temperature 0 for a deterministic transcript). Returns the raw model text,
+    /// "" if nothing was recognised. Transient failures are retried, see <see cref="GeminiClient"/>.
     /// </summary>
     /// <param name="wav">WAV bytes.</param>
     /// <param name="glossary">Spelling reference terms; empty list adds no hint.</param>
@@ -105,7 +127,7 @@ public sealed class GeminiClient
     {
         var model = _promptModel();
         var body = BuildPromptBody(wav, selection, customSystemPrompt);
-        return await SendAsync(model, body, ct).ConfigureAwait(false);
+        return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -121,14 +143,15 @@ public sealed class GeminiClient
     {
         var model = _promptModel();
         var body = BuildPromptTextBody(selection, instruction, customSystemPrompt);
-        return await SendAsync(model, body, ct).ConfigureAwait(false);
+        return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
     internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary)
     {
-        var terms = glossary.Select(t => t.Trim()).Where(t => t.Length > 0).ToList();
         var instruction = Prompts.DefaultTranscriptionSystemPrompt;
-        if (terms.Count > 0) instruction += "\n\n" + Prompts.GlossaryHintHeader + string.Join(", ", terms);
+        // Notes like `Bachata (not "Batchata")` become tie-breakers; the rejected spelling never goes out as vocabulary.
+        var hint = GlossaryPrompt.Hint(glossary);
+        if (hint.Length > 0) instruction += "\n\n" + hint;
 
         // 3.7 / 3.8 Flash and Pro reject "minimal" (HTTP 400): clamp to "low" like TranscriptionModels.swift.
         var level = RejectsMinimal(model) ? "low" : "minimal";
@@ -142,6 +165,8 @@ public sealed class GeminiClient
             }),
             ["generationConfig"] = new JsonObject
             {
+                // Like TranscriptionModels.swift: no sampling noise in a transcript.
+                ["temperature"] = 0.0,
                 ["thinkingConfig"] = new JsonObject { ["thinkingLevel"] = level },
             },
         };
@@ -175,6 +200,8 @@ public sealed class GeminiClient
             ["generationConfig"] = new JsonObject
             {
                 ["thinkingConfig"] = new JsonObject { ["thinkingLevel"] = "low" },
+                // WHY: a rewritten long selection is as long as the selection; a cut-off reply must be detectable.
+                ["maxOutputTokens"] = MaxOutputTokens,
             },
         };
         return root.ToJsonString();
@@ -232,7 +259,7 @@ public sealed class GeminiClient
         return result;
     }
 
-    private async Task<string> SendAsync(string model, string json, CancellationToken ct)
+    private async Task<string> SendAsync(string model, string json, CancellationToken ct, bool rejectTruncated = false)
     {
         var key = _apiKey()?.Trim();
         if (string.IsNullOrEmpty(key))
@@ -240,11 +267,15 @@ public sealed class GeminiClient
                 "Kein API-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.");
 
         var url = $"{BaseUrl}{model}:generateContent";
-        for (var attempt = 0; ; attempt++)
+        for (var attempt = 1; ; attempt++)
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             // Upload time scales with the body (~40 kB/s floor, e.g. slow DSL).
             timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(json.Length / 40_000.0));
+            GeminiException failure;
+            string kind;
+            var serverError = false;
+            TimeSpan? retryInfo = null;
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, url)
@@ -257,33 +288,82 @@ public sealed class GeminiClient
 
                 if (response.IsSuccessStatusCode)
                 {
-                    Log.Info($"Gemini {model}: HTTP {(int)response.StatusCode}, request {json.Length} bytes, answer {text.Length} bytes");
-                    return ExtractText(text);
+                    Log.Info($"Gemini {model}: HTTP {(int)response.StatusCode}, request {json.Length} bytes, answer {text.Length} bytes, attempt {attempt}");
+                    return ExtractText(text, rejectTruncated);
                 }
 
                 var code = (int)response.StatusCode;
-                if (attempt == 0 && (code is 429 or 500 or 503))
-                {
-                    Log.Info($"Gemini {model}: HTTP {code}, retrying once");
-                    await Task.Delay(RetryDelay, ct).ConfigureAwait(false);
-                    continue;
-                }
                 Log.Error($"Gemini {model}: HTTP {code} {GoogleError(text)}");
-                throw MapStatus(response.StatusCode, text);
+                failure = MapStatus(response.StatusCode, text);
+                kind = $"HTTP {code}";
+                // A daily quota will not recover within seconds: fail at once.
+                if (code is not (429 or 500 or 502 or 503 or 504) || (code == 429 && IsDailyQuota(text)))
+                    throw failure;
+                serverError = code >= 500;
+                if (code == 429) retryInfo = ParseRetryInfo(text);
             }
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 Log.Error($"Gemini {model}: timeout");
-                throw new GeminiException(GeminiErrorKind.Timeout,
+                failure = new GeminiException(GeminiErrorKind.Timeout,
                     "Zeitüberschreitung: Gemini hat nicht rechtzeitig geantwortet. Bitte Internetverbindung prüfen.");
+                kind = "timeout";
             }
             catch (HttpRequestException ex)
             {
                 Log.Error($"Gemini {model}: network", ex);
-                throw new GeminiException(GeminiErrorKind.Network,
+                failure = new GeminiException(GeminiErrorKind.Network,
                     "Kein Netz: Gemini ist nicht erreichbar. Bitte Internetverbindung prüfen.", ex);
+                kind = "network";
+            }
+
+            // Retryable failure: 5 attempts, 6 when the server itself is failing.
+            if (attempt >= (serverError ? MaxServerErrorAttempts : MaxAttempts)) throw failure;
+            TimeSpan delay;
+            if (retryInfo is { } info)
+            {
+                // Google says when the limit lifts; a longer wait is not worth blocking dictation for.
+                if (info > MaxRetryInfoDelay) throw failure;
+                delay = info + RetryInfoBuffer;
+            }
+            else
+            {
+                delay = TimeSpan.FromTicks((long)Math.Min(
+                    RetryDelay.Ticks * Math.Pow(2, attempt - 1), MaxBackoff.Ticks));
+            }
+            Log.Info($"Gemini {model}: attempt {attempt} failed ({kind}), retrying in {delay.TotalSeconds:0.#} s");
+            await Task.Delay(delay, ct).ConfigureAwait(false);
+        }
+    }
+
+    /// <summary>True when a 429 body says the per-day quota is used up (retrying within the minute is pointless).</summary>
+    private static bool IsDailyQuota(string body) =>
+        body.Contains("PerDay", StringComparison.OrdinalIgnoreCase)
+        || body.Contains("per day", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>The delay from a Google RetryInfo detail ("55s", "1.5s"), or null when absent.</summary>
+    public static TimeSpan? ParseRetryInfo(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("error", out var e)
+                || !e.TryGetProperty("details", out var details)
+                || details.ValueKind != JsonValueKind.Array) return null;
+            foreach (var d in details.EnumerateArray())
+            {
+                if (d.ValueKind != JsonValueKind.Object
+                    || !d.TryGetProperty("@type", out var t) || t.ValueKind != JsonValueKind.String
+                    || !(t.GetString() ?? "").EndsWith("RetryInfo", StringComparison.Ordinal)
+                    || !d.TryGetProperty("retryDelay", out var r) || r.ValueKind != JsonValueKind.String) continue;
+                var str = (r.GetString() ?? "").Trim().TrimEnd('s');
+                if (double.TryParse(str, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var secs) && secs >= 0 && secs < 86_400)
+                    return TimeSpan.FromSeconds(secs);
             }
         }
+        catch (JsonException) { }
+        return null;
     }
 
     private static GeminiException MapStatus(HttpStatusCode status, string body)
@@ -300,8 +380,10 @@ public sealed class GeminiClient
             return new GeminiException(GeminiErrorKind.InvalidKey,
                 "API-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
         if (code == 429)
-            return new GeminiException(GeminiErrorKind.Quota,
-                "Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen.");
+            // Daily quota vs. a per-minute rate limit: only the second one passes by waiting a moment.
+            return new GeminiException(GeminiErrorKind.Quota, IsDailyQuota(body)
+                ? "Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen."
+                : "Gemini ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
         return new GeminiException(GeminiErrorKind.Server, $"Gemini-Fehler (HTTP {code}). Bitte später erneut versuchen.");
     }
 
@@ -319,14 +401,24 @@ public sealed class GeminiClient
         catch { return ""; }
     }
 
-    /// <summary>Concatenates candidates[0].content.parts[].text; "" when absent.</summary>
-    internal static string ExtractText(string responseJson)
+    /// <summary>
+    /// Concatenates candidates[0].content.parts[].text; "" when absent. With <paramref name="rejectTruncated"/>
+    /// a MAX_TOKENS finish throws, so a cut-off rewrite is never pasted over the selection.
+    /// </summary>
+    internal static string ExtractText(string responseJson, bool rejectTruncated = false)
     {
         try
         {
             using var doc = JsonDocument.Parse(responseJson);
             if (!doc.RootElement.TryGetProperty("candidates", out var cands)
                 || cands.ValueKind != JsonValueKind.Array || cands.GetArrayLength() == 0) return "";
+            if (rejectTruncated && cands[0].TryGetProperty("finishReason", out var fr)
+                && fr.ValueKind == JsonValueKind.String && fr.GetString() == "MAX_TOKENS")
+            {
+                Log.Error("Gemini: finishReason MAX_TOKENS, reply is cut off");
+                throw new GeminiException(GeminiErrorKind.Truncated,
+                    "Die Antwort ist zu lang geworden und wurde abgeschnitten. Bitte einen kleineren Teil markieren.");
+            }
             if (!cands[0].TryGetProperty("content", out var content)
                 || !content.TryGetProperty("parts", out var parts)
                 || parts.ValueKind != JsonValueKind.Array) return "";

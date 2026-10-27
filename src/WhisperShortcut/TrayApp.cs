@@ -13,6 +13,14 @@ internal sealed class TrayApp : ApplicationContext
 {
     private enum State { Idle, Recording, Processing }
 
+    /// <summary>
+    /// A recording whose processing failed for a reason a second try can fix (network, quota, local model).
+    /// In memory only, never written to disk: it is patient data. Dropped after the next success.
+    /// </summary>
+    private sealed record FailedRun(byte[] Wav, Mode Mode, double Seconds, string? Selection, string? QuickAction, IntPtr Target);
+
+    private const string RetryHint = " Hier klicken, um es noch einmal zu versuchen.";
+
     private readonly string? _testWav;
     private readonly bool _fakeGemini;
     private readonly NotifyIcon _icon;
@@ -27,6 +35,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _glossaryInfo;
     private readonly ToolStripMenuItem _copyLast;
     private readonly ToolStripMenuItem _recentMenu;
+    private readonly ToolStripMenuItem _retryItem;
     private readonly RecordingOverlay _overlay = new();
     // In memory only: in a practice a dictation must not stay behind in a file.
     private readonly Core.RecentTexts _recent = new();
@@ -41,11 +50,19 @@ internal sealed class TrayApp : ApplicationContext
     private Task<string?>? _selection;
     private CancellationTokenSource? _selectionCts;
     private string? _quickAction;
+    // The window in front when the recording started: the only paste target, for a retry too.
+    private IntPtr _pasteTarget;
+    private FailedRun? _lastFailed;
     private IReadOnlyList<string> _unsupported = Array.Empty<string>();
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
     private Action? _balloonClick;
     private bool _glossaryBusy;
+    private bool _globalHotkeysOn;
+    private readonly Core.HotkeyPressGate _pressGate = new();
+    private readonly System.Windows.Forms.Timer _keyUpTimer = new() { Interval = 30 };
+    private Keys _armedKey;
+    private long _armedKeyDeadline;
     private readonly ToolStripMenuItem _offlineItem;
     private readonly SynchronizationContext _ui;
 
@@ -82,6 +99,7 @@ internal sealed class TrayApp : ApplicationContext
         _glossaryInfo = new ToolStripMenuItem { Enabled = false };
         _copyLast = new ToolStripMenuItem("Letzten Text kopieren", null, (_, _) => CopyRecent(_recent.Latest));
         _recentMenu = new ToolStripMenuItem("Letzte Texte");
+        _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Enabled = false };
         var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         _offlineItem = new ToolStripMenuItem("Offline: nichts verlässt den PC", null, (_, _) => ToggleOffline()) { CheckOnClick = false };
         var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings()) { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
@@ -91,10 +109,15 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.AddRange(new ToolStripItem[]
         {
             title, _statusItem, new ToolStripSeparator(), _dictateInfo, _promptInfo, _glossaryInfo, new ToolStripSeparator(),
-            _copyLast, _recentMenu, new ToolStripSeparator(),
+            _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
             _offlineItem, settingsItem, logItem, new ToolStripSeparator(), quitItem,
         });
-        menu.Opening += (_, _) => { UpdateRecentMenu(); _offlineItem.Checked = _settings.OfflineMode; };
+        menu.Opening += (_, _) =>
+        {
+            UpdateRecentMenu();
+            _retryItem.Enabled = _lastFailed != null && _state == State.Idle;
+            _offlineItem.Checked = _settings.OfflineMode;
+        };
         UpdateRecentMenu();
 
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
@@ -103,6 +126,7 @@ internal sealed class TrayApp : ApplicationContext
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
         _icon.BalloonTipClicked += (_, _) => _balloonClick?.Invoke();
 
+        _keyUpTimer.Tick += (_, _) => PollArmedKey();
         RegisterHotkeys();
         SetState(State.Idle);
         // A finished download changes the idle status ("Modelle noch nicht geladen" → "Bereit").
@@ -126,6 +150,7 @@ internal sealed class TrayApp : ApplicationContext
     /// <param name="notify">false when only re-arming after the settings window lost focus: no repeated warning.</param>
     private void RegisterHotkeys(bool notify = true)
     {
+        _globalHotkeysOn = true;
         _hotkeys.UnregisterAll();
         var failed = new List<string>();
         foreach (var (stored, action) in new (string, Action)[]
@@ -154,6 +179,13 @@ internal sealed class TrayApp : ApplicationContext
     private void OnHotkey(Mode mode)
     {
         Core.Log.Info($"Hotkey {mode} in state {_state}");
+        var now = Environment.TickCount64;
+        if (_state != State.Idle && !_pressGate.Accept(now))
+        {
+            Core.Log.Info($"Hotkey {mode} in state {_state} ignored: {(_pressGate.Released ? "within 300 ms" : "key still held")}");
+            return;
+        }
+        var before = _state;
         switch (_state)
         {
             case State.Idle:
@@ -166,15 +198,45 @@ internal sealed class TrayApp : ApplicationContext
                 _cts?.Cancel();
                 break;
         }
+        if (_state != before && Hotkey.TryParse(mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey, out var key))
+            ArmPressGate(key.Key, now);
     }
 
     /// <summary>
-    /// Esc is a global hotkey only while a recording runs, so it never takes Esc away from other
-    /// programs otherwise. It discards the recording; processing is cancelled with the record hotkey.
+    /// The press that changed the state is still down for a moment. Polling its key tells the gate when
+    /// it is up: a second WM_HOTKEY before that is a repeat or a bounce, not a stop or cancel.
+    /// </summary>
+    private void ArmPressGate(Keys key, long now)
+    {
+        _pressGate.Armed(now);
+        _armedKey = key;
+        _armedKeyDeadline = now + 10_000;
+        _keyUpTimer.Start();
+    }
+
+    private void PollArmedKey()
+    {
+        bool down = (NativeMethods.GetAsyncKeyState((int)_armedKey) & 0x8000) != 0;
+        // 10 s at most: a key stuck down must neither keep a timer running nor close the gate for good.
+        if (!down || Environment.TickCount64 >= _armedKeyDeadline)
+        {
+            _pressGate.KeyUp();
+            _keyUpTimer.Stop();
+        }
+    }
+
+    /// <summary>
+    /// Esc is a global hotkey only while a recording or the processing runs, so it never takes Esc away
+    /// from other programs otherwise. It discards the recording or cancels the request (nothing is pasted).
     /// </summary>
     private void OnEscape()
     {
         Core.Log.Info($"Esc in state {_state}");
+        if (_state == State.Processing)
+        {
+            _cts?.Cancel(); // same path as a hotkey press during processing
+            return;
+        }
         if (_state != State.Recording) return;
         (_audio as MicAudioSource)?.Cancel();
         _audio = null;
@@ -190,6 +252,7 @@ internal sealed class TrayApp : ApplicationContext
         _selectionCts?.Dispose();
         _selectionCts = null;
         _selection = null;
+        _paster.CancelLateWatch(); // Esc after the deadline: a late copy is no longer ours to restore
     }
 
     /// <summary>
@@ -241,6 +304,8 @@ internal sealed class TrayApp : ApplicationContext
 
         _mode = mode;
         _quickAction = null;
+        // Mac pastes only into the app that was in front now; the hotkey was pressed in the user's window.
+        _pasteTarget = ClipboardPaster.ForegroundRoot();
         // Copy the selection right away, while the user's selection is still there. It runs while recording.
         _selectionCts = mode == Mode.Prompt ? new CancellationTokenSource() : null;
         _selection = _selectionCts != null ? _paster.CopySelectionAsync(_selectionCts.Token) : null;
@@ -298,9 +363,27 @@ internal sealed class TrayApp : ApplicationContext
         }
     }
 
-    private async Task StopAndProcessAsync()
+    private Task StopAndProcessAsync() => ProcessAsync(_audio!, null);
+
+    /// <summary>
+    /// Tray menu or balloon click: run the last failed recording again. Like the Mac it pastes into the
+    /// window the recording was made for; after the click the taskbar is in front, never the user's field.
+    /// </summary>
+    private void RetryLast()
     {
-        var audio = _audio!;
+        if (_state != State.Idle || _lastFailed == null) return;
+        var run = _lastFailed;
+        Core.Log.Info($"{run.Mode}: retrying the last recording ({run.Seconds:0.0} s)");
+        _mode = run.Mode;
+        _quickAction = run.QuickAction;
+        _paster.CancelLateWatch(); // a flag from the old recording must not block this run
+        _pasteTarget = run.Target;
+        _ = ProcessAsync(null, run);
+    }
+
+    /// <param name="audio">The running recording to stop, or null for a retry of <paramref name="retry"/>.</param>
+    private async Task ProcessAsync(Core.IAudioSource? audio, FailedRun? retry)
+    {
         _audio = null;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
@@ -309,38 +392,71 @@ internal sealed class TrayApp : ApplicationContext
         Sounds.Stop();
         _unsupported = Array.Empty<string>();
         bool done = false;
+        byte[]? wav = null;
+        double seconds = 0;
+        string? selection = null;
+        // What a retry needs; null when the audio itself is lost (then there is nothing to try again).
+        FailedRun? Failed() => wav == null ? null : new FailedRun(wav, _mode, seconds, selection, _quickAction, _pasteTarget);
 
         try
         {
-            byte[] wav;
-            try
+            if (retry != null)
             {
-                wav = await audio.StopAsync();
+                (wav, seconds, selection) = (retry.Wav, retry.Seconds, retry.Selection);
             }
-            catch (Core.AudioSilentException) when (_quickAction != null)
+            else
             {
-                // Text marked, Ctrl+1 pressed without a word: the instruction applies to the selection alone.
-                wav = Array.Empty<byte>();
-            }
-            double seconds = wav.Length == 0 ? 0 : Core.Wav.DurationSeconds(wav);
-            Core.Log.Info($"{_mode}: recorded {seconds:0.0} s");
-            // A quick instruction needs no speech: mark text, press the hotkey and right away Ctrl+1.
-            if (seconds < 0.5 && _quickAction == null)
-            {
-                // A double press, not a recording: say so instead of a misleading microphone error.
-                Notify("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", ToolTipIcon.Info);
-                return;
+                try
+                {
+                    wav = await audio!.StopAsync();
+                }
+                catch (Core.AudioSilentException) when (_quickAction != null)
+                {
+                    // Text marked, Ctrl+1 pressed without a word: the instruction applies to the selection alone.
+                    wav = Array.Empty<byte>();
+                }
+                seconds = wav.Length == 0 ? 0 : Core.Wav.DurationSeconds(wav);
+                Core.Log.Info($"{_mode}: recorded {seconds:0.0} s");
+                // A quick instruction needs no speech: mark text, press the hotkey and right away Ctrl+1.
+                if (seconds < 0.5 && _quickAction == null)
+                {
+                    // A double press, not a recording: say so instead of a misleading microphone error.
+                    Notify("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", ToolTipIcon.Info);
+                    return;
+                }
+                if (_mode == Mode.Prompt && _selection != null) selection = await _selection;
             }
 
             string text = _mode == Mode.Dictate
                 ? await DictateAsync(wav, seconds, ct)
-                : await PromptAsync(wav, seconds, ct);
+                : await PromptAsync(wav, seconds, selection, retry != null, ct);
             ct.ThrowIfCancellationRequested();
 
             if (text.Length == 0) return; // already reported
+            _lastFailed = null; // this run worked; the old failure is history
             _recent.Add(text);
 
-            var outcome = await _paster.PasteAsync(text, ct);
+            // A quick-action rewrite that lost most of a long selection must not silently replace it. Spoken
+            // instructions are unknown here (Gemini hears them) and "fass zusammen" is a normal request, so
+            // they rely on the MAX_TOKENS check alone.
+            if (_mode == Mode.Prompt && selection != null && _quickAction != null
+                && Core.ReplyGuards.AnswerSuspiciouslyShort(selection.Length, text.Length, _quickAction))
+            {
+                Core.Log.Info($"Prompt: answer {text.Length} chars for a selection of {selection.Length}, not pasted");
+                if (_paster.KeepOnClipboard(text))
+                {
+                    Sounds.Error();
+                    Notify("Bitte prüfen", "Antwort deutlich kürzer als die Markierung – liegt in der Zwischenablage, bitte prüfen.", ToolTipIcon.Warning);
+                }
+                else
+                {
+                    Sounds.Error();
+                    Notify("Einfügen fehlgeschlagen", "Die Zwischenablage war blockiert. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
+                }
+                return;
+            }
+
+            var outcome = await _paster.PasteAsync(text, _pasteTarget, ct);
             Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars");
             switch (outcome)
             {
@@ -352,7 +468,8 @@ internal sealed class TrayApp : ApplicationContext
                     _overlay.ShowDone("Eingefügt");
                     done = true;
                     break;
-                case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld when _unsupported.Count > 0:
+                case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld or PasteOutcome.ClipboardOnlyTargetChanged
+                    or PasteOutcome.ClipboardOnlyOwnWindow when _unsupported.Count > 0:
                     // The balloon would bury the warning; the card says both.
                     _overlay.ShowWarning(_unsupported, pasted: false);
                     done = true;
@@ -365,6 +482,16 @@ internal sealed class TrayApp : ApplicationContext
                 case PasteOutcome.ClipboardOnlyKeysHeld:
                     Notify("Bitte selbst einfügen",
                         "Strg, Umschalt oder Alt war noch gedrückt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
+                        ToolTipIcon.Info);
+                    break;
+                case PasteOutcome.ClipboardOnlyTargetChanged:
+                    Notify("Bitte selbst einfügen",
+                        "Du hast das Fenster gewechselt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
+                        ToolTipIcon.Info);
+                    break;
+                case PasteOutcome.ClipboardOnlyOwnWindow:
+                    Notify("Bitte selbst einfügen",
+                        "Vorn war ein Fenster von WhisperShortcut. Der Text liegt in der Zwischenablage: Strg+V drücken.",
                         ToolTipIcon.Info);
                     break;
                 case PasteOutcome.Failed:
@@ -394,14 +521,18 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error($"{_mode}: local LLM failed", e);
             Sounds.Error();
-            Notify("Offline-Sprachmodell", e.Message, ToolTipIcon.Error);
+            NotifyRetryable("Offline-Sprachmodell", e.Message, Failed());
         }
         catch (Core.GeminiException e)
         {
             Core.Log.Error($"{_mode}: Gemini {e.Kind}");
             Sounds.Error();
-            Notify("Gemini-Fehler", e.Message, ToolTipIcon.Error,
-                e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey ? ShowSettings : null);
+            if (e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey)
+                Notify("Gemini-Fehler", e.Message, ToolTipIcon.Error, ShowSettings);
+            else if (e.Kind is Core.GeminiErrorKind.Network or Core.GeminiErrorKind.Timeout or Core.GeminiErrorKind.Quota or Core.GeminiErrorKind.Server)
+                NotifyRetryable("Gemini-Fehler", e.Message, Failed());
+            else
+                Notify("Gemini-Fehler", e.Message, ToolTipIcon.Error);
         }
         catch (Exception e) when (e is Core.AudioSilentException or MicrophoneUnavailableException)
         {
@@ -413,7 +544,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error($"{_mode}: unexpected error", e);
             Sounds.Error();
-            Notify("Fehler", "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", ToolTipIcon.Error);
+            NotifyRetryable("Fehler", "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", Failed());
         }
         finally
         {
@@ -428,25 +559,45 @@ internal sealed class TrayApp : ApplicationContext
         }
     }
 
+    /// <summary>
+    /// Error balloon that, when the audio is still there, keeps the run for a retry and offers it on click.
+    /// </summary>
+    private void NotifyRetryable(string title, string message, FailedRun? run)
+    {
+        if (run == null)
+        {
+            Notify(title, message, ToolTipIcon.Error);
+            return;
+        }
+        _lastFailed = run;
+        Notify(title, message + RetryHint, ToolTipIcon.Error, () => RetryLast());
+    }
+
     private async Task<string> DictateAsync(byte[] wav, double seconds, CancellationToken ct)
     {
         string raw = _fakeGemini
             ? "das ist ein test diktat aus der virtuellen maschine"
             : _settings.OfflineMode
                 ? await TranscribeOfflineAsync(wav, ct)
-                // Above 2.5 min the recording goes out in ~2-minute pieces, cut in pauses, four at a
-                // time: one request would hit Gemini's inline size limit and take as long as all of it.
-                : await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav),
-                    (chunk, c) => _gemini.TranscribeAsync(chunk, _settings.Glossary, c), maxParallel: 4, ct);
+                : await TranscribeOnlineAsync(wav, ct);
+        raw = GlossaryBackstops(raw);
         string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), seconds);
+        // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
+        if (Core.TextCleanup.LooksLikeRefusal(text)) text = "";
         Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup");
         if (text.Length == 0) Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
         return text;
     }
 
-    private async Task<string> PromptAsync(byte[] wav, double seconds, CancellationToken ct)
+    private async Task<string> PromptAsync(byte[] wav, double seconds, string? selection, bool isRetry, CancellationToken ct)
     {
-        string? selection = _selection != null ? await _selection : null;
+        // A Ctrl+C that came after the 2 s deadline means there is a selection we never read: writing a
+        // new text now would replace it. (A retry has its own, finished selection.)
+        if (selection == null && !isRetry && _paster.LateCopyArrived)
+        {
+            Core.Log.Info("Prompt: selection arrived after the deadline, not composing over it");
+            throw new SelectionUnreadableException();
+        }
         Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
 
         string systemPrompt = QuoteTemplate.BuildSystemPrompt(_settings.PromptSystemPrompt) ?? "";
@@ -460,6 +611,11 @@ internal sealed class TrayApp : ApplicationContext
         }
 
         if (_settings.OfflineMode) return await PromptOfflineAsync(wav, selection, systemPrompt, ct);
+        if (!HasSpeech(wav))
+        {
+            Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
+            return "";
+        }
         var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct);
 
         string? instruction = null;
@@ -467,7 +623,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             // Nothing selected and the instruction is only "korrigiere" / "mach das freundlicher":
             // there is nothing to edit, and the model would invent a text. Transcribe in parallel to check.
-            instruction = await _gemini.TranscribeAsync(wav, _settings.Glossary, ct);
+            instruction = await TranscribeOnlineAsync(wav, ct);
             if (Core.BareEditCommand.Matches(instruction))
             {
                 Core.Log.Info("Prompt: bare edit command without selection, refused");
@@ -530,8 +686,7 @@ internal sealed class TrayApp : ApplicationContext
         string transcript = seconds < 1.0 ? ""
             : _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen"
             : _settings.OfflineMode ? await TranscribeOfflineAsync(wav, ct)
-            : await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav),
-                (chunk, c) => _gemini.TranscribeAsync(chunk, _settings.Glossary, c), maxParallel: 4, ct);
+            : GlossaryBackstops(await TranscribeOnlineAsync(wav, ct));
         var request = Core.QuickActionRequest.Build(quick, selection, transcript);
         Core.Log.Info($"Prompt quick action: transcript {transcript.Trim().Length} chars, selection {selection?.Length ?? 0} chars");
         if (request == null)
@@ -581,6 +736,51 @@ internal sealed class TrayApp : ApplicationContext
         // Count only: the words are patient data and stay out of the log.
         if (_unsupported.Count > 0) Core.Log.Info($"Prompt: {_unsupported.Count} word(s) in the reply are not in the dictation, warning shown");
         return text;
+    }
+
+    /// <summary>
+    /// Gemini. Above 2.5 min the recording goes out in ~2-minute pieces, cut in pauses, four at a time:
+    /// one request would hit Gemini's inline size limit and take as long as all of it. A piece that comes
+    /// back as nothing but glossary words (the model filled a quiet stretch with vocabulary) is asked
+    /// again once without the glossary, like the Mac.
+    /// </summary>
+    private Task<string> TranscribeOnlineAsync(byte[] wav, CancellationToken ct)
+    {
+        var glossary = _settings.Glossary.ToList();
+        var echoTerms = Core.GlossaryPrompt.EchoTerms(glossary);
+        return Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav), async (chunk, c) =>
+        {
+            // Nothing but room noise: Gemini would answer with the glossary. Also saves the request.
+            if (!HasSpeech(chunk)) return "";
+            var text = await _gemini.TranscribeAsync(chunk, glossary, c);
+            if (text.Trim().Length == 0
+                || Core.TextCleanup.DiscardGlossaryEcho(text, Core.Wav.DurationSeconds(chunk), echoTerms).Length > 0)
+                return text;
+            Core.Log.Info("Dictate: glossary echo discarded, asking again without the glossary");
+            return await _gemini.TranscribeAsync(chunk, Array.Empty<string>(), c);
+        }, maxParallel: 4, ct);
+    }
+
+    /// <summary>Speech gate for a recording or chunk going to Gemini; the file source of --test-wav passes through here too.</summary>
+    private static bool HasSpeech(byte[] wav)
+    {
+        var level = Core.SpeechGate.Analyze(wav);
+        if (Core.SpeechGate.HasSpeech(level)) return true;
+        Core.Log.Info($"No speech (peak {level.PeakDbfs:0} dBFS, loud frames {level.LoudFrames}/{level.Frames}), Gemini skipped");
+        return false;
+    }
+
+    /// <summary>
+    /// Runs on every transcript, online and offline, as on the Mac: a glossary list tacked onto the end
+    /// is cut off, a spelling the user rejected (<c>Claude CLI (not "Cloud CLI")</c>) is corrected, and a
+    /// name Gemini wrote the common way ("Gödde" for "goedde") is set to the glossary spelling.
+    /// </summary>
+    private string GlossaryBackstops(string raw)
+    {
+        var glossary = _settings.Glossary.ToList();
+        var stripped = Core.TextCleanup.StripTrailingGlossaryEcho(raw, Core.GlossaryPrompt.EchoTerms(glossary));
+        var corrected = Core.GlossaryPrompt.CorrectRejectedSpellings(stripped, glossary);
+        return Core.GlossaryPrompt.ApplyTermSpellings(corrected, Core.GlossaryPrompt.EchoTerms(glossary));
     }
 
     /// <summary>
@@ -687,12 +887,12 @@ internal sealed class TrayApp : ApplicationContext
     // ---------------- UI ----------------
 
     /// <summary>
-    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording,
+    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording or processing,
     /// Ctrl+1–5 only while a Dictate Prompt recording runs.
     /// </summary>
     private void SyncSessionHotkeys()
     {
-        if (_state != State.Recording) _hotkeys.Unregister(Escape);
+        if (_state == State.Idle) _hotkeys.Unregister(Escape);
         else if (!_hotkeys.IsRegistered(Escape)) _hotkeys.Register(Escape, OnEscape);
         bool quick = _state == State.Recording && _mode == Mode.Prompt;
         for (int i = 0; i < QuickKeys.Length; i++)
@@ -711,6 +911,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         _state = state;
         SyncSessionHotkeys();
+        SyncGlobalHotkeys();
         string key = Hotkey.Display(_mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey);
         (string status, Icon icon) = state switch
         {
@@ -723,6 +924,31 @@ internal sealed class TrayApp : ApplicationContext
         };
         _icon.Icon = icon;
         SetStatusText(status);
+    }
+
+    /// <summary>
+    /// Idempotent, so the order of the settings window's activate / deactivate / close events cannot
+    /// leave the hotkeys off: every one of them (and every state change) just re-evaluates.
+    /// </summary>
+    private void SyncGlobalHotkeys(bool notify = false)
+    {
+        var f = _settingsForm;
+        // WHY the real foreground and not Form.ActiveForm: a form activated without getting the foreground
+        // (focus-steal prevention) stays "active" while the user works elsewhere. Any window of ours in
+        // front counts, so the settings dialogs (MessageBox) keep the hotkeys off as well.
+        bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow();
+        bool wanted = Core.HotkeyPolicy.WantGlobalHotkeys(settingsInFront, _state == State.Idle);
+        if (wanted == _globalHotkeysOn) return;
+        if (wanted)
+        {
+            RegisterHotkeys(notify);
+        }
+        else
+        {
+            _hotkeys.UnregisterAll();
+            _globalHotkeysOn = false;
+            Core.Log.Info("Hotkeys off: settings window in front");
+        }
     }
 
     private void SetStatusText(string status)
@@ -756,6 +982,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
             _settingsForm.Activate();
+            _settingsForm.BringToFront();
             return;
         }
         if (_state != State.Idle)
@@ -768,18 +995,26 @@ internal sealed class TrayApp : ApplicationContext
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
         _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
-        _settingsForm.Activated += (_, _) => { if (_state == State.Idle) _hotkeys.UnregisterAll(); };
-        _settingsForm.Deactivate += (_, _) => RegisterHotkeys(notify: false);
+        _settingsForm.Activated += (_, _) => SyncGlobalHotkeys();
+        // Posted: while Deactivate runs the new foreground window is not set yet.
+        _settingsForm.Deactivate += (_, _) => _ui.Post(_ => SyncGlobalHotkeys(), null);
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
-            RegisterHotkeys();
+            // Posted so it runs after any activation message still queued for the closing form; forced
+            // because the hotkeys may have been changed in the window.
+            _ui.Post(_ =>
+            {
+                _globalHotkeysOn = false;
+                SyncGlobalHotkeys(notify: true);
+            }, null);
             SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
             _offline.Prewarm(); // offline mode may just have been switched on
             _offline.GlossaryChanged(); // the Glossary may have been edited
         };
         _settingsForm.Show();
         _settingsForm.Activate();
+        _settingsForm.BringToFront();
     }
 
     /// <summary>
@@ -827,6 +1062,7 @@ internal sealed class TrayApp : ApplicationContext
         (_audio as MicAudioSource)?.Cancel();
         _icon.Visible = false;
         _icon.Dispose();
+        _keyUpTimer.Dispose();
         _overlay.Dispose();
         _hotkeys.Dispose();
         _offline.Dispose();

@@ -128,9 +128,10 @@ internal sealed class MicAudioSource : Core.IAudioSource
         _buffer = null;
         var peak = Volatile.Read(ref _peak);
         Core.Log.Info($"Mic: {bytes.Length} bytes, peak {peak * 100 / 32768} %");
-        // Peak below 1 %: not a quiet room, a blocked device.
+        // Only digital silence (peak below ~-60 dBFS, what a privacy-blocked device delivers) is a device
+        // problem. A quiet room is judged by the speech gate, which says "Nichts erkannt" instead.
         // Ultra-short recordings (< 0.5 s = 16000 bytes at 16 kHz mono 16-bit) are not judged.
-        if (peak < 328 && bytes.Length > 44 + 16000) throw new Core.AudioSilentException();
+        if (peak < 33 && bytes.Length > 44 + 16000) throw new Core.AudioSilentException();
         _level = 0;
         return bytes;
     }
