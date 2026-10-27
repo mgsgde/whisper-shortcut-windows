@@ -58,7 +58,7 @@ Expect: `Copy: selection 30 chars` (approx), `Prompt: selection N chars`, `Promp
 Pass: all; original sentence fully replaced (not appended).
 
 **P2 `[wav:angebot-ohne-markierung.wav][online]` Compose without selection uses the template**
-Promise: "Ohne Markierung … Ein fertiger Text nach der Vorlage (Einstellungen → Vorlage) wird eingefügt."
+Promise: "Ohne Markierung … Ein fertiger Text nach der Vorlage (Einstellungen → Dictate Prompt → Vorlage) wird eingefügt."
 Steps: empty Notepad; `$V combo ctrl shift p`; sleep 2; `$V combo ctrl shift p`.
 Expect: `Copy: clipboard unchanged after 2000 ms, no selection`, `Prompt: no selection (compose)`, `Prompt: answer`, `Prompt: Pasted`. Notepad has an offer text (Angebot, Heizkörper, Montage, Dienstag), no Markdown.
 Pass: all; zero `*`/`#` characters.
@@ -144,8 +144,8 @@ Expect: `Gemini key check: Ok`; label "✓ Schlüssel funktioniert".
 Pass: both.
 
 **S3 `[wav:diktat.wav][online]` Change dictate hotkey**
-Promise: "Tastenkürzel: änderbar, immer mit zwei Zusatztasten."
-Steps: backup; open settings, `uia select`/click "Tastenkürzel" page; focus Diktieren box; `$V combo ctrl shift y` (QWERTZ: sends scancode for physical Y key → check box text); `$V uia invoke Speichern`. Then Notepad: old `ctrl shift d` (expect nothing), new combo twice (expect paste).
+Promise: "Tastenkürzel sind immer mit zwei Zusatztasten."
+Steps: backup; open settings, `uia invoke "Diktieren"` (sidebar); focus the Tastenkürzel box; `$V combo ctrl shift y` (QWERTZ: sends scancode for physical Y key → check box text); `$V uia invoke Speichern`. Then Notepad: old `ctrl shift d` (expect nothing), new combo twice (expect paste).
 Expect: `Settings saved`; old combo: no `Hotkey Dictate` line; new combo: `Dictate: Pasted`. Restore backup + restart.
 Pass: old dead, new works, no "Tastenkürzel belegt" balloon.
 
@@ -162,7 +162,7 @@ Pass: closed, no prompt.
 
 **S6 `[no-wav]` Invalid hotkey rejected on save**
 Promise: "immer mit zwei Zusatztasten … Kombinationen mit Alt besser meiden."
-Steps: backup; Tastenkürzel page; in Prompt box press `$V combo ctrl p` (one modifier) → Speichern; then set Prompt = same as Diktieren (`ctrl shift d`) → Speichern.
+Steps: backup; `uia invoke "Dictate Prompt"` page; in its Tastenkürzel box press `$V combo ctrl p` (one modifier) → Speichern; then set it to the same as Diktieren (`ctrl shift d`) → Speichern.
 Expect: warning dialogs "Bitte für jede Funktion ein Tastenkürzel mit zwei Zusatztasten…" and "Die Tastenkürzel müssen verschieden sein."; no `Settings saved`.
 Pass: both refusals; settings.json unchanged.
 
@@ -173,7 +173,7 @@ Pass: exactly that.
 
 **S8 `[no-wav]` Quick-action reset**
 Promise: "„Vorschläge wiederherstellen“ setzt die Vorbelegung zurück."
-Steps: Schnellanweisungen page, edit one field, `uia invoke "Vorschläge wiederherstellen"`, Speichern.
+Steps: Dictate Prompt page, Schnellanweisungen card: edit one field, `uia invoke "Vorschläge wiederherstellen"`, Speichern.
 Expect: `Settings saved (... quick actions 5 ...)`; edited text gone in `uia list`.
 Pass: both.
 

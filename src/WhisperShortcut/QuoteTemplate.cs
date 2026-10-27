@@ -2,7 +2,7 @@ namespace WhisperShortcut;
 
 /// <summary>
 /// The "Vorlage" for Dictate Prompt without a selection. It is not used as the whole system prompt:
-/// it is appended to the Mac's default editing prompt, so "mach das freundlicher" on a selection
+/// it is appended to the Dictate Prompt system prompt (default or the user's own), so "mach das freundlicher" on a selection
 /// still gets the full editing rules and only compose turns (NO SELECTED TEXT) follow the template.
 /// </summary>
 internal static class QuoteTemplate

@@ -11,7 +11,7 @@ Was es kann
      Die Markierung wird ersetzt.
    - Ohne Markierung: Strg+Umschalt+P, z. B. „Schreib Herrn Meier ein Angebot für zwei
      Heizkörper inklusive Montage, Termin nächste Woche Dienstag“, Strg+Umschalt+P.
-     Ein fertiger Text nach der Vorlage (Einstellungen → Vorlage) wird eingefügt.
+     Ein fertiger Text nach der Vorlage (Einstellungen → Dictate Prompt → Vorlage) wird eingefügt.
    Ein Druck während der Verarbeitung bricht ab.
    - Schnellanweisungen: Während dieser Aufnahme zeigt die Anzeige fünf fertige Anweisungen,
      z. B. „Kürzer fassen“. Strg+1 bis Strg+5 oder ein Klick darauf
@@ -76,7 +76,7 @@ Offline-Modus (nichts verlässt den PC)
 Für Patientendaten und andere geschützte Inhalte: Einstellungen → Allgemein → Arbeitsweise →
 „Offline auf diesem PC“. Dann braucht es keinen API-Schlüssel und kein Internet. Umschalten geht
 auch schnell über Rechtsklick auf das Symbol → „Offline: nichts verlässt den PC“ (Haken = offline).
-1. Unter „Offline-Modelle“ einmal die Spracherkennung laden (ca. 670 MB) und das Sprachmodell
+1. Unter Einstellungen → Offline einmal die Spracherkennung laden (ca. 670 MB) und das Sprachmodell
    für „Text bearbeiten“ (ca. 2,5 GB, mit 16 GB Arbeitsspeicher besser das größere, ca. 5,7 GB).
    Das Laden läuft weiter, wenn das Fenster zu ist. Danach „Speichern“.
 2. Diktieren geht offline genauso schnell wie online. „Neuer Absatz“, „neue Zeile“ und
@@ -88,25 +88,32 @@ auch schnell über Rechtsklick auf das Symbol → „Offline: nichts verlässt d
    im Hintergrund einige Sekunden, bis sie die neuen Wörter kennt. Bisher greifen nur
    einzelne Wörter zuverlässig, Namen aus zwei Wörtern noch nicht.
 Die Modelle liegen unter %LOCALAPPDATA%\WhisperShortcut\Offline (in den Einstellungen per
-„Entfernen“ löschbar).
+„Entfernen“ auf der Seite Offline löschbar).
 
 Einstellungen
 -------------
 Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit ungespeicherten
 Änderungen schließt, wird gefragt.
-- Allgemein: Arbeitsweise (online/offline), Schlüssel, Offline-Modelle, Mikrofon, Autostart.
-- Tastenkürzel: änderbar, immer mit zwei Zusatztasten (z. B. Strg+Umschalt+…). Kombinationen
-  mit Alt besser meiden (dann öffnen viele Programme ihr Menü). Solange die App läuft, gehen
-  in Word Strg+Umschalt+D (doppelt unterstreichen) und Strg+Umschalt+P (Schriftgrad) nicht. In
-  Excel gilt bei Strg+Umschalt+P die aktuelle Zelle immer als Markierung. Esc und Strg+1 bis
-  Strg+5 gelten nur während einer Aufnahme.
-- Glossar: Namen, Fachbegriffe, Firmennamen (eine Zeile pro Begriff), damit sie richtig
-  geschrieben werden. Strg+Umschalt+G fügt ein markiertes Wort direkt hinzu.
-- Schnellanweisungen: die fünf Anweisungen für Strg+1 bis Strg+5, frei änderbar
-  (z. B. „Als Arztbrief formulieren“). „Vorschläge wiederherstellen“ setzt die Vorbelegung zurück.
-- Vorlage: wie neue Texte aussehen sollen. Über „Beispiel einsetzen“ gibt es eine Praxis-Vorlage
+- Allgemein: Arbeitsweise (online/offline), Schlüssel, Mikrofon mit Pegeltest, Autostart.
+- Diktieren: Tastenkürzel, Gemini-Modell und Systemprompt fürs Diktieren (online). Der
+  Systemprompt sagt, wie transkribiert wird; Namen und Fachwörter gehören ins Glossar.
+  „Standard wiederherstellen“ setzt ihn zurück.
+- Dictate Prompt: Tastenkürzel, Gemini-Modell, Systemprompt fürs Bearbeiten (gilt online und
+  offline), die Vorlage für neue Texte und die fünf Schnellanweisungen für Strg+1 bis Strg+5
+  (z. B. „Als Arztbrief formulieren“; „Vorschläge wiederherstellen“ setzt sie zurück).
+  Vorlage: wie neue Texte aussehen sollen. Über „Beispiel einsetzen“ gibt es eine Praxis-Vorlage
   (Anamnese, Befund, Therapie, Briefe in Sie-Form) und eine Handwerks-Vorlage (Angebot). Am besten
   mit 1–2 echten Texten des Nutzers anpassen (Praxisname, Stundensatz, Zahlungsbedingungen).
+- Glossar: Tastenkürzel und die Liste der Namen, Fachbegriffe, Firmennamen (eine Zeile pro
+  Begriff), damit sie richtig geschrieben werden. Strg+Umschalt+G fügt ein markiertes Wort
+  direkt hinzu.
+- Offline: Spracherkennung und Sprachmodell laden oder entfernen, Sprachmodell wählen.
+- Info: Version, Anleitung, Fehler melden, Protokoll öffnen.
+Tastenkürzel sind immer mit zwei Zusatztasten (z. B. Strg+Umschalt+…). Kombinationen mit Alt
+besser meiden (dann öffnen viele Programme ihr Menü). Solange die App läuft, gehen in Word
+Strg+Umschalt+D (doppelt unterstreichen) und Strg+Umschalt+P (Schriftgrad) nicht. In Excel gilt
+bei Strg+Umschalt+P die aktuelle Zelle immer als Markierung. Esc und Strg+1 bis Strg+5 gelten
+nur während einer Aufnahme.
 
 Gut zu wissen
 -------------
