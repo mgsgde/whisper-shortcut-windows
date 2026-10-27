@@ -109,13 +109,20 @@ Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit un
   einsetzen“ gibt es eine Praxis-Vorlage (Anamnese, Befund, Therapie, Briefe in Sie-Form), eine
   Werkstatt-Vorlage (Auftragsbericht) und eine Handwerks-Vorlage (Angebot). Am besten
   mit 1–2 echten Texten des Nutzers anpassen (Praxisname, Stundensatz, Zahlungsbedingungen).
+  Profile: Anweisungen, Vorlage und Schnellanweisungen lassen sich als Profil speichern, z. B. eins
+  pro Kunde. „Neu“ legt ein leeres Profil oder eins aus dem Beispiel Praxis, Werkstatt oder
+  Handwerk an; dazu Umbenennen, Duplizieren, Löschen. Ab zwei Profilen wird im Tray-Menü unter
+  „Profil“ gewechselt, und die Anzeige von Dictate Prompt zeigt den Profilnamen.
 - Glossar: Tastenkürzel und die Liste der Namen, Fachbegriffe, Firmennamen (eine Zeile pro
   Begriff), damit sie richtig geschrieben werden. Strg+Umschalt+G fügt ein markiertes Wort
   direkt hinzu.
 - Offline: Spracherkennung und Sprachmodell laden oder entfernen, Sprachmodell wählen.
 - Info: Version und „Nach Updates suchen“ (fragt GitHub, installiert nichts selbst),
   Willkommenstour, Daten und Zurücksetzen (App-Datenordner, Protokoll, „App zurücksetzen“ löscht
-  alles inklusive API-Schlüssel, Glossar und Offline-Modellen und beendet die App), Fehler melden.
+  alles inklusive API-Schlüssel, Glossar und Offline-Modellen und beendet die App).
+  „Problem melden“ öffnet ein ausgefülltes GitHub-Issue (Version, Windows, Modelle, Profilname,
+  letzte Protokollzeilen, keine diktierten Texte): oben eintragen, was passiert ist, durchsehen,
+  absenden. Ist der Bericht zu lang, liegt er in der Zwischenablage (Strg+V ins Issue).
 Tastenkürzel sind immer mit zwei Zusatztasten (z. B. Strg+Umschalt+…). Kombinationen mit Alt
 besser meiden (dann öffnen viele Programme ihr Menü). Solange die App läuft, gehen in Word
 Strg+Umschalt+D (doppelt unterstreichen) und Strg+Umschalt+P (Schriftgrad) nicht. In Excel gilt

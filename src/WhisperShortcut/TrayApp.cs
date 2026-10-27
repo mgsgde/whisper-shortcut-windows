@@ -844,8 +844,7 @@ internal sealed class TrayApp : ApplicationContext
         if (_state != State.Idle || id == _settings.ActiveProfile.Id) return; // not mid-recording: the quick actions would change under the card
         _settings.ActiveProfileId = id;
         TrySave();
-        // TODO(settings-ui): call _settingsForm?.SyncProfileFromTray() here so an open settings window
-        // does not overwrite this switch on its next save.
+        _settingsForm?.SyncProfileFromTray(); // an open settings window must not switch back on its next save
         SyncSessionHotkeys(); // the Ctrl+1–5 count follows the profile's quick actions
         var name = _settings.ActiveProfile.Name;
         Core.Log.Info($"Profile switched to {name} ({_settings.Profiles.Count} profiles)");

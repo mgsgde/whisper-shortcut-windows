@@ -696,3 +696,39 @@ internal sealed class Bar : Control
         g.FillPath(brush, fillPath);
     }
 }
+
+/// <summary>Small themed dialog that asks for a name, e.g. of a prompt profile.</summary>
+internal sealed class NameDialog : Form
+{
+    private readonly TextBox _name;
+
+    public string Value => _name.Text.Trim();
+
+    public NameDialog(string title, string prompt, string initial)
+    {
+        Text = title;
+        AutoScaleMode = AutoScaleMode.Dpi;
+        Font = Theme.Body;
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = MinimizeBox = ShowInTaskbar = false;
+        StartPosition = FormStartPosition.CenterParent;
+        ClientSize = new Size(400, 150);
+        _name = new TextBox { Text = initial, MaxLength = 60, AccessibleName = prompt };
+        var ok = new FluentButton("OK", accent: true) { MinimumSize = new Size(100, 32), DialogResult = DialogResult.OK };
+        var cancel = new FluentButton("Abbrechen") { MinimumSize = new Size(100, 32), DialogResult = DialogResult.Cancel };
+        _name.TextChanged += (_, _) => ok.Enabled = Value.Length > 0;
+        var buttons = new FlowLayoutPanel { FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, AutoSize = true, Margin = new Padding(0) };
+        buttons.Controls.Add(cancel);
+        buttons.Controls.Add(ok);
+        var layout = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(20, 16, 20, 16) };
+        layout.Controls.Add(new ThemedLabel { Text = prompt, AutoSize = true, Margin = new Padding(0, 0, 0, 4) });
+        layout.Controls.Add(new FieldFrame(_name));
+        layout.Controls.Add(buttons);
+        Controls.Add(layout);
+        AcceptButton = ok;
+        CancelButton = cancel;
+        HandleCreated += (_, _) => Theme.TitleBar(this);
+        Theme.Apply(this);
+        Shown += (_, _) => { _name.Focus(); _name.SelectAll(); };
+    }
+}

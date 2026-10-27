@@ -46,6 +46,14 @@ internal sealed class SettingsForm : Form
     private readonly TextBox _template;
     private readonly TextBox[] _quick = new TextBox[Core.QuickActionList.Max];
     private readonly ContextMenuStrip _sampleMenu;
+    private readonly FluentCombo _profile;
+    private readonly FluentButton _profileDelete;
+    private readonly ContextMenuStrip _profileNewMenu;
+    // Working copies: the Anweisungen, Vorlage and Schnellanweisungen editors show _current; Save writes all back.
+    private readonly List<Core.PromptProfile> _profiles;
+    private Core.PromptProfile _current;
+    private string _loadedProfileId;
+    private bool _fillingProfiles;
     private readonly ThemedLabel _dirty;
     private readonly List<(Label Label, int Inset)> _wraps = new();
     private readonly List<NavItem> _nav = new();
@@ -239,6 +247,41 @@ internal sealed class SettingsForm : Form
         prompt.Controls.Add(Section("Modell"));
         _promptModel = ModelChoice(Core.GeminiModels.Prompt, settings.PromptModel);
         prompt.Controls.Add(ModelCard(_promptModel, "Gilt online. Offline arbeitet das Sprachmodell, das unter „Offline“ gewählt ist."));
+
+        _profiles = settings.Profiles.Select(CopyProfile).ToList();
+        _current = _profiles.First(p => p.Id == settings.ActiveProfile.Id);
+        _loadedProfileId = _current.Id;
+        prompt.Controls.Add(Section("Profil"));
+        prompt.Controls.Add(Wrap("Ein Profil fasst Anweisungen, Vorlage und Schnellanweisungen zusammen, z. B. eines pro Kunde oder "
+            + "Arbeitsbereich. Die drei Abschnitte darunter gehören zum gewählten Profil. Ab zwei Profilen lässt es sich auch im "
+            + "Tray-Menü unter „Profil“ wechseln.", 0));
+        _profile = new FluentCombo { Width = ComboWidth, AccessibleName = "Profil" };
+        _profile.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_fillingProfiles && _profile.SelectedItem is ProfileItem item) SelectProfile(item.Profile);
+        };
+        var profileNew = new FluentButton("Neu ▾") { MinimumSize = new Size(96, 32), AccessibleName = "Neues Profil" };
+        _profileNewMenu = new ContextMenuStrip();
+        _profileNewMenu.Items.Add("Leer: Standard-Anweisungen, ohne Vorlage", null, (_, _) => AddProfile("Neues Profil", ""));
+        _profileNewMenu.Items.Add(new ToolStripSeparator());
+        foreach (var (name, text) in ProfileSamples.All)
+            _profileNewMenu.Items.Add($"Beispiel {name}", null, (_, _) => AddProfile(name, text));
+        profileNew.Click += (_, _) => { Theme.Menu(_profileNewMenu); _profileNewMenu.Show(profileNew, new Point(0, profileNew.Height)); };
+        var profileRename = new FluentButton("Umbenennen …") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Profil umbenennen" };
+        profileRename.Click += (_, _) => RenameProfile();
+        var profileDuplicate = new FluentButton("Duplizieren") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Profil duplizieren" };
+        profileDuplicate.Click += (_, _) => DuplicateProfile();
+        _profileDelete = new FluentButton("Löschen …") { MinimumSize = new Size(ButtonWidth, 32), Danger = true, AccessibleName = "Profil löschen" };
+        _profileDelete.Click += (_, _) => DeleteProfile();
+        var profileButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Dock = DockStyle.Top, Margin = new Padding(0) };
+        profileButtons.Controls.AddRange(new Control[] { profileNew, profileRename, profileDuplicate, _profileDelete });
+        var profileActions = Block();
+        profileActions.Controls.Add(profileButtons);
+        var profileCard = new Card();
+        profileCard.AddRow(SettingRow("Gewähltes Profil", "Gilt für Dictate Prompt und die Schnellanweisungen, online und offline.",
+            _profile, ComboWidth, out _));
+        profileCard.AddRow(profileActions);
+        prompt.Controls.Add(profileCard);
         prompt.Controls.Add(Section("Anweisungen"));
         prompt.Controls.Add(Wrap("Der Systemprompt für Dictate Prompt. Gilt immer: beim Bearbeiten einer Markierung, bei neuen Texten "
             + "und bei den Schnellanweisungen, online und offline. Hier hinein gehören feste Regeln wie Ton, Rechtschreibung oder "
@@ -301,6 +344,7 @@ internal sealed class SettingsForm : Form
         var quickCard = new Card();
         quickCard.AddRow(quickBlock);
         prompt.Controls.Add(quickCard);
+        FillProfiles();
 
         // ================= page: Glossar =================
         _glossaryKey = new HotkeyBox(settings.GlossaryHotkey) { AccessibleName = "Tastenkürzel Glossar" };
@@ -458,6 +502,7 @@ internal sealed class SettingsForm : Form
             StopMicTest();
             _meterTimer.Dispose();
             _sampleMenu.Dispose();
+            _profileNewMenu.Dispose();
         };
     }
 
@@ -590,8 +635,16 @@ internal sealed class SettingsForm : Form
         var links = new Card();
         links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
             LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
-        links.AddRow(SettingRow("Fehler melden", "Auf GitHub beschreiben, was passiert ist, am besten mit dem Protokoll.",
-            LinkButton("Melden", "https://github.com/mgsgde/whisper-shortcut-windows/issues"), ButtonWidth, out _));
+        var report = new FluentButton("Melden …") { MinimumSize = new Size(96, 32), AccessibleName = "Problem melden" };
+        report.Click += (_, _) => ReportProblem();
+        var reportLog = new FluentButton("Protokoll") { MinimumSize = new Size(96, 32), AccessibleName = "Protokollordner zum Anhängen öffnen" };
+        reportLog.Click += (_, _) => OpenFolder(Core.AppData.LogFolder);
+        var reportButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        reportButtons.Controls.Add(report);
+        reportButtons.Controls.Add(reportLog);
+        links.AddRow(SettingRow("Problem melden", "Öffnet ein GitHub-Issue, schon ausgefüllt mit Version, Windows, Modellen, Profilname "
+            + "und den letzten Protokollzeilen, ohne diktierte Texte und ohne Schlüssel. Oben eintragen, was passiert ist, und vor dem "
+            + "Absenden durchsehen. Klappt der Link nicht: die Protokolldatei aus dem Ordner anhängen.", reportButtons, 208, out _));
         info.Controls.Add(links);
 
         info.Controls.Add(Section("Lizenz"));
@@ -599,6 +652,33 @@ internal sealed class SettingsForm : Form
     }
 
     private static string AppVersion => Application.ProductVersion.Split('+')[0];
+
+    /// <summary>Opens a prefilled GitHub issue; a body too long for the URL goes to the clipboard instead.</summary>
+    private void ReportProblem()
+    {
+        var info = new Core.ProblemReportInfo(AppVersion, Environment.OSVersion.Version.ToString(),
+            System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(), _settings.OfflineMode,
+            _settings.TranscriptionModel, _settings.PromptModel, _settings.OfflineLlmId, _settings.ActiveProfile.Name);
+        var body = Core.ProblemReport.Body(info, Core.ProblemReport.TailLog(Core.Log.DefaultPath));
+        var (url, bodyInUrl) = Core.ProblemReport.IssueUrl($"Problem in Version {AppVersion}", body);
+        if (!bodyInUrl)
+        {
+            try
+            {
+                Clipboard.SetText(body);
+                MessageBox.Show(this, "Der Bericht ist zu lang für den Link und liegt jetzt in der Zwischenablage. Im Browser ins "
+                    + "Textfeld klicken und Strg+V drücken.", "Problem melden", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
+            catch (Exception e)
+            {
+                Core.Log.Error($"Copying the problem report failed: {e.GetType().Name}");
+                Warn("Der Bericht konnte nicht in die Zwischenablage. Bitte die Protokolldatei aus dem Ordner an das Issue anhängen.");
+                OpenFolder(Core.AppData.LogFolder);
+            }
+        }
+        Core.Log.Info($"Problem report opened (body in URL: {bodyInUrl})");
+        OpenUrl(url);
+    }
 
     private async Task CheckUpdateAsync()
     {
@@ -747,6 +827,9 @@ internal sealed class SettingsForm : Form
             Reset.LinkClicked += (_, _) => Box.Text = _default.ReplaceLineEndings("\r\n");
             Update();
         }
+
+        /// <summary>Shows <paramref name="stored"/>, or the default for "".</summary>
+        public void SetStored(string stored) => Box.Text = (stored.Length > 0 ? stored : _default).ReplaceLineEndings("\r\n");
 
         /// <summary>What to store: "" for the default.</summary>
         public string Value => Core.Settings.CustomOrEmpty(Box.Text, _default);
@@ -1138,14 +1221,20 @@ internal sealed class SettingsForm : Form
 
     // ---------------- save / close ----------------
 
-    /// <summary>Everything the user can change, as one string: equal = nothing to save. The mode comes first (see SyncOfflineFromTray).</summary>
-    private string Snapshot() => string.Join("\u0001", new[]
+    /// <summary>Everything the user can change, as one string: equal = nothing to save. The mode comes first (see SyncOfflineFromTray),
+    /// The chosen profile comes last (see SyncProfileFromTray).</summary>
+    private string Snapshot()
     {
-        _onlineMode.Checked.ToString(), SelectedLlmChoice.Id, _apiKey.Text.Trim(), SelectedMicrophone,
-        _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
-        _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
-        _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(),
-    }.Concat(_quick.Select(q => q.Text)));
+        StoreEditors();
+        return string.Join("\u0001", new[]
+        {
+            _onlineMode.Checked.ToString(), SelectedLlmChoice.Id, _apiKey.Text.Trim(), SelectedMicrophone,
+            _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
+            _glossary.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
+            _dictatePrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(),
+        }.Concat(_profiles.Select(p => string.Join("\u0002", new[] { p.Id, p.Name, p.Instructions, p.Template }.Concat(p.QuickActions))))
+         .Append(_current.Id));
+    }
 
     private static string SelectedModel(FluentCombo combo) => ((ModelItem)combo.SelectedItem!).Model.Id;
 
@@ -1214,8 +1303,8 @@ internal sealed class SettingsForm : Form
 
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
-            _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
-            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard);
+            _settings.Profiles, _settings.ActiveProfileId, _settings.TranscriptionModel, _settings.PromptModel,
+            _settings.DictateSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _apiKey.Text.Trim();
@@ -1224,12 +1313,12 @@ internal sealed class SettingsForm : Form
         _settings.PromptHotkey = parsed[1].ToString();
         _settings.GlossaryHotkey = parsed[2].ToString();
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
-        _settings.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
-        _settings.PromptSystemPrompt = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
+        StoreEditors();
+        _settings.Profiles = _profiles.Select(CopyProfile).ToList(); // copies: the rollback below keeps the old list untouched
+        _settings.ActiveProfileId = _current.Id;
         _settings.TranscriptionModel = SelectedModel(_dictateModel);
         _settings.PromptModel = SelectedModel(_promptModel);
         _settings.DictateSystemPrompt = _dictatePrompt.Value;
-        _settings.PromptModeSystemPrompt = _promptPrompt.Value;
         _settings.AutoPaste = _autoPaste.Checked;
         _settings.RestoreClipboard = _restoreClipboard.Checked;
         try
@@ -1241,8 +1330,8 @@ internal sealed class SettingsForm : Form
             Core.Log.Error($"Saving settings failed: {e.GetType().Name}");
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
                 _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
-                _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
-                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard) = before;
+                _settings.Profiles, _settings.ActiveProfileId, _settings.TranscriptionModel, _settings.PromptModel,
+                _settings.DictateSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard) = before;
             Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
             return false;
         }
@@ -1251,10 +1340,118 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, profiles {_settings.Profiles.Count})");
         _saved = true;
         DialogResult = DialogResult.OK;
         return true;
+    }
+
+    // ---------------- prompt profiles ----------------
+
+    private sealed record ProfileItem(Core.PromptProfile Profile)
+    {
+        public override string ToString() => Profile.Name;
+    }
+
+    private static Core.PromptProfile CopyProfile(Core.PromptProfile p) => new()
+    {
+        Id = p.Id, Name = p.Name, Instructions = p.Instructions, Template = p.Template, QuickActions = new List<string>(p.QuickActions),
+    };
+
+    /// <summary>Writes the Anweisungen, Vorlage and Schnellanweisungen editors back into the profile they show.</summary>
+    private void StoreEditors()
+    {
+        _current.Instructions = _promptPrompt.Value;
+        _current.Template = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
+        _current.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
+    }
+
+    private void LoadEditors()
+    {
+        _promptPrompt.SetStored(_current.Instructions);
+        _template.Text = _current.Template.ReplaceLineEndings("\r\n");
+        for (int i = 0; i < _quick.Length; i++) _quick[i].Text = i < _current.QuickActions.Count ? _current.QuickActions[i] : "";
+    }
+
+    private void FillProfiles()
+    {
+        _fillingProfiles = true;
+        _profile.Items.Clear();
+        foreach (var p in _profiles) _profile.Items.Add(new ProfileItem(p));
+        _profile.SelectedIndex = _profiles.IndexOf(_current);
+        _fillingProfiles = false;
+        _profileDelete.Enabled = _profiles.Count > 1;
+    }
+
+    private void SelectProfile(Core.PromptProfile profile)
+    {
+        if (profile != _current)
+        {
+            StoreEditors();
+            _current = profile;
+            LoadEditors();
+        }
+        FillProfiles();
+    }
+
+    private void AddProfile(string suggestion, string template)
+    {
+        var name = AskProfileName("Neues Profil", Core.PromptProfiles.UniqueName(_profiles.Select(p => p.Name), suggestion));
+        if (name == null) return;
+        var profile = ProfileSamples.Create(name, template, _profiles.Select(p => p.Name));
+        _profiles.Add(profile);
+        SelectProfile(profile);
+    }
+
+    private void RenameProfile()
+    {
+        var name = AskProfileName("Profil umbenennen", _current.Name);
+        if (name == null || name == _current.Name) return;
+        _current.Name = Core.PromptProfiles.UniqueName(_profiles.Where(p => p != _current).Select(p => p.Name), name);
+        FillProfiles();
+    }
+
+    private void DuplicateProfile()
+    {
+        StoreEditors();
+        var copy = Core.PromptProfiles.Duplicate(_current, _profiles.Select(p => p.Name));
+        _profiles.Insert(_profiles.IndexOf(_current) + 1, copy);
+        SelectProfile(copy);
+    }
+
+    private void DeleteProfile()
+    {
+        if (_profiles.Count < 2) return;
+        var answer = MessageBox.Show(this, $"Anweisungen, Vorlage und Schnellanweisungen von „{_current.Name}“ gehen beim Speichern "
+            + "verloren. Mit „Abbrechen“ unten im Fenster bleibt das Profil erhalten.", $"Profil „{_current.Name}“ löschen?",
+            MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes) return;
+        int index = _profiles.IndexOf(_current);
+        _profiles.RemoveAt(index);
+        _current = _profiles[Math.Min(index, _profiles.Count - 1)];
+        LoadEditors();
+        FillProfiles();
+    }
+
+    private string? AskProfileName(string title, string initial)
+    {
+        using var dialog = new NameDialog(title, "Name des Profils", initial);
+        return dialog.ShowDialog(this) == DialogResult.OK && dialog.Value.Length > 0 ? dialog.Value : null;
+    }
+
+    /// <summary>
+    /// The tray menu switched the profile while this window is open. Show that profile (unless the user picked
+    /// another one here), so Save does not quietly switch back.
+    /// </summary>
+    public void SyncProfileFromTray()
+    {
+        if (IsDisposed || _snapshot.Length == 0 || _settings.ActiveProfileId == _loadedProfileId) return;
+        bool userChangedProfile = _current.Id != _loadedProfileId;
+        _loadedProfileId = _settings.ActiveProfileId;
+        var match = _profiles.FirstOrDefault(p => p.Id == _loadedProfileId);
+        if (userChangedProfile || match == null) return;
+        SelectProfile(match);
+        _snapshot = _snapshot[..(_snapshot.LastIndexOf('\u0001') + 1)] + match.Id;
     }
 
     /// <summary>The glossary hotkey added a term while this window is open: show it, so Save keeps it.</summary>
