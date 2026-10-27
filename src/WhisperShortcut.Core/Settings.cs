@@ -54,8 +54,23 @@ public sealed class Settings
     /// <summary>Vocabulary terms that bias transcription spelling.</summary>
     public List<string> Glossary { get; set; } = new();
 
-    /// <summary>The user's own Dictate Prompt system prompt (quote template). Empty = default prompt.</summary>
+    /// <summary>
+    /// The template ("Vorlage") for new texts in Dictate Prompt; appended to the editing prompt and applied only
+    /// when nothing is selected. Empty = no template. JSON name kept from the former "system prompt" field.
+    /// </summary>
     public string PromptSystemPrompt { get; set; } = "";
+
+    /// <summary>
+    /// The user's own transcription instruction for Dictate (Gemini only; offline speech recognition takes no prompt).
+    /// Empty = Prompts.DefaultTranscriptionSystemPrompt.
+    /// </summary>
+    public string DictateSystemPrompt { get; set; } = "";
+
+    /// <summary>
+    /// The user's own editing instruction for Dictate Prompt (online and offline).
+    /// Empty = Prompts.DefaultPromptModeSystemPrompt. The template for new texts (PromptSystemPrompt) is appended to it.
+    /// </summary>
+    public string PromptModeSystemPrompt { get; set; } = "";
 
     /// <summary>Transcription model id.</summary>
     public string TranscriptionModel { get; set; } = DefaultTranscriptionModel;
@@ -84,6 +99,19 @@ public sealed class Settings
     /// <summary>Quick instructions offered while recording (see <see cref="QuickActionList"/>).</summary>
     public List<string> QuickActions { get; set; } = new(QuickActionList.Defaults);
 
+    /// <summary>
+    /// "" when <paramref name="text"/> is blank or equals <paramref name="defaultText"/> (ignoring line endings and
+    /// surrounding whitespace), otherwise the text trimmed with "\n" line endings. Keeps "default" stored as empty.
+    /// </summary>
+    public static string CustomOrEmpty(string? text, string defaultText)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        var t = Normalize(text);
+        return t == Normalize(defaultText) ? "" : t;
+
+        static string Normalize(string v) => v.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+    }
+
     /// <summary>Loads the settings; a missing or corrupt file yields defaults (a corrupt file is kept as .bak).</summary>
     public static Settings Load(string path, ISecretProtector protector)
     {
@@ -100,8 +128,10 @@ public sealed class Settings
             }
             s.Glossary = dto.Glossary ?? new();
             s.PromptSystemPrompt = dto.PromptSystemPrompt ?? "";
-            if (!string.IsNullOrWhiteSpace(dto.TranscriptionModel)) s.TranscriptionModel = dto.TranscriptionModel;
-            if (!string.IsNullOrWhiteSpace(dto.PromptModel)) s.PromptModel = dto.PromptModel;
+            s.DictateSystemPrompt = CustomOrEmpty(dto.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt);
+            s.PromptModeSystemPrompt = CustomOrEmpty(dto.PromptModeSystemPrompt, Prompts.DefaultPromptModeSystemPrompt);
+            s.TranscriptionModel = GeminiModels.NormalizeTranscription(dto.TranscriptionModel);
+            s.PromptModel = GeminiModels.NormalizePrompt(dto.PromptModel);
             if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
             if (!string.IsNullOrWhiteSpace(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey;
             if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
@@ -131,6 +161,8 @@ public sealed class Settings
             ApiKeyProtected = ApiKey.Length == 0 ? "" : _protector.Protect(ApiKey),
             Glossary = Glossary,
             PromptSystemPrompt = PromptSystemPrompt,
+            DictateSystemPrompt = DictateSystemPrompt,
+            PromptModeSystemPrompt = PromptModeSystemPrompt,
             TranscriptionModel = TranscriptionModel,
             PromptModel = PromptModel,
             DictateHotkey = DictateHotkey,
@@ -151,6 +183,8 @@ public sealed class Settings
         [JsonPropertyName("apiKeyProtected")] public string? ApiKeyProtected { get; set; }
         [JsonPropertyName("glossary")] public List<string>? Glossary { get; set; }
         [JsonPropertyName("promptSystemPrompt")] public string? PromptSystemPrompt { get; set; }
+        [JsonPropertyName("dictateSystemPrompt")] public string? DictateSystemPrompt { get; set; }
+        [JsonPropertyName("promptModeSystemPrompt")] public string? PromptModeSystemPrompt { get; set; }
         [JsonPropertyName("transcriptionModel")] public string? TranscriptionModel { get; set; }
         [JsonPropertyName("promptModel")] public string? PromptModel { get; set; }
         [JsonPropertyName("dictateHotkey")] public string? DictateHotkey { get; set; }

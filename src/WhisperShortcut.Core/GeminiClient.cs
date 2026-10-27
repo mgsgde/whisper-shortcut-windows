@@ -62,18 +62,20 @@ public sealed class GeminiClient
     private readonly Func<string?> _apiKey;
     private readonly Func<string> _transcriptionModel;
     private readonly Func<string> _promptModel;
+    private readonly Func<string>? _transcriptionPrompt;
 
     /// <summary>Delay before the single retry on 429/500/503 (1 s; tests set it to zero).</summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(1);
 
     /// <summary>Creates a client reading key and models from <paramref name="settings"/> on every call.</summary>
     public GeminiClient(Settings settings, HttpClient? http = null)
-        : this(() => settings.ApiKey, () => settings.TranscriptionModel, () => settings.PromptModel, http) { }
+        : this(() => settings.ApiKey, () => settings.TranscriptionModel, () => settings.PromptModel, http, () => settings.DictateSystemPrompt) { }
 
     /// <summary>Creates a client with explicit providers (evaluated on every call).</summary>
     public GeminiClient(Func<string?> apiKeyProvider, Func<string> transcriptionModel,
-        Func<string> promptModel, HttpClient? http = null)
+        Func<string> promptModel, HttpClient? http = null, Func<string>? transcriptionPrompt = null)
     {
+        _transcriptionPrompt = transcriptionPrompt;
         _apiKey = apiKeyProvider;
         _transcriptionModel = transcriptionModel;
         _promptModel = promptModel;
@@ -89,7 +91,7 @@ public sealed class GeminiClient
     public async Task<string> TranscribeAsync(byte[] wav, IReadOnlyList<string> glossary, CancellationToken ct = default)
     {
         var model = _transcriptionModel();
-        var body = BuildTranscriptionBody(model, wav, glossary);
+        var body = BuildTranscriptionBody(model, wav, glossary, _transcriptionPrompt?.Invoke());
         return await SendAsync(model, body, ct).ConfigureAwait(false);
     }
 
@@ -124,10 +126,10 @@ public sealed class GeminiClient
         return await SendAsync(model, body, ct).ConfigureAwait(false);
     }
 
-    internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary)
+    internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null)
     {
         var terms = glossary.Select(t => t.Trim()).Where(t => t.Length > 0).ToList();
-        var instruction = Prompts.DefaultTranscriptionSystemPrompt;
+        var instruction = string.IsNullOrWhiteSpace(customPrompt) ? Prompts.DefaultTranscriptionSystemPrompt : customPrompt.Trim();
         if (terms.Count > 0) instruction += "\n\n" + Prompts.GlossaryHintHeader + string.Join(", ", terms);
 
         // 3.7 / 3.8 Flash and Pro reject "minimal" (HTTP 400): clamp to "low" like TranscriptionModels.swift.

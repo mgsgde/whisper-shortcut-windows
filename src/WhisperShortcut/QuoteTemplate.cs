@@ -70,15 +70,4 @@ internal static class QuoteTemplate
         Wenn ich einen Brief oder eine Nachricht diktiere (an Patienten, Ärzte, Kassen): kurz und freundlich, Sie-Form, mit Anrede und Gruß.
         Immer reiner Text, ohne Sternchen oder Rauten.
         """;
-
-    /// <summary>System prompt for a Dictate Prompt request, or null for the plain Mac default.</summary>
-    public static string? BuildSystemPrompt(string? template)
-    {
-        if (string.IsNullOrWhiteSpace(template)) return null;
-        return Core.Prompts.DefaultPromptModeSystemPrompt
-            + "\n\nTemplate for new texts — applies ONLY when the request is marked NO SELECTED TEXT, never when editing a selection. "
-            + "Write the finished text in the language of the voice instruction and follow this template from the user exactly "
-            + "(structure, sections, wording). Fill in only what was spoken; keep every [placeholder] the speaker did not fill:\n\n"
-            + template.Trim();
-    }
 }

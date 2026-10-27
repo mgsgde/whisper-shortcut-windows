@@ -449,7 +449,7 @@ internal sealed class TrayApp : ApplicationContext
         string? selection = _selection != null ? await _selection : null;
         Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
 
-        string systemPrompt = QuoteTemplate.BuildSystemPrompt(_settings.PromptSystemPrompt) ?? "";
+        string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt, _settings.PromptSystemPrompt) ?? "";
         if (_quickAction != null) return await QuickActionAsync(_quickAction, wav, seconds, selection, systemPrompt, ct);
 
         if (_fakeGemini)
