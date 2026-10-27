@@ -346,7 +346,7 @@ internal sealed class FieldFrame : Panel
 /// <summary>Button drawn like a Windows 11 button; <see cref="Accent"/> for the main action (Speichern).</summary>
 internal sealed class FluentButton : Button
 {
-    private bool _hover, _pressed, _accent;
+    private bool _hover, _pressed, _accent, _danger;
 
     public FluentButton(string text, bool accent = false)
     {
@@ -367,6 +367,14 @@ internal sealed class FluentButton : Button
     {
         get => _accent;
         set { _accent = value; Invalidate(); }
+    }
+
+    /// <summary>Destructive action (Zurücksetzen): red text on a normal button, like the Windows 11 settings.</summary>
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public bool Danger
+    {
+        get => _danger;
+        set { _danger = value; Invalidate(); }
     }
 
     protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
@@ -399,7 +407,7 @@ internal sealed class FluentButton : Button
             using var path = Theme.Rounded(new RectangleF(1.5f, 1.5f, Width - 3.5f, Height - 3.5f), LogicalToDeviceUnits(4));
             g.DrawPath(ring, path);
         }
-        Color text = !Enabled ? Theme.Disabled : _accent ? Theme.AccentText : Theme.Text;
+        Color text = !Enabled ? Theme.Disabled : _accent ? Theme.AccentText : _danger ? Theme.Bad : Theme.Text;
         TextRenderer.DrawText(g, Text, Font, ClientRectangle, text,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
     }
@@ -420,6 +428,7 @@ internal sealed class ToggleSwitch : CheckBox
 
     protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -432,18 +441,18 @@ internal sealed class ToggleSwitch : CheckBox
         {
             if (Checked)
             {
-                using var fill = new SolidBrush(_hover ? Theme.AccentHover : Theme.Accent);
+                using var fill = new SolidBrush(!Enabled ? Theme.Disabled : _hover ? Theme.AccentHover : Theme.Accent);
                 g.FillPath(fill, path);
             }
             else
             {
-                using var pen = new Pen(Theme.Secondary);
+                using var pen = new Pen(Enabled ? Theme.Secondary : Theme.Disabled);
                 g.DrawPath(pen, path);
             }
         }
-        float knob = LogicalToDeviceUnits(_hover ? 14 : 12);
+        float knob = LogicalToDeviceUnits(_hover && Enabled ? 14 : 12);
         float x = Checked ? track.Right - knob - (h - knob) / 2 : track.X + (h - knob) / 2;
-        using (var brush = new SolidBrush(Checked ? Theme.AccentText : Theme.Secondary))
+        using (var brush = new SolidBrush(Checked ? Theme.AccentText : Enabled ? Theme.Secondary : Theme.Disabled))
             g.FillEllipse(brush, x, track.Y + (h - knob) / 2, knob, knob);
         if (Focused && ShowFocusCues)
         {
@@ -452,7 +461,7 @@ internal sealed class ToggleSwitch : CheckBox
             g.DrawPath(ring, path);
         }
         var textBox = new Rectangle((int)(track.Right + LogicalToDeviceUnits(12)), 0, Width, Height);
-        TextRenderer.DrawText(g, Checked ? "Ein" : "Aus", Font, textBox, Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
+        TextRenderer.DrawText(g, Checked ? "Ein" : "Aus", Font, textBox, Enabled ? Theme.Text : Theme.Disabled, TextFormatFlags.VerticalCenter | TextFormatFlags.Left);
     }
 }
 

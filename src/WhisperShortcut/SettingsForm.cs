@@ -35,6 +35,12 @@ internal sealed class SettingsForm : Form
     private readonly PromptEditor _dictatePrompt;
     private readonly PromptEditor _promptPrompt;
     private readonly ToggleSwitch _autoStart;
+    private readonly ToggleSwitch _autoPaste;
+    private readonly ToggleSwitch _restoreClipboard;
+    private readonly Banner _welcome;
+    private ThemedLabel _updateStatus = null!;
+    private FluentButton _updateButton = null!;
+    private Core.UpdateInfo? _update;
     private readonly TextBox _glossary;
     private readonly ThemedLabel _glossaryCount;
     private readonly TextBox _template;
@@ -91,17 +97,16 @@ internal sealed class SettingsForm : Form
 
         // ================= page: Allgemein =================
         var general = NewPage(General, null);
-        if (welcome)
         {
-            var banner = new Banner
+            _welcome = new Banner
             {
                 Text = "Willkommen! Zuerst die Arbeitsweise wählen: Online braucht einen Gemini-Schlüssel, "
                     + "offline werden einmal die Modelle geladen. Dann „Speichern“. Danach in einem beliebigen Programm "
                     + $"{Hotkey.Display(settings.DictateHotkey)} drücken, sprechen und noch einmal drücken.",
-                AutoSize = true, Padding = new Padding(14, 12, 14, 12), Margin = new Padding(0, 4, 0, 4),
+                AutoSize = true, Padding = new Padding(14, 12, 14, 12), Margin = new Padding(0, 4, 0, 4), Visible = welcome,
             };
-            Fit(banner, 0);
-            general.Controls.Add(banner);
+            Fit(_welcome, 0);
+            general.Controls.Add(_welcome);
         }
         general.Controls.Add(Section("Arbeitsweise", first: true));
         _onlineMode = new OptionButton("Online mit Gemini") { Checked = !settings.OfflineMode };
@@ -179,6 +184,20 @@ internal sealed class SettingsForm : Form
         _mic.SelectedIndexChanged += (_, _) => { if (_probe != null) { StopMicTest(); ToggleMicTest(); } };
         _meterTimer.Tick += (_, _) => _micMeter.Value = _probe?.Level ?? 0;
 
+        // --- pasting ---
+        general.Controls.Add(Section("Einfügen"));
+        _autoPaste = new ToggleSwitch { Checked = settings.AutoPaste, AccessibleName = "Automatisch einfügen" };
+        _restoreClipboard = new ToggleSwitch { Checked = settings.RestoreClipboard, AccessibleName = "Zwischenablage wiederherstellen" };
+        var pasteCard = new Card();
+        pasteCard.AddRow(SettingRow("Automatisch einfügen", "Der Text erscheint dort, wo der Cursor steht. Aus: Er liegt nur in der "
+            + "Zwischenablage und wird mit Strg+V selbst eingefügt.", _autoPaste, ToggleWidth, out _));
+        pasteCard.AddRow(SettingRow("Zwischenablage wiederherstellen", "Nach dem Einfügen kommt zurück, was vorher in der Zwischenablage war.",
+            _restoreClipboard, ToggleWidth, out _));
+        general.Controls.Add(pasteCard);
+        // Without pasting nothing is restored: the text itself stays in the clipboard.
+        _autoPaste.CheckedChanged += (_, _) => _restoreClipboard.Enabled = _autoPaste.Checked;
+        _restoreClipboard.Enabled = _autoPaste.Checked;
+
         // --- start ---
         general.Controls.Add(Section("Start"));
         _autoStart = new ToggleSwitch { Checked = AutoStart.IsEnabled, AccessibleName = "Mit Windows starten" };
@@ -220,10 +239,11 @@ internal sealed class SettingsForm : Form
         prompt.Controls.Add(Section("Modell"));
         _promptModel = ModelChoice(Core.GeminiModels.Prompt, settings.PromptModel);
         prompt.Controls.Add(ModelCard(_promptModel, "Gilt online. Offline arbeitet das Sprachmodell, das unter „Offline“ gewählt ist."));
-        prompt.Controls.Add(Section("Systemprompt"));
-        prompt.Controls.Add(Wrap("Wie das Modell markierten Text bearbeitet: nur das ändern, was gesagt wurde, Sprache und Ton behalten. "
-            + "Gilt online und offline. Die Vorlage unten wird angehängt.", 0));
-        _promptPrompt = new PromptEditor(Core.Prompts.DefaultPromptModeSystemPrompt, settings.PromptModeSystemPrompt, "Systemprompt Dictate Prompt");
+        prompt.Controls.Add(Section("Anweisungen"));
+        prompt.Controls.Add(Wrap("Der Systemprompt für Dictate Prompt. Gilt immer: beim Bearbeiten einer Markierung, bei neuen Texten "
+            + "und bei den Schnellanweisungen, online und offline. Hier hinein gehören feste Regeln wie Ton, Rechtschreibung oder "
+            + "„nichts erfinden“.", 0));
+        _promptPrompt = new PromptEditor(Core.Prompts.DefaultPromptModeSystemPrompt, settings.PromptModeSystemPrompt, "Anweisungen Dictate Prompt");
         prompt.Controls.Add(PromptCard(_promptPrompt));
 
         prompt.Controls.Add(Section("Vorlage für neue Texte"));
@@ -238,13 +258,15 @@ internal sealed class SettingsForm : Form
         var samples = new FluentButton("Beispiel einsetzen ▾");
         _sampleMenu = new ContextMenuStrip();
         _sampleMenu.Items.Add("Praxis: Anamnese, Befund, Therapie", null, (_, _) => ReplaceTemplate(QuoteTemplate.Praxis));
+        _sampleMenu.Items.Add("Werkstatt: Auftragsbericht", null, (_, _) => ReplaceTemplate(QuoteTemplate.Werkstatt));
         _sampleMenu.Items.Add("Handwerk: Angebot", null, (_, _) => ReplaceTemplate(QuoteTemplate.Default));
         _sampleMenu.Items.Add(new ToolStripSeparator());
         _sampleMenu.Items.Add("Leeren (ohne Vorlage)", null, (_, _) => ReplaceTemplate(""));
         samples.Click += (_, _) => { Theme.Menu(_sampleMenu); _sampleMenu.Show(samples, new Point(0, samples.Height)); };
         var templateBlock = Block();
         templateBlock.Controls.Add(new FieldFrame(_template, multiline: true) { Height = 260 });
-        templateBlock.Controls.Add(Row(new Control { Height = 1 }, samples));
+        templateBlock.Controls.Add(Row(Wrap("Gilt nur, wenn nichts markiert ist. Regeln, die immer gelten sollen, gehören oben unter Anweisungen.",
+            2 * RowPadding + 180, small: true), samples));
         var templateCard = new Card();
         templateCard.AddRow(templateBlock);
         prompt.Controls.Add(templateCard);
@@ -503,8 +525,8 @@ internal sealed class SettingsForm : Form
 
     private void BuildInfoPage()
     {
+        // Order as in the macOS app's About tab: version and updates, welcome tour, data and reset, support.
         var info = NewPage(InfoPage, null);
-        string version = Application.ProductVersion.Split('+')[0];
         var head = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(RowPadding, 14, RowPadding, 14), Margin = new Padding(0) };
         head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -513,27 +535,134 @@ internal sealed class SettingsForm : Form
         names.Controls.Add(new ThemedLabel { Text = "WhisperShortcut für Windows", Font = Theme.Strong, AutoSize = true, Margin = new Padding(0) });
         names.Controls.Add(new ThemedLabel
         {
-            Text = $"Version {version} ({System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()}) · Testversion",
+            Text = $"Version {AppVersion} ({System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant()})",
             Tone = Tone.Secondary, AutoSize = true, Margin = new Padding(0, 2, 0, 0),
         });
         head.Controls.Add(names, 1, 0);
         var headCard = new Card();
         headCard.AddRow(head);
+        _updateButton = new FluentButton("Suchen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Nach Updates suchen" };
+        _updateButton.Click += (_, _) =>
+        {
+            if (_update != null) OpenUrl(_update.Url);
+            else _ = CheckUpdateAsync();
+        };
+        headCard.AddRow(SettingRow("Nach Updates suchen", "", _updateButton, ButtonWidth, out _updateStatus));
+        _updateStatus.Text = "Fragt GitHub nach der neuesten Version. Installiert wird nichts von selbst.";
         info.Controls.Add(headCard);
 
-        info.Controls.Add(Section("Hilfe"));
+        info.Controls.Add(Section("Willkommenstour"));
+        var tour = new FluentButton("Tour zeigen") { MinimumSize = new Size(ButtonWidth, 32) };
+        tour.Click += (_, _) =>
+        {
+            _welcome.Visible = true;
+            ShowPage(General);
+            ((ScrollableControl)_pages[General]).AutoScrollPosition = Point.Empty;
+        };
+        var tourCard = new Card();
+        tourCard.AddRow(SettingRow("Willkommenstour", "Die Einführung vom ersten Start noch einmal zeigen.", tour, ButtonWidth, out _));
+        info.Controls.Add(tourCard);
+
+        info.Controls.Add(Section("Daten und Zurücksetzen"));
+        var dataFolder = new FluentButton("Öffnen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "App-Datenordner öffnen" };
+        dataFolder.Click += (_, _) => OpenFolder(Core.AppData.SettingsFolder);
+        var logFile = new FluentButton("Datei") { MinimumSize = new Size(80, 32), AccessibleName = "Protokoll öffnen" };
+        logFile.Click += (_, _) =>
+        {
+            if (File.Exists(Core.Log.DefaultPath)) OpenUrl(Core.Log.DefaultPath);
+            else OpenFolder(Core.AppData.LogFolder);
+        };
+        var logFolder = new FluentButton("Ordner") { MinimumSize = new Size(80, 32), AccessibleName = "Protokollordner öffnen" };
+        logFolder.Click += (_, _) => OpenFolder(Core.AppData.LogFolder);
+        var logButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        logButtons.Controls.Add(logFile);
+        logButtons.Controls.Add(logFolder);
+        var reset = new FluentButton("Zurücksetzen …") { MinimumSize = new Size(ButtonWidth, 32), Danger = true, AccessibleName = "App zurücksetzen" };
+        reset.Click += (_, _) => ResetApp();
+        var dataCard = new Card();
+        dataCard.AddRow(SettingRow("App-Datenordner öffnen", "Einstellungen, Glossar und Schlüssel (verschlüsselt).", dataFolder, ButtonWidth, out _));
+        dataCard.AddRow(SettingRow("Protokoll", "Hilft bei Fehlermeldungen. Enthält keine diktierten Texte und keinen Schlüssel.", logButtons, 176, out _));
+        dataCard.AddRow(SettingRow("App zurücksetzen", "Löscht alles, auch den API-Schlüssel, das Glossar und die Offline-Modelle. "
+            + "Danach beendet sich WhisperShortcut und startet beim nächsten Mal wie neu installiert.", reset, ButtonWidth, out _));
+        info.Controls.Add(dataCard);
+
+        info.Controls.Add(Section("Hilfe und Entwickler"));
         var links = new Card();
-        links.AddRow(SettingRow("Anleitung und Quellcode", "github.com/mgsgde/whisper-shortcut-windows",
-            LinkButton("Öffnen", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
-        links.AddRow(SettingRow("Fehler melden", "Auf GitHub beschreiben, was passiert ist. Das Protokoll hilft dabei.",
+        links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
+            LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
+        links.AddRow(SettingRow("Fehler melden", "Auf GitHub beschreiben, was passiert ist, am besten mit dem Protokoll.",
             LinkButton("Melden", "https://github.com/mgsgde/whisper-shortcut-windows/issues"), ButtonWidth, out _));
-        var log = new FluentButton("Öffnen") { MinimumSize = new Size(ButtonWidth, 32) };
-        log.Click += (_, _) => OpenUrl(File.Exists(Core.Log.DefaultPath) ? Core.Log.DefaultPath : Path.GetDirectoryName(Core.Log.DefaultPath)!);
-        links.AddRow(SettingRow("Protokoll", "Enthält keine diktierten Texte und keinen Schlüssel.", log, ButtonWidth, out _));
         info.Controls.Add(links);
 
         info.Controls.Add(Section("Lizenz"));
         info.Controls.Add(Wrap("Freie Software unter der GNU AGPL-3.0. Die Windows-Version ist ein Ableger von WhisperShortcut für macOS.", 0));
+    }
+
+    private static string AppVersion => Application.ProductVersion.Split('+')[0];
+
+    private async Task CheckUpdateAsync()
+    {
+        _updateButton.Enabled = false;
+        _updateStatus.Text = "Wird gesucht …";
+        _updateStatus.Tone = Tone.Secondary;
+        try
+        {
+            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+            var latest = await Core.UpdateCheck.CheckAsync(http, CancellationToken.None);
+            if (IsDisposed) return;
+            if (latest != null && Core.UpdateCheck.IsNewer(latest.Version, AppVersion))
+            {
+                _update = latest;
+                _updateStatus.Text = $"Version {latest.Version} ist da. „Herunterladen“ öffnet die Seite mit der neuen exe.";
+                _updateStatus.Tone = Tone.Accent;
+                _updateButton.Text = "Herunterladen";
+                _updateButton.Accent = true;
+            }
+            else
+            {
+                _updateStatus.Text = $"✓ Version {AppVersion} ist die neueste.";
+                _updateStatus.Tone = Tone.Good;
+            }
+            Core.Log.Info($"Update check: latest {latest?.Version ?? "none"}, running {AppVersion}");
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        {
+            Core.Log.Error($"Update check failed: {e.GetType().Name}");
+            if (IsDisposed) return;
+            _updateStatus.Text = "Keine Verbindung zu GitHub. Später noch einmal versuchen.";
+            _updateStatus.Tone = Tone.Caution;
+        }
+        if (!IsDisposed) _updateButton.Enabled = true;
+    }
+
+    private void ResetApp()
+    {
+        var answer = MessageBox.Show(this,
+            "Gelöscht werden alle Einstellungen, der API-Schlüssel, das Glossar, die Schnellanweisungen, die Vorlage und die "
+            + "eigenen Prompts, die geladenen Offline-Modelle und das Protokoll. Der Start mit Windows wird abgeschaltet.\n\n"
+            + "Danach beendet sich WhisperShortcut. Beim nächsten Start ist es wie neu installiert. Das lässt sich nicht rückgängig machen.",
+            "App zurücksetzen und beenden?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
+        if (answer != DialogResult.Yes) return;
+        Core.Log.Info("Settings: reset app");
+        StopMicTest();
+        // The language model server and the speech model keep files open that the reset has to delete.
+        _offline.Dispose();
+        AutoStart.Disable();
+        try { Core.AppData.Reset(); }
+        catch (Exception e)
+        {
+            Warn("Nicht alles konnte gelöscht werden, vermutlich ist eine Datei noch geöffnet. WhisperShortcut beendet sich jetzt; "
+                + "danach den App-Datenordner von Hand löschen.\n\n" + e.Message);
+        }
+        _discard = true;
+        Application.Exit();
+    }
+
+    private static void OpenFolder(string path)
+    {
+        try { Directory.CreateDirectory(path); }
+        catch (Exception e) { Core.Log.Error($"Creating folder failed: {e.GetType().Name}"); }
+        OpenUrl(path);
     }
 
     private FluentButton LinkButton(string text, string url)
@@ -1015,7 +1144,7 @@ internal sealed class SettingsForm : Form
         _onlineMode.Checked.ToString(), SelectedLlmChoice.Id, _apiKey.Text.Trim(), SelectedMicrophone,
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
-        _dictatePrompt.Value, _promptPrompt.Value,
+        _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(),
     }.Concat(_quick.Select(q => q.Text)));
 
     private static string SelectedModel(FluentCombo combo) => ((ModelItem)combo.SelectedItem!).Model.Id;
@@ -1086,7 +1215,7 @@ internal sealed class SettingsForm : Form
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
             _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
-            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt);
+            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _apiKey.Text.Trim();
@@ -1101,6 +1230,8 @@ internal sealed class SettingsForm : Form
         _settings.PromptModel = SelectedModel(_promptModel);
         _settings.DictateSystemPrompt = _dictatePrompt.Value;
         _settings.PromptModeSystemPrompt = _promptPrompt.Value;
+        _settings.AutoPaste = _autoPaste.Checked;
+        _settings.RestoreClipboard = _restoreClipboard.Checked;
         try
         {
             _settings.Save();
@@ -1111,7 +1242,7 @@ internal sealed class SettingsForm : Form
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
                 _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
                 _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
-                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt) = before;
+                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard) = before;
             Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
             return false;
         }
@@ -1120,7 +1251,7 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars)");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard})");
         _saved = true;
         DialogResult = DialogResult.OK;
         return true;

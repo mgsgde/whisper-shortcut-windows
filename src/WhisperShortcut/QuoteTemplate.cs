@@ -70,4 +70,26 @@ internal static class QuoteTemplate
         Wenn ich einen Brief oder eine Nachricht diktiere (an Patienten, Ärzte, Kassen): kurz und freundlich, Sie-Form, mit Anrede und Gruß.
         Immer reiner Text, ohne Sternchen oder Rauten.
         """;
+
+    public const string Werkstatt =
+        """
+        Wenn ich einen Auftrag dokumentiere, schreibe einen Auftragsbericht in Stichpunkten (Deutsch, sachlich):
+
+        Fahrzeug: [Marke, Modell, Kennzeichen, Kilometerstand]
+
+        Erledigte Arbeiten:
+        - [so wie diktiert]
+
+        Festgestellte Mängel:
+        - [so wie diktiert]
+
+        Empfehlungen:
+        - [so wie diktiert]
+
+        Nächste Wartung: [so wie diktiert]
+
+        Nur übernehmen, was ich diktiere: keine Teile, Preise oder Arbeiten ergänzen. Fehlt zu einem Abschnitt etwas, lass ihn weg.
+        Wenn ich eine Nachricht an den Kunden diktiere: kurz und freundlich, Sie-Form, mit Anrede und Gruß.
+        Immer reiner Text, ohne Sternchen oder Rauten.
+        """;
 }
