@@ -2,6 +2,13 @@
 
 Plan: `~/whisper-shortcut-private/windows/PLAN.md`. Hier liegt nur, was zum Bauen gebraucht wird.
 
+**Releases (seit 2026-10-27):** öffentlich nur die Builds in `mgsgde/whisper-shortcut-windows-releases`
+(Code bleibt privat). Fester Link auf die neueste:
+`https://github.com/mgsgde/whisper-shortcut-windows-releases/releases/latest/download/WhisperShortcut-Windows-x64.zip`.
+Neuer Release: `dotnet publish src/WhisperShortcut -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true` (dito `win-arm64`),
+exe + `dist/ANLEITUNG.txt` als `WhisperShortcut/` zippen, dann
+`gh release create vX.Y.Z -R mgsgde/whisper-shortcut-windows-releases <zips> dist/ANLEITUNG.txt`.
+
 **Stand 2026-10-26: UI/UX überarbeitet** (vor der Weitergabe an den ersten Tester).
 
 - **Einstellungsfenster neu:** links Navigation (Allgemein, Tastenkürzel, Glossar,
