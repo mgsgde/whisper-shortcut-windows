@@ -151,10 +151,12 @@ public class LogAndAudioTests
         Log.Info("hello");
         Log.Error("bad", new InvalidOperationException("boom"));
         Log.Init(null);
+        // Log is static and other test classes run in parallel: their lines may land here too, so look for ours only.
         var lines = File.ReadAllLines(path);
-        Assert.Equal(2, lines.Length);
-        Assert.Contains("INFO hello", lines[0]);
-        Assert.Contains("ERROR bad (InvalidOperationException: boom)", lines[1]);
+        Assert.DoesNotContain(lines, l => l.Contains("ignored"));
+        int hello = Array.FindIndex(lines, l => l.Contains("INFO hello"));
+        int bad = Array.FindIndex(lines, l => l.Contains("ERROR bad (InvalidOperationException: boom)"));
+        Assert.True(hello >= 0 && bad > hello);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 }
