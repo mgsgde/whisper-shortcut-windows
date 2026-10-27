@@ -17,7 +17,7 @@ internal sealed class TrayApp : ApplicationContext
     /// A recording whose processing failed for a reason a second try can fix (network, quota, local model).
     /// In memory only, never written to disk: it is patient data. Dropped after the next success.
     /// </summary>
-    private sealed record FailedRun(byte[] Wav, Mode Mode, double Seconds, string? Selection, string? QuickAction);
+    private sealed record FailedRun(byte[] Wav, Mode Mode, double Seconds, string? Selection, string? QuickAction, IntPtr Target);
 
     private const string RetryHint = " Hier klicken, um es noch einmal zu versuchen.";
 
@@ -50,7 +50,7 @@ internal sealed class TrayApp : ApplicationContext
     private Task<string?>? _selection;
     private CancellationTokenSource? _selectionCts;
     private string? _quickAction;
-    // The window in front when the recording started (or the retry was clicked): the only paste target.
+    // The window in front when the recording started: the only paste target, for a retry too.
     private IntPtr _pasteTarget;
     private FailedRun? _lastFailed;
     private IReadOnlyList<string> _unsupported = Array.Empty<string>();
@@ -94,7 +94,7 @@ internal sealed class TrayApp : ApplicationContext
         _glossaryInfo = new ToolStripMenuItem { Enabled = false };
         _copyLast = new ToolStripMenuItem("Letzten Text kopieren", null, (_, _) => CopyRecent(_recent.Latest));
         _recentMenu = new ToolStripMenuItem("Letzte Texte");
-        _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast(fromTrayMenu: true)) { Enabled = false };
+        _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Enabled = false };
         var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         _offlineItem = new ToolStripMenuItem("Offline: nichts verlässt den PC", null, (_, _) => ToggleOffline()) { CheckOnClick = false };
         var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings()) { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
@@ -321,8 +321,11 @@ internal sealed class TrayApp : ApplicationContext
 
     private Task StopAndProcessAsync() => ProcessAsync(_audio!, null);
 
-    /// <summary>Tray menu or balloon click: run the last failed recording again, pasting where the user is now.</summary>
-    private void RetryLast(bool fromTrayMenu = false)
+    /// <summary>
+    /// Tray menu or balloon click: run the last failed recording again. Like the Mac it pastes into the
+    /// window the recording was made for; after the click the taskbar is in front, never the user's field.
+    /// </summary>
+    private void RetryLast()
     {
         if (_state != State.Idle || _lastFailed == null) return;
         var run = _lastFailed;
@@ -330,10 +333,7 @@ internal sealed class TrayApp : ApplicationContext
         _mode = run.Mode;
         _quickAction = run.QuickAction;
         _paster.CancelLateWatch(); // a flag from the old recording must not block this run
-        // A click on the tray icon puts the tray menu or the taskbar in front: that is never the user's
-        // text field, so no target is pinned then (paste goes where the user is when the text is ready).
-        var target = ClipboardPaster.ForegroundRoot();
-        _pasteTarget = fromTrayMenu && ClipboardPaster.IsShellOrOwnWindow(target) ? IntPtr.Zero : target;
+        _pasteTarget = run.Target;
         _ = ProcessAsync(null, run);
     }
 
@@ -352,7 +352,7 @@ internal sealed class TrayApp : ApplicationContext
         double seconds = 0;
         string? selection = null;
         // What a retry needs; null when the audio itself is lost (then there is nothing to try again).
-        FailedRun? Failed() => wav == null ? null : new FailedRun(wav, _mode, seconds, selection, _quickAction);
+        FailedRun? Failed() => wav == null ? null : new FailedRun(wav, _mode, seconds, selection, _quickAction, _pasteTarget);
 
         try
         {
@@ -510,11 +510,11 @@ internal sealed class TrayApp : ApplicationContext
             ? "das ist ein test diktat aus der virtuellen maschine"
             : _settings.OfflineMode
                 ? await TranscribeOfflineAsync(wav, ct)
-                // Above 2.5 min the recording goes out in ~2-minute pieces, cut in pauses, four at a
-                // time: one request would hit Gemini's inline size limit and take as long as all of it.
-                : await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav),
-                    (chunk, c) => _gemini.TranscribeAsync(chunk, _settings.Glossary, c), maxParallel: 4, ct);
+                : await TranscribeOnlineAsync(wav, ct);
+        raw = GlossaryBackstops(raw);
         string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), seconds);
+        // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
+        if (Core.TextCleanup.LooksLikeRefusal(text)) text = "";
         Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup");
         if (text.Length == 0) Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
         return text;
@@ -549,7 +549,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             // Nothing selected and the instruction is only "korrigiere" / "mach das freundlicher":
             // there is nothing to edit, and the model would invent a text. Transcribe in parallel to check.
-            instruction = await _gemini.TranscribeAsync(wav, _settings.Glossary, ct);
+            instruction = await TranscribeOnlineAsync(wav, ct);
             if (Core.BareEditCommand.Matches(instruction))
             {
                 Core.Log.Info("Prompt: bare edit command without selection, refused");
@@ -612,8 +612,7 @@ internal sealed class TrayApp : ApplicationContext
         string transcript = seconds < 1.0 ? ""
             : _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen"
             : _settings.OfflineMode ? await TranscribeOfflineAsync(wav, ct)
-            : await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav),
-                (chunk, c) => _gemini.TranscribeAsync(chunk, _settings.Glossary, c), maxParallel: 4, ct);
+            : GlossaryBackstops(await TranscribeOnlineAsync(wav, ct));
         var request = Core.QuickActionRequest.Build(quick, selection, transcript);
         Core.Log.Info($"Prompt quick action: transcript {transcript.Trim().Length} chars, selection {selection?.Length ?? 0} chars");
         if (request == null)
@@ -663,6 +662,38 @@ internal sealed class TrayApp : ApplicationContext
         // Count only: the words are patient data and stay out of the log.
         if (_unsupported.Count > 0) Core.Log.Info($"Prompt: {_unsupported.Count} word(s) in the reply are not in the dictation, warning shown");
         return text;
+    }
+
+    /// <summary>
+    /// Gemini. Above 2.5 min the recording goes out in ~2-minute pieces, cut in pauses, four at a time:
+    /// one request would hit Gemini's inline size limit and take as long as all of it. A piece that comes
+    /// back as nothing but glossary words (the model filled a quiet stretch with vocabulary) is asked
+    /// again once without the glossary, like the Mac.
+    /// </summary>
+    private Task<string> TranscribeOnlineAsync(byte[] wav, CancellationToken ct)
+    {
+        var glossary = _settings.Glossary.ToList();
+        var echoTerms = Core.GlossaryPrompt.EchoTerms(glossary);
+        return Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav), async (chunk, c) =>
+        {
+            var text = await _gemini.TranscribeAsync(chunk, glossary, c);
+            if (text.Trim().Length == 0
+                || Core.TextCleanup.DiscardGlossaryEcho(text, Core.Wav.DurationSeconds(chunk), echoTerms).Length > 0)
+                return text;
+            Core.Log.Info("Dictate: glossary echo discarded, asking again without the glossary");
+            return await _gemini.TranscribeAsync(chunk, Array.Empty<string>(), c);
+        }, maxParallel: 4, ct);
+    }
+
+    /// <summary>
+    /// Runs on every transcript, online and offline, as on the Mac: a glossary list tacked onto the end
+    /// is cut off, and a spelling the user rejected (<c>Claude CLI (not "Cloud CLI")</c>) is corrected.
+    /// </summary>
+    private string GlossaryBackstops(string raw)
+    {
+        var glossary = _settings.Glossary.ToList();
+        var stripped = Core.TextCleanup.StripTrailingGlossaryEcho(raw, Core.GlossaryPrompt.EchoTerms(glossary));
+        return Core.GlossaryPrompt.CorrectRejectedSpellings(stripped, glossary);
     }
 
     /// <summary>

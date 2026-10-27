@@ -84,9 +84,6 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern bool SetForegroundWindow(IntPtr hWnd);
 
-    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
-    public static extern int GetClassName(IntPtr hWnd, System.Text.StringBuilder className, int maxCount);
-
     [DllImport("user32.dll")]
     public static extern uint EnumClipboardFormats(uint format);
 

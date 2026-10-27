@@ -1,5 +1,4 @@
 using System.Runtime.InteropServices;
-using System.Text;
 using static WhisperShortcut.NativeMethods;
 
 namespace WhisperShortcut;
@@ -81,21 +80,6 @@ internal sealed class ClipboardPaster
         if (hwnd == IntPtr.Zero) return IntPtr.Zero;
         var root = GetAncestor(hwnd, GA_ROOT);
         return root != IntPtr.Zero ? root : hwnd;
-    }
-
-    /// <summary>
-    /// True for the tray menu, the taskbar and our own windows: after a click on the tray icon one of
-    /// these is in front, never the program the user was typing in.
-    /// </summary>
-    public static bool IsShellOrOwnWindow(IntPtr hwnd)
-    {
-        if (hwnd == IntPtr.Zero) return false;
-        GetWindowThreadProcessId(hwnd, out uint pid);
-        if (pid == (uint)Environment.ProcessId) return true;
-        var name = new StringBuilder(64);
-        if (GetClassName(hwnd, name, name.Capacity) == 0) return false;
-        string cls = name.ToString();
-        return cls.StartsWith("Shell_", StringComparison.Ordinal) || cls is "NotifyIconOverflowWindow" or "TopLevelWindowForOverflowXamlIsland";
     }
 
     /// <summary>
