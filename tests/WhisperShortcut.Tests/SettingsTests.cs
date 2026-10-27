@@ -280,4 +280,26 @@ public class QuickActionRequestTests
         Assert.Equal("Headset (USB Audio)", Settings.Load(path, new PlainSecretProtector()).Microphone);
         Directory.Delete(dir, true);
     }
+
+    [Fact]
+    public void PasteOptions_DefaultOn_RoundTrip_AndOldFileLoadsAsOn()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.True(s.AutoPaste);
+        Assert.True(s.RestoreClipboard);
+
+        s.AutoPaste = false;
+        s.RestoreClipboard = false;
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.False(t.AutoPaste);
+        Assert.False(t.RestoreClipboard);
+
+        File.WriteAllText(path, "{\"glossary\":[\"a\"]}"); // old file without the fields
+        var u = Settings.Load(path, new PlainSecretProtector());
+        Assert.True(u.AutoPaste);
+        Assert.True(u.RestoreClipboard);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
 }

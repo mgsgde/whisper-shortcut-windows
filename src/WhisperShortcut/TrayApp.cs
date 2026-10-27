@@ -340,10 +340,20 @@ internal sealed class TrayApp : ApplicationContext
             if (text.Length == 0) return; // already reported
             _recent.Add(text);
 
-            var outcome = await _paster.PasteAsync(text, ct);
-            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars");
+            var outcome = _settings.AutoPaste
+                ? await _paster.PasteAsync(text, _settings.RestoreClipboard, ct)
+                : (_paster.CopyToClipboard(text) ? PasteOutcome.ClipboardOnlyByChoice : PasteOutcome.Failed);
+            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, restore {(_settings.RestoreClipboard ? "on" : "off")}");
             switch (outcome)
             {
+                case PasteOutcome.ClipboardOnlyByChoice when _unsupported.Count > 0:
+                    _overlay.ShowWarning(_unsupported, pasted: false);
+                    done = true;
+                    break;
+                case PasteOutcome.ClipboardOnlyByChoice:
+                    _overlay.ShowDone("In der Zwischenablage");
+                    done = true;
+                    break;
                 case PasteOutcome.Pasted when _unsupported.Count > 0:
                     _overlay.ShowWarning(_unsupported, pasted: true);
                     done = true;

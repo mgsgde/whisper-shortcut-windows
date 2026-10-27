@@ -36,7 +36,7 @@ public static class Log
     {
         lock (Gate)
         {
-            if (_path == null) return;
+            if (_path == null || AppData.ResetDone) return;
             try
             {
                 var dir = Path.GetDirectoryName(_path);

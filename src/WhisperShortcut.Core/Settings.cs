@@ -99,6 +99,12 @@ public sealed class Settings
     /// <summary>Quick instructions offered while recording (see <see cref="QuickActionList"/>).</summary>
     public List<string> QuickActions { get; set; } = new(QuickActionList.Defaults);
 
+    /// <summary>Paste the result at the cursor with Ctrl+V. Off = the text only goes to the clipboard.</summary>
+    public bool AutoPaste { get; set; } = true;
+
+    /// <summary>Put the previous clipboard text back after pasting (ignored when <see cref="AutoPaste"/> is off).</summary>
+    public bool RestoreClipboard { get; set; } = true;
+
     /// <summary>
     /// "" when <paramref name="text"/> is blank or equals <paramref name="defaultText"/> (ignoring line endings and
     /// surrounding whitespace), otherwise the text trimmed with "\n" line endings. Keeps "default" stored as empty.
@@ -138,6 +144,8 @@ public sealed class Settings
             s.Microphone = dto.Microphone ?? "";
             s.OfflineMode = dto.OfflineMode ?? false;
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
+            s.AutoPaste = dto.AutoPaste ?? true;
+            s.RestoreClipboard = dto.RestoreClipboard ?? true;
             // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
@@ -154,6 +162,7 @@ public sealed class Settings
     /// <summary>Writes the settings to the path given at <see cref="Load"/>.</summary>
     public void Save()
     {
+        if (AppData.ResetDone) return; // after "Zurücksetzen" nothing may bring the data folder back
         var dir = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var dto = new Dto
@@ -172,6 +181,8 @@ public sealed class Settings
             OfflineMode = OfflineMode,
             OfflineLlmId = OfflineLlmId,
             QuickActions = QuickActions,
+            AutoPaste = AutoPaste,
+            RestoreClipboard = RestoreClipboard,
         };
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
@@ -194,5 +205,7 @@ public sealed class Settings
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
         [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
         [JsonPropertyName("quickActions")] public List<string>? QuickActions { get; set; }
+        [JsonPropertyName("autoPaste")] public bool? AutoPaste { get; set; }
+        [JsonPropertyName("restoreClipboard")] public bool? RestoreClipboard { get; set; }
     }
 }
