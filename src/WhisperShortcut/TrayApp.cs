@@ -436,9 +436,10 @@ internal sealed class TrayApp : ApplicationContext
             _lastFailed = null; // this run worked; the old failure is history
             _recent.Add(text);
 
-            // A rewrite that lost most of a long selection must not silently replace it. The spoken
-            // instruction is unknown here (Gemini hears it), so only a quick action can be a known shortening.
-            if (_mode == Mode.Prompt && selection != null
+            // A quick-action rewrite that lost most of a long selection must not silently replace it. Spoken
+            // instructions are unknown here (Gemini hears them) and "fass zusammen" is a normal request, so
+            // they rely on the MAX_TOKENS check alone.
+            if (_mode == Mode.Prompt && selection != null && _quickAction != null
                 && Core.ReplyGuards.AnswerSuspiciouslyShort(selection.Length, text.Length, _quickAction))
             {
                 Core.Log.Info($"Prompt: answer {text.Length} chars for a selection of {selection.Length}, not pasted");
