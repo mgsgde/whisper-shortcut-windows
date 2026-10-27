@@ -17,7 +17,7 @@ sprechen, der Text steht dort, wo der Cursor blinkt. Läuft als Symbol im Infobe
 
 ## Download
 
-Fertige Builds: [whisper-shortcut-windows-releases](https://github.com/mgsgde/whisper-shortcut-windows-releases/releases/latest).
+Fertige Builds unter [Releases](https://github.com/mgsgde/whisper-shortcut-windows/releases/latest).
 Für die meisten PCs `WhisperShortcut-Windows-x64.zip`. Einrichtung steht in [`dist/ANLEITUNG.txt`](dist/ANLEITUNG.txt).
 
 ## Bauen
