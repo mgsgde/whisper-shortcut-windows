@@ -5,7 +5,7 @@ namespace WhisperShortcut.Tests;
 public class ProblemReportTests
 {
     private static readonly ProblemReportInfo Info = new("1.2.3", "Windows 11 10.0.26100", "Arm64", true,
-        "gemini-3.1-flash-lite", "gemini-3.8-flash", "qwen3-4b", "Werkstatt");
+        "gemini-3.1-flash-lite", "gemini-3.8-flash", "qwen3-4b");
 
     [Fact]
     public void Body_HasSectionsInOrder()
@@ -19,7 +19,7 @@ public class ProblemReportTests
         Assert.Contains("**Was ist passiert?**\n\n\n\n**Umgebung**", body);
         Assert.Contains("- Version: 1.2.3", body);
         Assert.Contains("- Modus: offline", body);
-        Assert.Contains("- Profil: Werkstatt", body);
+        Assert.DoesNotContain("Profil", body);
         Assert.Contains("```\nline one\nline two\n```", body);
     }
 

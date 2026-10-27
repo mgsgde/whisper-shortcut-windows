@@ -6,7 +6,7 @@ namespace WhisperShortcut.Core;
 /// <summary>What the user's problem report says about the installation (no content, no secrets).</summary>
 public sealed record ProblemReportInfo(
     string AppVersion, string WindowsVersion, string Architecture, bool Offline,
-    string TranscriptionModel, string PromptModel, string OfflineLlm, string ProfileName);
+    string TranscriptionModel, string PromptModel, string OfflineLlm);
 
 /// <summary>Builds the prefilled GitHub issue behind "Problem melden".</summary>
 public static partial class ProblemReport
@@ -36,8 +36,7 @@ public static partial class ProblemReport
         sb.Append($"- Modus: {(info.Offline ? "offline" : "online")}\n");
         sb.Append($"- Diktat-Modell: {info.TranscriptionModel}\n");
         sb.Append($"- Prompt-Modell: {info.PromptModel}\n");
-        sb.Append($"- Offline-Sprachmodell: {(info.OfflineLlm.Length == 0 ? "-" : info.OfflineLlm)}\n");
-        sb.Append($"- Profil: {info.ProfileName}\n\n");
+        sb.Append($"- Offline-Sprachmodell: {(info.OfflineLlm.Length == 0 ? "-" : info.OfflineLlm)}\n\n");
         sb.Append("**Protokoll (letzte Zeilen)**\n\n```\n");
         foreach (var line in logLines) sb.Append(Redact(line)).Append('\n');
         sb.Append("```\n");

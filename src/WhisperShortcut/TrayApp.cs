@@ -47,7 +47,6 @@ internal sealed class TrayApp : ApplicationContext
     private Action? _balloonClick;
     private bool _glossaryBusy;
     private readonly ToolStripMenuItem _offlineItem;
-    private readonly ToolStripMenuItem _profileMenu;
     private readonly SynchronizationContext _ui;
 
     public TrayApp(string? testWav, bool fakeGemini)
@@ -85,7 +84,6 @@ internal sealed class TrayApp : ApplicationContext
         _recentMenu = new ToolStripMenuItem("Letzte Texte");
         var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         _offlineItem = new ToolStripMenuItem("Offline: nichts verlässt den PC", null, (_, _) => ToggleOffline()) { CheckOnClick = false };
-        _profileMenu = new ToolStripMenuItem("Profil");
         var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings()) { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         var logItem = new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog());
         var quitItem = new ToolStripMenuItem("Beenden", null, (_, _) => Quit());
@@ -94,9 +92,9 @@ internal sealed class TrayApp : ApplicationContext
         {
             title, _statusItem, new ToolStripSeparator(), _dictateInfo, _promptInfo, _glossaryInfo, new ToolStripSeparator(),
             _copyLast, _recentMenu, new ToolStripSeparator(),
-            _offlineItem, _profileMenu, settingsItem, logItem, new ToolStripSeparator(), quitItem,
+            _offlineItem, settingsItem, logItem, new ToolStripSeparator(), quitItem,
         });
-        menu.Opening += (_, _) => { UpdateRecentMenu(); _offlineItem.Checked = _settings.OfflineMode; UpdateProfileMenu(); };
+        menu.Opening += (_, _) => { UpdateRecentMenu(); _offlineItem.Checked = _settings.OfflineMode; };
         UpdateRecentMenu();
 
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
@@ -289,8 +287,7 @@ internal sealed class TrayApp : ApplicationContext
         Sounds.Start();
         SetState(State.Recording);
         _overlay.ShowRecording(mode, Hotkey.Display(mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey),
-            limit, mic != null ? () => mic.Level : null, mic != null ? () => mic.PeakSoFar : null, _settings.QuickActions,
-            _settings.Profiles.Count > 1 ? _settings.ActiveProfile.Name : null);
+            limit, mic != null ? () => mic.Level : null, mic != null ? () => mic.PeakSoFar : null, _settings.QuickActions);
         if (_selection != null)
         {
             var pending = _selection;
@@ -824,31 +821,6 @@ internal sealed class TrayApp : ApplicationContext
         _offline.Prewarm();
         SetState(_state);
         _overlay.ShowDone(offline ? "Offline: nichts verlässt den PC" : "Online mit Gemini", neutral: true);
-    }
-
-    /// <summary>Rebuilt on every menu open so it reflects edits made in the settings. Hidden with a single profile.</summary>
-    private void UpdateProfileMenu()
-    {
-        _profileMenu.DropDownItems.Clear();
-        _profileMenu.Visible = _settings.Profiles.Count > 1;
-        string active = _settings.ActiveProfile.Id;
-        foreach (var p in _settings.Profiles)
-        {
-            string id = p.Id;
-            _profileMenu.DropDownItems.Add(new ToolStripMenuItem(p.Name, null, (_, _) => SwitchProfile(id)) { Checked = id == active });
-        }
-    }
-
-    private void SwitchProfile(string id)
-    {
-        if (_state != State.Idle || id == _settings.ActiveProfile.Id) return; // not mid-recording: the quick actions would change under the card
-        _settings.ActiveProfileId = id;
-        TrySave();
-        _settingsForm?.SyncProfileFromTray(); // an open settings window must not switch back on its next save
-        SyncSessionHotkeys(); // the Ctrl+1–5 count follows the profile's quick actions
-        var name = _settings.ActiveProfile.Name;
-        Core.Log.Info($"Profile switched to {name} ({_settings.Profiles.Count} profiles)");
-        _overlay.ShowDone($"Profil: {name}", neutral: true);
     }
 
     private void TrySave()
