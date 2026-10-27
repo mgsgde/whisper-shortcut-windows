@@ -77,6 +77,54 @@ public class SettingsTests
         Assert.True(File.Exists(path + ".bak"));
         Directory.Delete(dir, true);
     }
+
+    private static string Tmp() => Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+
+    [Fact]
+    public void RoundTrip_CustomPrompts()
+    {
+        var path = Tmp();
+        var s = Settings.Load(path, new Reverse());
+        s.DictateSystemPrompt = "Schreib alles klein.";
+        s.PromptModeSystemPrompt = "Formuliere knapp.";
+        s.Save();
+        var l = Settings.Load(path, new Reverse());
+        Assert.Equal("Schreib alles klein.", l.DictateSystemPrompt);
+        Assert.Equal("Formuliere knapp.", l.PromptModeSystemPrompt);
+    }
+
+    [Fact]
+    public void OldFile_WithoutPromptFields_LoadsEmpty()
+    {
+        var path = Tmp();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{\"promptSystemPrompt\":\"Vorlage\"}");
+        var l = Settings.Load(path, new Reverse());
+        Assert.Equal("", l.DictateSystemPrompt);
+        Assert.Equal("", l.PromptModeSystemPrompt);
+        Assert.Equal("Vorlage", l.PromptSystemPrompt);
+    }
+
+    [Fact]
+    public void Load_NormalizesModels()
+    {
+        var path = Tmp();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{\"promptModel\":\"gemini-3.7-flash\",\"transcriptionModel\":\"quatsch\"}");
+        var l = Settings.Load(path, new Reverse());
+        Assert.Equal("gemini-3.8-flash", l.PromptModel);
+        Assert.Equal(Settings.DefaultTranscriptionModel, l.TranscriptionModel);
+    }
+
+    [Fact]
+    public void CustomOrEmpty_Cases()
+    {
+        var def = "Zeile eins\nZeile zwei";
+        Assert.Equal("", Settings.CustomOrEmpty("Zeile eins\r\nZeile zwei\r\n", def));
+        Assert.Equal("", Settings.CustomOrEmpty("  \r\n ", def));
+        Assert.Equal("", Settings.CustomOrEmpty(null, def));
+        Assert.Equal("a\nb", Settings.CustomOrEmpty("  a\r\nb \r\n", def));
+    }
 }
 
 public class LogAndAudioTests
@@ -103,10 +151,12 @@ public class LogAndAudioTests
         Log.Info("hello");
         Log.Error("bad", new InvalidOperationException("boom"));
         Log.Init(null);
+        // Log is static and other test classes run in parallel: their lines may land here too, so look for ours only.
         var lines = File.ReadAllLines(path);
-        Assert.Equal(2, lines.Length);
-        Assert.Contains("INFO hello", lines[0]);
-        Assert.Contains("ERROR bad (InvalidOperationException: boom)", lines[1]);
+        Assert.DoesNotContain(lines, l => l.Contains("ignored"));
+        int hello = Array.FindIndex(lines, l => l.Contains("INFO hello"));
+        int bad = Array.FindIndex(lines, l => l.Contains("ERROR bad (InvalidOperationException: boom)"));
+        Assert.True(hello >= 0 && bad > hello);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 }
@@ -231,5 +281,27 @@ public class QuickActionRequestTests
         Assert.Contains("\"microphone\": \"Headset (USB Audio)\"", File.ReadAllText(path));
         Assert.Equal("Headset (USB Audio)", Settings.Load(path, new PlainSecretProtector()).Microphone);
         Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void PasteOptions_DefaultOn_RoundTrip_AndOldFileLoadsAsOn()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.True(s.AutoPaste);
+        Assert.True(s.RestoreClipboard);
+
+        s.AutoPaste = false;
+        s.RestoreClipboard = false;
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.False(t.AutoPaste);
+        Assert.False(t.RestoreClipboard);
+
+        File.WriteAllText(path, "{\"glossary\":[\"a\"]}"); // old file without the fields
+        var u = Settings.Load(path, new PlainSecretProtector());
+        Assert.True(u.AutoPaste);
+        Assert.True(u.RestoreClipboard);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 }

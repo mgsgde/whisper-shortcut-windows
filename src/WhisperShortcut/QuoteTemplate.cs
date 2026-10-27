@@ -2,7 +2,7 @@ namespace WhisperShortcut;
 
 /// <summary>
 /// The "Vorlage" for Dictate Prompt without a selection. It is not used as the whole system prompt:
-/// it is appended to the Mac's default editing prompt, so "mach das freundlicher" on a selection
+/// it is appended to the Dictate Prompt system prompt (default or the user's own), so "mach das freundlicher" on a selection
 /// still gets the full editing rules and only compose turns (NO SELECTED TEXT) follow the template.
 /// </summary>
 internal static class QuoteTemplate
@@ -71,14 +71,25 @@ internal static class QuoteTemplate
         Immer reiner Text, ohne Sternchen oder Rauten.
         """;
 
-    /// <summary>System prompt for a Dictate Prompt request, or null for the plain Mac default.</summary>
-    public static string? BuildSystemPrompt(string? template)
-    {
-        if (string.IsNullOrWhiteSpace(template)) return null;
-        return Core.Prompts.DefaultPromptModeSystemPrompt
-            + "\n\nTemplate for new texts — applies ONLY when the request is marked NO SELECTED TEXT, never when editing a selection. "
-            + "Write the finished text in the language of the voice instruction and follow this template from the user exactly "
-            + "(structure, sections, wording). Fill in only what was spoken; keep every [placeholder] the speaker did not fill:\n\n"
-            + template.Trim();
-    }
+    public const string Werkstatt =
+        """
+        Wenn ich einen Auftrag dokumentiere, schreibe einen Auftragsbericht in Stichpunkten (Deutsch, sachlich):
+
+        Fahrzeug: [Marke, Modell, Kennzeichen, Kilometerstand]
+
+        Erledigte Arbeiten:
+        - [so wie diktiert]
+
+        Festgestellte Mängel:
+        - [so wie diktiert]
+
+        Empfehlungen:
+        - [so wie diktiert]
+
+        Nächste Wartung: [so wie diktiert]
+
+        Nur übernehmen, was ich diktiere: keine Teile, Preise oder Arbeiten ergänzen. Fehlt zu einem Abschnitt etwas, lass ihn weg.
+        Wenn ich eine Nachricht an den Kunden diktiere: kurz und freundlich, Sie-Form, mit Anrede und Gruß.
+        Immer reiner Text, ohne Sternchen oder Rauten.
+        """;
 }

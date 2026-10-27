@@ -54,8 +54,23 @@ public sealed class Settings
     /// <summary>Vocabulary terms that bias transcription spelling.</summary>
     public List<string> Glossary { get; set; } = new();
 
-    /// <summary>The user's own Dictate Prompt system prompt (quote template). Empty = default prompt.</summary>
+    /// <summary>
+    /// The template ("Vorlage") for new texts in Dictate Prompt; appended to the editing prompt and applied only
+    /// when nothing is selected. Empty = no template. JSON name kept from the former "system prompt" field.
+    /// </summary>
     public string PromptSystemPrompt { get; set; } = "";
+
+    /// <summary>
+    /// The user's own transcription instruction for Dictate (Gemini only; offline speech recognition takes no prompt).
+    /// Empty = Prompts.DefaultTranscriptionSystemPrompt.
+    /// </summary>
+    public string DictateSystemPrompt { get; set; } = "";
+
+    /// <summary>
+    /// The user's own editing instruction for Dictate Prompt (online and offline).
+    /// Empty = Prompts.DefaultPromptModeSystemPrompt. The template for new texts (PromptSystemPrompt) is appended to it.
+    /// </summary>
+    public string PromptModeSystemPrompt { get; set; } = "";
 
     /// <summary>Transcription model id.</summary>
     public string TranscriptionModel { get; set; } = DefaultTranscriptionModel;
@@ -84,6 +99,25 @@ public sealed class Settings
     /// <summary>Quick instructions offered while recording (see <see cref="QuickActionList"/>).</summary>
     public List<string> QuickActions { get; set; } = new(QuickActionList.Defaults);
 
+    /// <summary>Paste the result at the cursor with Ctrl+V. Off = the text only goes to the clipboard.</summary>
+    public bool AutoPaste { get; set; } = true;
+
+    /// <summary>Put the previous clipboard text back after pasting (ignored when <see cref="AutoPaste"/> is off).</summary>
+    public bool RestoreClipboard { get; set; } = true;
+
+    /// <summary>
+    /// "" when <paramref name="text"/> is blank or equals <paramref name="defaultText"/> (ignoring line endings and
+    /// surrounding whitespace), otherwise the text trimmed with "\n" line endings. Keeps "default" stored as empty.
+    /// </summary>
+    public static string CustomOrEmpty(string? text, string defaultText)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return "";
+        var t = Normalize(text);
+        return t == Normalize(defaultText) ? "" : t;
+
+        static string Normalize(string v) => v.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
+    }
+
     /// <summary>Loads the settings; a missing or corrupt file yields defaults (a corrupt file is kept as .bak).</summary>
     public static Settings Load(string path, ISecretProtector protector)
     {
@@ -100,14 +134,18 @@ public sealed class Settings
             }
             s.Glossary = dto.Glossary ?? new();
             s.PromptSystemPrompt = dto.PromptSystemPrompt ?? "";
-            if (!string.IsNullOrWhiteSpace(dto.TranscriptionModel)) s.TranscriptionModel = dto.TranscriptionModel;
-            if (!string.IsNullOrWhiteSpace(dto.PromptModel)) s.PromptModel = dto.PromptModel;
+            s.DictateSystemPrompt = CustomOrEmpty(dto.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt);
+            s.PromptModeSystemPrompt = CustomOrEmpty(dto.PromptModeSystemPrompt, Prompts.DefaultPromptModeSystemPrompt);
+            s.TranscriptionModel = GeminiModels.NormalizeTranscription(dto.TranscriptionModel);
+            s.PromptModel = GeminiModels.NormalizePrompt(dto.PromptModel);
             if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
             if (!string.IsNullOrWhiteSpace(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey;
             if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
             s.Microphone = dto.Microphone ?? "";
             s.OfflineMode = dto.OfflineMode ?? false;
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
+            s.AutoPaste = dto.AutoPaste ?? true;
+            s.RestoreClipboard = dto.RestoreClipboard ?? true;
             // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
@@ -124,6 +162,7 @@ public sealed class Settings
     /// <summary>Writes the settings to the path given at <see cref="Load"/>.</summary>
     public void Save()
     {
+        if (AppData.ResetDone) return; // after "Zurücksetzen" nothing may bring the data folder back
         var dir = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var dto = new Dto
@@ -131,6 +170,8 @@ public sealed class Settings
             ApiKeyProtected = ApiKey.Length == 0 ? "" : _protector.Protect(ApiKey),
             Glossary = Glossary,
             PromptSystemPrompt = PromptSystemPrompt,
+            DictateSystemPrompt = DictateSystemPrompt,
+            PromptModeSystemPrompt = PromptModeSystemPrompt,
             TranscriptionModel = TranscriptionModel,
             PromptModel = PromptModel,
             DictateHotkey = DictateHotkey,
@@ -140,6 +181,8 @@ public sealed class Settings
             OfflineMode = OfflineMode,
             OfflineLlmId = OfflineLlmId,
             QuickActions = QuickActions,
+            AutoPaste = AutoPaste,
+            RestoreClipboard = RestoreClipboard,
         };
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
@@ -151,6 +194,8 @@ public sealed class Settings
         [JsonPropertyName("apiKeyProtected")] public string? ApiKeyProtected { get; set; }
         [JsonPropertyName("glossary")] public List<string>? Glossary { get; set; }
         [JsonPropertyName("promptSystemPrompt")] public string? PromptSystemPrompt { get; set; }
+        [JsonPropertyName("dictateSystemPrompt")] public string? DictateSystemPrompt { get; set; }
+        [JsonPropertyName("promptModeSystemPrompt")] public string? PromptModeSystemPrompt { get; set; }
         [JsonPropertyName("transcriptionModel")] public string? TranscriptionModel { get; set; }
         [JsonPropertyName("promptModel")] public string? PromptModel { get; set; }
         [JsonPropertyName("dictateHotkey")] public string? DictateHotkey { get; set; }
@@ -160,5 +205,7 @@ public sealed class Settings
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
         [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
         [JsonPropertyName("quickActions")] public List<string>? QuickActions { get; set; }
+        [JsonPropertyName("autoPaste")] public bool? AutoPaste { get; set; }
+        [JsonPropertyName("restoreClipboard")] public bool? RestoreClipboard { get; set; }
     }
 }

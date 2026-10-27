@@ -430,6 +430,31 @@ public class GeminiClientTests
         Assert.Empty(h.Calls);
     }
 
+    private static async Task<string> InstructionAsync(string? custom, params string[] glossary)
+    {
+        var h = new FakeHandler();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        var c = new GeminiClient(() => "k", () => "gemini-3.1-flash-lite", () => "gemini-3.8-flash",
+            new HttpClient(h), () => custom ?? "");
+        await c.TranscribeAsync(Wav, glossary);
+        return (string)h.Json(0)["contents"]![0]!["parts"]![0]!["text"]!;
+    }
+
+    [Fact]
+    public async Task TranscriptionBody_CustomPrompt_ReplacesDefaultKeepsGlossary()
+    {
+        var instruction = await InstructionAsync("  Mein Prompt  ", "Müller");
+        Assert.StartsWith("Mein Prompt\n\n" + Prompts.GlossaryHintHeader, instruction);
+        Assert.Contains("Müller", instruction);
+        Assert.DoesNotContain(Prompts.DefaultTranscriptionSystemPrompt.Split('\n')[0], instruction);
+    }
+
+    [Fact]
+    public async Task TranscriptionBody_BlankCustomPrompt_UsesDefault()
+    {
+        Assert.Equal(Prompts.DefaultTranscriptionSystemPrompt, await InstructionAsync("   "));
+    }
+
     private const string Truncated = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Halb\"}]},\"finishReason\":\"MAX_TOKENS\"}]}";
     private const string Stopped = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Ganz\"}]},\"finishReason\":\"STOP\"}]}";
 

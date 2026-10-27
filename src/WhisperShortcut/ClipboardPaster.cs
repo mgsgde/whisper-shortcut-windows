@@ -11,6 +11,8 @@ internal enum PasteOutcome
     ClipboardOnlyElevatedTarget,
     /// <summary>Ctrl/Alt were still held after 3 s: a Ctrl+V now would arrive as Ctrl+Alt+V. Text stays on the clipboard.</summary>
     ClipboardOnlyKeysHeld,
+    /// <summary>"Automatisch einfügen" is off: the text was only put on the clipboard.</summary>
+    ClipboardOnlyByChoice,
     /// <summary>The user switched to another window since the recording started and the old one could not be brought back. Text stays on the clipboard.</summary>
     ClipboardOnlyTargetChanged,
     /// <summary>The window in front is one of our own (settings, a message box): Ctrl+V would vanish there. Text stays on the clipboard.</summary>
@@ -104,11 +106,11 @@ internal sealed class ClipboardPaster
 
     /// <summary>
     /// Puts <paramref name="text"/> at the cursor: save the clipboard, set ours, Ctrl+V, and after
-    /// 2000 ms put the old clipboard back, but only when nobody else wrote it in between.
+    /// 2000 ms put the old clipboard back (unless <paramref name="restoreClipboard"/> is off), but only when nobody else wrote it in between.
     /// Pastes only into <paramref name="target"/> (the window in front when the recording began); when the
     /// user went elsewhere the text stays on the clipboard. <c>IntPtr.Zero</c> means: no target to check.
     /// </summary>
-    public async Task<PasteOutcome> PasteAsync(string text, IntPtr target, CancellationToken ct = default)
+    public async Task<PasteOutcome> PasteAsync(string text, IntPtr target, bool restoreClipboard = true, CancellationToken ct = default)
     {
         // The user may still hold Ctrl+Alt from the hotkey: Ctrl+V would arrive as Ctrl+Alt+V.
         bool released = await WaitForModifiersReleasedAsync(ct);
@@ -178,9 +180,16 @@ internal sealed class ClipboardPaster
 
         await Task.Delay(50);
         SendChord(0x56); // V
-        Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars)");
+        Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars), restore {(restoreClipboard ? "on" : "off")}");
 
-        _ = RestoreLaterAsync(original, ourSequence, restore);
+        if (restoreClipboard) _ = RestoreLaterAsync(original, ourSequence, restore);
+        else
+        {
+            // No restore wanted: the user's old text stays gone, and a later paste must not bring it back.
+            _pendingRestore = null;
+            _pendingOriginal = null;
+            restore.Dispose();
+        }
         return PasteOutcome.Pasted;
     }
 

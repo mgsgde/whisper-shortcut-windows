@@ -15,6 +15,22 @@ public static class DictatePromptText
             + Prompts.PromptModeOutputRule;
     }
 
+    /// <summary>
+    /// System prompt for a Dictate Prompt request: the user's editing prompt (or the default), plus the template for
+    /// new texts when one is set. Null = plain default (callers then pass "" / null).
+    /// </summary>
+    public static string? BuildSystemPrompt(string? customEditPrompt, string? template)
+    {
+        var custom = customEditPrompt?.Trim();
+        var hasCustom = !string.IsNullOrEmpty(custom);
+        if (string.IsNullOrWhiteSpace(template)) return hasCustom ? custom : null;
+        return (hasCustom ? custom! : Prompts.DefaultPromptModeSystemPrompt)
+            + "\n\nTemplate for new texts — applies ONLY when the request is marked NO SELECTED TEXT, never when editing a selection. "
+            + "Write the finished text in the language of the voice instruction and follow this template from the user exactly "
+            + "(structure, sections, wording). Fill in only what was spoken; keep every [placeholder] the speaker did not fill:\n\n"
+            + template.Trim();
+    }
+
     /// <summary>The compose marker when nothing is selected, otherwise the selection under its header.</summary>
     public static string SelectionBlock(string? selection) =>
         string.IsNullOrEmpty(selection)

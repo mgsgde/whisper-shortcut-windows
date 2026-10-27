@@ -456,10 +456,20 @@ internal sealed class TrayApp : ApplicationContext
                 return;
             }
 
-            var outcome = await _paster.PasteAsync(text, _pasteTarget, ct);
-            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars");
+            var outcome = _settings.AutoPaste
+                ? await _paster.PasteAsync(text, _pasteTarget, _settings.RestoreClipboard, ct)
+                : (_paster.KeepOnClipboard(text) ? PasteOutcome.ClipboardOnlyByChoice : PasteOutcome.Failed);
+            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, restore {(_settings.RestoreClipboard ? "on" : "off")}");
             switch (outcome)
             {
+                case PasteOutcome.ClipboardOnlyByChoice when _unsupported.Count > 0:
+                    _overlay.ShowWarning(_unsupported, pasted: false);
+                    done = true;
+                    break;
+                case PasteOutcome.ClipboardOnlyByChoice:
+                    _overlay.ShowDone("In der Zwischenablage");
+                    done = true;
+                    break;
                 case PasteOutcome.Pasted when _unsupported.Count > 0:
                     _overlay.ShowWarning(_unsupported, pasted: true);
                     done = true;
@@ -600,7 +610,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
 
-        string systemPrompt = QuoteTemplate.BuildSystemPrompt(_settings.PromptSystemPrompt) ?? "";
+        string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt, _settings.PromptSystemPrompt) ?? "";
         if (_quickAction != null) return await QuickActionAsync(_quickAction, wav, seconds, selection, systemPrompt, ct);
 
         if (_fakeGemini)
@@ -994,10 +1004,11 @@ internal sealed class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
-        _settingsForm.Activated += (_, _) => SyncGlobalHotkeys();
+        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
+        // Activation messages can still arrive after FormClosed: only the open window may re-evaluate.
+        _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.
-        _settingsForm.Deactivate += (_, _) => _ui.Post(_ => SyncGlobalHotkeys(), null);
+        _settingsForm.Deactivate += (_, _) => { if (_settingsForm == form) _ui.Post(_ => SyncGlobalHotkeys(), null); };
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
