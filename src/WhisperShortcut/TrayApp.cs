@@ -735,6 +735,7 @@ internal sealed class TrayApp : ApplicationContext
     private void Notify(string title, string text, ToolTipIcon icon, Action? onClick = null)
     {
         _balloonClick = onClick;
+        Core.Log.Info($"Notify: {title}");  // title only: the text can quote an error message
         _icon.ShowBalloonTip(6000, title, text, icon);
     }
 

@@ -6,6 +6,7 @@
 #
 #   tools/vm.sh deploy <path/to/App.exe>   copy exe + test-audio/*.wav into %LOCALAPPDATA%\wsw\ via the ~/Downloads share
 #   tools/vm.sh start [diktat.wav]         start the deployed exe (detached); with a wav: --test-wav, no mic
+#                                          WSW_ARGS=--settings opens the settings window on start
 #   tools/vm.sh stop                       kill it
 #   tools/vm.sh notepad                    open an empty Notepad and focus it (paste target)
 #   tools/vm.sh focus <window title>       bring a window to the front
@@ -56,9 +57,9 @@ case "$cmd" in
     # Absolute path, no cmd /c: going through cmd leaves a console window in the VM.
     lad=$(run "echo %LOCALAPPDATA%" | tr -d '\r')
     if [[ -n "${1:-}" ]]; then
-      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" --test-wav "$1" --log "Z:\\Downloads\\wsw-test\\wsw.log" >/dev/null 2>&1 &
+      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" --test-wav "$1" --log "Z:\\Downloads\\wsw-test\\wsw.log" ${WSW_ARGS:-} >/dev/null 2>&1 &
     else
-      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" --log "Z:\\Downloads\\wsw-test\\wsw.log" >/dev/null 2>&1 &
+      nohup prlctl exec "$VM" --current-user "$lad\\wsw\\$EXE_NAME" --log "Z:\\Downloads\\wsw-test\\wsw.log" ${WSW_ARGS:-} >/dev/null 2>&1 &
     fi
     # First launch of a fresh 120 MB single-file exe takes 10-20 s (Defender scans it).
     for _ in $(seq 1 15); do
