@@ -12,8 +12,21 @@ public class GeminiClientTests
     {
         var h = new FakeHandler();
         var c = new GeminiClient(() => key, () => "gemini-3.1-flash-lite", () => "gemini-3.8-flash", new HttpClient(h))
-        { RetryDelay = TimeSpan.Zero };
+        { RetryDelay = TimeSpan.Zero, RetryInfoBuffer = TimeSpan.Zero };
         return (c, h);
+    }
+
+    [Fact]
+    public async Task Transcribe_AnnotatedGlossary_SendsTieBreakerNotRejectedAsVocabulary()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.TranscribeAsync(Wav, new[] { "Bachata (not \"Batchata\")", "Ramipril" });
+
+        var instruction = (string)h.Json(0)["contents"]![0]!["parts"]![0]!["text"]!;
+        Assert.Contains(Prompts.GlossaryHintHeader + "Bachata, Ramipril", instruction);
+        Assert.Contains("Homophone tie-breakers", instruction);
+        Assert.DoesNotContain("(not", instruction);
     }
 
     [Fact]
@@ -125,25 +138,183 @@ public class GeminiClientTests
         Assert.Empty(h.Calls);
     }
 
+    private const string RetryInfo0s =
+        "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"0s\"}]}}";
+    private const string PerMinute429 =
+        "{\"error\":{\"code\":429,\"message\":\"Quota exceeded\",\"status\":\"RESOURCE_EXHAUSTED\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.QuotaFailure\",\"violations\":[{\"quotaId\":\"GenerateRequestsPerMinutePerProjectPerModel-FreeTier\"}]}]}}";
+    private const string PerDay429 =
+        "{\"error\":{\"code\":429,\"message\":\"Quota exceeded\",\"status\":\"RESOURCE_EXHAUSTED\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.QuotaFailure\",\"violations\":[{\"quotaId\":\"GenerateRequestsPerDayPerProjectPerModel-FreeTier\"}]}]}}";
+
+    /// <summary>Handler that runs a script per call (throw, cancel or answer).</summary>
+    private sealed class ScriptHandler : HttpMessageHandler
+    {
+        public int Calls;
+        public Func<int, CancellationToken, Task<HttpResponseMessage>> Script = (_, _) => throw new InvalidOperationException();
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => Script(++Calls, ct);
+    }
+
+    private static GeminiClient MakeScripted(ScriptHandler h) =>
+        new(() => "k", () => "gemini-3.1-flash-lite", () => "gemini-3.8-flash", new HttpClient(h)) { RetryDelay = TimeSpan.Zero, RetryInfoBuffer = TimeSpan.Zero };
+
+    private static HttpResponseMessage Ok() => new(HttpStatusCode.OK)
+    {
+        Content = new StringContent(Answer, System.Text.Encoding.UTF8, "application/json"),
+    };
+
     [Fact]
-    public async Task Retries_Once_On503_ThenSucceeds()
+    public async Task Temperature0_InTranscriptionBody_NotInPromptBodies()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.TranscribeAsync(Wav, Array.Empty<string>());
+        await c.PromptAsync(Wav, "x", null);
+        await c.PromptTextAsync("x", "y", null);
+        Assert.Equal(0.0, (double)h.Json(0)["generationConfig"]!["temperature"]!);
+        Assert.Null(h.Json(1)["generationConfig"]!["temperature"]);
+        Assert.Null(h.Json(2)["generationConfig"]!["temperature"]);
+    }
+
+    [Fact]
+    public async Task Retries_On503Twice_ThenSucceeds()
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.ServiceUnavailable, "{}"));
+        h.Responses.Enqueue((HttpStatusCode.ServiceUnavailable, "{}"));
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        Assert.Equal("Hallo Welt", await c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(3, h.Calls.Count);
+    }
+
+    [Fact]
+    public async Task ServerError_GetsSixAttempts()
+    {
+        var (c, h) = Make();
+        for (var i = 0; i < 6; i++) h.Responses.Enqueue((HttpStatusCode.BadGateway, "{}"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        Assert.Equal(6, h.Calls.Count);
+    }
+
+    [Fact]
+    public async Task Retries_NetworkException_ThenSucceeds()
+    {
+        var h = new ScriptHandler
+        {
+            Script = (n, _) => n == 1 ? throw new HttpRequestException("down") : Task.FromResult(Ok()),
+        };
+        Assert.Equal("Hallo Welt", await MakeScripted(h).TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(2, h.Calls);
+    }
+
+    [Fact]
+    public async Task PersistentNetworkError_ThrowsNetwork_After5Attempts()
+    {
+        var h = new ScriptHandler { Script = (_, _) => throw new HttpRequestException("down") };
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => MakeScripted(h).TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.Network, ex.Kind);
+        Assert.Equal(5, h.Calls);
+    }
+
+    [Fact]
+    public async Task Retries_RateLimit_WithRetryInfo0s()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.TooManyRequests, RetryInfo0s));
         h.Responses.Enqueue((HttpStatusCode.OK, Answer));
         Assert.Equal("Hallo Welt", await c.TranscribeAsync(Wav, Array.Empty<string>()));
         Assert.Equal(2, h.Calls.Count);
     }
 
     [Fact]
-    public async Task Quota_After429Twice_Throws()
+    public async Task RateLimit_WithRetryInfoOver60s_StopsRetrying()
     {
         var (c, h) = Make();
-        h.Responses.Enqueue((HttpStatusCode.TooManyRequests, "{}"));
-        h.Responses.Enqueue((HttpStatusCode.TooManyRequests, "{}"));
+        h.Responses.Enqueue((HttpStatusCode.TooManyRequests,
+            "{\"error\":{\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"120s\"}]}}"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Single(h.Calls);
+    }
+
+    [Theory]
+    [InlineData("55s", 55.0)]
+    [InlineData("1.5s", 1.5)]
+    [InlineData("0s", 0.0)]
+    public void ParseRetryInfo_ReadsSeconds(string value, double seconds)
+    {
+        var body = "{\"error\":{\"details\":[{\"@type\":\"x.QuotaFailure\"},{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"" + value + "\"}]}}";
+        Assert.Equal(TimeSpan.FromSeconds(seconds), GeminiClient.ParseRetryInfo(body));
+        Assert.Null(GeminiClient.ParseRetryInfo("{}"));
+        Assert.Null(GeminiClient.ParseRetryInfo("not json"));
+    }
+
+    [Fact]
+    public async Task BadRequest_IsNotRetried()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.BadRequest, "{\"error\":{\"message\":\"bad\"}}"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        Assert.Single(h.Calls);
+    }
+
+    [Fact]
+    public async Task Quota_After5Consecutive429_Throws()
+    {
+        var (c, h) = Make();
+        for (var i = 0; i < 5; i++) h.Responses.Enqueue((HttpStatusCode.TooManyRequests, "{}"));
         var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptAsync(Wav, null, null));
         Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
-        Assert.Equal(2, h.Calls.Count);
+        Assert.Equal(5, h.Calls.Count);
+    }
+
+    [Fact]
+    public async Task CallerCancellation_IsNotRetried()
+    {
+        using var cts = new CancellationTokenSource();
+        var h = new ScriptHandler
+        {
+            Script = (_, ct) => { cts.Cancel(); ct.ThrowIfCancellationRequested(); return Task.FromResult(Ok()); },
+        };
+        await Assert.ThrowsAnyAsync<OperationCanceledException>(
+            () => MakeScripted(h).TranscribeAsync(Wav, Array.Empty<string>(), cts.Token));
+        Assert.Equal(1, h.Calls);
+    }
+
+    [Fact]
+    public async Task AttemptTimeout_IsRetried_ThenThrowsTimeout()
+    {
+        // Handler reports a cancelled linked token although the caller did not cancel = per-attempt timeout.
+        var h = new ScriptHandler { Script = (_, _) => throw new OperationCanceledException() };
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => MakeScripted(h).TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.Timeout, ex.Kind);
+        Assert.Equal(5, h.Calls);
+    }
+
+    [Fact]
+    public async Task Quota_PerMinute_SaysBusy_AndIsRetried()
+    {
+        var (c, h) = Make();
+        for (var i = 0; i < 5; i++) h.Responses.Enqueue((HttpStatusCode.TooManyRequests, PerMinute429));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal("Gemini ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.", ex.Message);
+        Assert.Equal(5, h.Calls.Count);
+    }
+
+    [Fact]
+    public async Task Quota_PerDay_SaysExhausted_AndFailsAtOnce()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.TooManyRequests, PerDay429));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal("Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen.", ex.Message);
+        Assert.Single(h.Calls);
     }
 
     [Fact]
@@ -274,7 +445,7 @@ public class GeminiClientTests
     {
         var instruction = await InstructionAsync("  Mein Prompt  ", "Müller");
         Assert.StartsWith("Mein Prompt\n\n" + Prompts.GlossaryHintHeader, instruction);
-        Assert.EndsWith("Müller", instruction);
+        Assert.Contains("Müller", instruction);
         Assert.DoesNotContain(Prompts.DefaultTranscriptionSystemPrompt.Split('\n')[0], instruction);
     }
 
@@ -282,5 +453,53 @@ public class GeminiClientTests
     public async Task TranscriptionBody_BlankCustomPrompt_UsesDefault()
     {
         Assert.Equal(Prompts.DefaultTranscriptionSystemPrompt, await InstructionAsync("   "));
+    }
+
+    private const string Truncated = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Halb\"}]},\"finishReason\":\"MAX_TOKENS\"}]}";
+    private const string Stopped = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Ganz\"}]},\"finishReason\":\"STOP\"}]}";
+
+    [Fact]
+    public async Task PromptText_MaxTokens_ThrowsTruncated()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("Text", "Mach das freundlicher", null));
+        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+        Assert.Contains("abgeschnitten", ex.Message);
+        Assert.Single(h.Calls); // not retried
+    }
+
+    [Fact]
+    public async Task Prompt_MaxTokens_ThrowsTruncated()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptAsync(Wav, "Text", null));
+        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+    }
+
+    [Fact]
+    public async Task Prompt_StopFinish_ReturnsText()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Stopped));
+        Assert.Equal("Ganz", await c.PromptTextAsync("Text", "Kürzer", null));
+    }
+
+    [Fact]
+    public async Task Prompt_SendsExplicitMaxOutputTokens()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.PromptTextAsync("Text", "Kürzer", null);
+        Assert.Equal(65536, (int)h.Json(0)["generationConfig"]!["maxOutputTokens"]!);
+    }
+
+    [Fact]
+    public async Task Transcribe_MaxTokens_KeepsTextAsBefore()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
+        Assert.Equal("Halb", await c.TranscribeAsync(Wav, Array.Empty<string>()));
     }
 }
