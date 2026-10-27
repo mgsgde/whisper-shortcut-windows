@@ -900,10 +900,11 @@ internal sealed class TrayApp : ApplicationContext
     /// Idempotent, so the order of the settings window's activate / deactivate / close events cannot
     /// leave the hotkeys off: every one of them (and every state change) just re-evaluates.
     /// </summary>
-    private void SyncGlobalHotkeys(bool notify = false)
+    private void SyncGlobalHotkeys(bool notify = false, bool? settingsActive = null)
     {
         var f = _settingsForm;
-        bool settingsInFront = f is { IsDisposed: false, Visible: true } && Form.ActiveForm == f;
+        // During Deactivate, Form.ActiveForm can still name the settings window, so that event says it outright.
+        bool settingsInFront = f is { IsDisposed: false, Visible: true } && (settingsActive ?? Form.ActiveForm == f);
         bool wanted = Core.HotkeyPolicy.WantGlobalHotkeys(settingsInFront, _state == State.Idle);
         if (wanted == _globalHotkeysOn) return;
         if (wanted)
@@ -961,8 +962,8 @@ internal sealed class TrayApp : ApplicationContext
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
         _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
-        _settingsForm.Activated += (_, _) => SyncGlobalHotkeys();
-        _settingsForm.Deactivate += (_, _) => SyncGlobalHotkeys();
+        _settingsForm.Activated += (_, _) => SyncGlobalHotkeys(settingsActive: true);
+        _settingsForm.Deactivate += (_, _) => SyncGlobalHotkeys(settingsActive: false);
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
