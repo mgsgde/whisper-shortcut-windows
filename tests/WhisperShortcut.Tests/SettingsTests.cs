@@ -125,6 +125,82 @@ public class SettingsTests
         Assert.Equal("", Settings.CustomOrEmpty(null, def));
         Assert.Equal("a\nb", Settings.CustomOrEmpty("  a\r\nb \r\n", def));
     }
+
+    private static string TempSettingsFile(string json)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, json);
+        return path;
+    }
+
+    [Fact]
+    public void Engines_OldFile_DefaultToGemini_OfflineUnchanged()
+    {
+        var path = TempSettingsFile("{\"offlineMode\":true,\"dictateHotkey\":\"Ctrl+Shift+X\"}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.Gemini, s.SpeechEngine);
+        Assert.Equal(Engine.Gemini, s.TextEngine);
+        Assert.True(s.OfflineMode);
+        Assert.Equal("", s.OpenAiKey);
+        Assert.Equal("gpt-4o-transcribe", s.OpenAiTranscriptionModel);
+        Assert.Equal("gpt-6-sol", s.OpenAiPromptModel);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Engines_UnknownValue_IsGemini()
+    {
+        var path = TempSettingsFile("{\"speechEngine\":\"azure\",\"textEngine\":\"\"}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.Gemini, s.SpeechEngine);
+        Assert.Equal(Engine.Gemini, s.TextEngine);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Engines_AndOpenAi_RoundTrip_KeyProtected()
+    {
+        var path = TempSettingsFile("{}");
+        var s = Settings.Load(path, new Reverse());
+        s.SpeechEngine = Engine.Local;
+        s.TextEngine = Engine.OpenAI;
+        s.OpenAiKey = "sk-SECRET123";
+        s.OpenAiTranscriptionModel = "gpt-4o-mini-transcribe";
+        s.OpenAiPromptModel = "gpt-6-luna";
+        s.Save();
+
+        var raw = File.ReadAllText(path);
+        Assert.DoesNotContain("sk-SECRET123", raw);
+        Assert.Contains("\"speechEngine\": \"local\"", raw);
+        Assert.Contains("\"textEngine\": \"openai\"", raw);
+
+        var t = Settings.Load(path, new Reverse());
+        Assert.Equal(Engine.Local, t.SpeechEngine);
+        Assert.Equal(Engine.OpenAI, t.TextEngine);
+        Assert.Equal("sk-SECRET123", t.OpenAiKey);
+        Assert.Equal("gpt-4o-mini-transcribe", t.OpenAiTranscriptionModel);
+        Assert.Equal("gpt-6-luna", t.OpenAiPromptModel);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void EffectiveEngines_OfflineMode_OverridesBoth()
+    {
+        var path = TempSettingsFile("{}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.SpeechEngine = Engine.OpenAI;
+        s.TextEngine = Engine.Gemini;
+        Assert.Equal(Engine.OpenAI, s.EffectiveSpeechEngine);
+        Assert.Equal(Engine.Gemini, s.EffectiveTextEngine);
+        s.OfflineMode = true;
+        Assert.Equal(Engine.Local, s.EffectiveSpeechEngine);
+        Assert.Equal(Engine.Local, s.EffectiveTextEngine);
+        s.Save();
+        Assert.DoesNotContain("effective", File.ReadAllText(path), StringComparison.OrdinalIgnoreCase);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
 }
 
 public class LogAndAudioTests

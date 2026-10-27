@@ -28,6 +28,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ClipboardPaster _paster;
     private readonly Core.Settings _settings;
     private readonly Core.GeminiClient _gemini;
+    private readonly Core.OpenAiClient _openAi;
     private readonly OfflineEngine _offline;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _dictateInfo;
@@ -88,6 +89,7 @@ internal sealed class TrayApp : ApplicationContext
             AutoStart.RefreshPathIfEnabled(); // the .exe may have been moved out of Downloads
         }
         _gemini = new Core.GeminiClient(_settings);
+        _openAi = new Core.OpenAiClient(_settings);
         _offline = new OfflineEngine(_settings);
         _offline.Prewarm();
 
@@ -279,14 +281,32 @@ internal sealed class TrayApp : ApplicationContext
 
     // ---------------- recording ----------------
 
-    /// <summary>Online mode without a Gemini key. The offline mode needs none.</summary>
-    private bool MissingKey => !_settings.OfflineMode && string.IsNullOrWhiteSpace(_settings.ApiKey) && !_fakeGemini;
+    /// <summary>
+    /// The engines a mode uses: Dictate only speech recognition; Dictate Prompt the text engine and
+    /// speech recognition too (the instruction is transcribed, or checked for a bare "korrigiere").
+    /// </summary>
+    private IEnumerable<Core.Engine> EnginesFor(Mode mode) => mode == Mode.Dictate
+        ? new[] { _settings.EffectiveSpeechEngine }
+        : new[] { _settings.EffectiveSpeechEngine, _settings.EffectiveTextEngine };
+
+    /// <summary>The provider whose key a mode needs but lacks (null: all there). Local engines need none.</summary>
+    private string? MissingKeyFor(Mode mode)
+    {
+        if (_fakeGemini) return null;
+        var engines = EnginesFor(mode).ToList();
+        if (engines.Contains(Core.Engine.Gemini) && string.IsNullOrWhiteSpace(_settings.ApiKey)) return "Gemini";
+        if (engines.Contains(Core.Engine.OpenAI) && string.IsNullOrWhiteSpace(_settings.OpenAiKey)) return "OpenAI";
+        return null;
+    }
+
+    /// <summary>Any mode lacks a key: for the tray tooltip.</summary>
+    private bool MissingKey => MissingKeyFor(Mode.Prompt) != null;
 
     private void StartRecording(Mode mode)
     {
-        if (_settings.OfflineMode && !OfflineModelsReady(mode))
+        if (!OfflineModelsReady(mode))
         {
-            Core.Log.Info($"Hotkey {mode} in offline mode, models missing");
+            Core.Log.Info($"Hotkey {mode} with a local engine, models missing");
             Sounds.Error();
             Notify("Offline-Modelle fehlen",
                 (mode == Mode.Dictate || !OfflineEngine.SpeechInstalled
@@ -296,18 +316,18 @@ internal sealed class TrayApp : ApplicationContext
                 ToolTipIcon.Warning, ShowSettings);
             return;
         }
-        if (_settings.OfflineMode && mode == Mode.Prompt && OfflineEngine.LlmUnsupportedCpu)
+        if (mode == Mode.Prompt && _settings.EffectiveTextEngine == Core.Engine.Local && OfflineEngine.LlmUnsupportedCpu)
         {
-            Core.Log.Info("Hotkey Prompt in offline mode, but this CPU cannot run the language model");
+            Core.Log.Info("Hotkey Prompt with the local text engine, but this CPU cannot run the language model");
             Sounds.Error();
             Notify("Offline-Sprachmodell", Core.LlamaServerHost.UnsupportedCpuMessage, ToolTipIcon.Warning, ShowSettings);
             return;
         }
-        if (MissingKey)
+        if (MissingKeyFor(mode) is { } provider)
         {
-            Core.Log.Info("Hotkey pressed but no API key (Schlüssel fehlt)");
+            Core.Log.Info($"Hotkey pressed but no {provider} key (Schlüssel fehlt)");
             Sounds.Error();
-            Notify("Schlüssel fehlt", "Noch kein API-Schlüssel eingetragen. Hier klicken, um ihn einzutragen.",
+            Notify("Schlüssel fehlt", $"Noch kein {provider}-Schlüssel eingetragen. Hier klicken, um ihn einzutragen.",
                 ToolTipIcon.Warning, ShowSettings);
             return;
         }
@@ -320,7 +340,7 @@ internal sealed class TrayApp : ApplicationContext
         _selectionCts = mode == Mode.Prompt ? new CancellationTokenSource() : null;
         _selection = _selectionCts != null ? _paster.CopySelectionAsync(_selectionCts.Token) : null;
         // Loading the language model takes seconds to half a minute; do it while the user speaks.
-        if (mode == Mode.Prompt && _settings.OfflineMode) _offline.PrewarmLlm();
+        if (mode == Mode.Prompt && _settings.EffectiveTextEngine == Core.Engine.Local) _offline.PrewarmLlm();
 
         var limit = mode == Mode.Dictate ? MicAudioSource.DictateLimit : MicAudioSource.PromptLimit;
         MicAudioSource? mic = null;
@@ -597,9 +617,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         string raw = _fakeGemini
             ? "das ist ein test diktat aus der virtuellen maschine"
-            : _settings.OfflineMode
-                ? await TranscribeOfflineAsync(wav, ct)
-                : await TranscribeOnlineAsync(wav, ct);
+            : await TranscribeAsync(wav, ct);
         raw = GlossaryBackstops(raw);
         string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), seconds);
         // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
@@ -630,7 +648,8 @@ internal sealed class TrayApp : ApplicationContext
                 : $"Bearbeitet (Testmodus ohne Gemini): {selection.Length} Zeichen markiert";
         }
 
-        if (_settings.OfflineMode) return await PromptOfflineAsync(wav, selection, systemPrompt, ct);
+        // Only Gemini hears the instruction itself; a local or OpenAI text model gets it transcribed.
+        if (_settings.EffectiveTextEngine != Core.Engine.Gemini) return await PromptFromTranscriptAsync(wav, selection, systemPrompt, ct);
         if (!HasSpeech(wav))
         {
             Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
@@ -643,7 +662,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             // Nothing selected and the instruction is only "korrigiere" / "mach das freundlicher":
             // there is nothing to edit, and the model would invent a text. Transcribe in parallel to check.
-            instruction = await TranscribeOnlineAsync(wav, ct);
+            instruction = await TranscribeAsync(wav, ct);
             if (Core.BareEditCommand.Matches(instruction))
             {
                 Core.Log.Info("Prompt: bare edit command without selection, refused");
@@ -663,13 +682,13 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     /// <summary>
-    /// Offline Dictate Prompt, as on the Mac: a local text model cannot hear, so the instruction is
-    /// transcribed first and then sent as text with the selection.
+    /// Dictate Prompt with a text model that cannot hear (local, as on the Mac, or OpenAI): the
+    /// instruction is transcribed with the chosen speech engine and sent as text with the selection.
     /// </summary>
-    private async Task<string> PromptOfflineAsync(byte[] wav, string? selection, string systemPrompt, CancellationToken ct)
+    private async Task<string> PromptFromTranscriptAsync(byte[] wav, string? selection, string systemPrompt, CancellationToken ct)
     {
-        string instruction = (await TranscribeOfflineAsync(wav, ct)).Trim();
-        Core.Log.Info($"Prompt offline: instruction {instruction.Length} chars");
+        string instruction = (await TranscribeAsync(wav, ct)).Trim();
+        Core.Log.Info($"Prompt via transcript ({_settings.EffectiveTextEngine}): instruction {instruction.Length} chars");
         if (instruction.Length == 0)
         {
             Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
@@ -684,14 +703,9 @@ internal sealed class TrayApp : ApplicationContext
             return "";
         }
 
-        if (!_offline.LlmReady)
-        {
-            SetStatusText("Sprachmodell wird geladen …");
-            _overlay.ShowProcessing("Sprachmodell wird geladen …");
-        }
         var sw = Stopwatch.StartNew();
-        string text = Reply(await _offline.PromptAsync(selection, instruction, systemPrompt, ct), new[] { instruction, selection, systemPrompt });
-        Core.Log.Info($"Prompt offline: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
+        string text = Reply(await PromptTextAsync(selection, instruction, systemPrompt, ct), new[] { instruction, selection, systemPrompt });
+        Core.Log.Info($"Prompt via transcript: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
         if (text.Length == 0) Notify("Nichts erkannt", "Das Sprachmodell hat keinen Text geliefert. Bitte die Anweisung noch einmal sprechen.", ToolTipIcon.Info);
         return text;
     }
@@ -705,8 +719,9 @@ internal sealed class TrayApp : ApplicationContext
         // Under a second nothing was said yet; a recognizer would only guess at the silence.
         string transcript = seconds < 1.0 ? ""
             : _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen"
-            : _settings.OfflineMode ? await TranscribeOfflineAsync(wav, ct)
-            : GlossaryBackstops(await TranscribeOnlineAsync(wav, ct));
+            // Parakeet gets the glossary as hotwords already; the backstops are for the cloud models.
+            : _settings.EffectiveSpeechEngine == Core.Engine.Local ? await TranscribeAsync(wav, ct)
+            : GlossaryBackstops(await TranscribeAsync(wav, ct));
         var request = Core.QuickActionRequest.Build(quick, selection, transcript);
         Core.Log.Info($"Prompt quick action: transcript {transcript.Trim().Length} chars, selection {selection?.Length ?? 0} chars");
         if (request == null)
@@ -724,18 +739,9 @@ internal sealed class TrayApp : ApplicationContext
             // Test mode: Markdown and an invented drug, so the plain-text cleanup and the warning show.
             raw = "## Anamnese\nKopfschmerzen seit drei Tagen\n\n**Therapie:**\n* Ibuprofen 400 mg";
         }
-        else if (_settings.OfflineMode)
-        {
-            if (!_offline.LlmReady)
-            {
-                SetStatusText("Sprachmodell wird geladen …");
-                _overlay.ShowProcessing("Sprachmodell wird geladen …");
-            }
-            raw = await _offline.PromptAsync(target, instruction, systemPrompt, ct);
-        }
         else
         {
-            raw = await _gemini.PromptTextAsync(target, instruction, systemPrompt, ct);
+            raw = await PromptTextAsync(target, instruction, systemPrompt, ct);
         }
         string text = Reply(raw, new[] { transcript, selection, quick, systemPrompt });
         Core.Log.Info($"Prompt quick action: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
@@ -758,13 +764,41 @@ internal sealed class TrayApp : ApplicationContext
         return text;
     }
 
+    /// <summary>Speech recognition with the chosen engine: Parakeet on this PC, or Gemini / OpenAI.</summary>
+    private Task<string> TranscribeAsync(byte[] wav, CancellationToken ct) =>
+        _settings.EffectiveSpeechEngine switch
+        {
+            Core.Engine.Local => TranscribeOfflineAsync(wav, ct),
+            Core.Engine.OpenAI => TranscribeOnlineAsync(_openAi, wav, ct),
+            _ => TranscribeOnlineAsync(_gemini, wav, ct),
+        };
+
+    /// <summary>A text-only Dictate Prompt call with the chosen text engine.</summary>
+    private Task<string> PromptTextAsync(string? selection, string instruction, string systemPrompt, CancellationToken ct)
+    {
+        switch (_settings.EffectiveTextEngine)
+        {
+            case Core.Engine.Local:
+                if (!_offline.LlmReady)
+                {
+                    SetStatusText("Sprachmodell wird geladen …");
+                    _overlay.ShowProcessing("Sprachmodell wird geladen …");
+                }
+                return _offline.PromptAsync(selection, instruction, systemPrompt, ct);
+            case Core.Engine.OpenAI:
+                return _openAi.PromptTextAsync(selection, instruction, systemPrompt, ct);
+            default:
+                return _gemini.PromptTextAsync(selection, instruction, systemPrompt, ct);
+        }
+    }
+
     /// <summary>
-    /// Gemini. Above 2.5 min the recording goes out in ~2-minute pieces, cut in pauses, four at a time:
+    /// Gemini or OpenAI. Above 2.5 min the recording goes out in ~2-minute pieces, cut in pauses, four at a time:
     /// one request would hit Gemini's inline size limit and take as long as all of it. A piece that comes
     /// back as nothing but glossary words (the model filled a quiet stretch with vocabulary) is asked
     /// again once without the glossary, like the Mac.
     /// </summary>
-    private Task<string> TranscribeOnlineAsync(byte[] wav, CancellationToken ct)
+    private Task<string> TranscribeOnlineAsync(Core.ISpeechProvider speech, byte[] wav, CancellationToken ct)
     {
         var glossary = _settings.Glossary.ToList();
         var echoTerms = Core.GlossaryPrompt.EchoTerms(glossary);
@@ -772,21 +806,21 @@ internal sealed class TrayApp : ApplicationContext
         {
             // Nothing but room noise: Gemini would answer with the glossary. Also saves the request.
             if (!HasSpeech(chunk)) return "";
-            var text = await _gemini.TranscribeAsync(chunk, glossary, c);
+            var text = await speech.TranscribeAsync(chunk, glossary, c);
             if (text.Trim().Length == 0
                 || Core.TextCleanup.DiscardGlossaryEcho(text, Core.Wav.DurationSeconds(chunk), echoTerms).Length > 0)
                 return text;
             Core.Log.Info("Dictate: glossary echo discarded, asking again without the glossary");
-            return await _gemini.TranscribeAsync(chunk, Array.Empty<string>(), c);
+            return await speech.TranscribeAsync(chunk, Array.Empty<string>(), c);
         }, maxParallel: 4, ct);
     }
 
-    /// <summary>Speech gate for a recording or chunk going to Gemini; the file source of --test-wav passes through here too.</summary>
+    /// <summary>Speech gate for a recording or chunk going to Gemini or OpenAI; the file source of --test-wav passes through here too.</summary>
     private static bool HasSpeech(byte[] wav)
     {
         var level = Core.SpeechGate.Analyze(wav);
         if (Core.SpeechGate.HasSpeech(level)) return true;
-        Core.Log.Info($"No speech (peak {level.PeakDbfs:0} dBFS, loud frames {level.LoudFrames}/{level.Frames}), Gemini skipped");
+        Core.Log.Info($"No speech (peak {level.PeakDbfs:0} dBFS, loud frames {level.LoudFrames}/{level.Frames}), request skipped");
         return false;
     }
 
@@ -901,8 +935,10 @@ internal sealed class TrayApp : ApplicationContext
         else Notify("WhisperShortcut", title, ToolTipIcon.Info);
     }
 
+    /// <summary>The local models the mode's engines need are on disk (true when it uses none).</summary>
     private bool OfflineModelsReady(Mode mode) =>
-        OfflineEngine.SpeechInstalled && (mode == Mode.Dictate || OfflineEngine.LlmInstalled(_offline.SelectedLlm));
+        (_settings.EffectiveSpeechEngine != Core.Engine.Local || OfflineEngine.SpeechInstalled)
+        && (mode == Mode.Dictate || _settings.EffectiveTextEngine != Core.Engine.Local || OfflineEngine.LlmInstalled(_offline.SelectedLlm));
 
     // ---------------- UI ----------------
 
@@ -938,7 +974,7 @@ internal sealed class TrayApp : ApplicationContext
             State.Recording => ($"Aufnahme läuft – {key} beendet sie", TrayIcons.Recording),
             State.Processing => ("Wird verarbeitet …", TrayIcons.Processing),
             _ when MissingKey => ("Kein API-Schlüssel eingetragen", TrayIcons.Ready),
-            _ when _settings.OfflineMode && !OfflineModelsReady(Mode.Dictate) => ("Offline – Modelle noch nicht geladen", TrayIcons.Ready),
+            _ when !OfflineModelsReady(Mode.Dictate) => ("Spracherkennung noch nicht geladen", TrayIcons.Ready),
             _ when _settings.OfflineMode => ("Bereit (offline, nichts verlässt diesen PC)", TrayIcons.Ready),
             _ => ("Bereit", TrayIcons.Ready),
         };
@@ -1031,7 +1067,7 @@ internal sealed class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
+        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, welcome);
         // Activation messages can still arrive after FormClosed: only the open window may re-evaluate.
         _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.
@@ -1075,17 +1111,28 @@ internal sealed class TrayApp : ApplicationContext
             Notify("Offline-Modelle fehlen", "Für den Offline-Modus zuerst die Spracherkennung laden: hier klicken.", ToolTipIcon.Info, ShowSettings);
             return;
         }
-        if (!offline && string.IsNullOrWhiteSpace(_settings.ApiKey) && !_fakeGemini)
+        _settings.OfflineMode = offline;
+        // Back to the chosen engines: they may need a key that was never entered.
+        if (!offline && MissingKeyFor(Mode.Prompt) is { } provider)
         {
-            Notify("Schlüssel fehlt", "Für den Online-Modus zuerst den Gemini-Schlüssel eintragen: hier klicken.", ToolTipIcon.Info, ShowSettings);
+            _settings.OfflineMode = true;
+            Notify("Schlüssel fehlt", $"Für den Online-Modus zuerst den {provider}-Schlüssel eintragen: hier klicken.", ToolTipIcon.Info, ShowSettings);
             return;
         }
-        _settings.OfflineMode = offline;
         TrySave();
         Core.Log.Info($"Tray: offline mode {(offline ? "on" : "off")}");
         _offline.Prewarm();
         SetState(_state);
-        _overlay.ShowDone(offline ? "Offline: nichts verlässt den PC" : "Online mit Gemini", neutral: true);
+        _overlay.ShowDone(offline ? "Offline: nichts verlässt den PC" : EnginesLabel(), neutral: true);
+    }
+
+    /// <summary>"Sprache: Gemini · Text: OpenAI", or one name when both are the same.</summary>
+    private string EnginesLabel()
+    {
+        static string Name(Core.Engine e) => e switch { Core.Engine.Local => "auf diesem PC", Core.Engine.OpenAI => "OpenAI", _ => "Gemini" };
+        var (speech, text) = (_settings.EffectiveSpeechEngine, _settings.EffectiveTextEngine);
+        if (speech == Core.Engine.Local && text == Core.Engine.Local) return "Alles auf diesem PC";
+        return speech == text ? $"Online mit {Name(speech)}" : $"Sprache: {Name(speech)} · Text: {Name(text)}";
     }
 
     private void TrySave()
