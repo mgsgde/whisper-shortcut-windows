@@ -82,6 +82,7 @@ internal static class Theme
     public static readonly Font Title = new("Segoe UI Semibold", 20f);
     public static readonly Font AppTitle = new("Segoe UI Semibold", 11f);
     public static readonly Font Icons = FontOr("Segoe Fluent Icons", "Segoe MDL2 Assets", 12f);
+    public static readonly Font SmallIcons = new(Icons.FontFamily, 8f);
 
     private static Font FontOr(string family, string fallback, float size)
     {
@@ -536,6 +537,25 @@ internal sealed class FluentCombo : ComboBox
         ItemHeight = LogicalToDeviceUnits(26);
     }
 
+    protected override void WndProc(ref Message m)
+    {
+        base.WndProc(ref m);
+        // The flat combo draws its frame in the text color (white in dark mode) and a tiny arrow:
+        // paint over both with the field frame and a chevron like the Windows 11 combo boxes.
+        if (m.Msg != 0x000F /* WM_PAINT */ || !IsHandleCreated) return;
+        using var g = Graphics.FromHwnd(Handle);
+        int arrow = SystemInformation.VerticalScrollBarWidth + LogicalToDeviceUnits(4);
+        var box = new Rectangle(Width - arrow - 1, 1, arrow, Height - 2);
+        using (var back = new SolidBrush(Enabled ? Theme.Field : Theme.Button)) g.FillRectangle(back, box);
+        using (var pen = new Pen(Focused || DroppedDown ? Theme.Accent : Theme.FieldBorder))
+            g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+        TextRenderer.DrawText(g, "\uE70D", Theme.SmallIcons, box,
+            Enabled ? Theme.Secondary : Theme.Disabled, TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.SingleLine);
+    }
+
+    protected override void OnGotFocus(EventArgs e) { base.OnGotFocus(e); Invalidate(); }
+    protected override void OnLostFocus(EventArgs e) { base.OnLostFocus(e); Invalidate(); }
+
     protected override void OnDrawItem(DrawItemEventArgs e)
     {
         if (e.Index < 0) return;
@@ -564,7 +584,6 @@ internal sealed class NavItem : Button
         FlatAppearance.BorderSize = 0;
         Font = Theme.Body;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
-        AccessibleRole = AccessibleRole.PageTab;
     }
 
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]

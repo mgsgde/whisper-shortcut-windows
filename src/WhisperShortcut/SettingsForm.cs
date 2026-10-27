@@ -274,7 +274,7 @@ internal sealed class SettingsForm : Form
         prompt.Controls.Add(Section("Schnellanweisungen"));
         prompt.Controls.Add(Wrap($"Erscheinen bei Dictate Prompt ({Hotkey.Display(settings.PromptHotkey)}) unten in der Anzeige. "
             + "Strg+1 bis Strg+5 oder ein Klick wendet sie sofort an: auf die Markierung oder, ohne Markierung, auf das gerade "
-            + "Diktierte. Beispiel: Befund diktieren, Strg+1, fertig gegliedert. Leere Felder werden ausgelassen.", 0));
+            + "Diktierte. Beispiel: Text markieren, Strg+3, schon kürzer. Leere Felder werden ausgelassen.", 0));
         var quickTable = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0) };
         quickTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
         quickTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -444,7 +444,7 @@ internal sealed class SettingsForm : Form
         dirtyTimer.Tick += (_, _) => _dirty.Visible = _snapshot.Length > 0 && Snapshot() != _snapshot;
         dirtyTimer.Start();
         FormClosing += OnClosing;
-        Activated += (_, _) => SyncOfflineFromTray();
+        Activated += (_, _) => { if (!IsDisposed && !_saved && !_discard) SyncOfflineFromTray(); };
         // A running mic test keeps the microphone (and the Windows mic indicator) busy in the background.
         Deactivate += (_, _) => { if (_probe != null) StopMicTest(); };
         // Light/dark switched in Windows while the window is open: follow it.

@@ -777,9 +777,14 @@ internal sealed class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
-        _settingsForm.Activated += (_, _) => { if (_state == State.Idle) _hotkeys.UnregisterAll(); };
-        _settingsForm.Deactivate += (_, _) => RegisterHotkeys(notify: false);
+        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
+        // Activation messages can still arrive after FormClosed (e.g. when the save prompt closes):
+        // only the open window may turn the hotkeys off, or they stay dead after closing.
+        _settingsForm.Activated += (_, _) =>
+        {
+            if (_settingsForm == form && !form.IsDisposed && !form.Disposing && _state == State.Idle) _hotkeys.UnregisterAll();
+        };
+        _settingsForm.Deactivate += (_, _) => { if (_settingsForm == form) RegisterHotkeys(notify: false); };
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
