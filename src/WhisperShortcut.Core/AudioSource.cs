@@ -13,7 +13,7 @@ public interface IAudioSource
 }
 
 /// <summary>
-/// Raised by a microphone source when the whole recording is near-silent (peak below 1 %),
+/// Raised by a microphone source when the whole recording is digital silence (peak below ~-60 dBFS),
 /// which usually means Windows blocks the microphone for the app.
 /// </summary>
 public sealed class AudioSilentException : Exception
