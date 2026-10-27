@@ -94,21 +94,28 @@ Einstellungen
 -------------
 Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit ungespeicherten
 Änderungen schließt, wird gefragt.
-- Allgemein: Arbeitsweise (online/offline), Schlüssel, Mikrofon mit Pegeltest, Autostart.
+- Allgemein: Arbeitsweise (online/offline), Schlüssel, Mikrofon mit Pegeltest, Einfügen, Autostart.
+  „Automatisch einfügen“ aus: Der Text liegt nur in der Zwischenablage (Hinweis „In der
+  Zwischenablage“) und wird mit Strg+V selbst eingefügt. „Zwischenablage wiederherstellen“: nach
+  dem Einfügen kommt zurück, was vorher in der Zwischenablage war.
 - Diktieren: Tastenkürzel, Gemini-Modell und Systemprompt fürs Diktieren (online). Der
   Systemprompt sagt, wie transkribiert wird; Namen und Fachwörter gehören ins Glossar.
   „Standard wiederherstellen“ setzt ihn zurück.
-- Dictate Prompt: Tastenkürzel, Gemini-Modell, Systemprompt fürs Bearbeiten (gilt online und
-  offline), die Vorlage für neue Texte und die fünf Schnellanweisungen für Strg+1 bis Strg+5
+- Dictate Prompt: Tastenkürzel, Gemini-Modell, „Anweisungen“ (der Systemprompt; gilt immer, auch
+  für Markierungen und Schnellanweisungen, online und offline: hier gehören feste Regeln hin wie
+  Ton oder „nichts erfinden“), die Vorlage für neue Texte und die fünf Schnellanweisungen für Strg+1 bis Strg+5
   (z. B. „Als Arztbrief formulieren“; „Vorschläge wiederherstellen“ setzt sie zurück).
-  Vorlage: wie neue Texte aussehen sollen. Über „Beispiel einsetzen“ gibt es eine Praxis-Vorlage
-  (Anamnese, Befund, Therapie, Briefe in Sie-Form) und eine Handwerks-Vorlage (Angebot). Am besten
+  Vorlage: wie neue Texte aussehen sollen; sie gilt nur, wenn nichts markiert ist. Über „Beispiel
+  einsetzen“ gibt es eine Praxis-Vorlage (Anamnese, Befund, Therapie, Briefe in Sie-Form), eine
+  Werkstatt-Vorlage (Auftragsbericht) und eine Handwerks-Vorlage (Angebot). Am besten
   mit 1–2 echten Texten des Nutzers anpassen (Praxisname, Stundensatz, Zahlungsbedingungen).
 - Glossar: Tastenkürzel und die Liste der Namen, Fachbegriffe, Firmennamen (eine Zeile pro
   Begriff), damit sie richtig geschrieben werden. Strg+Umschalt+G fügt ein markiertes Wort
   direkt hinzu.
 - Offline: Spracherkennung und Sprachmodell laden oder entfernen, Sprachmodell wählen.
-- Info: Version, Anleitung, Fehler melden, Protokoll öffnen.
+- Info: Version und „Nach Updates suchen“ (fragt GitHub, installiert nichts selbst),
+  Willkommenstour, Daten und Zurücksetzen (App-Datenordner, Protokoll, „App zurücksetzen“ löscht
+  alles inklusive API-Schlüssel, Glossar und Offline-Modellen und beendet die App), Fehler melden.
 Tastenkürzel sind immer mit zwei Zusatztasten (z. B. Strg+Umschalt+…). Kombinationen mit Alt
 besser meiden (dann öffnen viele Programme ihr Menü). Solange die App läuft, gehen in Word
 Strg+Umschalt+D (doppelt unterstreichen) und Strg+Umschalt+P (Schriftgrad) nicht. In Excel gilt
