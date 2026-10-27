@@ -20,6 +20,8 @@ public enum GeminiErrorKind
     Timeout,
     /// <summary>Any other HTTP/server error.</summary>
     Server,
+    /// <summary>The reply hit the output-token limit and is cut off (finishReason MAX_TOKENS).</summary>
+    Truncated,
 }
 
 /// <summary>Gemini call failed. <see cref="Exception.Message"/> is a German text fit for the user.</summary>
@@ -64,6 +66,12 @@ public sealed class GeminiClient
     private readonly Func<string?> _apiKey;
     private readonly Func<string> _transcriptionModel;
     private readonly Func<string> _promptModel;
+
+    /// <summary>
+    /// Output-token ceiling of the current Gemini flash models. Set explicitly on edit calls so a long
+    /// selection gets the whole room the model has instead of whatever the server default allows.
+    /// </summary>
+    internal const int MaxOutputTokens = 65536;
 
     private const int MaxAttempts = 5;
     private const int MaxServerErrorAttempts = 6;
@@ -119,7 +127,7 @@ public sealed class GeminiClient
     {
         var model = _promptModel();
         var body = BuildPromptBody(wav, selection, customSystemPrompt);
-        return await SendAsync(model, body, ct).ConfigureAwait(false);
+        return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -135,7 +143,7 @@ public sealed class GeminiClient
     {
         var model = _promptModel();
         var body = BuildPromptTextBody(selection, instruction, customSystemPrompt);
-        return await SendAsync(model, body, ct).ConfigureAwait(false);
+        return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
     internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary)
@@ -192,6 +200,8 @@ public sealed class GeminiClient
             ["generationConfig"] = new JsonObject
             {
                 ["thinkingConfig"] = new JsonObject { ["thinkingLevel"] = "low" },
+                // WHY: a rewritten long selection is as long as the selection; a cut-off reply must be detectable.
+                ["maxOutputTokens"] = MaxOutputTokens,
             },
         };
         return root.ToJsonString();
@@ -249,7 +259,7 @@ public sealed class GeminiClient
         return result;
     }
 
-    private async Task<string> SendAsync(string model, string json, CancellationToken ct)
+    private async Task<string> SendAsync(string model, string json, CancellationToken ct, bool rejectTruncated = false)
     {
         var key = _apiKey()?.Trim();
         if (string.IsNullOrEmpty(key))
@@ -279,7 +289,7 @@ public sealed class GeminiClient
                 if (response.IsSuccessStatusCode)
                 {
                     Log.Info($"Gemini {model}: HTTP {(int)response.StatusCode}, request {json.Length} bytes, answer {text.Length} bytes, attempt {attempt}");
-                    return ExtractText(text);
+                    return ExtractText(text, rejectTruncated);
                 }
 
                 var code = (int)response.StatusCode;
@@ -391,14 +401,24 @@ public sealed class GeminiClient
         catch { return ""; }
     }
 
-    /// <summary>Concatenates candidates[0].content.parts[].text; "" when absent.</summary>
-    internal static string ExtractText(string responseJson)
+    /// <summary>
+    /// Concatenates candidates[0].content.parts[].text; "" when absent. With <paramref name="rejectTruncated"/>
+    /// a MAX_TOKENS finish throws, so a cut-off rewrite is never pasted over the selection.
+    /// </summary>
+    internal static string ExtractText(string responseJson, bool rejectTruncated = false)
     {
         try
         {
             using var doc = JsonDocument.Parse(responseJson);
             if (!doc.RootElement.TryGetProperty("candidates", out var cands)
                 || cands.ValueKind != JsonValueKind.Array || cands.GetArrayLength() == 0) return "";
+            if (rejectTruncated && cands[0].TryGetProperty("finishReason", out var fr)
+                && fr.ValueKind == JsonValueKind.String && fr.GetString() == "MAX_TOKENS")
+            {
+                Log.Error("Gemini: finishReason MAX_TOKENS, reply is cut off");
+                throw new GeminiException(GeminiErrorKind.Truncated,
+                    "Die Antwort ist zu lang geworden und wurde abgeschnitten. Bitte einen kleineren Teil markieren.");
+            }
             if (!cands[0].TryGetProperty("content", out var content)
                 || !content.TryGetProperty("parts", out var parts)
                 || parts.ValueKind != JsonValueKind.Array) return "";

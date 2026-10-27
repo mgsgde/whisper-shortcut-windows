@@ -13,6 +13,8 @@ internal enum PasteOutcome
     ClipboardOnlyKeysHeld,
     /// <summary>The user switched to another window since the recording started and the old one could not be brought back. Text stays on the clipboard.</summary>
     ClipboardOnlyTargetChanged,
+    /// <summary>The window in front is one of our own (settings, a message box): Ctrl+V would vanish there. Text stays on the clipboard.</summary>
+    ClipboardOnlyOwnWindow,
     /// <summary>Could not write the clipboard at all.</summary>
     Failed,
 }
@@ -82,6 +84,24 @@ internal sealed class ClipboardPaster
         return root != IntPtr.Zero ? root : hwnd;
     }
 
+    /// <summary>True when the window (or its owner chain root) belongs to this process.</summary>
+    public static bool BelongsToThisProcess(IntPtr hwnd)
+    {
+        if (hwnd == IntPtr.Zero) return false;
+        GetWindowThreadProcessId(hwnd, out uint pid);
+        return Core.ReplyGuards.IsOwnWindow(pid, (uint)Environment.ProcessId);
+    }
+
+    /// <summary>The foreground window belongs to this process (settings window or one of its dialogs).</summary>
+    public static bool ForegroundIsOwnWindow() => BelongsToThisProcess(GetForegroundWindow());
+
+    /// <summary>Leaves <paramref name="text"/> on the clipboard without pasting (the caller tells the user).</summary>
+    public bool KeepOnClipboard(string text)
+    {
+        CancelLateWatch(); // our own write would look like a late copy
+        return WriteText(text);
+    }
+
     /// <summary>
     /// Puts <paramref name="text"/> at the cursor: save the clipboard, set ours, Ctrl+V, and after
     /// 2000 ms put the old clipboard back, but only when nobody else wrote it in between.
@@ -96,6 +116,13 @@ internal sealed class ClipboardPaster
         CancelLateWatch(); // our own write below would look like a late copy
         if (!released)
             return WriteText(text) ? PasteOutcome.ClipboardOnlyKeysHeld : PasteOutcome.Failed;
+
+        // WHY: a dictation started over our own message box would be pasted into it and lost.
+        if (BelongsToThisProcess(target) || (target == IntPtr.Zero && ForegroundIsOwnWindow()))
+        {
+            Core.Log.Info("Paste: target is one of our own windows, leaving text on the clipboard");
+            return WriteText(text) ? PasteOutcome.ClipboardOnlyOwnWindow : PasteOutcome.Failed;
+        }
 
         if (target != IntPtr.Zero && ForegroundRoot() != target)
         {
@@ -117,6 +144,12 @@ internal sealed class ClipboardPaster
                 return WriteText(text) ? PasteOutcome.ClipboardOnlyTargetChanged : PasteOutcome.Failed;
             }
             Core.Log.Info("Paste: foreground changed, brought the target window back");
+        }
+
+        if (ForegroundIsOwnWindow())
+        {
+            Core.Log.Info("Paste: foreground is one of our own windows, leaving text on the clipboard");
+            return WriteText(text) ? PasteOutcome.ClipboardOnlyOwnWindow : PasteOutcome.Failed;
         }
 
         if (ForegroundIsElevated())

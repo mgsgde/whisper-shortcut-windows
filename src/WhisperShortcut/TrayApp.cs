@@ -226,12 +226,17 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     /// <summary>
-    /// Esc is a global hotkey only while a recording runs, so it never takes Esc away from other
-    /// programs otherwise. It discards the recording; processing is cancelled with the record hotkey.
+    /// Esc is a global hotkey only while a recording or the processing runs, so it never takes Esc away
+    /// from other programs otherwise. It discards the recording or cancels the request (nothing is pasted).
     /// </summary>
     private void OnEscape()
     {
         Core.Log.Info($"Esc in state {_state}");
+        if (_state == State.Processing)
+        {
+            _cts?.Cancel(); // same path as a hotkey press during processing
+            return;
+        }
         if (_state != State.Recording) return;
         (_audio as MicAudioSource)?.Cancel();
         _audio = null;
@@ -431,6 +436,25 @@ internal sealed class TrayApp : ApplicationContext
             _lastFailed = null; // this run worked; the old failure is history
             _recent.Add(text);
 
+            // A rewrite that lost most of a long selection must not silently replace it. The spoken
+            // instruction is unknown here (Gemini hears it), so only a quick action can be a known shortening.
+            if (_mode == Mode.Prompt && selection != null
+                && Core.ReplyGuards.AnswerSuspiciouslyShort(selection.Length, text.Length, _quickAction))
+            {
+                Core.Log.Info($"Prompt: answer {text.Length} chars for a selection of {selection.Length}, not pasted");
+                if (_paster.KeepOnClipboard(text))
+                {
+                    Sounds.Error();
+                    Notify("Bitte prüfen", "Antwort deutlich kürzer als die Markierung – liegt in der Zwischenablage, bitte prüfen.", ToolTipIcon.Warning);
+                }
+                else
+                {
+                    Sounds.Error();
+                    Notify("Einfügen fehlgeschlagen", "Die Zwischenablage war blockiert. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
+                }
+                return;
+            }
+
             var outcome = await _paster.PasteAsync(text, _pasteTarget, ct);
             Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars");
             switch (outcome)
@@ -444,7 +468,7 @@ internal sealed class TrayApp : ApplicationContext
                     done = true;
                     break;
                 case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld or PasteOutcome.ClipboardOnlyTargetChanged
-                    when _unsupported.Count > 0:
+                    or PasteOutcome.ClipboardOnlyOwnWindow when _unsupported.Count > 0:
                     // The balloon would bury the warning; the card says both.
                     _overlay.ShowWarning(_unsupported, pasted: false);
                     done = true;
@@ -462,6 +486,11 @@ internal sealed class TrayApp : ApplicationContext
                 case PasteOutcome.ClipboardOnlyTargetChanged:
                     Notify("Bitte selbst einfügen",
                         "Du hast das Fenster gewechselt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
+                        ToolTipIcon.Info);
+                    break;
+                case PasteOutcome.ClipboardOnlyOwnWindow:
+                    Notify("Bitte selbst einfügen",
+                        "Vorn war ein Fenster von WhisperShortcut. Der Text liegt in der Zwischenablage: Strg+V drücken.",
                         ToolTipIcon.Info);
                     break;
                 case PasteOutcome.Failed:
@@ -857,12 +886,12 @@ internal sealed class TrayApp : ApplicationContext
     // ---------------- UI ----------------
 
     /// <summary>
-    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording,
+    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording or processing,
     /// Ctrl+1–5 only while a Dictate Prompt recording runs.
     /// </summary>
     private void SyncSessionHotkeys()
     {
-        if (_state != State.Recording) _hotkeys.Unregister(Escape);
+        if (_state == State.Idle) _hotkeys.Unregister(Escape);
         else if (!_hotkeys.IsRegistered(Escape)) _hotkeys.Register(Escape, OnEscape);
         bool quick = _state == State.Recording && _mode == Mode.Prompt;
         for (int i = 0; i < QuickKeys.Length; i++)
@@ -900,11 +929,13 @@ internal sealed class TrayApp : ApplicationContext
     /// Idempotent, so the order of the settings window's activate / deactivate / close events cannot
     /// leave the hotkeys off: every one of them (and every state change) just re-evaluates.
     /// </summary>
-    private void SyncGlobalHotkeys(bool notify = false, bool? settingsActive = null)
+    private void SyncGlobalHotkeys(bool notify = false)
     {
         var f = _settingsForm;
-        // During Deactivate, Form.ActiveForm can still name the settings window, so that event says it outright.
-        bool settingsInFront = f is { IsDisposed: false, Visible: true } && (settingsActive ?? Form.ActiveForm == f);
+        // WHY the real foreground and not Form.ActiveForm: a form activated without getting the foreground
+        // (focus-steal prevention) stays "active" while the user works elsewhere. Any window of ours in
+        // front counts, so the settings dialogs (MessageBox) keep the hotkeys off as well.
+        bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow();
         bool wanted = Core.HotkeyPolicy.WantGlobalHotkeys(settingsInFront, _state == State.Idle);
         if (wanted == _globalHotkeysOn) return;
         if (wanted)
@@ -950,6 +981,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
             _settingsForm.Activate();
+            _settingsForm.BringToFront();
             return;
         }
         if (_state != State.Idle)
@@ -962,8 +994,9 @@ internal sealed class TrayApp : ApplicationContext
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
         _settingsForm = new SettingsForm(_settings, _offline, _gemini, welcome);
-        _settingsForm.Activated += (_, _) => SyncGlobalHotkeys(settingsActive: true);
-        _settingsForm.Deactivate += (_, _) => SyncGlobalHotkeys(settingsActive: false);
+        _settingsForm.Activated += (_, _) => SyncGlobalHotkeys();
+        // Posted: while Deactivate runs the new foreground window is not set yet.
+        _settingsForm.Deactivate += (_, _) => _ui.Post(_ => SyncGlobalHotkeys(), null);
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
@@ -980,6 +1013,7 @@ internal sealed class TrayApp : ApplicationContext
         };
         _settingsForm.Show();
         _settingsForm.Activate();
+        _settingsForm.BringToFront();
     }
 
     /// <summary>
