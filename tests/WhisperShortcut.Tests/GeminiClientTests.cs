@@ -17,6 +17,19 @@ public class GeminiClientTests
     }
 
     [Fact]
+    public async Task Transcribe_AnnotatedGlossary_SendsTieBreakerNotRejectedAsVocabulary()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.TranscribeAsync(Wav, new[] { "Bachata (not \"Batchata\")", "Ramipril" });
+
+        var instruction = (string)h.Json(0)["contents"]![0]!["parts"]![0]!["text"]!;
+        Assert.Contains(Prompts.GlossaryHintHeader + "Bachata, Ramipril", instruction);
+        Assert.Contains("Homophone tie-breakers", instruction);
+        Assert.DoesNotContain("(not", instruction);
+    }
+
+    [Fact]
     public async Task TranscribeShape_NoSystemInstruction_WithGlossary()
     {
         var (c, h) = Make();

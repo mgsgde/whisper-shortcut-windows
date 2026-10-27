@@ -140,9 +140,10 @@ public sealed class GeminiClient
 
     internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary)
     {
-        var terms = glossary.Select(t => t.Trim()).Where(t => t.Length > 0).ToList();
         var instruction = Prompts.DefaultTranscriptionSystemPrompt;
-        if (terms.Count > 0) instruction += "\n\n" + Prompts.GlossaryHintHeader + string.Join(", ", terms);
+        // Notes like `Bachata (not "Batchata")` become tie-breakers; the rejected spelling never goes out as vocabulary.
+        var hint = GlossaryPrompt.Hint(glossary);
+        if (hint.Length > 0) instruction += "\n\n" + hint;
 
         // 3.7 / 3.8 Flash and Pro reject "minimal" (HTTP 400): clamp to "low" like TranscriptionModels.swift.
         var level = RejectsMinimal(model) ? "low" : "minimal";

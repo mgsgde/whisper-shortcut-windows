@@ -134,12 +134,7 @@ public static class GlossaryPrompt
         var block = "";
         if (glossary.Length > 0)
         {
-            block = "Reference vocabulary — correct spellings of names and terms this speaker uses. "
-                + "If, and only if, you clearly hear one of them, transcribe it with exactly this spelling "
-                + "and capitalization instead of a more common, similar-sounding word. This list is a "
-                + "spelling reference only, NOT content: never output a listed term you did not clearly "
-                + "hear, and never append these terms to the transcript. If the audio is silent or "
-                + "unintelligible, return an empty response.\n" + glossary;
+            block = Prompts.GlossaryHintHeader + glossary;
         }
         var tie = TieBreakerBlock(parsed.Corrections);
         if (tie != null) block = block.Length == 0 ? tie : block + "\n\n" + tie;
