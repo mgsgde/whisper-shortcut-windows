@@ -42,6 +42,7 @@ internal sealed class RecordingOverlay : Form
 
     private Phase _phase = Phase.Hidden;
     private string _title = "";
+    private string _profileSuffix = "";  // " · <profile>" in the Dictate Prompt title, only with several profiles
     private string _hint = "";
     private string? _context;
     private bool _contextWarn;
@@ -117,11 +118,13 @@ internal sealed class RecordingOverlay : Form
 
     /// <param name="level">Live level 0..1 (null for a test WAV: no bars, no silence warning).</param>
     /// <param name="quickActions">Dictate Prompt: the instructions offered as Ctrl+1–5 rows (empty: plain pill).</param>
+    /// <param name="profileName">Dictate Prompt: the active profile, shown in the title (null: none, i.e. only one profile).</param>
     public void ShowRecording(Mode mode, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar,
-        IReadOnlyList<string>? quickActions = null)
+        IReadOnlyList<string>? quickActions = null, string? profileName = null)
     {
         _phase = Phase.Recording;
-        _title = mode == Mode.Dictate ? "Diktat läuft" : "Anweisung sprechen";
+        _profileSuffix = mode == Mode.Prompt && !string.IsNullOrEmpty(profileName) ? $" · {profileName}" : "";
+        _title = (mode == Mode.Dictate ? "Diktat läuft" : "Anweisung sprechen") + _profileSuffix;
         _hint = $"{stopKey} beendet · Esc bricht ab";
         // Dictate Prompt: what will be edited is known only after Ctrl+C (up to 0.5 s), see SetSelection.
         _context = mode == Mode.Prompt ? "Markierung wird gelesen …" : null;
@@ -145,7 +148,7 @@ internal sealed class RecordingOverlay : Form
         if (selection == null)
         {
             // Nothing to edit: what the user says is the text (a finding, a letter) or a request for one.
-            _title = "Text oder Anweisung sprechen";
+            _title = "Text oder Anweisung sprechen" + _profileSuffix;
             _context = "Nichts markiert: schreibt neuen Text an die Cursorstelle";
             _contextWarn = true;
             _quickLabel = "Oder auf das Gesprochene anwenden:";

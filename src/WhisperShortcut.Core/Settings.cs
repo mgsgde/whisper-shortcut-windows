@@ -41,6 +41,7 @@ public sealed class Settings
     {
         _path = path;
         _protector = protector;
+        ActiveProfileId = Profiles[0].Id;
     }
 
     /// <summary>Default location: %APPDATA%\WhisperShortcut\settings.json.</summary>
@@ -58,7 +59,11 @@ public sealed class Settings
     /// The template ("Vorlage") for new texts in Dictate Prompt; appended to the editing prompt and applied only
     /// when nothing is selected. Empty = no template. JSON name kept from the former "system prompt" field.
     /// </summary>
-    public string PromptSystemPrompt { get; set; } = "";
+    public string PromptSystemPrompt
+    {
+        get => ActiveProfile.Template;
+        set => ActiveProfile.Template = value;
+    }
 
     /// <summary>
     /// The user's own transcription instruction for Dictate (Gemini only; offline speech recognition takes no prompt).
@@ -70,7 +75,11 @@ public sealed class Settings
     /// The user's own editing instruction for Dictate Prompt (online and offline).
     /// Empty = Prompts.DefaultPromptModeSystemPrompt. The template for new texts (PromptSystemPrompt) is appended to it.
     /// </summary>
-    public string PromptModeSystemPrompt { get; set; } = "";
+    public string PromptModeSystemPrompt
+    {
+        get => ActiveProfile.Instructions;
+        set => ActiveProfile.Instructions = value;
+    }
 
     /// <summary>Transcription model id.</summary>
     public string TranscriptionModel { get; set; } = DefaultTranscriptionModel;
@@ -97,7 +106,29 @@ public sealed class Settings
     public string OfflineLlmId { get; set; } = "";
 
     /// <summary>Quick instructions offered while recording (see <see cref="QuickActionList"/>).</summary>
-    public List<string> QuickActions { get; set; } = new(QuickActionList.Defaults);
+    public List<string> QuickActions
+    {
+        get => ActiveProfile.QuickActions;
+        set => ActiveProfile.QuickActions = value;
+    }
+
+    /// <summary>All saved prompt profiles ("Prompt-Vorlagen"). Never empty after <see cref="Load"/>.</summary>
+    public List<PromptProfile> Profiles { get; set; } = new() { NewStandardProfile() };
+
+    /// <summary>Id of the profile whose instructions, template and quick actions are in use.</summary>
+    public string ActiveProfileId { get; set; } = "";
+
+    /// <summary>The profile with <see cref="ActiveProfileId"/>; the first one if the id is unknown.</summary>
+    public PromptProfile ActiveProfile
+    {
+        get
+        {
+            if (Profiles.Count == 0) Profiles.Add(NewStandardProfile());
+            return Profiles.FirstOrDefault(p => p.Id == ActiveProfileId) ?? Profiles[0];
+        }
+    }
+
+    private static PromptProfile NewStandardProfile() => new() { Id = PromptProfiles.NewId(), Name = PromptProfiles.DefaultName };
 
     /// <summary>Paste the result at the cursor with Ctrl+V. Off = the text only goes to the clipboard.</summary>
     public bool AutoPaste { get; set; } = true;
@@ -133,9 +164,7 @@ public sealed class Settings
                 catch { s.ApiKey = ""; }
             }
             s.Glossary = dto.Glossary ?? new();
-            s.PromptSystemPrompt = dto.PromptSystemPrompt ?? "";
             s.DictateSystemPrompt = CustomOrEmpty(dto.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt);
-            s.PromptModeSystemPrompt = CustomOrEmpty(dto.PromptModeSystemPrompt, Prompts.DefaultPromptModeSystemPrompt);
             s.TranscriptionModel = GeminiModels.NormalizeTranscription(dto.TranscriptionModel);
             s.PromptModel = GeminiModels.NormalizePrompt(dto.PromptModel);
             if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
@@ -146,10 +175,7 @@ public sealed class Settings
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
             s.AutoPaste = dto.AutoPaste ?? true;
             s.RestoreClipboard = dto.RestoreClipboard ?? true;
-            // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
-            s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
-                ? new(QuickActionList.Defaults)
-                : QuickActionList.Clean(dto.QuickActions);
+            LoadProfiles(s, dto);
         }
         catch (Exception ex)
         {
@@ -158,6 +184,45 @@ public sealed class Settings
         }
         return s;
     }
+
+    /// <summary>
+    /// Builds <see cref="Profiles"/> from the file. A file without profiles (written before they existed, or an empty
+    /// list) becomes one "Standard" profile made from the old top-level fields.
+    /// </summary>
+    private static void LoadProfiles(Settings s, Dto dto)
+    {
+        var profiles = new List<PromptProfile>();
+        foreach (var p in dto.Profiles ?? new())
+        {
+            if (p == null) continue;
+            var id = string.IsNullOrWhiteSpace(p.Id) || profiles.Any(x => x.Id == p.Id) ? PromptProfiles.NewId() : p.Id;
+            profiles.Add(NormalizedProfile(id, PromptProfiles.UniqueName(profiles.Select(x => x.Name), p.Name ?? ""),
+                p.Instructions, p.Template, p.QuickActions));
+        }
+        if (profiles.Count == 0)
+        {
+            profiles.Add(NormalizedProfile(PromptProfiles.NewId(), PromptProfiles.DefaultName,
+                dto.PromptModeSystemPrompt, dto.PromptSystemPrompt, dto.QuickActions));
+            s.ActiveProfileId = profiles[0].Id;
+        }
+        else
+        {
+            s.ActiveProfileId = profiles.Any(x => x.Id == dto.ActiveProfileId) ? dto.ActiveProfileId! : profiles[0].Id;
+        }
+        s.Profiles = profiles;
+    }
+
+    private static PromptProfile NormalizedProfile(string id, string name, string? instructions, string? template, List<string>? quickActions) => new()
+    {
+        Id = id,
+        Name = name,
+        Instructions = CustomOrEmpty(instructions, Prompts.DefaultPromptModeSystemPrompt),
+        Template = template ?? "",
+        // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
+        QuickActions = quickActions == null || QuickActionList.IsLegacyDefaults(quickActions)
+            ? new(QuickActionList.Defaults)
+            : QuickActionList.Clean(quickActions),
+    };
 
     /// <summary>Writes the settings to the path given at <see cref="Load"/>.</summary>
     public void Save()
@@ -169,6 +234,8 @@ public sealed class Settings
         {
             ApiKeyProtected = ApiKey.Length == 0 ? "" : _protector.Protect(ApiKey),
             Glossary = Glossary,
+            // The three old top-level fields mirror the active profile, so a downgrade to a build that
+            // knows no profiles still finds the prompts the user is working with.
             PromptSystemPrompt = PromptSystemPrompt,
             DictateSystemPrompt = DictateSystemPrompt,
             PromptModeSystemPrompt = PromptModeSystemPrompt,
@@ -181,6 +248,11 @@ public sealed class Settings
             OfflineMode = OfflineMode,
             OfflineLlmId = OfflineLlmId,
             QuickActions = QuickActions,
+            Profiles = Profiles.Select(p => new ProfileDto
+            {
+                Id = p.Id, Name = p.Name, Instructions = p.Instructions, Template = p.Template, QuickActions = p.QuickActions,
+            }).ToList(),
+            ActiveProfileId = ActiveProfile.Id,
             AutoPaste = AutoPaste,
             RestoreClipboard = RestoreClipboard,
         };
@@ -205,7 +277,18 @@ public sealed class Settings
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
         [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
         [JsonPropertyName("quickActions")] public List<string>? QuickActions { get; set; }
+        [JsonPropertyName("profiles")] public List<ProfileDto>? Profiles { get; set; }
+        [JsonPropertyName("activeProfileId")] public string? ActiveProfileId { get; set; }
         [JsonPropertyName("autoPaste")] public bool? AutoPaste { get; set; }
         [JsonPropertyName("restoreClipboard")] public bool? RestoreClipboard { get; set; }
+    }
+
+    private sealed class ProfileDto
+    {
+        [JsonPropertyName("id")] public string? Id { get; set; }
+        [JsonPropertyName("name")] public string? Name { get; set; }
+        [JsonPropertyName("instructions")] public string? Instructions { get; set; }
+        [JsonPropertyName("template")] public string? Template { get; set; }
+        [JsonPropertyName("quickActions")] public List<string>? QuickActions { get; set; }
     }
 }
