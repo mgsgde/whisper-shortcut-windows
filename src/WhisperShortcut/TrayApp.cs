@@ -149,6 +149,8 @@ internal sealed class TrayApp : ApplicationContext
     // ---------------- hotkeys ----------------
 
     private string _lastWarnedHotkeys = "";
+    // Set by Save in the settings window: the next registration warns about a newly chosen key that is taken.
+    private bool _hotkeyCheckPending;
 
     /// <param name="notify">false when only re-arming after the settings window lost focus: no repeated warning.</param>
 
@@ -959,7 +961,8 @@ internal sealed class TrayApp : ApplicationContext
         if (wanted == _globalHotkeysOn) return;
         if (wanted)
         {
-            RegisterHotkeys(notify);
+            RegisterHotkeys(notify || _hotkeyCheckPending);
+            _hotkeyCheckPending = false;
         }
         else
         {
@@ -981,6 +984,22 @@ internal sealed class TrayApp : ApplicationContext
         _balloonClick = onClick;
         Core.Log.Info($"Notify: {title}");  // title only: the text can quote an error message
         _icon.ShowBalloonTip(6000, title, text, icon);
+    }
+
+    /// <summary>
+    /// The first time the settings window closes: say that the app keeps running and where the icon is.
+    /// Windows 11 hides new tray icons behind the ^ arrow, and a closed window looked like a closed app.
+    /// </summary>
+    private void ShowTrayHintOnce()
+    {
+        var marker = Path.Combine(Core.AppData.SettingsFolder, "tray-hint-shown");
+        if (File.Exists(marker)) return;
+        Notify("WhisperShortcut läuft weiter",
+            "Die Kürzel funktionieren auch bei geschlossenem Fenster. Das Symbol ist unten rechts in der Taskleiste, "
+            + "oft hinter dem Pfeil ^. Dort anheften, dann bleibt es sichtbar. Beenden: Rechtsklick auf das Symbol.",
+            ToolTipIcon.Info);
+        try { File.WriteAllText(marker, DateTime.UtcNow.ToString("O")); }
+        catch (Exception e) { Core.Log.Error("Writing tray hint marker failed", e); }
     }
 
     /// <summary><c>--settings</c>: open the settings window right away (first setup, VM screenshots).</summary>
@@ -1017,10 +1036,19 @@ internal sealed class TrayApp : ApplicationContext
         _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.
         _settingsForm.Deactivate += (_, _) => { if (_settingsForm == form) _ui.Post(_ => SyncGlobalHotkeys(), null); };
+        // Save keeps the window open: apply right away, check the hotkeys once the window leaves the front.
+        _settingsForm.Saved += () =>
+        {
+            Sounds.Enabled = _settings.Sounds;
+            _hotkeyCheckPending = true;
+            SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
+            _offline.Prewarm(); // offline mode may just have been switched on
+            _offline.GlossaryChanged(); // the Glossary may have been edited
+        };
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
-            Sounds.Enabled = _settings.Sounds;
+            ShowTrayHintOnce();
             // Posted so it runs after any activation message still queued for the closing form; forced
             // because the hotkeys may have been changed in the window.
             _ui.Post(_ =>
@@ -1028,9 +1056,6 @@ internal sealed class TrayApp : ApplicationContext
                 _globalHotkeysOn = false;
                 SyncGlobalHotkeys(notify: true);
             }, null);
-            SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
-            _offline.Prewarm(); // offline mode may just have been switched on
-            _offline.GlossaryChanged(); // the Glossary may have been edited
         };
         _settingsForm.Show();
         _settingsForm.Activate();

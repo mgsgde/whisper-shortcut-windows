@@ -58,7 +58,12 @@ internal sealed class SettingsForm : Form
     private LevelProbe? _probe;
     private string _snapshot = "";
     private bool _loadedOffline;
-    private bool _saved;
+    private readonly FluentButton _close;
+    // "✓ Gespeichert" stays next to the buttons until then (Environment.TickCount64).
+    private long _savedHintUntil;
+
+    /// <summary>Raised after the settings were written; the window stays open.</summary>
+    public event Action? Saved;
     private bool _discard;
 
     public const string General = "Allgemein", DictatePage = "Diktieren", PromptPage = "Dictate Prompt",
@@ -401,10 +406,10 @@ internal sealed class SettingsForm : Form
         foreach (var page in _pages.Values) _pageHost.Controls.Add(page);
 
         var save = new FluentButton("Speichern", accent: true) { MinimumSize = new Size(120, 32), TabIndex = 0 };
-        var cancel = new FluentButton("Abbrechen") { MinimumSize = new Size(120, 32), TabIndex = 1 };
-        save.Click += (_, _) => Save();
-        // The window is modeless (Show, not ShowDialog), so a DialogResult alone would not close it.
-        // "Abbrechen" means discard: only the title bar's X asks whether to save.
+        var cancel = _close = new FluentButton("Schließen") { MinimumSize = new Size(120, 32), TabIndex = 1 };
+        // WHY Save keeps the window open: a window that vanished on Save looked like a crash to testers.
+        save.Click += (_, _) => TrySave();
+        // "Abbrechen" (with changes) means discard: only the title bar's X asks whether to save.
         cancel.Click += (_, _) => { _discard = true; Close(); };
         _dirty = new ThemedLabel { Text = "Nicht gespeicherte Änderungen", Tone = Tone.Secondary, AutoSize = true, Visible = false, Margin = new Padding(0, 8, 12, 0) };
         var buttons = new FlowLayoutPanel
@@ -457,11 +462,11 @@ internal sealed class SettingsForm : Form
         dirtyTimer.Tick += (_, _) =>
         {
             if (combos.Any(c => c.DroppedDown)) return;
-            _dirty.Visible = _snapshot.Length > 0 && Snapshot() != _snapshot;
+            UpdateSaveState();
         };
         dirtyTimer.Start();
         FormClosing += OnClosing;
-        Activated += (_, _) => { if (!IsDisposed && !_saved && !_discard) SyncOfflineFromTray(); };
+        Activated += (_, _) => { if (!IsDisposed && !_discard) SyncOfflineFromTray(); };
         // A running mic test keeps the microphone (and the Windows mic indicator) busy in the background.
         Deactivate += (_, _) => { if (_probe != null) StopMicTest(); };
         // Light/dark switched in Windows while the window is open: follow it.
@@ -1249,16 +1254,22 @@ internal sealed class SettingsForm : Form
 
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
-        if (_saved || _discard || e.CloseReason != CloseReason.UserClosing || Snapshot() == _snapshot) return;
+        if (_discard || e.CloseReason != CloseReason.UserClosing || Snapshot() == _snapshot) return;
         var answer = MessageBox.Show(this, "Die Änderungen sind noch nicht gespeichert.", "Änderungen speichern?",
             MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1);
         if (answer == DialogResult.Cancel) e.Cancel = true;
         else if (answer == DialogResult.Yes && !TrySave()) e.Cancel = true;
     }
 
-    private void Save()
+    /// <summary>Hint next to the buttons and the close button's word: unsaved changes, just saved, or nothing.</summary>
+    private void UpdateSaveState()
     {
-        if (TrySave()) Close();
+        bool dirty = _snapshot.Length > 0 && Snapshot() != _snapshot;
+        _close.Text = dirty ? "Abbrechen" : "Schließen";
+        if (dirty)
+            (_dirty.Text, _dirty.Tone, _dirty.Visible) = ("Nicht gespeicherte Änderungen", Tone.Secondary, true);
+        else
+            (_dirty.Text, _dirty.Tone, _dirty.Visible) = ("✓ Gespeichert", Tone.Good, Environment.TickCount64 < _savedHintUntil);
     }
 
     private bool TrySave()
@@ -1325,8 +1336,11 @@ internal sealed class SettingsForm : Form
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
         Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds})");
-        _saved = true;
-        DialogResult = DialogResult.OK;
+        _snapshot = Snapshot();
+        _loadedOffline = _settings.OfflineMode;
+        _savedHintUntil = Environment.TickCount64 + 3000;
+        UpdateSaveState();
+        Saved?.Invoke();
         return true;
     }
 
