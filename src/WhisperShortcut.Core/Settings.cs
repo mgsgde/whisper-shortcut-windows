@@ -109,7 +109,7 @@ public sealed class Settings
             s.OfflineMode = dto.OfflineMode ?? false;
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
             // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
-            s.QuickActions = dto.QuickActions == null
+            s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
                 : QuickActionList.Clean(dto.QuickActions);
         }

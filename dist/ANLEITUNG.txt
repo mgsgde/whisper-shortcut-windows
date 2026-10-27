@@ -14,9 +14,9 @@ Was es kann
      Ein fertiger Text nach der Vorlage (Einstellungen → Vorlage) wird eingefügt.
    Ein Druck während der Verarbeitung bricht ab.
    - Schnellanweisungen: Während dieser Aufnahme zeigt die Anzeige fünf fertige Anweisungen,
-     z. B. „Als Anamnese, Befund und Therapie gliedern“. Strg+1 bis Strg+5 oder ein Klick darauf
+     z. B. „Kürzer fassen“. Strg+1 bis Strg+5 oder ein Klick darauf
      wendet sie sofort an: auf die Markierung, oder ohne Markierung auf das gerade Diktierte.
-     Beispiel: Strg+Umschalt+P, Befund diktieren, Strg+1 → gegliederter Befund.
+     Beispiel: Strg+Umschalt+P, einen Satz diktieren, Strg+3 → kürzere Fassung.
      Text markieren und gleich Strg+1 drücken geht auch, ganz ohne Sprechen.
    - „Nicht in deinem Diktat“: Schreibt das Sprachmodell Wörter, die so nicht diktiert wurden
      (z. B. ein Medikament), zeigt die Anzeige sie nach dem Einfügen 20 Sekunden lang an. Der Text

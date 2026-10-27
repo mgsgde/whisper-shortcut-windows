@@ -9,8 +9,18 @@ public static class QuickActionList
     /// <summary>Longest accepted quick action in characters; longer lines are dropped.</summary>
     public const int MaxLength = 80;
 
-    /// <summary>The five actions a new or old settings file starts with.</summary>
+    /// <summary>The five actions a new or old settings file starts with (neutral, same as the macOS app).</summary>
     public static IReadOnlyList<string> Defaults { get; } = new[]
+    {
+        "Rechtschreibung und Grammatik korrigieren",
+        "Klarer formulieren",
+        "Kürzer fassen",
+        "Als Aufgabenliste formatieren",
+        "Ins Englische übersetzen",
+    };
+
+    // WHY: the first versions shipped a medical default list; a file that still holds exactly it was never customised.
+    private static readonly string[] LegacyDefaults =
     {
         "Als Anamnese, Befund und Therapie gliedern",
         "In Stichpunkten zusammenfassen",
@@ -18,6 +28,9 @@ public static class QuickActionList
         "Kürzer fassen",
         "Freundlicher formulieren",
     };
+
+    /// <summary>True when <paramref name="saved"/> is exactly the old medical default list (same strings, same order).</summary>
+    public static bool IsLegacyDefaults(IReadOnlyList<string> saved) => saved.SequenceEqual(LegacyDefaults);
 
     /// <summary>
     /// Trims, collapses inner whitespace, drops blank and too long lines, dedupes case-insensitively

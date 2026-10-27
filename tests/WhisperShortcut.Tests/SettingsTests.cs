@@ -131,6 +131,34 @@ public class QuickActionTests
         Assert.Equal(5, s.QuickActions.Count);
     }
 
+    private static readonly string[] OldDefaults =
+    {
+        "Als Anamnese, Befund und Therapie gliedern",
+        "In Stichpunkten zusammenfassen",
+        "Rechtschreibung und Grammatik korrigieren",
+        "Kürzer fassen",
+        "Freundlicher formulieren",
+    };
+
+    [Fact]
+    public void OldMedicalDefaults_MigrateToNewDefaults()
+    {
+        var path = TempFile(System.Text.Json.JsonSerializer.Serialize(new { quickActions = OldDefaults }));
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(QuickActionList.Defaults, s.QuickActions);
+        Assert.DoesNotContain("Als Anamnese, Befund und Therapie gliedern", s.QuickActions);
+    }
+
+    [Fact]
+    public void CustomisedOldDefaults_AreKept()
+    {
+        var custom = (string[])OldDefaults.Clone();
+        custom[4] = "Förmlicher formulieren";
+        var path = TempFile(System.Text.Json.JsonSerializer.Serialize(new { quickActions = custom }));
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(custom, s.QuickActions);
+    }
+
     [Fact]
     public void RoundTrip_KeepsCustomList()
     {
