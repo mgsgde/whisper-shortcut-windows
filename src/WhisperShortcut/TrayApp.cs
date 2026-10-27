@@ -13,6 +13,14 @@ internal sealed class TrayApp : ApplicationContext
 {
     private enum State { Idle, Recording, Processing }
 
+    /// <summary>
+    /// A recording whose processing failed for a reason a second try can fix (network, quota, local model).
+    /// In memory only, never written to disk: it is patient data. Dropped after the next success.
+    /// </summary>
+    private sealed record FailedRun(byte[] Wav, Mode Mode, double Seconds, string? Selection, string? QuickAction);
+
+    private const string RetryHint = " Hier klicken, um es noch einmal zu versuchen.";
+
     private readonly string? _testWav;
     private readonly bool _fakeGemini;
     private readonly NotifyIcon _icon;
@@ -27,6 +35,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _glossaryInfo;
     private readonly ToolStripMenuItem _copyLast;
     private readonly ToolStripMenuItem _recentMenu;
+    private readonly ToolStripMenuItem _retryItem;
     private readonly RecordingOverlay _overlay = new();
     // In memory only: in a practice a dictation must not stay behind in a file.
     private readonly Core.RecentTexts _recent = new();
@@ -41,6 +50,9 @@ internal sealed class TrayApp : ApplicationContext
     private Task<string?>? _selection;
     private CancellationTokenSource? _selectionCts;
     private string? _quickAction;
+    // The window in front when the recording started (or the retry was clicked): the only paste target.
+    private IntPtr _pasteTarget;
+    private FailedRun? _lastFailed;
     private IReadOnlyList<string> _unsupported = Array.Empty<string>();
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
@@ -82,6 +94,7 @@ internal sealed class TrayApp : ApplicationContext
         _glossaryInfo = new ToolStripMenuItem { Enabled = false };
         _copyLast = new ToolStripMenuItem("Letzten Text kopieren", null, (_, _) => CopyRecent(_recent.Latest));
         _recentMenu = new ToolStripMenuItem("Letzte Texte");
+        _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast(fromTrayMenu: true)) { Enabled = false };
         var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         _offlineItem = new ToolStripMenuItem("Offline: nichts verlässt den PC", null, (_, _) => ToggleOffline()) { CheckOnClick = false };
         var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings()) { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
@@ -91,10 +104,15 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.AddRange(new ToolStripItem[]
         {
             title, _statusItem, new ToolStripSeparator(), _dictateInfo, _promptInfo, _glossaryInfo, new ToolStripSeparator(),
-            _copyLast, _recentMenu, new ToolStripSeparator(),
+            _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
             _offlineItem, settingsItem, logItem, new ToolStripSeparator(), quitItem,
         });
-        menu.Opening += (_, _) => { UpdateRecentMenu(); _offlineItem.Checked = _settings.OfflineMode; };
+        menu.Opening += (_, _) =>
+        {
+            UpdateRecentMenu();
+            _retryItem.Enabled = _lastFailed != null && _state == State.Idle;
+            _offlineItem.Checked = _settings.OfflineMode;
+        };
         UpdateRecentMenu();
 
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
@@ -190,6 +208,7 @@ internal sealed class TrayApp : ApplicationContext
         _selectionCts?.Dispose();
         _selectionCts = null;
         _selection = null;
+        _paster.CancelLateWatch(); // Esc after the deadline: a late copy is no longer ours to restore
     }
 
     /// <summary>
@@ -241,6 +260,8 @@ internal sealed class TrayApp : ApplicationContext
 
         _mode = mode;
         _quickAction = null;
+        // Mac pastes only into the app that was in front now; the hotkey was pressed in the user's window.
+        _pasteTarget = ClipboardPaster.ForegroundRoot();
         // Copy the selection right away, while the user's selection is still there. It runs while recording.
         _selectionCts = mode == Mode.Prompt ? new CancellationTokenSource() : null;
         _selection = _selectionCts != null ? _paster.CopySelectionAsync(_selectionCts.Token) : null;
@@ -298,9 +319,27 @@ internal sealed class TrayApp : ApplicationContext
         }
     }
 
-    private async Task StopAndProcessAsync()
+    private Task StopAndProcessAsync() => ProcessAsync(_audio!, null);
+
+    /// <summary>Tray menu or balloon click: run the last failed recording again, pasting where the user is now.</summary>
+    private void RetryLast(bool fromTrayMenu = false)
     {
-        var audio = _audio!;
+        if (_state != State.Idle || _lastFailed == null) return;
+        var run = _lastFailed;
+        Core.Log.Info($"{run.Mode}: retrying the last recording ({run.Seconds:0.0} s)");
+        _mode = run.Mode;
+        _quickAction = run.QuickAction;
+        _paster.CancelLateWatch(); // a flag from the old recording must not block this run
+        // A click on the tray icon puts the tray menu or the taskbar in front: that is never the user's
+        // text field, so no target is pinned then (paste goes where the user is when the text is ready).
+        var target = ClipboardPaster.ForegroundRoot();
+        _pasteTarget = fromTrayMenu && ClipboardPaster.IsShellOrOwnWindow(target) ? IntPtr.Zero : target;
+        _ = ProcessAsync(null, run);
+    }
+
+    /// <param name="audio">The running recording to stop, or null for a retry of <paramref name="retry"/>.</param>
+    private async Task ProcessAsync(Core.IAudioSource? audio, FailedRun? retry)
+    {
         _audio = null;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
@@ -309,38 +348,51 @@ internal sealed class TrayApp : ApplicationContext
         Sounds.Stop();
         _unsupported = Array.Empty<string>();
         bool done = false;
+        byte[]? wav = null;
+        double seconds = 0;
+        string? selection = null;
+        // What a retry needs; null when the audio itself is lost (then there is nothing to try again).
+        FailedRun? Failed() => wav == null ? null : new FailedRun(wav, _mode, seconds, selection, _quickAction);
 
         try
         {
-            byte[] wav;
-            try
+            if (retry != null)
             {
-                wav = await audio.StopAsync();
+                (wav, seconds, selection) = (retry.Wav, retry.Seconds, retry.Selection);
             }
-            catch (Core.AudioSilentException) when (_quickAction != null)
+            else
             {
-                // Text marked, Ctrl+1 pressed without a word: the instruction applies to the selection alone.
-                wav = Array.Empty<byte>();
-            }
-            double seconds = wav.Length == 0 ? 0 : Core.Wav.DurationSeconds(wav);
-            Core.Log.Info($"{_mode}: recorded {seconds:0.0} s");
-            // A quick instruction needs no speech: mark text, press the hotkey and right away Ctrl+1.
-            if (seconds < 0.5 && _quickAction == null)
-            {
-                // A double press, not a recording: say so instead of a misleading microphone error.
-                Notify("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", ToolTipIcon.Info);
-                return;
+                try
+                {
+                    wav = await audio!.StopAsync();
+                }
+                catch (Core.AudioSilentException) when (_quickAction != null)
+                {
+                    // Text marked, Ctrl+1 pressed without a word: the instruction applies to the selection alone.
+                    wav = Array.Empty<byte>();
+                }
+                seconds = wav.Length == 0 ? 0 : Core.Wav.DurationSeconds(wav);
+                Core.Log.Info($"{_mode}: recorded {seconds:0.0} s");
+                // A quick instruction needs no speech: mark text, press the hotkey and right away Ctrl+1.
+                if (seconds < 0.5 && _quickAction == null)
+                {
+                    // A double press, not a recording: say so instead of a misleading microphone error.
+                    Notify("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", ToolTipIcon.Info);
+                    return;
+                }
+                if (_mode == Mode.Prompt && _selection != null) selection = await _selection;
             }
 
             string text = _mode == Mode.Dictate
                 ? await DictateAsync(wav, seconds, ct)
-                : await PromptAsync(wav, seconds, ct);
+                : await PromptAsync(wav, seconds, selection, retry != null, ct);
             ct.ThrowIfCancellationRequested();
 
             if (text.Length == 0) return; // already reported
+            _lastFailed = null; // this run worked; the old failure is history
             _recent.Add(text);
 
-            var outcome = await _paster.PasteAsync(text, ct);
+            var outcome = await _paster.PasteAsync(text, _pasteTarget, ct);
             Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars");
             switch (outcome)
             {
@@ -352,7 +404,8 @@ internal sealed class TrayApp : ApplicationContext
                     _overlay.ShowDone("Eingefügt");
                     done = true;
                     break;
-                case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld when _unsupported.Count > 0:
+                case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld or PasteOutcome.ClipboardOnlyTargetChanged
+                    when _unsupported.Count > 0:
                     // The balloon would bury the warning; the card says both.
                     _overlay.ShowWarning(_unsupported, pasted: false);
                     done = true;
@@ -365,6 +418,11 @@ internal sealed class TrayApp : ApplicationContext
                 case PasteOutcome.ClipboardOnlyKeysHeld:
                     Notify("Bitte selbst einfügen",
                         "Strg, Umschalt oder Alt war noch gedrückt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
+                        ToolTipIcon.Info);
+                    break;
+                case PasteOutcome.ClipboardOnlyTargetChanged:
+                    Notify("Bitte selbst einfügen",
+                        "Du hast das Fenster gewechselt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
                         ToolTipIcon.Info);
                     break;
                 case PasteOutcome.Failed:
@@ -394,14 +452,18 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error($"{_mode}: local LLM failed", e);
             Sounds.Error();
-            Notify("Offline-Sprachmodell", e.Message, ToolTipIcon.Error);
+            NotifyRetryable("Offline-Sprachmodell", e.Message, Failed());
         }
         catch (Core.GeminiException e)
         {
             Core.Log.Error($"{_mode}: Gemini {e.Kind}");
             Sounds.Error();
-            Notify("Gemini-Fehler", e.Message, ToolTipIcon.Error,
-                e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey ? ShowSettings : null);
+            if (e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey)
+                Notify("Gemini-Fehler", e.Message, ToolTipIcon.Error, ShowSettings);
+            else if (e.Kind is Core.GeminiErrorKind.Network or Core.GeminiErrorKind.Timeout or Core.GeminiErrorKind.Quota or Core.GeminiErrorKind.Server)
+                NotifyRetryable("Gemini-Fehler", e.Message, Failed());
+            else
+                Notify("Gemini-Fehler", e.Message, ToolTipIcon.Error);
         }
         catch (Exception e) when (e is Core.AudioSilentException or MicrophoneUnavailableException)
         {
@@ -413,7 +475,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error($"{_mode}: unexpected error", e);
             Sounds.Error();
-            Notify("Fehler", "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", ToolTipIcon.Error);
+            NotifyRetryable("Fehler", "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", Failed());
         }
         finally
         {
@@ -426,6 +488,20 @@ internal sealed class TrayApp : ApplicationContext
             if (!done) _overlay.HideOverlay();
             SetState(State.Idle);
         }
+    }
+
+    /// <summary>
+    /// Error balloon that, when the audio is still there, keeps the run for a retry and offers it on click.
+    /// </summary>
+    private void NotifyRetryable(string title, string message, FailedRun? run)
+    {
+        if (run == null)
+        {
+            Notify(title, message, ToolTipIcon.Error);
+            return;
+        }
+        _lastFailed = run;
+        Notify(title, message + RetryHint, ToolTipIcon.Error, () => RetryLast());
     }
 
     private async Task<string> DictateAsync(byte[] wav, double seconds, CancellationToken ct)
@@ -444,9 +520,15 @@ internal sealed class TrayApp : ApplicationContext
         return text;
     }
 
-    private async Task<string> PromptAsync(byte[] wav, double seconds, CancellationToken ct)
+    private async Task<string> PromptAsync(byte[] wav, double seconds, string? selection, bool isRetry, CancellationToken ct)
     {
-        string? selection = _selection != null ? await _selection : null;
+        // A Ctrl+C that came after the 2 s deadline means there is a selection we never read: writing a
+        // new text now would replace it. (A retry has its own, finished selection.)
+        if (selection == null && !isRetry && _paster.LateCopyArrived)
+        {
+            Core.Log.Info("Prompt: selection arrived after the deadline, not composing over it");
+            throw new SelectionUnreadableException();
+        }
         Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
 
         string systemPrompt = QuoteTemplate.BuildSystemPrompt(_settings.PromptSystemPrompt) ?? "";
