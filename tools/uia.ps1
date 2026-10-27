@@ -8,7 +8,12 @@ $win = $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Wi
 if (-not $win) { "no settings window"; exit 1 }
 $all = $win.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)
 if ($Action -eq "list") { foreach ($e in $all) { if ($e.Current.Name) { "{0} | {1} | enabled={2} offscreen={3}" -f $e.Current.ControlType.ProgrammaticName, $e.Current.Name, $e.Current.IsEnabled, $e.Current.IsOffscreen } }; exit 0 }
-$hits = @($all | Where-Object { $_.Current.Name -eq $Name })
+$hits = @($all | Where-Object { $_.Current.Name -like $Name })
+if ($hits.Count -le $Index) {
+    # Context menus and message boxes are their own top-level windows.
+    $cond = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+    $hits = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, $cond))
+}
 if ($hits.Count -le $Index) { "not found: $Name"; exit 1 }
 $el = $hits[$Index]
 if ($Action -eq "select") { $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); "selected $Name" }

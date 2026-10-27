@@ -46,6 +46,7 @@ internal sealed class SettingsForm : Form
     private readonly List<Label> _hints = new();
     private readonly List<NavItem> _nav = new();
     private readonly Dictionary<string, Control> _pages = new();
+    private bool _discard;
     private readonly Panel _pageHost;
     private readonly System.Windows.Forms.Timer _keyDebounce = new() { Interval = 700 };
     private readonly System.Windows.Forms.Timer _meterTimer = new() { Interval = 50 };
@@ -154,7 +155,12 @@ internal sealed class SettingsForm : Form
         _offline.DownloadChanged += UpdateModelRows;
         FormClosed += (_, _) => _offline.DownloadChanged -= UpdateModelRows;
         _offlineOnly = new Control[] { offlineHeader, _speechRow, _llmRow, _llmChoice, ramHint };
-        _onlineMode.CheckedChanged += (_, _) => UpdateMode();
+        _onlineMode.CheckedChanged += (_, _) =>
+        {
+            UpdateMode();
+            // Switching to online shows the key field: say right away whether the stored key works.
+            if (_onlineMode.Checked && IsHandleCreated && _apiKey.Text.Trim().Length > 0) _ = CheckKeyAsync();
+        };
 
         // --- microphone ---
         general.Controls.Add(Header("Mikrofon"));
@@ -276,7 +282,7 @@ internal sealed class SettingsForm : Form
         foreach (var name in new[] { General, Keys_, GlossaryPage, QuickPage, TemplatePage })
         {
             var item = new NavItem(name) { Location = new Point(8, y), Size = new Size(194, 36), TabStop = false };
-            item.Click += (_, _) => ShowPage(name);
+            item.Picked += (_, _) => ShowPage(name);
             _nav.Add(item);
             nav.Controls.Add(item);
             y += 40;
@@ -289,7 +295,8 @@ internal sealed class SettingsForm : Form
         var cancel = new Button { Text = "Abbrechen", AutoSize = true, MinimumSize = new Size(108, 32), TabIndex = 1 };
         save.Click += (_, _) => Save();
         // The window is modeless (Show, not ShowDialog), so a DialogResult alone would not close it.
-        cancel.Click += (_, _) => Close();
+        // "Abbrechen" means discard: only the title bar's X asks whether to save.
+        cancel.Click += (_, _) => { _discard = true; Close(); };
         _dirty = new Label { Text = "Nicht gespeicherte Änderungen", AutoSize = true, ForeColor = HintColor, Visible = false, Margin = new Padding(0, 9, 12, 0) };
         var buttons = new FlowLayoutPanel
         {
@@ -352,6 +359,7 @@ internal sealed class SettingsForm : Form
     public void ShowPage(string name)
     {
         if (!_pages.TryGetValue(name, out var page)) return;
+        Core.Log.Info($"Settings page {name}");
         foreach (var p in _pages.Values) p.Visible = p == page;
         foreach (var n in _nav) n.Selected = n.Text == name;
         if (name != General) StopMicTest();
@@ -699,7 +707,7 @@ internal sealed class SettingsForm : Form
 
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
-        if (_saved || e.CloseReason != CloseReason.UserClosing || Snapshot() == _snapshot) return;
+        if (_saved || _discard || e.CloseReason != CloseReason.UserClosing || Snapshot() == _snapshot) return;
         var answer = MessageBox.Show(this, "Die Änderungen sind noch nicht gespeichert.", "Änderungen speichern?",
             MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1);
         if (answer == DialogResult.Cancel) e.Cancel = true;
@@ -840,6 +848,23 @@ internal sealed class SettingsForm : Form
         {
             get => _selected;
             set { _selected = value; AccessibleDescription = value ? "ausgewählt" : null; Invalidate(); }
+        }
+
+        /// <summary>Raised on mouse press (like a tab, so a click that loses the window's activation
+        /// halfway still switches) and on keyboard or UI Automation clicks.</summary>
+        public event EventHandler? Picked;
+
+        protected override void OnMouseDown(MouseEventArgs e)
+        {
+            base.OnMouseDown(e);
+            if (e.Button == MouseButtons.Left) Picked?.Invoke(this, EventArgs.Empty);
+        }
+
+        protected override void OnClick(EventArgs e)
+        {
+            base.OnClick(e);
+            // A mouse click already raised Picked on press.
+            if (MouseButtons == MouseButtons.None) Picked?.Invoke(this, EventArgs.Empty);
         }
 
         protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
