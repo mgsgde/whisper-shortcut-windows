@@ -16,6 +16,22 @@ dotnet publish src/WhisperShortcut -c Release -r win-x64 --self-contained -p:Pub
 Real-Windows checks run in the Parallels VM through `tools/vm.sh` (deploy, start, hotkeys,
 screenshots, UI Automation, log). Test plans and results: `tools/e2e/`.
 
+## Releases: the agent owns them
+
+Magnus, 2026-10-28: „dass du hier dafür Sorge trägst zentral, dass alles deployed wird bezüglich
+Windows“. Whoever works in this repo makes sure every finished change reaches a GitHub release; Magnus
+does not have to ask for it. No separate „Soll ich releasen?“: merged and verified means released.
+
+1. Branch → PR → merge to `main` (tests green, VM check for anything users see).
+2. Bump `<Version>` in `src/WhisperShortcut/WhisperShortcut.csproj` (semver; fixes = patch), commit
+   „Version x.y.z“ on `main`, write German release notes (what changes for the user, short).
+3. `tools/release.sh x.y.z <notes.md> --publish` from a clean `main`: tests, both ZIPs (x64, arm64),
+   ECDSA signatures with `~/.config/whispershortcut-windows-update/ecdsa-p256-private.pem`. Never
+   publish a ZIP without its `.sig`; never lose or commit that key.
+4. Verify: `gh release view vx.y.z` lists both ZIPs, both `.sig`, `ANLEITUNG.txt`; in the VM the
+   previous version finds and installs the update (`tools/vm.sh`).
+5. Report the release link to Magnus. Testers (e.g. Christoph) get it through the in-app update.
+
 ## Model tiering: Opus 5.5 thinks, cheap hands type
 
 Same split as sabaki.dance and the macOS app; the full wording and the daily cap live in
@@ -31,7 +47,7 @@ stupide Tätigkeiten wie Typing: Grok oder Sonnet“.
 - **Enforced:** the user-level hook `~/.claude/hooks/typing-guard.py` refuses Edit/Write/sed/heredoc
   on code files in this repo from the main session; subagents pass. For UI work or Magnus's
   „mach das selbst“ the deny message names the 3-hour override; say in the report that it was used.
-- `grok-build` (on PATH, `~/.local/bin`) is sabaki's `scripts/grok-build.sh`: 16 runs a day across all
+- `grok-build` (on PATH, `~/.local/bin`) is sabaki's `scripts/grok-build.sh`: 16 runs a day (40 until 2026-11-02) across all
   repos, `grok-build --status` shows the count, log in `~/.cache/sabaki/grok-runs.tsv`.
 - Briefs from `docs/grok-brief-template.md`. Review gate is the diff plus the verbatim
   `dotnet test` summary, not a glance.
