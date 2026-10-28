@@ -44,9 +44,12 @@ internal static class UpdateInstaller
                 WorkingDirectory = StagingDir,
             };
             if (elevate) psi.Verb = "runas";
-            using var p = Process.Start(psi);
+            // Off the UI thread: with "runas", Process.Start only returns once the admin prompt is answered,
+            // which can take minutes (someone with an admin account has to come over). No timeout for that.
+            using var p = await Task.Run(() => Process.Start(psi));
             if (p == null) { Core.Log.Error("Update: installer did not start"); return false; }
-            using (var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(5)))
+            // The swap itself takes seconds; a minute means something hangs.
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1)))
             {
                 try { await p.WaitForExitAsync(timeout.Token); }
                 catch (OperationCanceledException) { Core.Log.Error("Update: installer timed out"); return false; }

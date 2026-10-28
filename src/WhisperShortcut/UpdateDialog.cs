@@ -111,6 +111,12 @@ internal sealed class UpdateDialog : Form
         Theme.TitleBar(this);
     }
 
+    /// <summary>The VM test's stand-in for a click on "Jetzt installieren".</summary>
+    public void InstallNow()
+    {
+        if (!IsDisposed && _install.Enabled) _install.PerformClick();
+    }
+
     private static string InstallHint()
     {
         var hint = "Lädt etwa 60 MB, prüft die Signatur und startet WhisperShortcut neu. Einstellungen, Schlüssel und Glossar bleiben.";

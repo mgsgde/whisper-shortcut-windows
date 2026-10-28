@@ -20,12 +20,23 @@ internal sealed class UpdateService : IDisposable
         _settings = settings;
         _idle = idle;
         _quit = quit;
+        // VM test (--update-feed): check after 5 s, open the window and click "Jetzt installieren" by
+        // itself, because prlctl can only send keys and screenshots, no clicks.
+        if (TestFeed) _timer.Interval = 5_000;
         _timer.Tick += async (_, _) =>
         {
             _timer.Interval = 24 * 60 * 60 * 1000;
-            if (_settings.AutoUpdateCheck) await CheckAsync(manual: false);
+            if (_settings.AutoUpdateCheck || TestFeed) await CheckAsync(manual: false);
+            if (TestFeed && Available != null)
+            {
+                ShowDialog();
+                await Task.Delay(15_000);
+                _dialog?.InstallNow();
+            }
         };
     }
+
+    private static bool TestFeed => Core.UpdateCheck.ApiUrl != Core.UpdateCheck.LatestReleaseApi;
 
     public static string CurrentVersion => Application.ProductVersion.Split('+')[0];
 
