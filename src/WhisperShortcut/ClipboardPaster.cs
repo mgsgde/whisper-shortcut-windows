@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Runtime.InteropServices;
 using static WhisperShortcut.NativeMethods;
 
@@ -442,39 +443,35 @@ internal sealed class ClipboardPaster
     }
 
     /// <summary>
-    /// False for formats whose handle is not a global memory block (CF_BITMAP, CF_METAFILEPICT, CF_PALETTE,
-    /// CF_ENHMETAFILE, the owner-display family) and for 0x200-0x3FF (private formats may hold any handle;
-    /// GDI objects). CF_DIB/CF_DIBV5 are memory and keep images alive; Windows regenerates CF_BITMAP from them.
-    /// </summary>
-    private static bool IsMemoryFormat(uint format) => format switch
-    {
-        2 or 3 or 9 or 14 or 0x80 or 0x82 or 0x83 or 0x8E => false,
-        >= 0x200 and <= 0x3FF => false,
-        _ => true,
-    };
-
-    /// <summary>
-    /// Copies every memory-based format. Null when the clipboard is empty or cannot be opened (nothing to
-    /// bring back). Above 64 MB only the text is kept. The log names sizes, never content.
+    /// Copies the memory formats ClipboardFormats.ToSnapshot keeps. Null when the clipboard is empty or
+    /// cannot be opened (nothing to bring back). Above 64 MB only the text is kept. The log names format
+    /// ids and sizes, never content.
     /// </summary>
     private ClipboardSnapshot? TrySnapshot()
     {
         if (!Open()) return null;
         try
         {
+            var available = new List<uint>();
+            for (uint format = EnumClipboardFormats(0); format != 0; format = EnumClipboardFormats(format))
+                available.Add(format);
+
             var snap = new ClipboardSnapshot();
             long total = 0;
-            for (uint format = EnumClipboardFormats(0); format != 0; format = EnumClipboardFormats(format))
+            var seen = new List<(uint Format, long Size)>();
+            foreach (uint format in Core.ClipboardFormats.ToSnapshot(available))
             {
-                if (!IsMemoryFormat(format)) continue;
                 IntPtr handle = GetClipboardData(format);
                 if (handle == IntPtr.Zero) continue;
                 long size = (long)GlobalSize(handle);
                 if (size <= 0) continue; // not a memory block after all
                 total += size;
+                seen.Add((format, size));
                 if (total > SnapshotCap)
                 {
-                    Core.Log.Info($"Clipboard snapshot above {SnapshotCap / (1024 * 1024)} MB, keeping text only");
+                    string sizes = string.Join(", ", seen.Select(s =>
+                        $"{s.Format}: {(s.Size / (1024.0 * 1024.0)).ToString("0.0", CultureInfo.InvariantCulture)} MB"));
+                    Core.Log.Info($"Clipboard snapshot above {SnapshotCap / (1024 * 1024)} MB ({sizes}), keeping text only");
                     snap.Items.Clear();
                     IntPtr text = GetClipboardData(CF_UNICODETEXT);
                     long textSize = text == IntPtr.Zero ? 0 : (long)GlobalSize(text);
