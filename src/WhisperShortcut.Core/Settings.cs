@@ -134,6 +134,9 @@ public sealed class Settings
     /// <summary>Play the short start/stop/error tones.</summary>
     public bool Sounds { get; set; } = true;
 
+    /// <summary>Look for a new version at start and once a day; only shows a notice, installs nothing by itself.</summary>
+    public bool AutoUpdateCheck { get; set; } = true;
+
     /// <summary>Put the previous clipboard text back after pasting (ignored when <see cref="AutoPaste"/> is off).</summary>
     public bool RestoreClipboard { get; set; } = true;
 
@@ -187,6 +190,7 @@ public sealed class Settings
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
             s.AutoPaste = dto.AutoPaste ?? true;
             s.Sounds = dto.Sounds ?? true;
+            s.AutoUpdateCheck = dto.AutoUpdateCheck ?? true;
             s.RestoreClipboard = dto.RestoreClipboard ?? true;
             // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
@@ -245,6 +249,7 @@ public sealed class Settings
             QuickActions = QuickActions,
             AutoPaste = AutoPaste,
             Sounds = Sounds,
+            AutoUpdateCheck = AutoUpdateCheck,
             RestoreClipboard = RestoreClipboard,
         };
         var tmp = _path + ".tmp";
@@ -275,6 +280,7 @@ public sealed class Settings
         [JsonPropertyName("quickActions")] public List<string>? QuickActions { get; set; }
         [JsonPropertyName("autoPaste")] public bool? AutoPaste { get; set; }
         [JsonPropertyName("sounds")] public bool? Sounds { get; set; }
+        [JsonPropertyName("autoUpdateCheck")] public bool? AutoUpdateCheck { get; set; }
         [JsonPropertyName("restoreClipboard")] public bool? RestoreClipboard { get; set; }
     }
 }

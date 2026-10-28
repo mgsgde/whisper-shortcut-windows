@@ -5,9 +5,16 @@ using System.Text.Json;
 namespace WhisperShortcut.Core;
 
 /// <summary>The newest published release: version without leading "v", and its web page.</summary>
-public sealed record UpdateInfo(string Version, string Url);
+public sealed record UpdateInfo(string Version, string Url)
+{
+    /// <summary>Release notes (the release <c>body</c>).</summary>
+    public string Notes { get; init; } = "";
 
-/// <summary>Asks GitHub for the latest release and compares versions. Nothing is downloaded or installed.</summary>
+    /// <summary>Asset name to download URL.</summary>
+    public IReadOnlyDictionary<string, string> Assets { get; init; } = new Dictionary<string, string>();
+}
+
+/// <summary>Asks GitHub for the latest release and compares versions. The check itself downloads nothing.</summary>
 public static class UpdateCheck
 {
     /// <summary>GitHub API: latest published (non-draft, non-prerelease) release.</summary>
@@ -30,13 +37,30 @@ public static class UpdateCheck
             if (doc.RootElement.TryGetProperty("html_url", out var u) && u.ValueKind == JsonValueKind.String
                 && !string.IsNullOrWhiteSpace(u.GetString()))
                 url = u.GetString()!;
-            return new UpdateInfo(version, url);
+            string notes = doc.RootElement.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.String
+                ? b.GetString() ?? "" : "";
+            var assets = new Dictionary<string, string>();
+            if (doc.RootElement.TryGetProperty("assets", out var arr) && arr.ValueKind == JsonValueKind.Array)
+                foreach (var a in arr.EnumerateArray())
+                {
+                    if (a.ValueKind != JsonValueKind.Object) continue;
+                    if (a.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String
+                        && a.TryGetProperty("browser_download_url", out var d) && d.ValueKind == JsonValueKind.String
+                        && !string.IsNullOrEmpty(n.GetString()) && !string.IsNullOrEmpty(d.GetString()))
+                        assets[n.GetString()!] = d.GetString()!;
+                }
+            return new UpdateInfo(version, url) { Notes = notes, Assets = assets };
         }
         catch (JsonException)
         {
             return null;
         }
     }
+
+    /// <summary>Release asset name of the ZIP for this CPU.</summary>
+    public static string AssetName(System.Runtime.InteropServices.Architecture arch) =>
+        arch == System.Runtime.InteropServices.Architecture.Arm64
+            ? "WhisperShortcut-Windows-arm64.zip" : "WhisperShortcut-Windows-x64.zip";
 
     /// <summary>
     /// True when <paramref name="latest"/> is a higher dotted numeric version than <paramref name="current"/>.

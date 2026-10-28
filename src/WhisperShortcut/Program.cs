@@ -10,8 +10,19 @@ internal static class Program
         int logArg = Array.IndexOf(args, "--log");
         Core.Log.Init(logArg >= 0 && logArg + 1 < args.Length ? args[logArg + 1] : Core.Log.DefaultPath);
 
+        // Runs inside the staged new exe: swap files, no mutex, no UI.
+        int install = Array.IndexOf(args, "--install-update");
+        if (install >= 0 && install + 1 < args.Length)
+            Environment.Exit(UpdateInstaller.RunInstall(args[install + 1]));
+
         // One instance only: a second one could not register the hotkeys anyway.
-        using var mutex = new Mutex(true, @"Local\WhisperShortcut.Windows", out bool first);
+        // After an update the old process may still be shutting down, so wait for it.
+        bool afterUpdate = args.Contains("--after-update");
+        using var mutex = new Mutex(false, @"Local\WhisperShortcut.Windows");
+        bool first;
+        try { first = mutex.WaitOne(afterUpdate ? TimeSpan.FromSeconds(15) : TimeSpan.Zero); }
+        catch (AbandonedMutexException) { first = true; }
+        if (afterUpdate) Core.Log.Info(first ? "Started after update" : "Started after update, but the old instance is still running");
         if (!first)
         {
             Core.Log.Info("Second instance started, exiting");
@@ -19,6 +30,8 @@ internal static class Program
                 "WhisperShortcut", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+
+        UpdateInstaller.CleanupAfterStart();
 
         string? testWav = TestWavPath(args);
         bool fakeGemini = args.Contains("--fake-gemini");

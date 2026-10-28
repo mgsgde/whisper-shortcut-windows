@@ -8,8 +8,32 @@ public class UpdateCheckTests
     public void Parse_ReadsTagAndUrl()
     {
         var info = UpdateCheck.Parse("""{"tag_name":"v0.2.0","html_url":"https://github.com/x/y/releases/tag/v0.2.0"}""");
-        Assert.Equal(new UpdateInfo("0.2.0", "https://github.com/x/y/releases/tag/v0.2.0"), info);
+        Assert.Equal("0.2.0", info!.Version);
+        Assert.Equal("https://github.com/x/y/releases/tag/v0.2.0", info.Url);
+        Assert.Empty(info.Assets);
+        Assert.Equal("", info.Notes);
         Assert.Equal("1.0", UpdateCheck.Parse("""{"tag_name":"V1.0"}""")!.Version);
+    }
+
+    [Fact]
+    public void Parse_ReadsNotesAndAssets()
+    {
+        var info = UpdateCheck.Parse("""
+            {"tag_name":"v0.4.0","body":"Neu: Updates","assets":[
+              {"name":"a.zip","browser_download_url":"https://x/a.zip"},
+              {"name":"a.zip.sig","browser_download_url":"https://x/a.zip.sig"},
+              {"name":"broken"},{"browser_download_url":"https://x/y"}]}
+            """)!;
+        Assert.Equal("Neu: Updates", info.Notes);
+        Assert.Equal(2, info.Assets.Count);
+        Assert.Equal("https://x/a.zip", info.Assets["a.zip"]);
+    }
+
+    [Fact]
+    public void AssetName_PicksByArchitecture()
+    {
+        Assert.Equal("WhisperShortcut-Windows-arm64.zip", UpdateCheck.AssetName(System.Runtime.InteropServices.Architecture.Arm64));
+        Assert.Equal("WhisperShortcut-Windows-x64.zip", UpdateCheck.AssetName(System.Runtime.InteropServices.Architecture.X64));
     }
 
     [Theory]
