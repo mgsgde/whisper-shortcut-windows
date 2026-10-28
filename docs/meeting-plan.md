@@ -4,6 +4,15 @@ Stand 28.10.2026, Windows-App v0.2.0. Anlass: Martin (Pilot) will Meetings aufne
 länger, mit Umschalter **Online-Meeting** (Systemton + Mikro) und **Vor Ort** (nur Mikro). Er sitzt bei
 Online-Meetings am Headset. Dieses Dokument ist nur der Plan, Code gibt es noch keinen.
 
+**Modi (entschieden 28.10.).** Es gibt genau zwei:
+
+- **Online-Meeting**: Systemton (Loopback) und Mikro, immer beide, als getrennte Spuren.
+- **Vor Ort**: nur Mikro.
+
+Einen Modus „nur Systemton“ gibt es nicht, sonst fehlt die eigene Stimme. Die App merkt sich den zuletzt
+gewählten Modus (Einstellung `MeetingMode`). Teams oder Zoom automatisch zu erkennen ist nicht Teil von v1,
+höchstens ein späterer Schritt.
+
 ## 1. Was die Mac-App macht und was davon nach Windows kommt
 
 Die Mac-App nimmt im Meeting **nur das Mikrofon** auf (`LiveMeetingRecorder.swift`, zwei `AVAudioRecorder`
@@ -62,9 +71,35 @@ Anfrage raus (wie auf dem Mac). Bleibt das Mikro im Online-Modus 2 Minuten bei d
 −60 dBFS, das was ein gesperrtes Mikro liefert), zeigt die Anzeige einen Hinweis, wie `AudioSilentException`
 es heute beim Diktat tut.
 
-**Echo**: Wer im Online-Meeting über Lautsprecher statt Headset hört, hat das Gegenüber doppelt (über
-Loopback und leicht verzögert übers Mikro). Die Erkennung kommt damit klar, der Text wird nicht doppelt.
-Kein Echo-Filter in v1, nur ein Satz in der Anzeige beim Start: „Am besten mit Headset“.
+**Lautsprecher statt Headset.** Wer das Online-Meeting über Lautsprecher hört, hat die Gegenseite zweimal
+in der Aufnahme: sauber über Loopback und 10–300 ms später, leiser und mit Raumhall, übers Mikro.
+
+- *In v1 (eine gemischte Spur an Gemini)* ist das ein Echo im selben Audio, kein zweiter Text. Das Modell
+  schreibt den Satz in der Regel einmal. Ob es das auch bei starkem Hall tut, prüft Schritt 7 mit
+  Lautsprechern in der VM und einmal an einem echten Laptop.
+- *Mit „Ich“ / „Gegenüber“ (Schritt 8, zwei Anfragen pro Stück)* landen die Sätze der Gegenseite wirklich
+  doppelt, einmal als „Gegenüber“ und einmal als „Ich“. Dort muss abgeglichen werden.
+
+Was hilft, geprüft:
+
+- **Windows-Echo-Unterdrückung: nicht in v1.** Es gibt zwei Wege. Der Voice-Capture-DSP
+  (`CLSID_CWMAudioAEC`, eine DMO) bekommt Mikro und Wiedergabe und filtert selbst. Das ist COM-Interop ohne
+  NAudio-Unterstützung, Größe L, und ob er auf Windows 11 ARM sauber läuft, ist offen. Der andere Weg, den
+  Mikro-Stream als „Communications“ zu öffnen, wirkt nur, wenn der Audiotreiber eine AEC mitbringt. Das ist
+  von Gerät zu Gerät verschieden und in der VM nicht testbar. Beides lohnt sich erst, wenn der Hinweis
+  unten nicht reicht.
+- **Abgleich über die getrennten Spuren: ja, aber erst mit Schritt 8.** Zwei Stufen, beide in Core und gut
+  testbar. Erstens Erkennung: pro Stück die Mikro-Spur mit der Systemton-Spur korrelieren (Verzögerung
+  10–300 ms). Ist die Korrelation hoch, hört das Mikro den Lautsprecher. Zweitens Text: Sätze unter „Ich“,
+  die fast wörtlich auch unter „Gegenüber“ im selben Zeitfenster stehen, fliegen raus. Eigene
+  Echo-Subtraktion im Signal wäre L und wird nicht gebaut.
+- **Hinweis in der UI: ja, in v1.** Beim Start im Online-Modus liest die App den Gerätetyp des
+  Standard-Wiedergabegeräts (`PKEY_AudioEndpoint_FormFactor`: Kopfhörer, Headset, Lautsprecher). Kein
+  Kopfhörer/Headset → Hinweis in der Pille: „Kein Headset erkannt. Ohne Headset reicht Vor Ort.“ mit Knopf
+  „Zu Vor Ort wechseln“. Der Gerätetyp ist nicht immer richtig (manche Klinkenbuchsen melden
+  „Lautsprecher“, obwohl ein Kopfhörer steckt). Deshalb nur ein Hinweis, der das Meeting nicht blockiert
+  und pro Gerät abgeschaltet werden kann. Ohne Headset ist „Vor Ort“ tatsächlich die bessere Wahl: das Mikro
+  hört die Gegenseite ja ohnehin.
 
 ## 3. Stückeln und Transkribieren
 
@@ -118,13 +153,14 @@ Meeting-2026-10-28-143005\
 
 - **Start/Stopp**: Tray-Menü bekommt „Meeting aufnehmen“ mit den zwei Einträgen „Online-Meeting (Ton vom PC
   + Mikro)“ und „Vor Ort (nur Mikro)“. Während der Aufnahme wird daraus „Meeting beenden (23:14)“.
-  Tastenkürzel startet im zuletzt gewählten Modus und stoppt. Vorschlag `Strg+Alt+M`, **nicht**
+  Der zuletzt gewählte Modus hat ein Häkchen. Das Tastenkürzel startet im zuletzt gewählten Modus und stoppt. Vorschlag `Strg+Alt+M`, **nicht**
   `Strg+Umschalt+M` (das ist in Teams Stummschalten).
 - **Escape bricht ein Meeting nicht ab.** Beim Diktat verwirft Esc, im Meeting wäre das eine Stunde weg.
   Verwerfen nur über das Tray mit Rückfrage.
 - **Anzeige** (`RecordingOverlay`, neuer Modus): kleine Pille statt der Diktat-Karte, damit sie eine Stunde
   lang nicht stört: roter Punkt, „Meeting · 23:14“, im Online-Modus zwei schmale Pegel (Ich / PC-Ton). Klick
-  auf die Pille stoppt. Hinweise in derselben Pille: „Mikro getrennt“, „Offline, Audio wird gespeichert“.
+  auf die Pille stoppt. Hinweise in derselben Pille: „Mikro getrennt“, „Offline, Audio wird gespeichert“,
+  „Kein Headset erkannt. Ohne Headset reicht Vor Ort.“ (mit Knopf zum Wechseln, siehe Abschnitt 2).
   Tray-Icon auf `recording.ico` wie beim Diktat.
 - **Nach Stopp**: Pille zeigt „Wird fertig transkribiert …“, dann eine Windows-Benachrichtigung „Transkript
   gespeichert“, Klick öffnet `transkript.txt` im Editor. Im Tray „Letztes Meeting öffnen“ und
@@ -154,24 +190,31 @@ prüft jeden Schritt am Testlauf. Geschätzt 5–6 Grok-Läufe für v1.
 | 2 | **`MeetingStore`**: Ordner, `meeting.json`, Stück-Dateien, `transkript.txt` in Reihenfolge zusammensetzen, Wiederherstellung beim Start, `AppData` und Reset | M | Plumbing | `MeetingStoreTests`: Reihenfolge bei ungeordnet fertigen Stücken, Platzhalter für fehlende, Wiederherstellung nach „läuft“, Mac-Parser-Format. `AppDataTests` um Meetings ergänzt | – |
 | 3 | **`MeetingTranscriber`**: Warteschlange, 2 parallel, Wiederholung, Audio behalten bei Fehler, Meeting-Prompt in `GeminiClient` und `Prompts` | M | Plumbing | `MeetingTranscriberTests` mit falschem Transkribierer: Fehler → Datei bleibt, später Erfolg → Datei weg, stilles Stück → keine Anfrage. `GeminiClientTests`: Meeting-Prompt im Body | – |
 | 4 | **`MeetingRecorder`** (App): Mikro gestreamt, Loopback, Schnitt bei Pause, Gerätewechsel, Paket `NAudio.Wasapi` | M–L | Plumbing, Opus prüft genau | nur die Schnittlogik (in Core, mit synthetischen Puffern: Pause → Schnitt, keine Pause → nach 60 s) | Ja: Testton per PowerShell abspielen, Loopback-Spur prüfen. Standardgerät wechseln. Läuft das in der Parallels-VM (virtuelles Audiogerät)? ist der erste Test. |
+| 4a | **Headset-Erkennung**: Gerätetyp des Standard-Wiedergabegeräts lesen (`PKEY_AudioEndpoint_FormFactor`), bei Gerätewechsel neu, „pro Gerät nicht mehr zeigen“ in den Einstellungen | S | Plumbing | Zuordnung Gerätetyp → „Headset ja/nein/unklar“ (reine Funktion in Core) | Ja: welchen Typ meldet das Parallels-Gerät? Am echten Laptop einmal mit Klinke, USB und Bluetooth |
 | 5 | **Verdrahtung in `TrayApp`**: Start/Stopp, Hotkey, Einstellungen `MeetingMode`/`MeetingHotkey`/`MeetingNoticeSeen`, Erinnerung nach 2 h, Retry-Eintrag | S | Plumbing | `SettingsTests`: neue Felder Rundreise und Standardwerte | Start per `tools/vm.sh combo ctrl alt m` |
-| 6 | **UI**: Tray-Einträge, Pille im Meeting-Modus, Datenschutz-Dialog, Benachrichtigung, Einstellungsbereich | M | **UI (Opus)** | – | Screenshots per `tools/vm.sh shot`, UIA für Einstellungen |
-| 7 | **E2E in der VM**: 60 min mit wiederholter Test-WAV, Prozess mittendrin abschießen, Netz trennen und wiederholen, Headset-Wechsel simulieren. Ergebnisse in `tools/e2e/RESULTS-meeting.md` | M | Plumbing führt aus, Opus wertet aus | – | das ist der Schritt |
+| 6 | **UI**: Tray-Einträge mit Häkchen am letzten Modus, Pille im Meeting-Modus, Headset-Hinweis mit Knopf „Zu Vor Ort wechseln“, Datenschutz-Dialog, Benachrichtigung, Einstellungsbereich | M | **UI (Opus)** | – | Screenshots per `tools/vm.sh shot`, UIA für Einstellungen |
+| 7 | **E2E in der VM**: 60 min mit wiederholter Test-WAV, Prozess mittendrin abschießen, Netz trennen und wiederholen, Headset-Wechsel simulieren, Lautsprecher-Fall (Gegenseite übers Mikro, landet ein Satz doppelt?). Ergebnisse in `tools/e2e/RESULTS-meeting.md` | M | Plumbing führt aus, Opus wertet aus | – | das ist der Schritt |
 | 8 | **Danach, eigene Runde**: „Ich“ / „Gegenüber“ aus den getrennten Spuren (zwei Anfragen, Zeitstempel pro Satz, zusammenführen), Zusammenfassung (`PromptTextAsync` gibt es), Sprecher-Konsolidierung, Meeting-Liste in den Einstellungen | je S–M | gemischt | | |
+| 8a | **Echo-Abgleich** (nur mit „Ich“ / „Gegenüber“): Korrelation Mikro- gegen Systemton-Spur pro Stück, doppelte Sätze unter „Ich“ entfernen | M | Plumbing | Korrelation mit synthetisch verzögerter, leiserer Kopie (erkannt) und unabhängigem Signal (nicht erkannt). Textabgleich: fast gleicher Satz fliegt raus, ähnlicher eigener Satz bleibt | Lautsprecher-Fall aus Schritt 7 wiederholen |
+| 8b | **Später, nur wenn nötig**: Windows-Echo-Unterdrückung (Voice-Capture-DSP), Modus automatisch wählen, wenn Teams/Zoom/Meet läuft | je L / M | Plumbing, UI für die Automatik | | |
 
-Schritte 1–3 hängen nicht voneinander ab und können parallel laufen. 4 braucht 1, 5 braucht 2–4, 6 kann nach
-5 anfangen. Ein Release (0.3.0) erst nach 7.
+Schritte 1–3 hängen nicht voneinander ab und können parallel laufen. 4 braucht 1, 4a ist unabhängig,
+5 braucht 2–4a, 6 kann nach 5 anfangen. Ein Release (0.3.0) erst nach 7.
 
-## Offene Fragen an Magnus
+## Entschieden (Magnus, 28.10.2026)
 
-1. **„Ich“ / „Gegenüber“ gleich in v1?** Empfehlung: nein, erst Schritt 8. v1 trennt Sprecher wie der Mac
-   per Prompt, die Spuren liegen aber schon getrennt, damit es später ohne Umbau geht.
-2. **Zusammenfassung in v1?** Empfehlung: direkt danach als kleiner Schritt, sobald klar ist, was Martin
-   damit will. Für ein Anamnesegespräch sieht eine brauchbare Zusammenfassung anders aus als fürs Teams-Meeting.
-3. **Audio nach erfolgreicher Erkennung behalten?** Empfehlung: löschen. Nur Text auf der Platte ist für die
-   Praxis-Fälle das kleinere Risiko. Wer Audio braucht, bekommt später einen Schalter.
-4. **Offline-Meeting mit Parakeet?** Empfehlung: nicht in v1. Martin hat am 19.10. selbst „dann über Cloud“
-   gesagt. Wenn eine Praxis es verlangt, dann als Nach-Transkription ohne Sprecher.
-5. **Speicherort `%LOCALAPPDATA%` oder `Dokumente\WhisperShortcut`?** Empfehlung: `%LOCALAPPDATA%` plus
-   Menüeinträge zum Öffnen. Dokumente würde in OneDrive synchronisiert, was bei Gesundheitsdaten keiner will.
-6. **Tastenkürzel `Strg+Alt+M`?** Empfehlung: ja, einstellbar.
+1. **Zwei Modi**, Online-Meeting (Systemton + Mikro als getrennte Spuren) und Vor Ort (nur Mikro). Kein
+   Modus „nur Systemton“. Der zuletzt gewählte Modus wird gemerkt (`MeetingMode`), keine Automatik in v1.
+2. **„Ich“ / „Gegenüber“ nicht in v1**, sondern Schritt 8. v1 trennt Sprecher wie der Mac per Prompt, die
+   Spuren liegen schon getrennt.
+3. **Zusammenfassung** direkt nach v1 als kleiner Schritt, sobald klar ist, was Martin damit will (Anamnese
+   oder Teams-Meeting).
+4. **Audio wird nach erfolgreicher Erkennung gelöscht**, nur Text bleibt. Ein Schalter zum Behalten kommt
+   später, falls jemand ihn braucht.
+5. **Kein Offline-Meeting mit Parakeet in v1.** Falls eine Praxis es verlangt, als Nach-Transkription ohne
+   Sprecher.
+6. **Speicherort `%LOCALAPPDATA%\WhisperShortcut\Meetings`** mit Menüeinträgen zum Öffnen, nicht
+   `Dokumente` (OneDrive-Sync).
+7. **Tastenkürzel `Strg+Alt+M`**, einstellbar.
+8. **Lautsprecher-Fall**: in v1 Headset-Erkennung mit Hinweis „Ohne Headset reicht Vor Ort“. Abgleich der
+   Spuren kommt mit „Ich“ / „Gegenüber“ (8a), Windows-Echo-Unterdrückung nur, wenn das nicht reicht (8b).
