@@ -35,7 +35,7 @@ public class PromptsTests
     [SwiftSourceFact]
     public void GlossaryHintEqualsSwiftSource()
     {
-        var t = Swift("SpeechService.swift", 110, 160);
+        var t = File.ReadAllText(Paths.SwiftFile("SpeechService.swift")).ReplaceLineEndings("\n");
         var start = t.IndexOf("block = \"Reference vocabulary", StringComparison.Ordinal);
         var end = t.IndexOf("+ glossary", start, StringComparison.Ordinal);
         var literals = Regex.Matches(t[start..end], "\"((?:[^\"\\\\\\n]|\\\\.)*)\"")
