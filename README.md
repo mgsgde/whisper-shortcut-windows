@@ -30,6 +30,9 @@ dotnet test tests/WhisperShortcut.Tests
 dotnet publish src/WhisperShortcut -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
 ```
 
+Release: `tools/release.sh <version> <notes.md>` testet, baut beide ZIPs (x64, arm64) und signiert sie mit dem
+privaten Schlüssel. Jede ZIP braucht ihre `.sig`-Datei, sonst lehnen installierte Apps das Update ab.
+
 Für Windows auf ARM `-r win-arm64`. `tools/vm.sh` steuert eine Parallels-Windows-VM vom Mac aus
 (Tastenkürzel, Screenshots, Protokoll) für Tests ohne echten PC.
 

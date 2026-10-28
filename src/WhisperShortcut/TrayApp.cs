@@ -58,6 +58,12 @@ internal sealed class TrayApp : ApplicationContext
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
     private Action? _balloonClick;
+    private readonly UpdateService _updates;
+    private readonly ToolStripMenuItem _updateItem;
+    // A found update waits for the end of a recording; the notice then comes a little later, so it does not
+    // replace a "Bitte prüfen" balloon that was just shown.
+    private readonly System.Windows.Forms.Timer _updateNoticeTimer = new() { Interval = 20_000 };
+    private bool _updateNoticePending;
     private bool _glossaryBusy;
     private bool _globalHotkeysOn;
     private readonly Core.HotkeyPressGate _pressGate = new();
@@ -103,6 +109,11 @@ internal sealed class TrayApp : ApplicationContext
         _copyLast = new ToolStripMenuItem("Letzten Text kopieren", null, (_, _) => CopyRecent(_recent.Latest));
         _recentMenu = new ToolStripMenuItem("Letzte Texte");
         _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Enabled = false };
+        _updates = new UpdateService(_settings, () => _state == State.Idle, Quit);
+        _updateItem = new ToolStripMenuItem("Update installieren …", null, (_, _) => _updates.ShowDialog())
+        {
+            Visible = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold),
+        };
         var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         _offlineItem = new ToolStripMenuItem("Offline: nichts verlässt den PC", null, (_, _) => ToggleOffline()) { CheckOnClick = false };
         var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings()) { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
@@ -111,7 +122,7 @@ internal sealed class TrayApp : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.AddRange(new ToolStripItem[]
         {
-            title, _statusItem, new ToolStripSeparator(), _dictateInfo, _promptInfo, _glossaryInfo, new ToolStripSeparator(),
+            title, _statusItem, _updateItem, new ToolStripSeparator(), _dictateInfo, _promptInfo, _glossaryInfo, new ToolStripSeparator(),
             _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
             _offlineItem, settingsItem, logItem, new ToolStripSeparator(), quitItem,
         });
@@ -135,6 +146,15 @@ internal sealed class TrayApp : ApplicationContext
         // A finished download changes the idle status ("Modelle noch nicht geladen" → "Bereit").
         _offline.DownloadChanged += () => { if (_state == State.Idle) SetState(State.Idle); };
         _overlay.QuickActionClicked += OnQuickAction;
+        _updates.Found += OnUpdateFound;
+        _updateNoticeTimer.Tick += (_, _) =>
+        {
+            _updateNoticeTimer.Stop();
+            if (_state == State.Idle) ShowUpdateNotice();
+            else _updateNoticePending = true;
+        };
+        // Test runs (VM loop) must not pop update notices into the screenshots.
+        if (!testRun) _updates.Start();
 
         if (firstRun && !testRun)
         {
@@ -980,6 +1000,34 @@ internal sealed class TrayApp : ApplicationContext
         };
         _icon.Icon = icon;
         SetStatusText(status);
+        if (state == State.Idle && _updateNoticePending)
+        {
+            _updateNoticePending = false;
+            _updateNoticeTimer.Start();
+        }
+    }
+
+    // ---------------- updates ----------------
+
+    private void OnUpdateFound()
+    {
+        var update = _updates.Available;
+        if (update == null) return;
+        _updateItem.Text = $"Update auf Version {update.Version} installieren …";
+        _updateItem.Visible = true;
+        // Found from the settings window: it shows the news itself.
+        if (_settingsForm != null) return;
+        if (_state == State.Idle) ShowUpdateNotice();
+        else _updateNoticePending = true;
+    }
+
+    private void ShowUpdateNotice()
+    {
+        var update = _updates.Available;
+        if (update == null) return;
+        Notify($"Version {update.Version} ist da",
+            "Hier klicken, um zu sehen, was neu ist, und es zu installieren. Ohne Klick bleibt alles, wie es ist.",
+            ToolTipIcon.Info, _updates.ShowDialog);
     }
 
     /// <summary>
@@ -1068,7 +1116,7 @@ internal sealed class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, welcome);
+        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, welcome);
         // Activation messages can still arrive after FormClosed: only the open window may re-evaluate.
         _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.
@@ -1156,6 +1204,8 @@ internal sealed class TrayApp : ApplicationContext
         _icon.Visible = false;
         _icon.Dispose();
         _keyUpTimer.Dispose();
+        _updateNoticeTimer.Dispose();
+        _updates.Dispose();
         _overlay.Dispose();
         _hotkeys.Dispose();
         _offline.Dispose();

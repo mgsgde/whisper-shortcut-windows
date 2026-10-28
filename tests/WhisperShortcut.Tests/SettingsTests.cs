@@ -396,4 +396,20 @@ public class QuickActionRequestTests
         Assert.True(u.RestoreClipboard);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
+
+    [Fact]
+    public void AutoUpdateCheck_defaults_on_and_round_trips()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.True(s.AutoUpdateCheck);
+
+        s.AutoUpdateCheck = false;
+        s.Save();
+        Assert.False(Settings.Load(path, new PlainSecretProtector()).AutoUpdateCheck);
+
+        File.WriteAllText(path, "{\"glossary\":[\"a\"]}");
+        Assert.True(Settings.Load(path, new PlainSecretProtector()).AutoUpdateCheck);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
 }

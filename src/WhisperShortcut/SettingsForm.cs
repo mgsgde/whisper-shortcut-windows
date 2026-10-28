@@ -47,7 +47,8 @@ internal sealed class SettingsForm : Form
     private readonly Banner _welcome;
     private ThemedLabel _updateStatus = null!;
     private FluentButton _updateButton = null!;
-    private Core.UpdateInfo? _update;
+    private readonly UpdateService _updates;
+    private ToggleSwitch _autoUpdate = null!;
     private readonly TextBox _glossary;
     private readonly ThemedLabel _glossaryCount;
     private readonly TextBox _template;
@@ -85,9 +86,10 @@ internal sealed class SettingsForm : Form
     private const int KeyWidth = 200, ComboWidth = 300, ToggleWidth = 88, ButtonWidth = 120;
 
     /// <param name="welcome">First start: a short "what to do now" box on top of the first page.</param>
-    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, bool welcome = false)
+    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, UpdateService updates, bool welcome = false)
     {
         _settings = settings;
+        _updates = updates;
         _offline = offline;
         _gemini = gemini;
         _openAi = openAi;
@@ -584,11 +586,17 @@ internal sealed class SettingsForm : Form
         _updateButton = new FluentButton("Suchen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Nach Updates suchen" };
         _updateButton.Click += (_, _) =>
         {
-            if (_update != null) OpenUrl(_update.Url);
+            if (_updates.Available != null) _updates.ShowDialog();
             else _ = CheckUpdateAsync();
         };
         headCard.AddRow(SettingRow("Nach Updates suchen", "", _updateButton, ButtonWidth, out _updateStatus));
-        _updateStatus.Text = "Fragt GitHub nach der neuesten Version. Installiert wird nichts von selbst.";
+        _updateStatus.Text = "Fragt GitHub nach der neuesten Version. Installiert wird erst nach deinem Klick.";
+        if (_updates.Available != null) ShowUpdateFound(_updates.Available);
+        _autoUpdate = new ToggleSwitch { Checked = _settings.AutoUpdateCheck, AccessibleName = "Automatisch nach Updates suchen" };
+        // The practice runs in offline mode, which promises that nothing leaves the PC: say plainly what this one request sends.
+        headCard.AddRow(SettingRow("Automatisch nach Updates suchen", "Kurz nach dem Start und einmal am Tag. Eine neue Version meldet sich "
+            + "mit einem Hinweis; installiert wird erst, wenn du auf „Jetzt installieren“ klickst. Auch im Offline-Modus: Die App fragt "
+            + "dabei nur github.com nach der neuesten Versionsnummer, ohne Aufnahmen, Texte oder Einstellungen.", _autoUpdate, ToggleWidth, out _));
         info.Controls.Add(headCard);
 
         info.Controls.Add(Section("Willkommenstour"));
@@ -682,23 +690,14 @@ internal sealed class SettingsForm : Form
         _updateStatus.Tone = Tone.Secondary;
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            var latest = await Core.UpdateCheck.CheckAsync(http, CancellationToken.None);
+            var latest = await _updates.CheckAsync(manual: true);
             if (IsDisposed) return;
-            if (latest != null && Core.UpdateCheck.IsNewer(latest.Version, AppVersion))
-            {
-                _update = latest;
-                _updateStatus.Text = $"Version {latest.Version} ist da. „Herunterladen“ öffnet die Seite mit der neuen exe.";
-                _updateStatus.Tone = Tone.Accent;
-                _updateButton.Text = "Herunterladen";
-                _updateButton.Accent = true;
-            }
+            if (latest != null) ShowUpdateFound(latest);
             else
             {
                 _updateStatus.Text = $"✓ Version {AppVersion} ist die neueste.";
                 _updateStatus.Tone = Tone.Good;
             }
-            Core.Log.Info($"Update check: latest {latest?.Version ?? "none"}, running {AppVersion}");
         }
         catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
         {
@@ -708,6 +707,14 @@ internal sealed class SettingsForm : Form
             _updateStatus.Tone = Tone.Caution;
         }
         if (!IsDisposed) _updateButton.Enabled = true;
+    }
+
+    private void ShowUpdateFound(Core.UpdateInfo update)
+    {
+        _updateStatus.Text = $"Version {update.Version} ist da. „Installieren“ zeigt, was neu ist.";
+        _updateStatus.Tone = Tone.Accent;
+        _updateButton.Text = "Installieren …";
+        _updateButton.Accent = true;
     }
 
     private void ResetApp()
@@ -1335,6 +1342,7 @@ internal sealed class SettingsForm : Form
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
+        _autoUpdate.Checked.ToString(),
     }.Concat(_quick.Select(q => q.Text)));
 
     private static string SelectedModel(FluentCombo combo) => ((ModelItem)combo.SelectedItem!).Model.Id;
@@ -1412,7 +1420,8 @@ internal sealed class SettingsForm : Form
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
             _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
             _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
-            _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel);
+            _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
+            _settings.AutoUpdateCheck);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _geminiKey.Value;
@@ -1435,6 +1444,7 @@ internal sealed class SettingsForm : Form
         _settings.AutoPaste = _autoPaste.Checked;
         _settings.RestoreClipboard = _restoreClipboard.Checked;
         _settings.Sounds = _sounds.Checked;
+        _settings.AutoUpdateCheck = _autoUpdate.Checked;
         try
         {
             _settings.Save();
@@ -1446,7 +1456,8 @@ internal sealed class SettingsForm : Form
                 _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
                 _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
-            _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel) = before;
+            _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
+            _settings.AutoUpdateCheck) = before;
             Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
             return false;
         }
@@ -1455,7 +1466,7 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel})");
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;
         _savedHintUntil = Environment.TickCount64 + 3000;

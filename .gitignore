@@ -7,3 +7,4 @@ out/
 dist/*.exe
 dist/*.zip
 dist/*/
+dist/*.sig
