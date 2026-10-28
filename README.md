@@ -12,8 +12,9 @@ sprechen, der Text steht dort, wo der Cursor blinkt. Läuft als Symbol im Infobe
 - **Text bearbeiten oder schreiben lassen** (Strg+Umschalt+P): Text markieren und sagen, was damit passieren
   soll („freundlicher“, „ins Englische“), oder ohne Markierung einen Text nach einer Vorlage schreiben lassen.
 - **Glossar** (Strg+Umschalt+K): ein markiertes Wort wird ab dann immer so geschrieben.
-- **Online oder offline:** online mit Google Gemini (eigener API-Schlüssel), offline komplett auf dem PC
+- **Online oder offline:** online mit Google Gemini oder OpenAI (eigener API-Schlüssel), offline komplett auf dem PC
   (Parakeet für die Spracherkennung, ein lokales Sprachmodell über llama.cpp). Offline verlässt nichts den PC.
+  Gemischt geht auch, pro Schritt wählbar: z. B. Spracherkennung auf dem PC, Texte bearbeiten online.
 
 ## Download
 

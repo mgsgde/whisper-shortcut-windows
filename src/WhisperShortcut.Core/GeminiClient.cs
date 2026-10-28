@@ -57,7 +57,7 @@ public enum KeyCheck
 /// 502, 503, 504, network errors, per-attempt timeouts) are retried like on the Mac: up to 5 attempts
 /// (6 for 5xx) with exponential backoff, or Google's own RetryInfo delay on a 429.
 /// </summary>
-public sealed class GeminiClient
+public sealed class GeminiClient : ISpeechProvider, ITextProvider
 {
     private const string BaseUrl = "https://generativelanguage.googleapis.com/v1beta/models/";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);

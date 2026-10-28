@@ -13,17 +13,23 @@ internal sealed class SettingsForm : Form
     private readonly Core.Settings _settings;
     private readonly OfflineEngine _offline;
     private readonly Core.GeminiClient _gemini;
+    private readonly Core.OpenAiClient _openAi;
     private readonly OptionButton _onlineMode;
     private readonly OptionButton _offlineMode;
-    private readonly Control[] _onlineOnly;
     private readonly Control[] _offlineOnly;
     private readonly ModelRow _speechRow;
     private readonly ModelRow _llmRow;
     private readonly FluentCombo _llmChoice;
     private readonly ThemedLabel _offlineSummary;
     private readonly ThemedLabel _offlineState;
-    private readonly TextBox _apiKey;
-    private readonly ThemedLabel _keyStatus;
+    private readonly KeyField _geminiKey;
+    private readonly KeyField _openAiKey;
+    private readonly FluentCombo _speechEngine;
+    private readonly FluentCombo _textEngine;
+    private readonly FluentCombo _dictateModelOpenAi;
+    private readonly FluentCombo _promptModelOpenAi;
+    private readonly Control[] _engineOnly;
+    private readonly Card _dictateGeminiCard, _dictateOpenAiCard, _promptGeminiCard, _promptOpenAiCard;
     private readonly FluentCombo _mic;
     private readonly FluentButton _micTest;
     private readonly Bar _micMeter;
@@ -52,9 +58,7 @@ internal sealed class SettingsForm : Form
     private readonly List<NavItem> _nav = new();
     private readonly Dictionary<string, Control> _pages = new();
     private readonly Panel _pageHost;
-    private readonly System.Windows.Forms.Timer _keyDebounce = new() { Interval = 700 };
     private readonly System.Windows.Forms.Timer _meterTimer = new() { Interval = 50 };
-    private CancellationTokenSource? _keyCheck;
     private LevelProbe? _probe;
     private string _snapshot = "";
     private bool _loadedOffline;
@@ -81,11 +85,12 @@ internal sealed class SettingsForm : Form
     private const int KeyWidth = 200, ComboWidth = 300, ToggleWidth = 88, ButtonWidth = 120;
 
     /// <param name="welcome">First start: a short "what to do now" box on top of the first page.</param>
-    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, bool welcome = false)
+    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, bool welcome = false)
     {
         _settings = settings;
         _offline = offline;
         _gemini = gemini;
+        _openAi = openAi;
 
         // Designer pattern: all sizes below are written for 96 dpi and scaled once on ResumeLayout,
         // so 125/150/200 % get the same layout instead of big text in a small window.
@@ -106,7 +111,7 @@ internal sealed class SettingsForm : Form
         {
             _welcome = new Banner
             {
-                Text = "Willkommen! Zuerst die Arbeitsweise wählen: Online braucht einen Gemini-Schlüssel, "
+                Text = "Willkommen! Zuerst die Arbeitsweise wählen: Online braucht einen Schlüssel von Google (Gemini) oder OpenAI, "
                     + "offline werden einmal die Modelle geladen. Dann „Speichern“. Danach in einem beliebigen Programm "
                     + $"{Hotkey.Display(settings.DictateHotkey)} drücken, sprechen und noch einmal drücken.",
                 AutoSize = true, Padding = new Padding(14, 12, 14, 12), Margin = new Padding(0, 4, 0, 4), Visible = welcome,
@@ -115,52 +120,58 @@ internal sealed class SettingsForm : Form
             general.Controls.Add(_welcome);
         }
         general.Controls.Add(Section("Arbeitsweise", first: true));
-        _onlineMode = new OptionButton("Online mit Gemini") { Checked = !settings.OfflineMode };
+        _onlineMode = new OptionButton("Online") { Checked = !settings.OfflineMode };
         _offlineMode = new OptionButton("Offline auf diesem PC") { Checked = settings.OfflineMode };
         // Each option sits in its own card row, so the automatic radio grouping (same parent) does not apply.
         _onlineMode.CheckedChanged += (_, _) => { if (_onlineMode.Checked) _offlineMode.Checked = false; };
         _offlineMode.CheckedChanged += (_, _) => { if (_offlineMode.Checked) _onlineMode.Checked = false; };
         var modeCard = new Card();
-        modeCard.AddRow(OptionRow(_onlineMode, "Beste Qualität und am schnellsten. Braucht Internet und einen API-Schlüssel; "
-            + "Aufnahme und markierter Text gehen an Google."));
+        modeCard.AddRow(OptionRow(_onlineMode, "Beste Qualität und am schnellsten. Braucht Internet und einen API-Schlüssel von Google (Gemini) "
+            + "oder OpenAI; Aufnahme und markierter Text gehen an den gewählten Anbieter. Einzelne Schritte können auch auf diesem PC laufen."));
         modeCard.AddRow(OptionRow(_offlineMode, "Aufnahmen und Texte verlassen den Rechner nie, richtig für Patientendaten. Die Modelle werden einmal "
             + "geladen, danach geht alles ohne Internet. „Dictate Prompt“ dauert offline länger, je nach PC einige Sekunden bis eine Minute."));
         general.Controls.Add(modeCard);
 
-        // --- API key (online) ---
-        var keySection = Section("Gemini-API-Schlüssel");
-        general.Controls.Add(keySection);
-        _apiKey = new TextBox { UseSystemPasswordChar = true, Text = settings.ApiKey ?? "" };
-        var show = new FluentButton("Anzeigen") { MinimumSize = new Size(100, 32) };
-        show.Click += (_, _) =>
+        // --- engines (online): chosen per step, so speech recognition can stay on this PC while texts go online ---
+        var engineSection = Section("Anbieter");
+        general.Controls.Add(engineSection);
+        _speechEngine = EngineChoice(settings.SpeechEngine, "Spracherkennung", "Auf diesem PC (Parakeet)");
+        _textEngine = EngineChoice(settings.TextEngine, "Texte bearbeiten", "Auf diesem PC (Sprachmodell)");
+        var engineCard = new Card();
+        engineCard.AddRow(SettingRow("Spracherkennung", "Diktieren, und die gesprochene Anweisung bei Dictate Prompt.", _speechEngine, ComboWidth, out _));
+        engineCard.AddRow(SettingRow("Texte bearbeiten", "Dictate Prompt und die Schnellanweisungen.", _textEngine, ComboWidth, out _));
+        var engineNote = Block();
+        engineNote.Controls.Add(Wrap($"Gemischt geht auch: Die Spracherkennung auf diesem PC braucht nur {FormatBytes(ComponentSize(Core.OfflineCatalog.Parakeet))} "
+            + "und ist sehr schnell, die Texte gehen online. Das große Sprachmodell muss dafür nicht geladen werden.", 2 * RowPadding, small: true));
+        engineCard.AddRow(engineNote);
+        general.Controls.Add(engineCard);
+        _engineOnly = new Control[] { engineSection, engineCard };
+
+        // --- API keys (shown for the providers in use) ---
+        _geminiKey = new KeyField(settings.ApiKey ?? "", (k, ct) => _gemini.CheckKeyAsync(k, ct), result => result switch
         {
-            _apiKey.UseSystemPasswordChar = !_apiKey.UseSystemPasswordChar;
-            show.Text = _apiKey.UseSystemPasswordChar ? "Anzeigen" : "Verbergen";
-        };
-        var check = new FluentButton("Prüfen") { MinimumSize = new Size(100, 32) };
-        var keyBlock = Block();
-        keyBlock.Controls.Add(Row(new FieldFrame(_apiKey), show, check));
-        _keyStatus = new ThemedLabel { AutoSize = true, Margin = new Padding(0, 4, 0, 0), Text = "" };
-        Fit(_keyStatus, 2 * RowPadding);
-        keyBlock.Controls.Add(_keyStatus);
-        keyBlock.Controls.Add(Wrap("Bitte einen Schlüssel aus einem Google-Projekt mit Abrechnung verwenden: Im kostenlosen Kontingent "
-            + "darf Google die Aufnahmen zum Training nutzen.", 2 * RowPadding, small: true));
-        var link = new LinkLabel { Text = "Schlüssel in Google AI Studio erstellen", AutoSize = true, Margin = new Padding(0, 2, 0, 0) };
-        link.LinkClicked += (_, _) => OpenUrl("https://aistudio.google.com/apikey");
-        keyBlock.Controls.Add(link);
-        var keyCard = new Card();
-        keyCard.AddRow(keyBlock);
-        general.Controls.Add(keyCard);
-        check.Click += (_, _) => _ = CheckKeyAsync();
-        _apiKey.TextChanged += (_, _) =>
+            Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
+            Core.KeyCheck.Invalid => ("✗ Google kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
+            Core.KeyCheck.Forbidden => ("✗ Google kennt den Schlüssel, lässt ihn aber nicht an Gemini. In Google AI Studio einen neuen Schlüssel erstellen.", Tone.Bad),
+            Core.KeyCheck.NoConnection => ("Keine Verbindung zu Google. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
+            _ => ("Google hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
+        });
+        AddKeyCard(general, _geminiKey, "Gemini-API-Schlüssel", "Bitte einen Schlüssel aus einem Google-Projekt mit Abrechnung verwenden: "
+            + "Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen.",
+            "Schlüssel in Google AI Studio erstellen", "https://aistudio.google.com/apikey");
+        _openAiKey = new KeyField(settings.OpenAiKey ?? "", (k, ct) => _openAi.CheckKeyAsync(k, ct), result => result switch
         {
-            // Pasting a key is the moment to know whether it works, not after Speichern.
-            _keyStatus.Text = "";
-            _keyDebounce.Stop();
-            if (_apiKey.Text.Trim().Length >= 20) _keyDebounce.Start();
-        };
-        _keyDebounce.Tick += (_, _) => { _keyDebounce.Stop(); _ = CheckKeyAsync(); };
-        _onlineOnly = new Control[] { keySection, keyCard };
+            Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
+            Core.KeyCheck.Invalid => ("✗ OpenAI kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
+            Core.KeyCheck.Forbidden => ("✗ OpenAI kennt den Schlüssel, er darf aber keine Modelle benutzen. Rechte des Projekts prüfen.", Tone.Bad),
+            Core.KeyCheck.NoConnection => ("Keine Verbindung zu OpenAI. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
+            _ => ("OpenAI hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
+        });
+        AddKeyCard(general, _openAiKey, "OpenAI-API-Schlüssel", "Ein API-Schlüssel mit Guthaben auf platform.openai.com. "
+            + "Ein ChatGPT-Abo zählt dafür nicht.",
+            "Schlüssel bei OpenAI erstellen", "https://platform.openai.com/api-keys");
+        _speechEngine.SelectedIndexChanged += (_, _) => UpdateMode();
+        _textEngine.SelectedIndexChanged += (_, _) => UpdateMode();
 
         // --- offline models: summary here, the downloads on the Offline page ---
         var offlineSection = Section("Offline-Modelle");
@@ -238,10 +249,13 @@ internal sealed class SettingsForm : Form
             + "Solange dieses Fenster im Vordergrund ist, sind die Kürzel aus."));
         dictate.Controls.Add(Section("Modell"));
         _dictateModel = ModelChoice(Core.GeminiModels.Transcription, settings.TranscriptionModel);
-        dictate.Controls.Add(ModelCard(_dictateModel, "Gilt online. Offline erkennt die Spracherkennung auf diesem PC die Sprache, "
-            + "ohne Modellwahl und ohne Systemprompt."));
+        dictate.Controls.Add(_dictateGeminiCard = ModelCard(_dictateModel, "Gemini-Modell", "Gilt, wenn die Spracherkennung über Gemini läuft "
+            + "(Allgemein → Anbieter). Auf diesem PC erkennt Parakeet die Sprache, ohne Modellwahl und ohne Systemprompt."));
+        _dictateModelOpenAi = ModelChoice(Core.OpenAiModels.Transcription, settings.OpenAiTranscriptionModel);
+        dictate.Controls.Add(_dictateOpenAiCard = ModelCard(_dictateModelOpenAi, "OpenAI-Modell", "Gilt, wenn die Spracherkennung über OpenAI läuft. "
+            + "Das Glossar geht als Hinweis mit; der Systemprompt unten gilt nur für Gemini."));
         dictate.Controls.Add(Section("Systemprompt"));
-        dictate.Controls.Add(Wrap("So soll Gemini transkribieren: Füllwörter, Satzzeichen, Formatierung. Namen und Fachwörter gehören "
+        dictate.Controls.Add(Wrap("So soll Gemini transkribieren (gilt nur für Gemini): Füllwörter, Satzzeichen, Formatierung. Namen und Fachwörter gehören "
             + "ins Glossar, nicht hierher. Der Standardtext ist englisch; geschrieben wird trotzdem in der gesprochenen Sprache.", 0));
         _dictatePrompt = new PromptEditor(Core.Prompts.DefaultTranscriptionSystemPrompt, settings.DictateSystemPrompt, "Systemprompt Diktieren");
         dictate.Controls.Add(PromptCard(_dictatePrompt));
@@ -254,7 +268,10 @@ internal sealed class SettingsForm : Form
             + "Ein Druck während der Verarbeitung bricht ab."));
         prompt.Controls.Add(Section("Modell"));
         _promptModel = ModelChoice(Core.GeminiModels.Prompt, settings.PromptModel);
-        prompt.Controls.Add(ModelCard(_promptModel, "Gilt online. Offline arbeitet das Sprachmodell, das unter „Offline“ gewählt ist."));
+        prompt.Controls.Add(_promptGeminiCard = ModelCard(_promptModel, "Gemini-Modell", "Gilt, wenn Texte über Gemini bearbeitet werden "
+            + "(Allgemein → Anbieter). Auf diesem PC arbeitet das Sprachmodell, das unter „Offline“ gewählt ist."));
+        _promptModelOpenAi = ModelChoice(Core.OpenAiModels.Prompt, settings.OpenAiPromptModel);
+        prompt.Controls.Add(_promptOpenAiCard = ModelCard(_promptModelOpenAi, "OpenAI-Modell", "Gilt, wenn Texte über OpenAI bearbeitet werden."));
         prompt.Controls.Add(Section("Anweisungen"));
         prompt.Controls.Add(Wrap("Der Systemprompt für Dictate Prompt. Gilt immer: beim Bearbeiten einer Markierung, bei neuen Texten "
             + "und bei den Schnellanweisungen, online und offline. Hier hinein gehören feste Regeln wie Ton, Rechtschreibung oder "
@@ -373,7 +390,7 @@ internal sealed class SettingsForm : Form
         {
             UpdateMode();
             // Switching to online shows the key field: say right away whether the stored key works.
-            if (_onlineMode.Checked && IsHandleCreated && _apiKey.Text.Trim().Length > 0) _ = CheckKeyAsync();
+            if (_onlineMode.Checked && IsHandleCreated) CheckVisibleKeys();
         };
 
         // ================= page: Info =================
@@ -451,14 +468,15 @@ internal sealed class SettingsForm : Form
         ShowPage(General);
         Shown += (_, _) =>
         {
-            (string.IsNullOrEmpty(_apiKey.Text) && _onlineMode.Checked ? (Control)_apiKey : save).Focus();
-            if (_onlineMode.Checked && _apiKey.Text.Trim().Length > 0) _ = CheckKeyAsync();
+            var emptyKey = new[] { _geminiKey, _openAiKey }.FirstOrDefault(k => k.Card.Visible && k.Value.Length == 0);
+            (emptyKey != null && _onlineMode.Checked ? (Control)emptyKey.Box : save).Focus();
+            if (_onlineMode.Checked) CheckVisibleKeys();
         };
 
         // Any edit: show the "not saved" hint next to the buttons.
         var dirtyTimer = new System.Windows.Forms.Timer { Interval = 400 };
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would flicker the hint.
-        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel };
+        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi };
         dirtyTimer.Tick += (_, _) =>
         {
             if (combos.Any(c => c.DroppedDown)) return;
@@ -475,8 +493,8 @@ internal sealed class SettingsForm : Form
         {
             Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             dirtyTimer.Dispose();
-            _keyDebounce.Dispose();
-            _keyCheck?.Cancel();
+            _geminiKey.Dispose();
+            _openAiKey.Dispose();
             StopMicTest();
             _meterTimer.Dispose();
             _sampleMenu.Dispose();
@@ -739,17 +757,18 @@ internal sealed class SettingsForm : Form
 
     private static FluentCombo ModelChoice(IReadOnlyList<Core.GeminiModel> models, string selected)
     {
-        var combo = new FluentCombo { Width = ComboWidth, AccessibleName = "Gemini-Modell" };
+        var combo = new FluentCombo { Width = ComboWidth };
         foreach (var m in models) combo.Items.Add(new ModelItem(m));
         combo.SelectedItem = combo.Items.Cast<ModelItem>().FirstOrDefault(i => i.Model.Id == selected) ?? combo.Items[0];
         return combo;
     }
 
-    /// <summary>Card "Gemini-Modell" with the chosen model's one-line description under the title.</summary>
-    private Card ModelCard(FluentCombo combo, string note)
+    /// <summary>Model card ("Gemini-Modell" / "OpenAI-Modell") with the chosen model's one-line description under the title.</summary>
+    private Card ModelCard(FluentCombo combo, string title, string note)
     {
+        combo.AccessibleName = title;
         var card = new Card();
-        card.AddRow(SettingRow("Gemini-Modell", "", combo, ComboWidth, out var description));
+        card.AddRow(SettingRow(title, "", combo, ComboWidth, out var description));
         void Describe() => description.Text = ((ModelItem)combo.SelectedItem!).Model.Description;
         combo.SelectedIndexChanged += (_, _) => Describe();
         Describe();
@@ -935,42 +954,122 @@ internal sealed class SettingsForm : Form
 
     // ---------------- API key ----------------
 
-    private async Task CheckKeyAsync()
+    private void CheckVisibleKeys()
     {
-        _keyCheck?.Cancel();
-        var cts = _keyCheck = new CancellationTokenSource();
-        string key = _apiKey.Text.Trim();
-        if (key.Length == 0)
+        foreach (var key in new[] { _geminiKey, _openAiKey })
+            if (key.Card.Visible && key.Value.Length > 0) _ = key.CheckAsync();
+    }
+
+    /// <summary>One API key: the field, Anzeigen / Prüfen, and a check that runs while the key is pasted.</summary>
+    private sealed class KeyField : IDisposable
+    {
+        public TextBox Box { get; }
+        public ThemedLabel Status { get; } = new() { AutoSize = true, Margin = new Padding(0, 4, 0, 0), Text = "" };
+        public Control Section { get; set; } = null!;
+        public Card Card { get; set; } = null!;
+        public string Value => Box.Text.Trim();
+
+        private readonly Func<string, CancellationToken, Task<Core.KeyCheck>> _check;
+        private readonly Func<Core.KeyCheck, (string Text, Tone Tone)> _message;
+        private readonly System.Windows.Forms.Timer _debounce = new() { Interval = 700 };
+        private CancellationTokenSource? _cts;
+
+        public KeyField(string value, Func<string, CancellationToken, Task<Core.KeyCheck>> check,
+            Func<Core.KeyCheck, (string Text, Tone Tone)> message)
         {
-            SetKeyStatus("", Tone.Secondary);
-            return;
+            _check = check;
+            _message = message;
+            Box = new TextBox { UseSystemPasswordChar = true, Text = value };
+            // Pasting a key is the moment to know whether it works, not after Speichern.
+            Box.TextChanged += (_, _) =>
+            {
+                SetStatus("", Tone.Secondary);
+                _debounce.Stop();
+                if (Value.Length >= 20) _debounce.Start();
+            };
+            _debounce.Tick += (_, _) => { _debounce.Stop(); _ = CheckAsync(); };
         }
-        SetKeyStatus("Wird geprüft …", Tone.Secondary);
-        Core.KeyCheck result;
-        try { result = await _gemini.CheckKeyAsync(key, cts.Token); }
-        catch (OperationCanceledException) { return; }
-        catch (Exception e)
+
+        public async Task CheckAsync()
         {
-            Core.Log.Error($"Key check failed: {e.GetType().Name}");
-            result = Core.KeyCheck.Other;
+            _cts?.Cancel();
+            var cts = _cts = new CancellationTokenSource();
+            string key = Value;
+            if (key.Length == 0)
+            {
+                SetStatus("", Tone.Secondary);
+                return;
+            }
+            SetStatus("Wird geprüft …", Tone.Secondary);
+            Core.KeyCheck result;
+            try { result = await _check(key, cts.Token); }
+            catch (OperationCanceledException) { return; }
+            catch (Exception e)
+            {
+                Core.Log.Error($"Key check failed: {e.GetType().Name}");
+                result = Core.KeyCheck.Other;
+            }
+            if (cts.IsCancellationRequested || Box.IsDisposed) return;
+            var (text, tone) = _message(result);
+            SetStatus(text, tone);
         }
-        if (cts.IsCancellationRequested || IsDisposed) return;
-        switch (result)
+
+        private void SetStatus(string text, Tone tone)
         {
-            case Core.KeyCheck.Ok: SetKeyStatus("✓ Schlüssel funktioniert", Tone.Good); break;
-            case Core.KeyCheck.Invalid: SetKeyStatus("✗ Google kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad); break;
-            case Core.KeyCheck.Forbidden: SetKeyStatus("✗ Google kennt den Schlüssel, lässt ihn aber nicht an Gemini. In Google AI Studio einen neuen Schlüssel erstellen.", Tone.Bad); break;
-            case Core.KeyCheck.NoConnection: SetKeyStatus("Keine Verbindung zu Google. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution); break;
-            default: SetKeyStatus("Google hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution); break;
+            Status.Text = text;
+            Status.Tone = tone;
+            Status.Visible = text.Length > 0;
+        }
+
+        public void Dispose()
+        {
+            _debounce.Dispose();
+            _cts?.Cancel();
         }
     }
 
-    private void SetKeyStatus(string text, Tone tone)
+    private void AddKeyCard(Control page, KeyField key, string title, string note, string linkText, string url)
     {
-        _keyStatus.Text = text;
-        _keyStatus.Tone = tone;
-        _keyStatus.Visible = text.Length > 0;
+        key.Section = Section(title);
+        page.Controls.Add(key.Section);
+        key.Box.AccessibleName = title;
+        var show = new FluentButton("Anzeigen") { MinimumSize = new Size(100, 32) };
+        show.Click += (_, _) =>
+        {
+            key.Box.UseSystemPasswordChar = !key.Box.UseSystemPasswordChar;
+            show.Text = key.Box.UseSystemPasswordChar ? "Anzeigen" : "Verbergen";
+        };
+        var check = new FluentButton("Prüfen") { MinimumSize = new Size(100, 32) };
+        check.Click += (_, _) => _ = key.CheckAsync();
+        var block = Block();
+        block.Controls.Add(Row(new FieldFrame(key.Box), show, check));
+        Fit(key.Status, 2 * RowPadding);
+        block.Controls.Add(key.Status);
+        block.Controls.Add(Wrap(note, 2 * RowPadding, small: true));
+        var link = new LinkLabel { Text = linkText, AutoSize = true, Margin = new Padding(0, 2, 0, 0) };
+        link.LinkClicked += (_, _) => OpenUrl(url);
+        block.Controls.Add(link);
+        key.Card = new Card();
+        key.Card.AddRow(block);
+        page.Controls.Add(key.Card);
     }
+
+    private sealed record EngineItem(Core.Engine Engine, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private static FluentCombo EngineChoice(Core.Engine selected, string name, string localLabel)
+    {
+        var combo = new FluentCombo { Width = ComboWidth, AccessibleName = name };
+        combo.Items.Add(new EngineItem(Core.Engine.Gemini, "Gemini (Google)"));
+        combo.Items.Add(new EngineItem(Core.Engine.OpenAI, "OpenAI"));
+        combo.Items.Add(new EngineItem(Core.Engine.Local, localLabel));
+        combo.SelectedItem = combo.Items.Cast<EngineItem>().First(i => i.Engine == selected);
+        return combo;
+    }
+
+    private static Core.Engine SelectedEngine(FluentCombo combo) => ((EngineItem)combo.SelectedItem!).Engine;
 
     // ---------------- microphone ----------------
 
@@ -1060,10 +1159,22 @@ internal sealed class SettingsForm : Form
     private void UpdateMode()
     {
         SuspendLayout();
-        foreach (var c in _onlineOnly) c.Visible = _onlineMode.Checked;
-        foreach (var c in _offlineOnly) c.Visible = _offlineMode.Checked;
+        bool online = _onlineMode.Checked;
+        var engines = online ? new[] { SelectedEngine(_speechEngine), SelectedEngine(_textEngine) } : new[] { Core.Engine.Local };
+        foreach (var c in _engineOnly) c.Visible = online;
+        _geminiKey.Section.Visible = _geminiKey.Card.Visible = engines.Contains(Core.Engine.Gemini);
+        _openAiKey.Section.Visible = _openAiKey.Card.Visible = engines.Contains(Core.Engine.OpenAI);
+        foreach (var c in _offlineOnly) c.Visible = engines.Contains(Core.Engine.Local);
+        bool openAiSpeech = online && SelectedEngine(_speechEngine) == Core.Engine.OpenAI;
+        bool openAiText = online && SelectedEngine(_textEngine) == Core.Engine.OpenAI;
+        (_dictateGeminiCard.Visible, _dictateOpenAiCard.Visible) = (!openAiSpeech, openAiSpeech);
+        (_promptGeminiCard.Visible, _promptOpenAiCard.Visible) = (!openAiText, openAiText);
         _offlineState.Text = _offlineMode.Checked
             ? "Der Offline-Modus ist an: Aufnahmen und Texte bleiben auf diesem PC. Beides muss einmal geladen sein."
+            : SelectedEngine(_speechEngine) == Core.Engine.Local && SelectedEngine(_textEngine) != Core.Engine.Local
+                ? "Die Spracherkennung läuft auf diesem PC, Texte gehen online. Nur die Spracherkennung muss geladen sein."
+            : SelectedEngine(_textEngine) == Core.Engine.Local && SelectedEngine(_speechEngine) != Core.Engine.Local
+                ? "Texte werden auf diesem PC bearbeitet, die Spracherkennung läuft online. Dafür muss das Sprachmodell geladen sein."
             : "Der Offline-Modus ist aus (umschalten unter Allgemein → Arbeitsweise). Laden geht schon vorher.";
         ResumeLayout(true);
     }
@@ -1218,7 +1329,9 @@ internal sealed class SettingsForm : Form
     /// <summary>Everything the user can change, as one string: equal = nothing to save. The mode comes first (see SyncOfflineFromTray).</summary>
     private string Snapshot() => string.Join("\u0001", new[]
     {
-        _onlineMode.Checked.ToString(), SelectedLlmChoice.Id, _apiKey.Text.Trim(), SelectedMicrophone,
+        _onlineMode.Checked.ToString(), SelectedLlmChoice.Id, _geminiKey.Value, _openAiKey.Value, SelectedMicrophone,
+        SelectedEngine(_speechEngine).ToString(), SelectedEngine(_textEngine).ToString(),
+        SelectedModel(_dictateModelOpenAi), SelectedModel(_promptModelOpenAi),
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
@@ -1298,10 +1411,16 @@ internal sealed class SettingsForm : Form
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
             _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
-            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds);
+            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
+            _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
-        _settings.ApiKey = _apiKey.Text.Trim();
+        _settings.ApiKey = _geminiKey.Value;
+        _settings.OpenAiKey = _openAiKey.Value;
+        _settings.SpeechEngine = SelectedEngine(_speechEngine);
+        _settings.TextEngine = SelectedEngine(_textEngine);
+        _settings.OpenAiTranscriptionModel = SelectedModel(_dictateModelOpenAi);
+        _settings.OpenAiPromptModel = SelectedModel(_promptModelOpenAi);
         _settings.Microphone = SelectedMicrophone;
         _settings.DictateHotkey = parsed[0].ToString();
         _settings.PromptHotkey = parsed[1].ToString();
@@ -1326,7 +1445,8 @@ internal sealed class SettingsForm : Form
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
                 _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
                 _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
-                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds) = before;
+                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
+            _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel) = before;
             Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
             return false;
         }
@@ -1335,7 +1455,7 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel})");
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;
         _savedHintUntil = Environment.TickCount64 + 3000;

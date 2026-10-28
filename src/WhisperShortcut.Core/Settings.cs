@@ -51,6 +51,35 @@ public sealed class Settings
     /// <summary>Gemini API key (plain in memory, protected on disk). Read at call time by GeminiClient.</summary>
     public string ApiKey { get; set; } = "";
 
+    /// <summary>OpenAI API key (plain in memory, protected on disk). Read at call time by OpenAiClient.</summary>
+    public string OpenAiKey { get; set; } = "";
+
+    /// <summary>Where speech recognition (Dictate) runs. Use <see cref="EffectiveSpeechEngine"/> to decide.</summary>
+    public Engine SpeechEngine { get; set; } = Engine.Gemini;
+
+    /// <summary>Where text processing (Dictate Prompt) runs. Use <see cref="EffectiveTextEngine"/> to decide.</summary>
+    public Engine TextEngine { get; set; } = Engine.Gemini;
+
+    /// <summary>OpenAI transcription model id.</summary>
+    public string OpenAiTranscriptionModel { get; set; } = OpenAiModels.DefaultTranscriptionModel;
+
+    /// <summary>OpenAI Dictate Prompt model id.</summary>
+    public string OpenAiPromptModel { get; set; } = OpenAiModels.DefaultPromptModel;
+
+    /// <summary>
+    /// The speech engine actually used. <see cref="OfflineMode"/> is the tray's "nothing leaves this PC"
+    /// switch and overrides the choice with <see cref="Engine.Local"/>. Not persisted.
+    /// </summary>
+    [JsonIgnore]
+    public Engine EffectiveSpeechEngine => OfflineMode ? Engine.Local : SpeechEngine;
+
+    /// <summary>
+    /// The text engine actually used. <see cref="OfflineMode"/> is the tray's "nothing leaves this PC"
+    /// switch and overrides the choice with <see cref="Engine.Local"/>. Not persisted.
+    /// </summary>
+    [JsonIgnore]
+    public Engine EffectiveTextEngine => OfflineMode ? Engine.Local : TextEngine;
+
     /// <summary>Vocabulary terms that bias transcription spelling.</summary>
     public List<string> Glossary { get; set; } = new();
 
@@ -135,6 +164,15 @@ public sealed class Settings
                 try { s.ApiKey = protector.Unprotect(dto.ApiKeyProtected) ?? ""; }
                 catch { s.ApiKey = ""; }
             }
+            if (!string.IsNullOrEmpty(dto.OpenAiKeyProtected))
+            {
+                try { s.OpenAiKey = protector.Unprotect(dto.OpenAiKeyProtected) ?? ""; }
+                catch { s.OpenAiKey = ""; }
+            }
+            s.SpeechEngine = ParseEngine(dto.SpeechEngine);
+            s.TextEngine = ParseEngine(dto.TextEngine);
+            s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
+            s.OpenAiPromptModel = OpenAiModels.NormalizePrompt(dto.OpenAiPromptModel);
             s.Glossary = dto.Glossary ?? new();
             s.PromptSystemPrompt = dto.PromptSystemPrompt ?? "";
             s.DictateSystemPrompt = CustomOrEmpty(dto.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt);
@@ -163,6 +201,21 @@ public sealed class Settings
         return s;
     }
 
+    // Unknown or missing = Gemini, the engine every old settings file used.
+    private static Engine ParseEngine(string? v) => v?.Trim().ToLowerInvariant() switch
+    {
+        "local" => Engine.Local,
+        "openai" => Engine.OpenAI,
+        _ => Engine.Gemini,
+    };
+
+    private static string EngineName(Engine e) => e switch
+    {
+        Engine.Local => "local",
+        Engine.OpenAI => "openai",
+        _ => "gemini",
+    };
+
     /// <summary>Writes the settings to the path given at <see cref="Load"/>.</summary>
     public void Save()
     {
@@ -172,6 +225,11 @@ public sealed class Settings
         var dto = new Dto
         {
             ApiKeyProtected = ApiKey.Length == 0 ? "" : _protector.Protect(ApiKey),
+            OpenAiKeyProtected = OpenAiKey.Length == 0 ? "" : _protector.Protect(OpenAiKey),
+            SpeechEngine = EngineName(SpeechEngine),
+            TextEngine = EngineName(TextEngine),
+            OpenAiTranscriptionModel = OpenAiTranscriptionModel,
+            OpenAiPromptModel = OpenAiPromptModel,
             Glossary = Glossary,
             PromptSystemPrompt = PromptSystemPrompt,
             DictateSystemPrompt = DictateSystemPrompt,
@@ -197,6 +255,11 @@ public sealed class Settings
     private sealed class Dto
     {
         [JsonPropertyName("apiKeyProtected")] public string? ApiKeyProtected { get; set; }
+        [JsonPropertyName("openAiKeyProtected")] public string? OpenAiKeyProtected { get; set; }
+        [JsonPropertyName("speechEngine")] public string? SpeechEngine { get; set; }
+        [JsonPropertyName("textEngine")] public string? TextEngine { get; set; }
+        [JsonPropertyName("openAiTranscriptionModel")] public string? OpenAiTranscriptionModel { get; set; }
+        [JsonPropertyName("openAiPromptModel")] public string? OpenAiPromptModel { get; set; }
         [JsonPropertyName("glossary")] public List<string>? Glossary { get; set; }
         [JsonPropertyName("promptSystemPrompt")] public string? PromptSystemPrompt { get; set; }
         [JsonPropertyName("dictateSystemPrompt")] public string? DictateSystemPrompt { get; set; }

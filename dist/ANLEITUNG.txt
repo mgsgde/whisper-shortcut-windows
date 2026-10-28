@@ -57,9 +57,13 @@ Die exe nicht „als Administrator ausführen“.
    Taskleiste auswählen“) → WhisperShortcut an.
    Ein Klick auf das Symbol öffnet die Einstellungen (Rechtsklick zeigt das Menü).
    Beim ersten Start öffnen sich die Einstellungen von selbst.
-4. Arbeitsweise wählen: „Online mit Gemini“ (schnell, braucht den Schlüssel) oder „Offline auf
-   diesem PC“ (für Patientendaten, siehe unten). Online: Gemini-API-Schlüssel eintragen (bekommst
-   du separat von Magnus). Die App prüft ihn sofort: grüner Haken = Schlüssel funktioniert.
+4. Arbeitsweise wählen: „Online“ (schnell, braucht einen Schlüssel) oder „Offline auf diesem PC“
+   (für Patientendaten, siehe unten). Online unter „Anbieter“ wählen, wer die Spracherkennung und
+   wer das Bearbeiten von Texten übernimmt: Gemini (Google), OpenAI oder dieser PC. Dann den
+   passenden Schlüssel eintragen (Gemini-Schlüssel bekommst du separat von Magnus, ein eigener
+   OpenAI-Schlüssel geht auch). Die App prüft ihn sofort: grüner Haken = Schlüssel funktioniert.
+   Wenig Platz auf der Festplatte: Spracherkennung „Auf diesem PC“ (klein, sehr schnell) und
+   Texte online, dann muss das große Sprachmodell nicht geladen werden.
    Solange das Einstellungsfenster im Vordergrund ist, sind die Tastenkürzel aus.
 5. Mikrofon: Unter „Mikrofon“ das Gerät wählen (Headset ist am besten, sonst „Windows-Standard“)
    und auf „Testen“ klicken: Beim Sprechen muss der grüne Balken ausschlagen. Bleibt er leer:
@@ -98,10 +102,11 @@ Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit un
   „Automatisch einfügen“ aus: Der Text liegt nur in der Zwischenablage (Hinweis „In der
   Zwischenablage“) und wird mit Strg+V selbst eingefügt. „Zwischenablage wiederherstellen“: nach
   dem Einfügen kommt zurück, was vorher in der Zwischenablage war.
-- Diktieren: Tastenkürzel, Gemini-Modell und Systemprompt fürs Diktieren (online). Der
+- Diktieren: Tastenkürzel, Modell (Gemini oder OpenAI, je nach Anbieter) und Systemprompt fürs
+  Diktieren (nur Gemini). Der
   Systemprompt sagt, wie transkribiert wird; Namen und Fachwörter gehören ins Glossar.
   „Standard wiederherstellen“ setzt ihn zurück.
-- Dictate Prompt: Tastenkürzel, Gemini-Modell, „Anweisungen“ (der Systemprompt; gilt immer, auch
+- Dictate Prompt: Tastenkürzel, Modell (Gemini oder OpenAI), „Anweisungen“ (der Systemprompt; gilt immer, auch
   für Markierungen und Schnellanweisungen, online und offline: hier gehören feste Regeln hin wie
   Ton oder „nichts erfinden“), die Vorlage für neue Texte und die fünf Schnellanweisungen für Strg+1 bis Strg+5
   (z. B. „Als Arztbrief formulieren“; „Vorschläge wiederherstellen“ setzt sie zurück).
@@ -127,8 +132,8 @@ nur während einer Aufnahme.
 
 Gut zu wissen
 -------------
-- Online wird Sprache zur Erkennung an Google Gemini geschickt (bezahlte API, keine Nutzung zum
-  Training). Für Patientendaten oder andere besonders geschützte Daten den Offline-Modus nehmen.
+- Online geht die Sprache zur Erkennung an den gewählten Anbieter, Google Gemini oder OpenAI
+  (bezahlte API, keine Nutzung zum Training). Für Patientendaten oder andere besonders geschützte Daten den Offline-Modus nehmen.
 - Programme, die als Administrator laufen, nehmen keinen eingefügten Text an. Der Text liegt
   dann in der Zwischenablage: Strg+V.
 - Diktate enden automatisch nach 30 Minuten, „Text bearbeiten“ nach 5 Minuten. Eine Minute

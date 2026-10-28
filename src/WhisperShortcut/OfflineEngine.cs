@@ -151,10 +151,10 @@ internal sealed class OfflineEngine : IDisposable
 
     // ---------------- inference ----------------
 
-    /// <summary>Loads Parakeet in the background (app start in offline mode), so the first dictation does not wait 3 s.</summary>
+    /// <summary>Loads Parakeet in the background (app start with local speech recognition), so the first dictation does not wait 3 s.</summary>
     public void Prewarm()
     {
-        if (!_settings.OfflineMode || !SpeechInstalled) return;
+        if (_settings.EffectiveSpeechEngine != Core.Engine.Local || !SpeechInstalled) return;
         _ = Task.Run(async () =>
         {
             try { await LoadParakeetAsync().ConfigureAwait(false); }
