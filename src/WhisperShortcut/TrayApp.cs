@@ -1031,8 +1031,9 @@ internal sealed class TrayApp : ApplicationContext
         var marker = Path.Combine(Core.AppData.SettingsFolder, "tray-hint-shown");
         if (File.Exists(marker)) return;
         Notify("WhisperShortcut läuft weiter",
-            "Die Kürzel funktionieren auch bei geschlossenem Fenster. Das Symbol ist unten rechts in der Taskleiste, "
-            + "oft hinter dem Pfeil ^. Dort anheften, dann bleibt es sichtbar. Beenden: Rechtsklick auf das Symbol.",
+            // Windows shows four lines of a balloon; longer text is cut off.
+            "Die Kürzel gehen auch bei geschlossenem Fenster. Das Symbol ist unten rechts, "
+            + "oft hinter dem Pfeil ^. Beenden: Rechtsklick auf das Symbol.",
             ToolTipIcon.Info);
         try { File.WriteAllText(marker, DateTime.UtcNow.ToString("O")); }
         catch (Exception e) { Core.Log.Error("Writing tray hint marker failed", e); }
