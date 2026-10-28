@@ -32,6 +32,12 @@ internal static class Program
         }
 
         UpdateInstaller.CleanupAfterStart();
+        int feedArg = Array.IndexOf(args, "--update-feed");
+        if (feedArg >= 0 && feedArg + 1 < args.Length)
+        {
+            Core.UpdateCheck.ApiUrl = args[feedArg + 1];
+            Core.Log.Info($"Update feed override {Core.UpdateCheck.ApiUrl}");
+        }
 
         string? testWav = TestWavPath(args);
         bool fakeGemini = args.Contains("--fake-gemini");

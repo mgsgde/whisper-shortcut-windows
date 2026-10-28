@@ -74,6 +74,10 @@ Die exe nicht „als Administrator ausführen“.
 6. Test: Notepad öffnen, Strg+Umschalt+D, einen Satz sagen, Strg+Umschalt+D.
 7. Die App startet ab jetzt automatisch mit Windows (abschaltbar in den Einstellungen unter
    „Start“). Wird die exe später verschoben, einmal von Hand starten, dann stimmt es wieder.
+8. Updates: Gibt es eine neue Version, erscheint unten rechts ein Hinweis (auch im Menü des
+   Symbols). Ein Klick zeigt, was neu ist; erst „Jetzt installieren“ lädt sie, prüft die
+   Signatur und startet die App neu. Einstellungen und Schlüssel bleiben. Liegt die exe unter
+   C:\Program Files, fragt Windows dabei nach einem Administrator. Abschaltbar unter Info.
 
 Offline-Modus (nichts verlässt den PC)
 --------------------------------------

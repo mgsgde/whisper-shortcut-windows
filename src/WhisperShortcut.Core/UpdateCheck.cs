@@ -20,6 +20,9 @@ public static class UpdateCheck
     /// <summary>GitHub API: latest published (non-draft, non-prerelease) release.</summary>
     public const string LatestReleaseApi = "https://api.github.com/repos/mgsgde/whisper-shortcut-windows/releases/latest";
 
+    /// <summary>Where <see cref="CheckAsync"/> asks; <c>--update-feed &lt;url&gt;</c> points it at a local test release (VM loop).</summary>
+    public static string ApiUrl { get; set; } = LatestReleaseApi;
+
     /// <summary>Page to send the user to.</summary>
     public const string ReleasesPage = "https://github.com/mgsgde/whisper-shortcut-windows/releases/latest";
 
@@ -100,7 +103,7 @@ public static class UpdateCheck
     /// </summary>
     public static async Task<UpdateInfo?> CheckAsync(HttpClient http, CancellationToken ct)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Get, LatestReleaseApi);
+        using var request = new HttpRequestMessage(HttpMethod.Get, ApiUrl);
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("WhisperShortcut-Windows", null));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         using var response = await http.SendAsync(request, ct);

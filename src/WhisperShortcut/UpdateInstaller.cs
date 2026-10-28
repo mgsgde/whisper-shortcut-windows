@@ -29,9 +29,9 @@ internal static class UpdateInstaller
 
     /// <summary>
     /// Runs the staged exe as installer (elevated if needed), then starts the new version.
-    /// True: the caller must exit the app now.
+    /// True: the caller must exit the app now. Awaited, not blocking: the admin prompt can stay open for minutes.
     /// </summary>
-    public static bool Apply(string stagedExe)
+    public static async Task<bool> ApplyAsync(string stagedExe)
     {
         try
         {
@@ -46,7 +46,11 @@ internal static class UpdateInstaller
             if (elevate) psi.Verb = "runas";
             using var p = Process.Start(psi);
             if (p == null) { Core.Log.Error("Update: installer did not start"); return false; }
-            if (!p.WaitForExit(60_000)) { Core.Log.Error("Update: installer timed out"); return false; }
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(5)))
+            {
+                try { await p.WaitForExitAsync(timeout.Token); }
+                catch (OperationCanceledException) { Core.Log.Error("Update: installer timed out"); return false; }
+            }
             if (p.ExitCode != 0) { Core.Log.Error($"Update: installer exit code {p.ExitCode}"); return false; }
 
             Core.Log.Info("Update: installed, restarting");
