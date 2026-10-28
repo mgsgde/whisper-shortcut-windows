@@ -118,6 +118,8 @@ Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit un
   einsetzen“ gibt es eine Praxis-Vorlage (Anamnese, Befund, Therapie, Briefe in Sie-Form), eine
   Werkstatt-Vorlage (Auftragsbericht) und eine Handwerks-Vorlage (Angebot). Am besten
   mit 1–2 echten Texten des Nutzers anpassen (Praxisname, Stundensatz, Zahlungsbedingungen).
+- Frühere Fassungen: Unter den Prompts und der Vorlage erscheint „Frühere
+  Fassungen ▾“, sobald ein eigener Text ersetzt wurde: die letzten 10, ein Klick setzt einen wieder ein.
 - Glossar: Tastenkürzel und die Liste der Namen, Fachbegriffe, Firmennamen (eine Zeile pro
   Begriff), damit sie richtig geschrieben werden. Strg+Umschalt+K fügt ein markiertes Wort
   direkt hinzu.
