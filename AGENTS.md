@@ -31,7 +31,7 @@ stupide Tätigkeiten wie Typing: Grok oder Sonnet“.
 - **Enforced:** the user-level hook `~/.claude/hooks/typing-guard.py` refuses Edit/Write/sed/heredoc
   on code files in this repo from the main session; subagents pass. For UI work or Magnus's
   „mach das selbst“ the deny message names the 3-hour override; say in the report that it was used.
-- `grok-build` (on PATH, `~/.local/bin`) is sabaki's `scripts/grok-build.sh`: 8 runs a day across all
+- `grok-build` (on PATH, `~/.local/bin`) is sabaki's `scripts/grok-build.sh`: 16 runs a day across all
   repos, `grok-build --status` shows the count, log in `~/.cache/sabaki/grok-runs.tsv`.
 - Briefs from `docs/grok-brief-template.md`. Review gate is the diff plus the verbatim
   `dotnet test` summary, not a glance.
