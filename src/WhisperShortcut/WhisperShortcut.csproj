@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Shown in the settings window and compared with the latest GitHub release: keep in step with the git tag. -->
-    <Version>0.4.1</Version>
+    <Version>0.5.0</Version>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- sherpa-onnx ships native DLLs (onnxruntime, sherpa-onnx-c-api); a single-file exe must carry them. -->
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
