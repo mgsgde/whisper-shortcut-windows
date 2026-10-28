@@ -54,6 +54,8 @@ internal sealed class SettingsForm : Form
     private readonly TextBox _template;
     private readonly TextBox[] _quick = new TextBox[Core.QuickActionList.Max];
     private readonly ContextMenuStrip _sampleMenu;
+    private readonly Core.PromptHistory _history = Core.PromptHistory.Load(Core.PromptHistory.DefaultPath);
+    private readonly HistoryLink _dictateHistory, _promptHistory, _templateHistory;
     private readonly ThemedLabel _dirty;
     private readonly List<(Label Label, int Inset)> _wraps = new();
     private readonly List<NavItem> _nav = new();
@@ -260,7 +262,8 @@ internal sealed class SettingsForm : Form
         dictate.Controls.Add(Wrap("So soll Gemini transkribieren (gilt nur für Gemini): Füllwörter, Satzzeichen, Formatierung. Namen und Fachwörter gehören "
             + "ins Glossar, nicht hierher. Der Standardtext ist englisch; geschrieben wird trotzdem in der gesprochenen Sprache.", 0));
         _dictatePrompt = new PromptEditor(Core.Prompts.DefaultTranscriptionSystemPrompt, settings.DictateSystemPrompt, "Systemprompt Diktieren");
-        dictate.Controls.Add(PromptCard(_dictatePrompt));
+        _dictateHistory = new HistoryLink(_dictatePrompt.Box, _history, Core.PromptField.Dictate);
+        dictate.Controls.Add(PromptCard(_dictatePrompt, _dictateHistory));
 
         // ================= page: Dictate Prompt =================
         var prompt = NewPage(PromptPage, "Text markieren, Kürzel drücken und sagen, was damit passieren soll („freundlicher“, "
@@ -279,7 +282,8 @@ internal sealed class SettingsForm : Form
             + "und bei den Schnellanweisungen, online und offline. Hier hinein gehören feste Regeln wie Ton, Rechtschreibung oder "
             + "„nichts erfinden“.", 0));
         _promptPrompt = new PromptEditor(Core.Prompts.DefaultPromptModeSystemPrompt, settings.PromptModeSystemPrompt, "Anweisungen Dictate Prompt");
-        prompt.Controls.Add(PromptCard(_promptPrompt));
+        _promptHistory = new HistoryLink(_promptPrompt.Box, _history, Core.PromptField.PromptMode);
+        prompt.Controls.Add(PromptCard(_promptPrompt, _promptHistory));
 
         prompt.Controls.Add(Section("Vorlage für neue Texte"));
         prompt.Controls.Add(Wrap("So soll ein Text aussehen, der ohne Markierung geschrieben wird: eine Behandlungsdokumentation, "
@@ -300,8 +304,9 @@ internal sealed class SettingsForm : Form
         samples.Click += (_, _) => { Theme.Menu(_sampleMenu); _sampleMenu.Show(samples, new Point(0, samples.Height)); };
         var templateBlock = Block();
         templateBlock.Controls.Add(new FieldFrame(_template, multiline: true) { Height = 260 });
+        _templateHistory = new HistoryLink(_template, _history, Core.PromptField.Template);
         templateBlock.Controls.Add(Row(Wrap("Gilt nur, wenn nichts markiert ist. Regeln, die immer gelten sollen, gehören oben unter Anweisungen.",
-            2 * RowPadding + 180, small: true), samples));
+            2 * RowPadding + 180, small: true), _templateHistory, samples));
         var templateCard = new Card();
         templateCard.AddRow(templateBlock);
         prompt.Controls.Add(templateCard);
@@ -721,7 +726,7 @@ internal sealed class SettingsForm : Form
     {
         var answer = MessageBox.Show(this,
             "Gelöscht werden alle Einstellungen, der API-Schlüssel, das Glossar, die Schnellanweisungen, die Vorlage und die "
-            + "eigenen Prompts, die geladenen Offline-Modelle und das Protokoll. Der Start mit Windows wird abgeschaltet.\n\n"
+            + "eigenen Prompts mit ihren früheren Fassungen, die geladenen Offline-Modelle und das Protokoll. Der Start mit Windows wird abgeschaltet.\n\n"
             + "Danach beendet sich WhisperShortcut. Beim nächsten Start ist es wie neu installiert. Das lässt sich nicht rückgängig machen.",
             "App zurücksetzen und beenden?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
         if (answer != DialogResult.Yes) return;
@@ -790,17 +795,21 @@ internal sealed class SettingsForm : Form
         public override string ToString() => Model.Name;
     }
 
-    private Card PromptCard(PromptEditor editor)
+    private Card PromptCard(PromptEditor editor, HistoryLink history)
     {
         var block = Block();
         block.Controls.Add(new FieldFrame(editor.Box, multiline: true) { Height = 240 });
-        var footer = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
+        var footer = new TableLayoutPanel { ColumnCount = 3, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        footer.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         editor.State.Anchor = AnchorStyles.Left;
+        history.Anchor = AnchorStyles.Right;
+        history.Margin = new Padding(0, 4, 20, 0);
         editor.Reset.Anchor = AnchorStyles.Right;
         footer.Controls.Add(editor.State, 0, 0);
-        footer.Controls.Add(editor.Reset, 1, 0);
+        footer.Controls.Add(history, 1, 0);
+        footer.Controls.Add(editor.Reset, 2, 0);
         block.Controls.Add(footer);
         var card = new Card();
         card.AddRow(block);
@@ -839,6 +848,61 @@ internal sealed class SettingsForm : Form
             bool custom = Value.Length > 0;
             State.Text = custom ? "Eigener Prompt" : Box.Text.Trim().Length == 0 ? "Leer: es gilt der Standard" : "Standard";
             Reset.Enabled = custom || Box.Text.Trim().Length == 0;
+        }
+    }
+
+    /// <summary>
+    /// "Frühere Fassungen ▾" under a prompt field, shown only once that field has history. A pick only fills the
+    /// field; Save keeps it, and the text it replaced goes into the history, so a restore can be undone the same way.
+    /// </summary>
+    private sealed class HistoryLink : LinkLabel
+    {
+        private readonly TextBox _box;
+        private readonly Core.PromptHistory _history;
+        private readonly Core.PromptField _field;
+        private readonly ContextMenuStrip _menu = new() { ShowItemToolTips = true };
+
+        public HistoryLink(TextBox box, Core.PromptHistory history, Core.PromptField field)
+        {
+            (_box, _history, _field) = (box, history, field);
+            Text = "Frühere Fassungen ▾";
+            AutoSize = true;
+            AccessibleName = "Frühere Fassungen von " + box.AccessibleName;
+            LinkClicked += (_, _) => { Theme.Menu(_menu); _menu.Show(this, new Point(0, Height)); };
+            Reload();
+        }
+
+        /// <summary>Rebuilds the menu from the history; hides the link while there is none.</summary>
+        public void Reload()
+        {
+            var versions = _history.Versions(_field);
+            Visible = versions.Count > 0;
+            _menu.Items.Clear();
+            foreach (var v in versions)
+            {
+                var item = new ToolStripMenuItem(Label(v))
+                {
+                    ToolTipText = v.Text.Length > 600 ? v.Text[..600] + " …" : v.Text, AccessibleName = "Fassung bis " + When(v),
+                };
+                var text = v.Text;
+                item.Click += (_, _) => _box.Text = text.ReplaceLineEndings("\r\n");
+                _menu.Items.Add(item);
+            }
+            _menu.Items.Add(new ToolStripSeparator());
+            _menu.Items.Add(new ToolStripMenuItem("Einsetzen ändert nur das Feld. Erst „Speichern“ übernimmt es.") { Enabled = false });
+        }
+
+        /// <summary>"bis 28.10., 14:32 · first line …": until when the text was the saved one.</summary>
+        private static string Label(Core.PromptVersion v)
+        {
+            var first = v.Text.Split('\n').Select(l => l.Trim()).FirstOrDefault(l => l.Length > 0) ?? "";
+            return $"bis {When(v)}  ·  {Core.RecentTexts.Preview(first, 50)}";
+        }
+
+        private static string When(Core.PromptVersion v)
+        {
+            var at = v.ReplacedAt.ToLocalTime();
+            return at.ToString(at.Year == DateTime.Now.Year ? "dd.MM., HH:mm" : "dd.MM.yyyy, HH:mm");
         }
     }
 
@@ -1467,12 +1531,28 @@ internal sealed class SettingsForm : Form
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
         Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel})");
+        RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.PromptSystemPrompt);
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;
         _savedHintUntil = Environment.TickCount64 + 3000;
         UpdateSaveState();
         Saved?.Invoke();
         return true;
+    }
+
+    /// <summary>After a save: the prompt texts that were replaced go into "Frühere Fassungen".</summary>
+    private void RecordPromptHistory(string dictate, string promptMode, string template)
+    {
+        var now = DateTime.UtcNow;
+        bool changed = _history.Record(Core.PromptField.Dictate, dictate, _settings.DictateSystemPrompt, now)
+            | _history.Record(Core.PromptField.PromptMode, promptMode, _settings.PromptModeSystemPrompt, now)
+            | _history.Record(Core.PromptField.Template, template, _settings.PromptSystemPrompt, now);
+        if (!changed) return;
+        try { _history.Save(); }
+        catch (Exception e) { Core.Log.Error($"Saving prompt history failed: {e.GetType().Name}"); }
+        _dictateHistory.Reload();
+        _promptHistory.Reload();
+        _templateHistory.Reload();
     }
 
     /// <summary>The glossary hotkey added a term while this window is open: show it, so Save keeps it.</summary>

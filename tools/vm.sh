@@ -100,7 +100,7 @@ case "$cmd" in
     ;;
   run) run "$@" ;;
   uia)
-    # UI Automation in the VM (tools/uia.ps1): select a radio, invoke a button, list the window's elements.
+    # UI Automation in the VM (tools/uia.ps1): select a radio, invoke a button, focus a field, list the window's elements.
     cp "$(dirname "$0")/uia.ps1" "$SHARE_DIR/uia.ps1"
     prlctl exec "$VM" --current-user powershell -NoProfile -ExecutionPolicy Bypass -File 'Z:\Downloads\wsw-test\uia.ps1' "$@" 2>&1 | tr -d '\r'
     ;;
