@@ -29,12 +29,16 @@ internal static class Sounds
     private static readonly byte[] StopTone = Tone(660, 70);
     private static readonly byte[] ErrorTone = Tone(300, 180);
 
+    /// <summary>Mirrors <c>Settings.Sounds</c>; off = all tones are silent.</summary>
+    public static bool Enabled { get; set; } = true;
+
     public static void Start() => Play(StartTone);
     public static void Stop() => Play(StopTone);
     public static void Error() => Play(ErrorTone);
 
     private static void Play(byte[] wav)
     {
+        if (!Enabled) return;
         try
         {
             var player = new SoundPlayer(new MemoryStream(wav));

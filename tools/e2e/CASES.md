@@ -102,8 +102,8 @@ Pass: when triggered, warning shown and auto-hidden; text still pasted.
 ## G: Glossary
 
 **G1 `[no-wav]` Add selected word**
-Promise: "Wort ins Glossar: ein Wort markieren …, Strg+Umschalt+G."
-Steps: settings backup; Notepad; `$V type "goedde"`; `$V combo ctrl a`; `$V combo ctrl shift g`.
+Promise: "Wort ins Glossar: ein Wort markieren …, Strg+Umschalt+K."
+Steps: settings backup; Notepad; `$V type "goedde"`; `$V combo ctrl a`; `$V combo ctrl shift k`.
 Expect: `Copy: selection 6 chars`, `Glossary add: Added (6 chars)`; `$V run type %APPDATA%\WhisperShortcut\settings.json | findstr /i goedde` finds it; overlay `Done`.
 Pass: Added + persisted.
 
@@ -114,7 +114,7 @@ Pass: both.
 
 **G3 `[no-wav]` Nothing / too much selected**
 Promise: implicit in "ein Wort markieren".
-Steps: (a) empty Notepad, `ctrl shift g`; (b) type 3 lines? (Enter available) or a >max-length string, `ctrl a`, `ctrl shift g`.
+Steps: (a) empty Notepad, `ctrl shift k`; (b) type 3 lines? (Enter available) or a >max-length string, `ctrl a`, `ctrl shift k`.
 Expect: (a) `Glossary add: Empty` + balloon "Nichts markiert"; (b) `Glossary add:` with a non-Added/Duplicate result + "Zu viel markiert".
 Pass: nothing added to settings.json in both.
 
@@ -125,8 +125,8 @@ Expect: Notepad contains "Goedde" (not "Göde"/"Gödde").
 Pass: exact spelling present. Optional baseline: same run before G1 shows a different spelling.
 
 **G5 `[no-wav]` Glossary hotkey while settings open appends to the field**
-Promise: "Strg+Umschalt+G fügt ein markiertes Wort direkt hinzu." (+ code: `AppendGlossaryTerm`)
-Steps: open settings, then focus Notepad (settings goes to background so hotkeys re-register), select a new word, `ctrl shift g`; back to settings, `uia list | grep -i <word>`.
+Promise: "Strg+Umschalt+K fügt ein markiertes Wort direkt hinzu." (+ code: `AppendGlossaryTerm`)
+Steps: open settings, then focus Notepad (settings goes to background so hotkeys re-register), select a new word, `ctrl shift k`; back to settings, `uia list | grep -i <word>`.
 Expect: `Glossary add: Added`; term visible in the glossary textbox; Save keeps it.
 Pass: term in field and in settings.json after Save.
 
@@ -254,7 +254,7 @@ Pass: both.
 5. Switch window mid-processing (`$V focus` another app, e.g. a second Notepad): text goes to the new foreground window; "Letzte Texte" has it.
 6. `hold 5000 ctrl shift d` on the stop press: expect `ClipboardOnlyKeysHeld` after 3 s wait, no stray keystrokes.
 7. Ctrl+1 pressed twice fast during P recording: one `Quick action` line, one paste.
-8. Ctrl+Shift+G while recording: must be refused (error sound), selection copy of the running P not disturbed.
+8. Ctrl+Shift+K while recording: must be refused (error sound), selection copy of the running P not disturbed.
 9. Close settings with unsaved changes via Esc while focus is in a hotkey box: Esc must be recorded as key, window stays.
 10. Type an invalid key, hit Prüfen, then immediately Speichern before the check returns: saved key = what was typed, no crash.
 11. Change hotkey to one already used by Windows/another app (e.g. ctrl shift esc): expect "Tastenkürzel belegt" balloon, old ones still work.
