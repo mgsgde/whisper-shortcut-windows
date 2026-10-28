@@ -29,14 +29,19 @@ while (running)
         else
         {
             var bytes = await File.ReadAllBytesAsync(Path.Combine(root, name));
+            ctx.Response.StatusCode = 200; // before the body: headers go out with the first write
             ctx.Response.ContentLength64 = bytes.Length;
             await ctx.Response.OutputStream.WriteAsync(bytes);
             status = 200;
         }
     }
     catch { status = 500; }
-    ctx.Response.StatusCode = status;
-    ctx.Response.Close();
+    try
+    {
+        if (status != 200) ctx.Response.StatusCode = status;
+        ctx.Response.Close();
+    }
+    catch (Exception) { } // client went away mid-download
     File.AppendAllText(logPath, $"{DateTime.Now:O}\t/{name}\t{status}\n");
 }
 listener.Stop();
