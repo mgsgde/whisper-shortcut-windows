@@ -1,5 +1,5 @@
 ﻿# Drive the settings window from the Mac without clicks: tools/vm.sh uia <action> [name] [index]
-#   select <radio name> | invoke <button name> [index] | list
+#   select <radio name> | invoke <button name> [index] | focus <field name> [index] | list
 param([string]$Action, [string]$Name, [int]$Index = 0)
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
 $root = [System.Windows.Automation.AutomationElement]::RootElement
@@ -17,4 +17,5 @@ if ($hits.Count -le $Index) {
 if ($hits.Count -le $Index) { "not found: $Name"; exit 1 }
 $el = $hits[$Index]
 if ($Action -eq "select") { $el.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select(); "selected $Name" }
+elseif ($Action -eq "focus") { $el.SetFocus(); "focused $Name" }
 elseif ($Action -eq "invoke") { $el.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); "invoked $Name" }
