@@ -813,26 +813,28 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     /// <summary>
-    /// Gemini or OpenAI. Above 2.5 min the recording goes out in ~2-minute pieces, cut in pauses, four at a time:
-    /// one request would hit Gemini's inline size limit and take as long as all of it. A piece that comes
-    /// back as nothing but glossary words (the model filled a quiet stretch with vocabulary) is asked
-    /// again once without the glossary, like the Mac.
+    /// Gemini or OpenAI. Gemini is cut above 2.5 min, OpenAI above 11 min (25 MB upload limit).
+    /// Pieces are cut in pauses, four at a time: one request would hit Gemini's inline size limit
+    /// and take as long as all of it. A piece that comes back as nothing but glossary words (the
+    /// model filled a quiet stretch with vocabulary) is asked again once without the glossary, like the Mac.
     /// </summary>
     private Task<string> TranscribeOnlineAsync(Core.ISpeechProvider speech, byte[] wav, CancellationToken ct)
     {
         var glossary = _settings.Glossary.ToList();
         var echoTerms = Core.GlossaryPrompt.EchoTerms(glossary);
-        return Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.Split(wav), async (chunk, c) =>
-        {
-            // Nothing but room noise: Gemini would answer with the glossary. Also saves the request.
-            if (!HasSpeech(chunk)) return "";
-            var text = await speech.TranscribeAsync(chunk, glossary, c);
-            if (text.Trim().Length == 0
-                || Core.TextCleanup.DiscardGlossaryEcho(text, Core.Wav.DurationSeconds(chunk), echoTerms).Length > 0)
-                return text;
-            Core.Log.Info("Dictate: glossary echo discarded, asking again without the glossary");
-            return await speech.TranscribeAsync(chunk, Array.Empty<string>(), c);
-        }, maxParallel: 4, ct);
+        return Core.ChunkedTranscription.TranscribeAsync(
+            speech is Core.OpenAiClient ? Core.WavChunker.SplitForOpenAi(wav) : Core.WavChunker.Split(wav),
+            async (chunk, c) =>
+            {
+                // Nothing but room noise: Gemini would answer with the glossary. Also saves the request.
+                if (!HasSpeech(chunk)) return "";
+                var text = await speech.TranscribeAsync(chunk, glossary, c);
+                if (text.Trim().Length == 0
+                    || Core.TextCleanup.DiscardGlossaryEcho(text, Core.Wav.DurationSeconds(chunk), echoTerms).Length > 0)
+                    return text;
+                Core.Log.Info("Dictate: glossary echo discarded, asking again without the glossary");
+                return await speech.TranscribeAsync(chunk, Array.Empty<string>(), c);
+            }, maxParallel: 4, ct);
     }
 
     /// <summary>Speech gate for a recording or chunk going to Gemini or OpenAI; the file source of --test-wav passes through here too.</summary>

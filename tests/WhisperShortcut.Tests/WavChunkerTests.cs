@@ -82,6 +82,37 @@ public class WavChunkerTests
         Assert.True(withTail.AsSpan(44).SequenceEqual(concat));
     }
 
+    [Fact]
+    public void OpenAi_FiveMinutes_16kMono_ReturnsTheSameInstance()
+    {
+        var wav = Tone(16000, 1, 5 * 60, null);
+        Assert.Same(wav, Assert.Single(WavChunker.SplitForOpenAi(wav)));
+    }
+
+    [Fact]
+    public void OpenAi_TwentyFiveMinutes_16kMono_SplitsUnderByteCap_AndKeepsPcm()
+    {
+        var wav = Tone(16000, 1, 25 * 60, null);
+        var parts = WavChunker.SplitForOpenAi(wav);
+        Assert.True(parts.Count > 1);
+        foreach (var part in parts)
+            Assert.True(part.Length <= 24_000_000);
+        var pcm = ConcatPcm(parts);
+        Assert.Equal(wav.Length - 44, pcm.Length);
+        Assert.True(wav.AsSpan(44).SequenceEqual(pcm));
+    }
+
+    [Fact]
+    public void OpenAi_ThreeMinutes_48kStereo_SplitsUnderByteCap()
+    {
+        // 192_000 B/s: three minutes is 34.5 MB, over the 24 MB piece cap and under the 11 min time cap.
+        var wav = Tone(48000, 2, 3 * 60, null);
+        var parts = WavChunker.SplitForOpenAi(wav);
+        Assert.True(parts.Count > 1);
+        foreach (var part in parts)
+            Assert.True(part.Length <= 24_000_000);
+    }
+
     private static void AssertRoundTrip(byte[] wav, IReadOnlyList<byte[]> parts)
     {
         foreach (var part in parts)
