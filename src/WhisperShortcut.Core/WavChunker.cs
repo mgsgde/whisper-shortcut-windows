@@ -31,6 +31,37 @@ public static class WavChunker
         Split(wav, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(8), TimeSpan.FromSeconds(40));
 
     /// <summary>
+    /// Longer pieces for OpenAI. audio/transcriptions accepts 25 MB, which at the 16 kHz mono the
+    /// microphone records is 11 minutes: a recording stays one piece up to 660 s and is otherwise
+    /// cut into about 10 min pieces (a pause in the last 30 s). A higher rate is shortened so no
+    /// piece exceeds 24 MB. Gemini keeps <see cref="Split"/>.
+    /// </summary>
+    public static IReadOnlyList<byte[]> SplitForOpenAi(byte[] wav)
+    {
+        const long maxBytes = 24_000_000;
+        var chunkLength = TimeSpan.FromSeconds(600);
+        var searchWindow = TimeSpan.FromSeconds(30);
+        var splitAbove = TimeSpan.FromSeconds(660);
+
+        if (TryParse16(wav, out var sampleRate, out var channels, out _, out _))
+        {
+            var byteRate = (long)sampleRate * channels * 2;
+            // 11 min at this rate would not fit in 24 MB. Keep the piece a minute under the
+            // shortened limit; the pause search stays 30 s and never more than half a piece.
+            if (byteRate > 0 && byteRate * 660 > maxBytes)
+            {
+                splitAbove = TimeSpan.FromTicks(maxBytes * TimeSpan.TicksPerSecond / byteRate);
+                chunkLength = splitAbove - TimeSpan.FromSeconds(60);
+                var halfChunk = TimeSpan.FromTicks(chunkLength.Ticks / 2);
+                if (searchWindow > halfChunk)
+                    searchWindow = halfChunk;
+            }
+        }
+
+        return Split(wav, chunkLength, searchWindow, splitAbove);
+    }
+
+    /// <summary>
     /// Same split with explicit boundaries, so tests can use a short synthetic file.
     /// A recording no longer than <paramref name="splitAbove"/> is returned as the same array:
     /// copying it would only burn memory before a single request.
