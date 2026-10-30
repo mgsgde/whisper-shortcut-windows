@@ -24,15 +24,22 @@ public enum GeminiErrorKind
     Truncated,
 }
 
-/// <summary>Gemini call failed. <see cref="Exception.Message"/> is a German text fit for the user.</summary>
+/// <summary>Gemini (or OpenAI) call failed. <see cref="Exception.Message"/> is a German text fit for the user.</summary>
 public sealed class GeminiException : Exception
 {
-    /// <summary>Creates the exception.</summary>
+    /// <summary>Creates the exception for a Gemini call.</summary>
     public GeminiException(GeminiErrorKind kind, string userMessage, Exception? inner = null)
-        : base(userMessage, inner) => Kind = kind;
+        : this("Gemini", kind, userMessage, inner) { }
+
+    /// <summary>Creates the exception for the named provider ("OpenAI").</summary>
+    public GeminiException(string provider, GeminiErrorKind kind, string userMessage, Exception? inner = null)
+        : base(userMessage, inner) => (Provider, Kind) = (provider, kind);
 
     /// <summary>The error category.</summary>
     public GeminiErrorKind Kind { get; }
+
+    /// <summary>"Gemini" or "OpenAI", for the notification title.</summary>
+    public string Provider { get; }
 }
 
 /// <summary>Result of <see cref="GeminiClient.CheckKeyAsync"/>.</summary>

@@ -433,7 +433,7 @@ internal sealed class SettingsForm : Form
         var cancel = _close = new FluentButton("Schließen") { MinimumSize = new Size(120, 32), TabIndex = 1 };
         // WHY Save keeps the window open: a window that vanished on Save looked like a crash to testers.
         save.Click += (_, _) => TrySave();
-        // "Abbrechen" (with changes) means discard: only the title bar's X asks whether to save.
+        // "Abbrechen" (with changes) means discard: only the title bar's X and Esc ask whether to save.
         cancel.Click += (_, _) => { _discard = true; Close(); };
         _dirty = new ThemedLabel { Text = "Nicht gespeicherte Änderungen", Tone = Tone.Secondary, AutoSize = true, Visible = false, Margin = new Padding(0, 8, 12, 0) };
         var buttons = new FlowLayoutPanel
@@ -455,6 +455,9 @@ internal sealed class SettingsForm : Form
         Controls.Add(nav);
         ResumeLayout(false);
         PerformLayout();
+
+        // The wheel moves the page on over a prompt box at its end and never changes a closed drop-down.
+        WheelToPage.Attach(this);
 
         // Hints wrap at the visible page width, never wider.
         _pageHost.ClientSizeChanged += (_, _) => FitHints();
@@ -728,12 +731,11 @@ internal sealed class SettingsForm : Form
 
     private void ResetApp()
     {
-        var answer = MessageBox.Show(this,
+        if (ChoiceDialog.Ask(this, "App zurücksetzen und beenden?",
             "Gelöscht werden alle Einstellungen, der API-Schlüssel, das Glossar, die Schnellanweisungen, die Vorlage und die "
             + "eigenen Anweisungen mit ihren früheren Fassungen, die geladenen Offline-Modelle und das Protokoll. Der Start mit Windows wird abgeschaltet.\n\n"
             + "Danach beendet sich WhisperShortcut. Beim nächsten Start ist es wie neu installiert. Das lässt sich nicht rückgängig machen.",
-            "App zurücksetzen und beenden?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
-        if (answer != DialogResult.Yes) return;
+            new[] { "Zurücksetzen", "Abbrechen" }, danger: true) != 0) return;
         Core.Log.Info("Settings: reset app");
         StopMicTest();
         // The language model server and the speech model keep files open that the reset has to delete.
@@ -1016,8 +1018,8 @@ internal sealed class SettingsForm : Form
     private void ReplaceTemplate(string text)
     {
         if (_template.Text.Trim().Length > 0 && _template.Text.Trim() != text.Trim()
-            && MessageBox.Show(this, "Die jetzige Vorlage wird ersetzt.", "Vorlage ersetzen?",
-                MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+            && ChoiceDialog.Ask(this, "Vorlage ersetzen?", "Die jetzige Vorlage wird ersetzt.",
+                new[] { "Ersetzen", "Abbrechen" }) != 0) return;
         _template.Text = text.ReplaceLineEndings("\r\n");
     }
 
@@ -1267,8 +1269,8 @@ internal sealed class SettingsForm : Form
 
     private void RemoveModel(Core.OfflineComponent component, string name)
     {
-        if (MessageBox.Show(this, $"{name} wird von diesem PC gelöscht. Für den Offline-Modus muss es danach neu geladen werden.",
-                "Modell entfernen?", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+        if (ChoiceDialog.Ask(this, "Modell entfernen?", $"{name} wird von diesem PC gelöscht. Für den Offline-Modus muss es danach neu geladen werden.",
+                new[] { "Entfernen", "Abbrechen" }, danger: true) != 0) return;
         try { _offline.Delete(component); }
         catch (Exception e)
         {
@@ -1444,10 +1446,13 @@ internal sealed class SettingsForm : Form
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
         if (_discard || e.CloseReason != CloseReason.UserClosing || Snapshot() == _snapshot) return;
-        var answer = MessageBox.Show(this, "Die Änderungen sind noch nicht gespeichert.", "Änderungen speichern?",
-            MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1);
-        if (answer == DialogResult.Cancel) e.Cancel = true;
-        else if (answer == DialogResult.Yes && !TrySave()) e.Cancel = true;
+        switch (ChoiceDialog.Ask(this, "Änderungen speichern?", "Die Änderungen in den Einstellungen sind noch nicht gespeichert.",
+                    new[] { "Speichern", "Verwerfen", "Zurück" }))
+        {
+            case 0: if (!TrySave()) e.Cancel = true; break;
+            case 1: _discard = true; break;
+            default: e.Cancel = true; break;
+        }
     }
 
     /// <summary>Hint next to the buttons and the close button's word: unsaved changes, just saved, or nothing.</summary>

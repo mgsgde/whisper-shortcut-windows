@@ -142,7 +142,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     {
         var key = _apiKey()?.Trim();
         if (string.IsNullOrEmpty(key))
-            throw new GeminiException(GeminiErrorKind.NoKey,
+            throw new GeminiException("OpenAI", GeminiErrorKind.NoKey,
                 "Kein OpenAI-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.");
 
         for (var attempt = 1; ; attempt++)
@@ -181,14 +181,14 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
             catch (OperationCanceledException) when (!ct.IsCancellationRequested)
             {
                 Log.Error($"OpenAI {model}: timeout");
-                failure = new GeminiException(GeminiErrorKind.Timeout,
+                failure = new GeminiException("OpenAI", GeminiErrorKind.Timeout,
                     "Zeitüberschreitung: OpenAI hat nicht rechtzeitig geantwortet. Bitte Internetverbindung prüfen.");
                 kind = "timeout";
             }
             catch (HttpRequestException ex)
             {
                 Log.Error($"OpenAI {model}: network", ex);
-                failure = new GeminiException(GeminiErrorKind.Network,
+                failure = new GeminiException("OpenAI", GeminiErrorKind.Network,
                     "Kein Netz: OpenAI ist nicht erreichbar. Bitte Internetverbindung prüfen.", ex);
                 kind = "network";
             }
@@ -214,15 +214,15 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     private static GeminiException MapStatus(int code, string errorCode)
     {
         if (code == 401)
-            return new GeminiException(GeminiErrorKind.InvalidKey, "OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
+            return new GeminiException("OpenAI", GeminiErrorKind.InvalidKey, "OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
         if (code == 403)
-            return new GeminiException(GeminiErrorKind.InvalidKey,
+            return new GeminiException("OpenAI", GeminiErrorKind.InvalidKey,
                 "Dieser OpenAI-Schlüssel darf das Modell nicht benutzen (Projekt- oder Organisationsrechte prüfen).");
         if (code == 429)
-            return new GeminiException(GeminiErrorKind.Quota, errorCode == "insufficient_quota"
+            return new GeminiException("OpenAI", GeminiErrorKind.Quota, errorCode == "insufficient_quota"
                 ? "OpenAI-Guthaben aufgebraucht. Bitte das Konto unter platform.openai.com prüfen."
                 : "OpenAI ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
-        return new GeminiException(GeminiErrorKind.Server, $"OpenAI-Fehler (HTTP {code}). Bitte später erneut versuchen.");
+        return new GeminiException("OpenAI", GeminiErrorKind.Server, $"OpenAI-Fehler (HTTP {code}). Bitte später erneut versuchen.");
     }
 
     /// <summary>error.code, else error.type, of an OpenAI error body ("insufficient_quota" wins if either has it); "" when absent. Never the message (it can quote content).</summary>
@@ -277,7 +277,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
                 && fr.ValueKind == JsonValueKind.String && fr.GetString() == "length")
             {
                 Log.Error("OpenAI: finish_reason length, reply is cut off");
-                throw new GeminiException(GeminiErrorKind.Truncated,
+                throw new GeminiException("OpenAI", GeminiErrorKind.Truncated,
                     "Die Antwort ist zu lang geworden und wurde abgeschnitten. Bitte einen kleineren Teil markieren.");
             }
             return choice.TryGetProperty("message", out var msg)

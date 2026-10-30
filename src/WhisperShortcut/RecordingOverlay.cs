@@ -152,7 +152,7 @@ internal sealed class RecordingOverlay : Form
         }
         else
         {
-            _context = $"Bearbeitet die Markierung ({selection.Length:N0} Zeichen)";
+            _context = $"Bearbeitet die Markierung ({selection.Length.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("de-DE"))} Zeichen)";
             _contextWarn = false;
             _quickLabel = "Oder direkt auf die Markierung anwenden:";
         }
