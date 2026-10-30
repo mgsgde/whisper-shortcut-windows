@@ -11,7 +11,7 @@ Was es kann
      Die Markierung wird ersetzt.
    - Ohne Markierung: Strg+Umschalt+P, z. B. „Schreib Herrn Meier ein Angebot für zwei
      Heizkörper inklusive Montage, Termin nächste Woche Dienstag“, Strg+Umschalt+P.
-     Ein fertiger Text nach der Vorlage (Einstellungen → Dictate Prompt → Vorlage) wird eingefügt.
+     Ein fertiger Text nach der Vorlage (Einstellungen → Text bearbeiten → Vorlage) wird eingefügt.
    Ein Druck während der Verarbeitung bricht ab.
    - Schnellanweisungen: Während dieser Aufnahme zeigt die Anzeige fünf fertige Anweisungen,
      z. B. „Kürzer fassen“. Strg+1 bis Strg+5 oder ein Klick darauf
@@ -106,11 +106,11 @@ Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit un
   „Automatisch einfügen“ aus: Der Text liegt nur in der Zwischenablage (Hinweis „In der
   Zwischenablage“) und wird mit Strg+V selbst eingefügt. „Zwischenablage wiederherstellen“: nach
   dem Einfügen kommt zurück, was vorher in der Zwischenablage war.
-- Diktieren: Tastenkürzel, Modell (Gemini oder OpenAI, je nach Anbieter) und Systemprompt fürs
-  Diktieren (nur Gemini). Der
-  Systemprompt sagt, wie transkribiert wird; Namen und Fachwörter gehören ins Glossar.
-  „Standard wiederherstellen“ setzt ihn zurück.
-- Dictate Prompt: Tastenkürzel, Modell (Gemini oder OpenAI), „Anweisungen“ (der Systemprompt; gilt immer, auch
+- Diktieren: Tastenkürzel, Modell (Gemini oder OpenAI, je nach Anbieter) und Anweisungen fürs
+  Diktieren (nur Gemini). Die
+  Anweisungen sagen, wie transkribiert wird; Namen und Fachwörter gehören ins Glossar.
+  „Standard wiederherstellen“ setzt sie zurück.
+- Text bearbeiten: Tastenkürzel, Modell (Gemini oder OpenAI), „Anweisungen“ (Grundregeln; gelten immer, auch
   für Markierungen und Schnellanweisungen, online und offline: hier gehören feste Regeln hin wie
   Ton oder „nichts erfinden“), die Vorlage für neue Texte und die fünf Schnellanweisungen für Strg+1 bis Strg+5
   (z. B. „Als Arztbrief formulieren“; „Vorschläge wiederherstellen“ setzt sie zurück).
@@ -118,14 +118,15 @@ Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit un
   einsetzen“ gibt es eine Praxis-Vorlage (Anamnese, Befund, Therapie, Briefe in Sie-Form), eine
   Werkstatt-Vorlage (Auftragsbericht) und eine Handwerks-Vorlage (Angebot). Am besten
   mit 1–2 echten Texten des Nutzers anpassen (Praxisname, Stundensatz, Zahlungsbedingungen).
-- Frühere Fassungen: Unter den Prompts und der Vorlage erscheint „Frühere
+- Frühere Fassungen: Unter den Anweisungen und der Vorlage erscheint „Frühere
   Fassungen ▾“, sobald ein eigener Text ersetzt wurde: die letzten 10, ein Klick setzt einen wieder ein.
 - Glossar: Tastenkürzel und die Liste der Namen, Fachbegriffe, Firmennamen (eine Zeile pro
   Begriff), damit sie richtig geschrieben werden. Strg+Umschalt+K fügt ein markiertes Wort
   direkt hinzu.
 - Offline: Spracherkennung und Sprachmodell laden oder entfernen, Sprachmodell wählen.
 - Info: Version und „Nach Updates suchen“ (fragt GitHub, installiert nichts selbst),
-  Willkommenstour, Daten und Zurücksetzen (App-Datenordner, Protokoll, „App zurücksetzen“ löscht
+  Einführung, Daten und Zurücksetzen (Ordner mit Einstellungen und Glossar, Ordner mit
+  Offline-Modellen und Protokoll, „App zurücksetzen“ löscht
   alles inklusive API-Schlüssel, Glossar und Offline-Modellen und beendet die App).
   „Problem melden“ öffnet ein ausgefülltes GitHub-Issue (Version, Windows, Modelle, letzte
   Protokollzeilen, keine diktierten Texte): oben eintragen, was passiert ist, durchsehen,
