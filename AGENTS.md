@@ -25,10 +25,11 @@ does not have to ask for it. No separate „Soll ich releasen?“: merged and ve
 1. Branch → PR → merge to `main` (tests green, VM check for anything users see).
 2. Bump `<Version>` in `src/WhisperShortcut/WhisperShortcut.csproj` (semver; fixes = patch), commit
    „Version x.y.z“ on `main`, write German release notes (what changes for the user, short).
-3. `tools/release.sh x.y.z <notes.md> --publish` from a clean `main`: tests, both ZIPs (x64, arm64),
+3. `tools/release.sh x.y.z <notes.md> --publish` from a clean `main`: tests, both exes and ZIPs (x64, arm64),
    ECDSA signatures with `~/.config/whispershortcut-windows-update/ecdsa-p256-private.pem`. Never
    publish a ZIP without its `.sig`; never lose or commit that key.
-4. Verify: `gh release view vx.y.z` lists both ZIPs, both `.sig`, `ANLEITUNG.txt`; in the VM the
+4. Verify: `gh release view vx.y.z` lists both exes, both ZIPs, all four `.sig`, `ANLEITUNG.txt` (the exe is the
+   download, the ZIP is what installed updaters fetch); in the VM the
    previous version finds and installs the update (`tools/vm.sh`).
 5. Report the release link to Magnus. Testers (e.g. Christoph) get it through the in-app update.
 

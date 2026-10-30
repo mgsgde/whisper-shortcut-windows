@@ -19,7 +19,15 @@ sprechen, der Text steht dort, wo der Cursor blinkt. Läuft als Symbol im Infobe
 ## Download
 
 Fertige Builds unter [Releases](https://github.com/mgsgde/whisper-shortcut-windows/releases/latest).
-Für die meisten PCs `WhisperShortcut-Windows-x64.zip`. Einrichtung steht in [`dist/ANLEITUNG.txt`](dist/ANLEITUNG.txt).
+Für die meisten PCs `WhisperShortcut-Windows-x64.exe`, für Windows auf ARM `-arm64.exe`. Keine Installation, kein Entpacken:
+
+1. Rechtsklick auf die exe → Eigenschaften → „Zulassen“ ankreuzen → OK.
+2. In einen festen Ordner legen, z. B. `%LOCALAPPDATA%\Programs\WhisperShortcut\`, und doppelklicken.
+   Meldet Windows „Der Computer wurde durch Windows geschützt“: „Weitere Informationen“ → „Trotzdem ausführen“
+   (die App ist noch nicht signiert).
+3. Im Windows-Konto des Nutzers starten, nicht als Administrator. Beim ersten Start öffnen sich die Einstellungen.
+
+Updates kommen danach über die App selbst. Ausführliche Einrichtung: [`dist/ANLEITUNG.txt`](dist/ANLEITUNG.txt).
 
 ## Bauen
 
@@ -30,8 +38,9 @@ dotnet test tests/WhisperShortcut.Tests
 dotnet publish src/WhisperShortcut -c Release -r win-x64 --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true
 ```
 
-Release: `tools/release.sh <version> <notes.md>` testet, baut beide ZIPs (x64, arm64) und signiert sie mit dem
-privaten Schlüssel. Jede ZIP braucht ihre `.sig`-Datei, sonst lehnen installierte Apps das Update ab.
+Release: `tools/release.sh <version> <notes.md>` testet, baut beide exe und ZIPs (x64, arm64) und signiert sie mit dem
+privaten Schlüssel. Die exe ist der Download, die ZIP holt sich das Update in der App. Jede ZIP braucht ihre
+`.sig`-Datei, sonst lehnen installierte Apps das Update ab.
 
 Für Windows auf ARM `-r win-arm64`. `tools/vm.sh` steuert eine Parallels-Windows-VM vom Mac aus
 (Tastenkürzel, Screenshots, Protokoll) für Tests ohne echten PC.
