@@ -48,8 +48,8 @@ internal static class UpdateInstaller
             // which can take minutes (someone with an admin account has to come over). No timeout for that.
             using var p = await Task.Run(() => Process.Start(psi));
             if (p == null) { Core.Log.Error("Update: installer did not start"); return false; }
-            // The swap itself takes seconds; a minute means something hangs.
-            using (var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(1)))
+            // Starting the new exe can take minutes while antivirus scans it; the swap itself takes seconds.
+            using (var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(5)))
             {
                 try { await p.WaitForExitAsync(timeout.Token); }
                 catch (OperationCanceledException) { Core.Log.Error("Update: installer timed out"); return false; }
