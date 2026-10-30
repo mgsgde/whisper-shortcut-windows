@@ -23,7 +23,7 @@ public class SettingsTests
 
         s.ApiKey = "abc123SECRET";
         s.Glossary = new() { "Kubernetes", "Müller" };
-        s.PromptSystemPrompt = "Mein Prompt";
+        s.DictatePromptTemplate = "Mein Prompt";
         s.DictateHotkey = "Ctrl+Shift+X";
         s.GlossaryHotkey = "Ctrl+Alt+G";
         s.Save();
@@ -34,7 +34,7 @@ public class SettingsTests
         var t = Settings.Load(path, new Reverse());
         Assert.Equal("abc123SECRET", t.ApiKey);
         Assert.Equal(new[] { "Kubernetes", "Müller" }, t.Glossary);
-        Assert.Equal("Mein Prompt", t.PromptSystemPrompt);
+        Assert.Equal("Mein Prompt", t.DictatePromptTemplate);
         Assert.Equal("Ctrl+Shift+X", t.DictateHotkey);
         Assert.Equal("Ctrl+Alt+G", t.GlossaryHotkey);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
@@ -102,7 +102,31 @@ public class SettingsTests
         var l = Settings.Load(path, new Reverse());
         Assert.Equal("", l.DictateSystemPrompt);
         Assert.Equal("", l.PromptModeSystemPrompt);
-        Assert.Equal("Vorlage", l.PromptSystemPrompt);
+        Assert.Equal("Vorlage", l.DictatePromptTemplate);
+    }
+
+    [Fact]
+    public void Load_ReadsLegacyPromptSystemPrompt()
+    {
+        var path = Tmp();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{\"promptSystemPrompt\":\"Alt\"}");
+        var l = Settings.Load(path, new Reverse());
+        Assert.Equal("Alt", l.DictatePromptTemplate);
+        l.Save();
+        var text = File.ReadAllText(path);
+        Assert.Contains("dictatePromptTemplate", text);
+        Assert.DoesNotContain("\"promptSystemPrompt\"", text);
+    }
+
+    [Fact]
+    public void Load_NewKeyWinsOverLegacy()
+    {
+        var path = Tmp();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{\"dictatePromptTemplate\":\"Neu\",\"promptSystemPrompt\":\"Alt\"}");
+        var l = Settings.Load(path, new Reverse());
+        Assert.Equal("Neu", l.DictatePromptTemplate);
     }
 
     [Fact]

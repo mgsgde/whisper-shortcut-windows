@@ -292,7 +292,7 @@ internal sealed class SettingsForm : Form
         _template = new TextBox
         {
             Multiline = true, AcceptsReturn = true, AcceptsTab = false, ScrollBars = ScrollBars.Vertical, WordWrap = true,
-            Text = (settings.PromptSystemPrompt ?? "").ReplaceLineEndings("\r\n"), AccessibleName = "Vorlage für neue Texte",
+            Text = (settings.DictatePromptTemplate ?? "").ReplaceLineEndings("\r\n"), AccessibleName = "Vorlage für neue Texte",
         };
         var samples = new FluentButton("Beispiel einsetzen ▾");
         _sampleMenu = new ContextMenuStrip();
@@ -1486,7 +1486,7 @@ internal sealed class SettingsForm : Form
 
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
-            _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
+            _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
             _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck);
@@ -1504,7 +1504,7 @@ internal sealed class SettingsForm : Form
         _settings.GlossaryHotkey = parsed[2].ToString();
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
         _settings.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
-        _settings.PromptSystemPrompt = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
+        _settings.DictatePromptTemplate = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
         _settings.TranscriptionModel = SelectedModel(_dictateModel);
         _settings.PromptModel = SelectedModel(_promptModel);
         _settings.DictateSystemPrompt = _dictatePrompt.Value;
@@ -1522,7 +1522,7 @@ internal sealed class SettingsForm : Form
             Core.Log.Error($"Saving settings failed: {e.GetType().Name}");
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
                 _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
-                _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
+                _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck) = before;
@@ -1534,8 +1534,8 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel})");
-        RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.PromptSystemPrompt);
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel})");
+        RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.DictatePromptTemplate);
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;
         _savedHintUntil = Environment.TickCount64 + 3000;
@@ -1550,7 +1550,7 @@ internal sealed class SettingsForm : Form
         var now = DateTime.UtcNow;
         bool changed = _history.Record(Core.PromptField.Dictate, dictate, _settings.DictateSystemPrompt, now)
             | _history.Record(Core.PromptField.PromptMode, promptMode, _settings.PromptModeSystemPrompt, now)
-            | _history.Record(Core.PromptField.Template, template, _settings.PromptSystemPrompt, now);
+            | _history.Record(Core.PromptField.Template, template, _settings.DictatePromptTemplate, now);
         if (!changed) return;
         try { _history.Save(); }
         catch (Exception e) { Core.Log.Error($"Saving prompt history failed: {e.GetType().Name}"); }

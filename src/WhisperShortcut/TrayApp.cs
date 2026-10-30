@@ -84,7 +84,7 @@ internal sealed class TrayApp : ApplicationContext
         bool testRun = testWav != null || fakeGemini;
         if (firstRun)
         {
-            _settings.PromptSystemPrompt = QuoteTemplate.Default;
+            _settings.DictatePromptTemplate = QuoteTemplate.Default;
             TrySave();
             // On by default: otherwise the app is simply gone after the next restart and the user
             // thinks it broke. Off in the settings. Not for test runs, which would autostart a test build.
@@ -658,7 +658,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
 
-        string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt, _settings.PromptSystemPrompt) ?? "";
+        string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt, _settings.DictatePromptTemplate) ?? "";
         if (_quickAction != null) return await QuickActionAsync(_quickAction, wav, seconds, selection, systemPrompt, ct);
 
         if (_fakeGemini)
