@@ -29,24 +29,32 @@ internal static class Microphones
 
     /// <summary>
     /// WinMM device number for a stored name. "" or null = -1 (WAVE_MAPPER, the Windows default,
-    /// not device 0). A name that is no longer present falls back to -1.
+    /// not device 0). A re-enumerated USB name ("2- " inside the parentheses) still resolves when
+    /// it is the only match. A name that is no longer present falls back to -1.
     /// </summary>
     public static int DeviceNumber(string? name)
     {
         if (string.IsNullOrEmpty(name)) return -1;
         try
         {
-            // WinMM truncates product names to 31 chars, so the stored value is that same truncated
-            // name (it came from Names()) and compares equal here.
+            // WinMM keeps 31 characters, and a re-enumerated USB endpoint inserts "N- " after
+            // the opening parenthesis. MicMatch.Find accepts the saved name in either form.
+            var names = new List<string>();
             for (int i = 0; i < WaveInEvent.DeviceCount; i++)
-                if (string.Equals(WaveInEvent.GetCapabilities(i).ProductName, name, StringComparison.Ordinal))
-                    return i;
+                names.Add(WaveInEvent.GetCapabilities(i).ProductName);
+            int index = Core.MicMatch.Find(name, names);
+            if (index >= 0)
+            {
+                if (!string.Equals(names[index], name, StringComparison.Ordinal))
+                    Core.Log.Info($"Mic: \"{name}\" now appears as \"{names[index]}\"");
+                return index;
+            }
+            Core.Log.Info($"Mic: \"{name}\" not found among {string.Join(" | ", names)}, using the Windows default");
         }
         catch (Exception e)
         {
             Core.Log.Error("Mic: device lookup failed", e);
         }
-        Core.Log.Info($"Mic: \"{name}\" not found, using the Windows default");
         return -1;
     }
 }

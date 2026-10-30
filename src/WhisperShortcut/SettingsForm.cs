@@ -1159,10 +1159,14 @@ internal sealed class SettingsForm : Form
 
     private void FillMicrophones(string? selected)
     {
+        var names = Microphones.Names();
         _mic.Items.Add(new MicItem("", "Windows-Standard"));
-        foreach (var name in Microphones.Names()) _mic.Items.Add(new MicItem(name, name));
+        foreach (var name in names) _mic.Items.Add(new MicItem(name, name));
         var items = _mic.Items.Cast<MicItem>().ToList();
-        var match = items.FirstOrDefault(i => i.Value == (selected ?? ""));
+        int found = Core.MicMatch.Find(selected, names);
+        var match = found >= 0
+            ? items.First(i => i.Value == names[found])
+            : items.FirstOrDefault(i => i.Value == (selected ?? ""));
         if (match == null)
         {
             // Headset unplugged: keep the choice instead of silently switching to the default.
@@ -1175,9 +1179,13 @@ internal sealed class SettingsForm : Form
     private void RefreshMicrophones()
     {
         var selected = _mic.SelectedItem is MicItem current ? current.Value : "";
+        var names = Microphones.Names();
         var wanted = new List<MicItem> { new("", "Windows-Standard") };
-        wanted.AddRange(Microphones.Names().Select(n => new MicItem(n, n)));
-        if (!wanted.Any(i => i.Value == selected))
+        wanted.AddRange(names.Select(n => new MicItem(n, n)));
+        int found = Core.MicMatch.Find(selected, names);
+        if (found >= 0)
+            selected = names[found];
+        else if (!wanted.Any(i => i.Value == selected))
             wanted.Add(new MicItem(selected, $"{selected} (nicht angeschlossen, solange gilt Windows-Standard)"));
         if (wanted.SequenceEqual(_mic.Items.Cast<MicItem>())) return; // same devices: leave everything untouched
         _refillingMics = true;
