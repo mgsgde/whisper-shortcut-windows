@@ -73,7 +73,7 @@ internal sealed class SettingsForm : Form
     public event Action? Saved;
     private bool _discard;
 
-    public const string General = "Allgemein", DictatePage = "Diktieren", PromptPage = "Dictate Prompt",
+    public const string General = "Allgemein", DictatePage = "Diktieren", PromptPage = "Text bearbeiten",
         GlossaryPage = "Glossar", OfflinePage = "Offline", InfoPage = "Info";
 
     // Segoe Fluent Icons (Windows 11) / Segoe MDL2 Assets (Windows 10) glyphs for the navigation.
@@ -133,7 +133,7 @@ internal sealed class SettingsForm : Form
         modeCard.AddRow(OptionRow(_onlineMode, "Beste Qualität und am schnellsten. Braucht Internet und einen API-Schlüssel von Google (Gemini) "
             + "oder OpenAI; Aufnahme und markierter Text gehen an den gewählten Anbieter. Einzelne Schritte können auch auf diesem PC laufen."));
         modeCard.AddRow(OptionRow(_offlineMode, "Aufnahmen und Texte verlassen den Rechner nie, richtig für Patientendaten. Die Modelle werden einmal "
-            + "geladen, danach geht alles ohne Internet. „Dictate Prompt“ dauert offline länger, je nach PC einige Sekunden bis eine Minute."));
+            + "geladen, danach geht alles ohne Internet. „Text bearbeiten“ dauert offline länger, je nach PC einige Sekunden bis eine Minute."));
         general.Controls.Add(modeCard);
 
         // --- engines (online): chosen per step, so speech recognition can stay on this PC while texts go online ---
@@ -142,8 +142,8 @@ internal sealed class SettingsForm : Form
         _speechEngine = EngineChoice(settings.SpeechEngine, "Spracherkennung", "Auf diesem PC (Parakeet)");
         _textEngine = EngineChoice(settings.TextEngine, "Texte bearbeiten", "Auf diesem PC (Sprachmodell)");
         var engineCard = new Card();
-        engineCard.AddRow(SettingRow("Spracherkennung", "Diktieren, und die gesprochene Anweisung bei Dictate Prompt.", _speechEngine, ComboWidth, out _));
-        engineCard.AddRow(SettingRow("Texte bearbeiten", "Dictate Prompt und die Schnellanweisungen.", _textEngine, ComboWidth, out _));
+        engineCard.AddRow(SettingRow("Spracherkennung", "Diktieren, und die gesprochene Anweisung bei „Text bearbeiten“.", _speechEngine, ComboWidth, out _));
+        engineCard.AddRow(SettingRow("Texte bearbeiten", "Markierungen ändern, neue Texte schreiben, Schnellanweisungen.", _textEngine, ComboWidth, out _));
         var engineNote = Block();
         engineNote.Controls.Add(Wrap($"Gemischt geht auch: Die Spracherkennung auf diesem PC braucht nur {FormatBytes(ComponentSize(Core.OfflineCatalog.Parakeet))} "
             + "und ist sehr schnell, die Texte gehen online. Das große Sprachmodell muss dafür nicht geladen werden.", 2 * RowPadding, small: true));
@@ -241,7 +241,7 @@ internal sealed class SettingsForm : Form
         general.Controls.Add(Section("Während einer Aufnahme"));
         var fixedCard = new Card();
         fixedCard.AddRow(SettingRow("Aufnahme verwerfen oder Verarbeitung abbrechen", null, KeyCap("Esc"), ButtonWidth + 40, out _));
-        fixedCard.AddRow(SettingRow("Schnellanweisung anwenden (nur bei Dictate Prompt)", null, KeyCap("Strg+1 bis Strg+5"), ButtonWidth + 40, out _));
+        fixedCard.AddRow(SettingRow("Schnellanweisung anwenden (nur bei „Text bearbeiten“)", null, KeyCap("Strg+1 bis Strg+5"), ButtonWidth + 40, out _));
         general.Controls.Add(fixedCard);
         general.Controls.Add(Wrap("Diese Tasten sind nur belegt, solange die Anzeige unten zu sehen ist. Sonst gehören sie wie gewohnt "
             + "den anderen Programmen.", 0));
@@ -254,21 +254,21 @@ internal sealed class SettingsForm : Form
         dictate.Controls.Add(Section("Modell"));
         _dictateModel = ModelChoice(Core.GeminiModels.Transcription, settings.TranscriptionModel);
         dictate.Controls.Add(_dictateGeminiCard = ModelCard(_dictateModel, "Gemini-Modell", "Gilt, wenn die Spracherkennung über Gemini läuft "
-            + "(Allgemein → Anbieter). Auf diesem PC erkennt Parakeet die Sprache, ohne Modellwahl und ohne Systemprompt."));
+            + "(Allgemein → Anbieter). Auf diesem PC erkennt Parakeet die Sprache, ohne Modellwahl und ohne eigene Anweisungen."));
         _dictateModelOpenAi = ModelChoice(Core.OpenAiModels.Transcription, settings.OpenAiTranscriptionModel);
         dictate.Controls.Add(_dictateOpenAiCard = ModelCard(_dictateModelOpenAi, "OpenAI-Modell", "Gilt, wenn die Spracherkennung über OpenAI läuft. "
-            + "Das Glossar geht als Hinweis mit; der Systemprompt unten gilt nur für Gemini."));
-        dictate.Controls.Add(Section("Systemprompt"));
+            + "Das Glossar geht als Hinweis mit; die Anweisungen unten gelten nur für Gemini."));
+        dictate.Controls.Add(Section("Anweisungen"));
         dictate.Controls.Add(Wrap("So soll Gemini transkribieren (gilt nur für Gemini): Füllwörter, Satzzeichen, Formatierung. Namen und Fachwörter gehören "
             + "ins Glossar, nicht hierher. Der Standardtext ist englisch; geschrieben wird trotzdem in der gesprochenen Sprache.", 0));
-        _dictatePrompt = new PromptEditor(Core.Prompts.DefaultTranscriptionSystemPrompt, settings.DictateSystemPrompt, "Systemprompt Diktieren");
+        _dictatePrompt = new PromptEditor(Core.Prompts.DefaultTranscriptionSystemPrompt, settings.DictateSystemPrompt, "Anweisungen Diktieren");
         _dictateHistory = new HistoryLink(_dictatePrompt.Box, _history, Core.PromptField.Dictate);
         dictate.Controls.Add(PromptCard(_dictatePrompt, _dictateHistory));
 
-        // ================= page: Dictate Prompt =================
+        // ================= page: Text bearbeiten (Dictate Prompt) =================
         var prompt = NewPage(PromptPage, "Text markieren, Kürzel drücken und sagen, was damit passieren soll („freundlicher“, "
             + "„ins Englische“), noch einmal drücken. Ohne Markierung schreibt das Modell einen neuen Text nach der Vorlage.");
-        _promptKey = new HotkeyBox(settings.PromptHotkey) { AccessibleName = "Tastenkürzel Dictate Prompt" };
+        _promptKey = new HotkeyBox(settings.PromptHotkey) { AccessibleName = "Tastenkürzel Text bearbeiten" };
         prompt.Controls.Add(KeyCard(_promptKey, "Ins Feld klicken und die neue Kombination drücken, z. B. Strg+Umschalt+P. "
             + "Ein Druck während der Verarbeitung bricht ab."));
         prompt.Controls.Add(Section("Modell"));
@@ -278,10 +278,10 @@ internal sealed class SettingsForm : Form
         _promptModelOpenAi = ModelChoice(Core.OpenAiModels.Prompt, settings.OpenAiPromptModel);
         prompt.Controls.Add(_promptOpenAiCard = ModelCard(_promptModelOpenAi, "OpenAI-Modell", "Gilt, wenn Texte über OpenAI bearbeitet werden."));
         prompt.Controls.Add(Section("Anweisungen"));
-        prompt.Controls.Add(Wrap("Der Systemprompt für Dictate Prompt. Gilt immer: beim Bearbeiten einer Markierung, bei neuen Texten "
+        prompt.Controls.Add(Wrap("Grundregeln fürs Bearbeiten und Schreiben. Gelten immer: beim Bearbeiten einer Markierung, bei neuen Texten "
             + "und bei den Schnellanweisungen, online und offline. Hier hinein gehören feste Regeln wie Ton, Rechtschreibung oder "
-            + "„nichts erfinden“.", 0));
-        _promptPrompt = new PromptEditor(Core.Prompts.DefaultPromptModeSystemPrompt, settings.PromptModeSystemPrompt, "Anweisungen Dictate Prompt");
+            + "„nichts erfinden“. Der Standardtext ist englisch; geantwortet wird trotzdem in der Sprache des Textes.", 0));
+        _promptPrompt = new PromptEditor(Core.Prompts.DefaultPromptModeSystemPrompt, settings.PromptModeSystemPrompt, "Anweisungen Text bearbeiten");
         _promptHistory = new HistoryLink(_promptPrompt.Box, _history, Core.PromptField.PromptMode);
         prompt.Controls.Add(PromptCard(_promptPrompt, _promptHistory));
 
@@ -312,7 +312,7 @@ internal sealed class SettingsForm : Form
         prompt.Controls.Add(templateCard);
 
         prompt.Controls.Add(Section("Schnellanweisungen"));
-        prompt.Controls.Add(Wrap($"Erscheinen bei Dictate Prompt ({Hotkey.Display(settings.PromptHotkey)}) unten in der Anzeige. "
+        prompt.Controls.Add(Wrap($"Erscheinen bei „Text bearbeiten“ ({Hotkey.Display(settings.PromptHotkey)}) unten in der Anzeige. "
             + "Strg+1 bis Strg+5 oder ein Klick wendet sie sofort an: auf die Markierung oder, ohne Markierung, auf das gerade "
             + "Diktierte. Beispiel: Text markieren, Strg+3, schon kürzer. Leere Felder werden ausgelassen.", 0));
         var quickTable = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0) };
@@ -370,7 +370,7 @@ internal sealed class SettingsForm : Form
         var speechCard = new Card();
         speechCard.AddRow(_speechRow);
         offlinePage.Controls.Add(speechCard);
-        offlinePage.Controls.Add(Section("Sprachmodell für Dictate Prompt"));
+        offlinePage.Controls.Add(Section("Sprachmodell für „Text bearbeiten“"));
         _llmChoice = new FluentCombo { Dock = DockStyle.Top, AccessibleName = "Sprachmodell" };
         var recommended = Core.OfflineCatalog.Recommended(OfflineEngine.TotalRam);
         foreach (var llm in Core.OfflineCatalog.Llms) _llmChoice.Items.Add(new LlmItem(llm, llm.Id == recommended.Id));
@@ -604,8 +604,8 @@ internal sealed class SettingsForm : Form
             + "dabei nur github.com nach der neuesten Versionsnummer, ohne Aufnahmen, Texte oder Einstellungen.", _autoUpdate, ToggleWidth, out _));
         info.Controls.Add(headCard);
 
-        info.Controls.Add(Section("Willkommenstour"));
-        var tour = new FluentButton("Tour zeigen") { MinimumSize = new Size(ButtonWidth, 32) };
+        info.Controls.Add(Section("Einführung"));
+        var tour = new FluentButton("Zeigen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Einführung zeigen" };
         tour.Click += (_, _) =>
         {
             _welcome.Visible = true;
@@ -613,28 +613,32 @@ internal sealed class SettingsForm : Form
             ((ScrollableControl)_pages[General]).AutoScrollPosition = Point.Empty;
         };
         var tourCard = new Card();
-        tourCard.AddRow(SettingRow("Willkommenstour", "Die Einführung vom ersten Start noch einmal zeigen.", tour, ButtonWidth, out _));
+        tourCard.AddRow(SettingRow("Einführung noch einmal zeigen", "Die Schritte vom ersten Start.", tour, ButtonWidth, out _));
         info.Controls.Add(tourCard);
 
         info.Controls.Add(Section("Daten und Zurücksetzen"));
-        var dataFolder = new FluentButton("Öffnen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "App-Datenordner öffnen" };
+        // Two folders on disk: %APPDATA% (settings, glossary, key) and %LOCALAPPDATA% (log and the Offline models).
+        // Each row names what is really inside, so "Ordner öffnen" never surprises.
+        var dataFolder = new FluentButton("Ordner öffnen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Ordner mit Einstellungen öffnen" };
         dataFolder.Click += (_, _) => OpenFolder(Core.AppData.SettingsFolder);
-        var logFile = new FluentButton("Datei") { MinimumSize = new Size(80, 32), AccessibleName = "Protokoll öffnen" };
+        var logFile = new FluentButton("Protokoll") { MinimumSize = new Size(96, 32), AccessibleName = "Protokolldatei öffnen" };
         logFile.Click += (_, _) =>
         {
             if (File.Exists(Core.Log.DefaultPath)) OpenUrl(Core.Log.DefaultPath);
-            else OpenFolder(Core.AppData.LogFolder);
+            else OpenFolder(Core.AppData.LocalFolder);
         };
-        var logFolder = new FluentButton("Ordner") { MinimumSize = new Size(80, 32), AccessibleName = "Protokollordner öffnen" };
-        logFolder.Click += (_, _) => OpenFolder(Core.AppData.LogFolder);
+        var logFolder = new FluentButton("Ordner öffnen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Ordner mit Modellen und Protokoll öffnen" };
+        logFolder.Click += (_, _) => OpenFolder(Core.AppData.LocalFolder);
         var logButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
         logButtons.Controls.Add(logFile);
         logButtons.Controls.Add(logFolder);
         var reset = new FluentButton("Zurücksetzen …") { MinimumSize = new Size(ButtonWidth, 32), Danger = true, AccessibleName = "App zurücksetzen" };
         reset.Click += (_, _) => ResetApp();
         var dataCard = new Card();
-        dataCard.AddRow(SettingRow("App-Datenordner öffnen", "Einstellungen, Glossar und Schlüssel (verschlüsselt).", dataFolder, ButtonWidth, out _));
-        dataCard.AddRow(SettingRow("Protokoll", "Hilft bei Fehlermeldungen. Enthält keine diktierten Texte und keinen Schlüssel.", logButtons, 176, out _));
+        dataCard.AddRow(SettingRow("Einstellungen und Glossar", "Einstellungen, Glossar, eigene Anweisungen und der Schlüssel (verschlüsselt).",
+            dataFolder, ButtonWidth, out _));
+        dataCard.AddRow(SettingRow("Offline-Modelle und Protokoll", "Die geladenen Modelle (Unterordner Offline) und das Protokoll. "
+            + "Das Protokoll hilft bei Fehlermeldungen und enthält keine diktierten Texte und keinen Schlüssel.", logButtons, ButtonWidth + 104, out _));
         dataCard.AddRow(SettingRow("App zurücksetzen", "Löscht alles, auch den API-Schlüssel, das Glossar und die Offline-Modelle. "
             + "Danach beendet sich WhisperShortcut und startet beim nächsten Mal wie neu installiert.", reset, ButtonWidth, out _));
         info.Controls.Add(dataCard);
@@ -726,7 +730,7 @@ internal sealed class SettingsForm : Form
     {
         var answer = MessageBox.Show(this,
             "Gelöscht werden alle Einstellungen, der API-Schlüssel, das Glossar, die Schnellanweisungen, die Vorlage und die "
-            + "eigenen Prompts mit ihren früheren Fassungen, die geladenen Offline-Modelle und das Protokoll. Der Start mit Windows wird abgeschaltet.\n\n"
+            + "eigenen Anweisungen mit ihren früheren Fassungen, die geladenen Offline-Modelle und das Protokoll. Der Start mit Windows wird abgeschaltet.\n\n"
             + "Danach beendet sich WhisperShortcut. Beim nächsten Start ist es wie neu installiert. Das lässt sich nicht rückgängig machen.",
             "App zurücksetzen und beenden?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
         if (answer != DialogResult.Yes) return;
@@ -846,7 +850,7 @@ internal sealed class SettingsForm : Form
         private void Update()
         {
             bool custom = Value.Length > 0;
-            State.Text = custom ? "Eigener Prompt" : Box.Text.Trim().Length == 0 ? "Leer: es gilt der Standard" : "Standard";
+            State.Text = custom ? "Angepasst" : Box.Text.Trim().Length == 0 ? "Leer: es gilt der Standard" : "Standard";
             Reset.Enabled = custom || Box.Text.Trim().Length == 0;
         }
     }
@@ -1287,7 +1291,7 @@ internal sealed class SettingsForm : Form
         (_offlineSummary.Text, _offlineSummary.Tone) =
             download != null ? ($"Wird geladen … {(int)Math.Round(download.Fraction * 100)} %", Tone.Secondary)
             : speechReady && llmReady ? ("✓ Beide geladen", Tone.Good)
-            : speechReady ? ("Spracherkennung geladen. Für Dictate Prompt fehlt noch das Sprachmodell.", Tone.Caution)
+            : speechReady ? ("Spracherkennung geladen. Für „Text bearbeiten“ fehlt noch das Sprachmodell.", Tone.Caution)
             : ("Noch nicht geladen. Ohne die Spracherkennung geht offline nichts.", Tone.Caution);
     }
 
@@ -1475,7 +1479,7 @@ internal sealed class SettingsForm : Form
             if (parsed.Take(i).Contains(parsed[i]))
             {
                 ShowPage(keys[i].Page);
-                Warn("Die Tastenkürzel müssen verschieden sein. Diktieren, Dictate Prompt und Glossar brauchen je ein eigenes.");
+                Warn("Die Tastenkürzel müssen verschieden sein. Diktieren, Text bearbeiten und Glossar brauchen je ein eigenes.");
                 return false;
             }
         }
