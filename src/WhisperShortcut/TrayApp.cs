@@ -84,7 +84,7 @@ internal sealed class TrayApp : ApplicationContext
         bool testRun = testWav != null || fakeGemini;
         if (firstRun)
         {
-            _settings.PromptSystemPrompt = QuoteTemplate.Default;
+            _settings.DictatePromptTemplate = QuoteTemplate.Default;
             TrySave();
             // On by default: otherwise the app is simply gone after the next restart and the user
             // thinks it broke. Off in the settings. Not for test runs, which would autostart a test build.
@@ -588,11 +588,11 @@ internal sealed class TrayApp : ApplicationContext
             Core.Log.Error($"{_mode}: Gemini {e.Kind}");
             Sounds.Error();
             if (e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey)
-                Notify("Gemini-Fehler", e.Message, ToolTipIcon.Error, ShowSettings);
+                Notify($"{e.Provider}-Fehler", e.Message, ToolTipIcon.Error, ShowSettings);
             else if (e.Kind is Core.GeminiErrorKind.Network or Core.GeminiErrorKind.Timeout or Core.GeminiErrorKind.Quota or Core.GeminiErrorKind.Server)
-                NotifyRetryable("Gemini-Fehler", e.Message, Failed());
+                NotifyRetryable($"{e.Provider}-Fehler", e.Message, Failed());
             else
-                Notify("Gemini-Fehler", e.Message, ToolTipIcon.Error);
+                Notify($"{e.Provider}-Fehler", e.Message, ToolTipIcon.Error);
         }
         catch (Exception e) when (e is Core.AudioSilentException or MicrophoneUnavailableException)
         {
@@ -658,7 +658,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
 
-        string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt, _settings.PromptSystemPrompt) ?? "";
+        string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt, _settings.DictatePromptTemplate) ?? "";
         if (_quickAction != null) return await QuickActionAsync(_quickAction, wav, seconds, selection, systemPrompt, ct);
 
         if (_fakeGemini)

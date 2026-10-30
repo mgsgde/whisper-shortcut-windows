@@ -85,9 +85,10 @@ public sealed class Settings
 
     /// <summary>
     /// The template ("Vorlage") for new texts in Dictate Prompt; appended to the editing prompt and applied only
-    /// when nothing is selected. Empty = no template. JSON name kept from the former "system prompt" field.
+    /// when nothing is selected. Empty = no template. JSON key "dictatePromptTemplate"; files before 0.5.3 used
+    /// "promptSystemPrompt", still read on load.
     /// </summary>
-    public string PromptSystemPrompt { get; set; } = "";
+    public string DictatePromptTemplate { get; set; } = "";
 
     /// <summary>
     /// The user's own transcription instruction for Dictate (Gemini only; offline speech recognition takes no prompt).
@@ -97,7 +98,7 @@ public sealed class Settings
 
     /// <summary>
     /// The user's own editing instruction for Dictate Prompt (online and offline).
-    /// Empty = Prompts.DefaultPromptModeSystemPrompt. The template for new texts (PromptSystemPrompt) is appended to it.
+    /// Empty = Prompts.DefaultPromptModeSystemPrompt. The template for new texts (DictatePromptTemplate) is appended to it.
     /// </summary>
     public string PromptModeSystemPrompt { get; set; } = "";
 
@@ -177,7 +178,7 @@ public sealed class Settings
             s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
             s.OpenAiPromptModel = OpenAiModels.NormalizePrompt(dto.OpenAiPromptModel);
             s.Glossary = dto.Glossary ?? new();
-            s.PromptSystemPrompt = dto.PromptSystemPrompt ?? "";
+            s.DictatePromptTemplate = dto.DictatePromptTemplate ?? dto.LegacyPromptSystemPrompt ?? "";
             s.DictateSystemPrompt = CustomOrEmpty(dto.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt);
             s.PromptModeSystemPrompt = CustomOrEmpty(dto.PromptModeSystemPrompt, Prompts.DefaultPromptModeSystemPrompt);
             s.TranscriptionModel = GeminiModels.NormalizeTranscription(dto.TranscriptionModel);
@@ -235,7 +236,7 @@ public sealed class Settings
             OpenAiTranscriptionModel = OpenAiTranscriptionModel,
             OpenAiPromptModel = OpenAiPromptModel,
             Glossary = Glossary,
-            PromptSystemPrompt = PromptSystemPrompt,
+            DictatePromptTemplate = DictatePromptTemplate,
             DictateSystemPrompt = DictateSystemPrompt,
             PromptModeSystemPrompt = PromptModeSystemPrompt,
             TranscriptionModel = TranscriptionModel,
@@ -266,7 +267,10 @@ public sealed class Settings
         [JsonPropertyName("openAiTranscriptionModel")] public string? OpenAiTranscriptionModel { get; set; }
         [JsonPropertyName("openAiPromptModel")] public string? OpenAiPromptModel { get; set; }
         [JsonPropertyName("glossary")] public List<string>? Glossary { get; set; }
-        [JsonPropertyName("promptSystemPrompt")] public string? PromptSystemPrompt { get; set; }
+        [JsonPropertyName("dictatePromptTemplate")] public string? DictatePromptTemplate { get; set; }
+        [JsonPropertyName("promptSystemPrompt")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? LegacyPromptSystemPrompt { get; set; }
         [JsonPropertyName("dictateSystemPrompt")] public string? DictateSystemPrompt { get; set; }
         [JsonPropertyName("promptModeSystemPrompt")] public string? PromptModeSystemPrompt { get; set; }
         [JsonPropertyName("transcriptionModel")] public string? TranscriptionModel { get; set; }

@@ -37,11 +37,12 @@ WICHTIG: Ab Schritt 2 alles im Windows-Konto des späteren Nutzers machen, nicht
 Einstellungen, Schlüssel und Autostart gelten nur für das Konto, in dem sie eingerichtet werden.
 Die exe nicht „als Administrator ausführen“.
 
-1. ZIP vorbereiten: Rechtsklick auf die ZIP → Eigenschaften → unten „Zulassen“ ankreuzen → OK.
-   Dann Rechtsklick → „Alle extrahieren“. Die WhisperShortcut.exe in einen festen Ordner legen,
-   z. B. C:\Program Files\WhisperShortcut\ (oder, nur für einen Nutzer,
-   %LOCALAPPDATA%\Programs\WhisperShortcut\). Nicht direkt aus der ZIP starten.
-   Keine Installation nötig.
+1. Herunterladen: WhisperShortcut-Windows-x64.exe (für Windows auf ARM die -arm64.exe).
+   Rechtsklick auf die Datei → Eigenschaften → unten „Zulassen“ ankreuzen → OK.
+   Dann in einen festen Ordner legen, z. B. C:\Program Files\WhisperShortcut\ (oder, nur für
+   einen Nutzer, %LOCALAPPDATA%\Programs\WhisperShortcut\). Nicht aus „Downloads“ starten,
+   dort wird gern aufgeräumt. Keine Installation nötig.
+   (Wer die ZIP genommen hat: Rechtsklick → „Alle extrahieren“, dann wie oben mit der exe.)
 2. Doppelklick. Windows zeigt „Der Computer wurde durch Windows geschützt“ (Programm ist noch
    nicht signiert): „Weitere Informationen“ → „Trotzdem ausführen“.
    (Mit „Zulassen“ aus Schritt 1 kommt die Meldung meist gar nicht.)
@@ -100,9 +101,9 @@ Die Modelle liegen unter %LOCALAPPDATA%\WhisperShortcut\Offline (in den Einstell
 
 Einstellungen
 -------------
-Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit ungespeicherten
-Änderungen schließt, wird gefragt.
-- Allgemein: Arbeitsweise (online/offline), Schlüssel, Mikrofon mit Pegeltest, Einfügen, Autostart.
+Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“. Mit ungespeicherten Änderungen
+heißt der zweite Knopf „Abbrechen“ und verwirft sie; das X oben rechts (oder Esc) fragt nach.
+- Allgemein: Arbeitsweise (online/offline), Anbieter und Schlüssel, Mikrofon mit Pegeltest, Einfügen, Töne, Autostart.
   „Automatisch einfügen“ aus: Der Text liegt nur in der Zwischenablage (Hinweis „In der
   Zwischenablage“) und wird mit Strg+V selbst eingefügt. „Zwischenablage wiederherstellen“: nach
   dem Einfügen kommt zurück, was vorher in der Zwischenablage war.
@@ -124,7 +125,7 @@ Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“; wer mit un
   Begriff), damit sie richtig geschrieben werden. Strg+Umschalt+K fügt ein markiertes Wort
   direkt hinzu.
 - Offline: Spracherkennung und Sprachmodell laden oder entfernen, Sprachmodell wählen.
-- Info: Version und „Nach Updates suchen“ (fragt GitHub, installiert nichts selbst),
+- Info: Version und „Nach Updates suchen“ (fragt GitHub, installiert wird erst nach einem Klick),
   Einführung, Daten und Zurücksetzen (Ordner mit Einstellungen und Glossar, Ordner mit
   Offline-Modellen und Protokoll, „App zurücksetzen“ löscht
   alles inklusive API-Schlüssel, Glossar und Offline-Modellen und beendet die App).

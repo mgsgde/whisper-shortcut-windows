@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Usage: tools/release.sh <version> <notes.md> [--publish]
-# Builds and signs both Windows ZIPs. Prints the gh command; runs it only with --publish.
+# Builds and signs both Windows ZIPs (updater) and bare exes (download). Prints the gh command; runs it only with --publish.
 set -euo pipefail
 
 VERSION="${1:?usage: tools/release.sh <version> <notes.md> [--publish]}"
@@ -21,7 +21,7 @@ dotnet test tests/WhisperShortcut.Tests
 PUB="$(mktemp)"
 openssl ec -in "$KEY" -pubout -out "$PUB" 2>/dev/null
 mkdir -p dist
-ZIPS=(); SIGS=()
+ZIPS=(); SIGS=(); EXES=(); EXESIGS=()
 for rid in win-x64 win-arm64; do
   dotnet publish src/WhisperShortcut -c Release -r "$rid" --self-contained -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o "out/$rid"
   zip_path="$PWD/dist/WhisperShortcut-Windows-${rid#win-}.zip"
@@ -35,10 +35,15 @@ for rid in win-x64 win-arm64; do
   openssl dgst -sha256 -sign "$KEY" -out "$zip_path.sig" "$zip_path"
   openssl dgst -sha256 -verify "$PUB" -signature "$zip_path.sig" "$zip_path"
   ZIPS+=("dist/$(basename "$zip_path")"); SIGS+=("dist/$(basename "$zip_path").sig")
+  exe_path="$PWD/dist/WhisperShortcut-Windows-${rid#win-}.exe"
+  cp "out/$rid/WhisperShortcut.exe" "$exe_path"
+  openssl dgst -sha256 -sign "$KEY" -out "$exe_path.sig" "$exe_path"
+  openssl dgst -sha256 -verify "$PUB" -signature "$exe_path.sig" "$exe_path"
+  EXES+=("dist/$(basename "$exe_path")"); EXESIGS+=("dist/$(basename "$exe_path").sig")
 done
 rm -f "$PUB"
 
-CMD=(gh release create "v$VERSION" -R mgsgde/whisper-shortcut-windows --title "Version $VERSION" --notes-file "$NOTES" "${ZIPS[@]}" "${SIGS[@]}" dist/ANLEITUNG.txt)
+CMD=(gh release create "v$VERSION" -R mgsgde/whisper-shortcut-windows --title "Version $VERSION" --notes-file "$NOTES" "${ZIPS[@]}" "${SIGS[@]}" "${EXES[@]}" "${EXESIGS[@]}" dist/ANLEITUNG.txt)
 if [ "$PUBLISH" = "--publish" ]; then
   "${CMD[@]}"
 else

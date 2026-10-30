@@ -148,7 +148,7 @@ internal sealed class UpdateDialog : Form
             {
                 if (IsDisposed) return;
                 _progress.Value = (float)p;
-                SetStatus($"Wird heruntergeladen … {p:P0}", Tone.Secondary);
+                SetStatus($"Wird heruntergeladen … {p * 100:0} %", Tone.Secondary);
             });
             exe = await Core.UpdateDownloader.DownloadAsync(http, _update, RuntimeInformation.ProcessArchitecture,
                 UpdateInstaller.StagingDir, progress, _cts.Token);

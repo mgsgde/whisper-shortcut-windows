@@ -292,7 +292,7 @@ internal sealed class SettingsForm : Form
         _template = new TextBox
         {
             Multiline = true, AcceptsReturn = true, AcceptsTab = false, ScrollBars = ScrollBars.Vertical, WordWrap = true,
-            Text = (settings.PromptSystemPrompt ?? "").ReplaceLineEndings("\r\n"), AccessibleName = "Vorlage für neue Texte",
+            Text = (settings.DictatePromptTemplate ?? "").ReplaceLineEndings("\r\n"), AccessibleName = "Vorlage für neue Texte",
         };
         var samples = new FluentButton("Beispiel einsetzen ▾");
         _sampleMenu = new ContextMenuStrip();
@@ -433,7 +433,7 @@ internal sealed class SettingsForm : Form
         var cancel = _close = new FluentButton("Schließen") { MinimumSize = new Size(120, 32), TabIndex = 1 };
         // WHY Save keeps the window open: a window that vanished on Save looked like a crash to testers.
         save.Click += (_, _) => TrySave();
-        // "Abbrechen" (with changes) means discard: only the title bar's X asks whether to save.
+        // "Abbrechen" (with changes) means discard: only the title bar's X and Esc ask whether to save.
         cancel.Click += (_, _) => { _discard = true; Close(); };
         _dirty = new ThemedLabel { Text = "Nicht gespeicherte Änderungen", Tone = Tone.Secondary, AutoSize = true, Visible = false, Margin = new Padding(0, 8, 12, 0) };
         var buttons = new FlowLayoutPanel
@@ -455,6 +455,9 @@ internal sealed class SettingsForm : Form
         Controls.Add(nav);
         ResumeLayout(false);
         PerformLayout();
+
+        // The wheel moves the page on over a prompt box at its end and never changes a closed drop-down.
+        WheelToPage.Attach(this);
 
         // Hints wrap at the visible page width, never wider.
         _pageHost.ClientSizeChanged += (_, _) => FitHints();
@@ -728,12 +731,11 @@ internal sealed class SettingsForm : Form
 
     private void ResetApp()
     {
-        var answer = MessageBox.Show(this,
+        if (ChoiceDialog.Ask(this, "App zurücksetzen und beenden?",
             "Gelöscht werden alle Einstellungen, der API-Schlüssel, das Glossar, die Schnellanweisungen, die Vorlage und die "
             + "eigenen Anweisungen mit ihren früheren Fassungen, die geladenen Offline-Modelle und das Protokoll. Der Start mit Windows wird abgeschaltet.\n\n"
             + "Danach beendet sich WhisperShortcut. Beim nächsten Start ist es wie neu installiert. Das lässt sich nicht rückgängig machen.",
-            "App zurücksetzen und beenden?", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2);
-        if (answer != DialogResult.Yes) return;
+            new[] { "Zurücksetzen", "Abbrechen" }, danger: true) != 0) return;
         Core.Log.Info("Settings: reset app");
         StopMicTest();
         // The language model server and the speech model keep files open that the reset has to delete.
@@ -1016,8 +1018,8 @@ internal sealed class SettingsForm : Form
     private void ReplaceTemplate(string text)
     {
         if (_template.Text.Trim().Length > 0 && _template.Text.Trim() != text.Trim()
-            && MessageBox.Show(this, "Die jetzige Vorlage wird ersetzt.", "Vorlage ersetzen?",
-                MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+            && ChoiceDialog.Ask(this, "Vorlage ersetzen?", "Die jetzige Vorlage wird ersetzt.",
+                new[] { "Ersetzen", "Abbrechen" }) != 0) return;
         _template.Text = text.ReplaceLineEndings("\r\n");
     }
 
@@ -1267,8 +1269,8 @@ internal sealed class SettingsForm : Form
 
     private void RemoveModel(Core.OfflineComponent component, string name)
     {
-        if (MessageBox.Show(this, $"{name} wird von diesem PC gelöscht. Für den Offline-Modus muss es danach neu geladen werden.",
-                "Modell entfernen?", MessageBoxButtons.OKCancel, MessageBoxIcon.Question) != DialogResult.OK) return;
+        if (ChoiceDialog.Ask(this, "Modell entfernen?", $"{name} wird von diesem PC gelöscht. Für den Offline-Modus muss es danach neu geladen werden.",
+                new[] { "Entfernen", "Abbrechen" }, danger: true) != 0) return;
         try { _offline.Delete(component); }
         catch (Exception e)
         {
@@ -1444,10 +1446,13 @@ internal sealed class SettingsForm : Form
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
         if (_discard || e.CloseReason != CloseReason.UserClosing || Snapshot() == _snapshot) return;
-        var answer = MessageBox.Show(this, "Die Änderungen sind noch nicht gespeichert.", "Änderungen speichern?",
-            MessageBoxButtons.YesNoCancel, MessageBoxIcon.Question, MessageBoxDefaultButton.Button1);
-        if (answer == DialogResult.Cancel) e.Cancel = true;
-        else if (answer == DialogResult.Yes && !TrySave()) e.Cancel = true;
+        switch (ChoiceDialog.Ask(this, "Änderungen speichern?", "Die Änderungen in den Einstellungen sind noch nicht gespeichert.",
+                    new[] { "Speichern", "Verwerfen", "Zurück" }))
+        {
+            case 0: if (!TrySave()) e.Cancel = true; break;
+            case 1: _discard = true; break;
+            default: e.Cancel = true; break;
+        }
     }
 
     /// <summary>Hint next to the buttons and the close button's word: unsaved changes, just saved, or nothing.</summary>
@@ -1486,7 +1491,7 @@ internal sealed class SettingsForm : Form
 
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
-            _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
+            _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
             _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck);
@@ -1504,7 +1509,7 @@ internal sealed class SettingsForm : Form
         _settings.GlossaryHotkey = parsed[2].ToString();
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
         _settings.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
-        _settings.PromptSystemPrompt = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
+        _settings.DictatePromptTemplate = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
         _settings.TranscriptionModel = SelectedModel(_dictateModel);
         _settings.PromptModel = SelectedModel(_promptModel);
         _settings.DictateSystemPrompt = _dictatePrompt.Value;
@@ -1522,7 +1527,7 @@ internal sealed class SettingsForm : Form
             Core.Log.Error($"Saving settings failed: {e.GetType().Name}");
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
                 _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
-                _settings.QuickActions, _settings.PromptSystemPrompt, _settings.TranscriptionModel, _settings.PromptModel,
+                _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck) = before;
@@ -1534,8 +1539,8 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.PromptSystemPrompt.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel})");
-        RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.PromptSystemPrompt);
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel})");
+        RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.DictatePromptTemplate);
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;
         _savedHintUntil = Environment.TickCount64 + 3000;
@@ -1550,7 +1555,7 @@ internal sealed class SettingsForm : Form
         var now = DateTime.UtcNow;
         bool changed = _history.Record(Core.PromptField.Dictate, dictate, _settings.DictateSystemPrompt, now)
             | _history.Record(Core.PromptField.PromptMode, promptMode, _settings.PromptModeSystemPrompt, now)
-            | _history.Record(Core.PromptField.Template, template, _settings.PromptSystemPrompt, now);
+            | _history.Record(Core.PromptField.Template, template, _settings.DictatePromptTemplate, now);
         if (!changed) return;
         try { _history.Save(); }
         catch (Exception e) { Core.Log.Error($"Saving prompt history failed: {e.GetType().Name}"); }
