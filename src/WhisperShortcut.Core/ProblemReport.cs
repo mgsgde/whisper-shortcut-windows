@@ -22,8 +22,11 @@ public static partial class ProblemReport
     [GeneratedRegex(@"AIza[0-9A-Za-z_\-]{20,}")]
     private static partial Regex GeminiKey();
 
-    /// <summary>Masks anything that looks like a Gemini API key.</summary>
-    public static string Redact(string line) => GeminiKey().Replace(line, "AIza…");
+    [GeneratedRegex(@"sk-[A-Za-z0-9_-]{16,}")]
+    private static partial Regex OpenAiKey();
+
+    /// <summary>Masks anything that looks like a Gemini or OpenAI API key.</summary>
+    public static string Redact(string line) => OpenAiKey().Replace(GeminiKey().Replace(line, "AIza…"), "sk-…");
 
     /// <summary>The Markdown body: an empty "what happened" section to type into, the environment and the log tail.</summary>
     public static string Body(ProblemReportInfo info, IEnumerable<string> logLines)
