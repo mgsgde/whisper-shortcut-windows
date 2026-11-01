@@ -55,6 +55,11 @@ public class TranscriptGuardsTests
         Assert.Equal("Sabaki", TextCleanup.DiscardGlossaryEcho("Sabaki", 0, Glossary));
 
     [Fact]
+    public void SingleGlossaryTermOnLongNearSilentAudioIsDiscarded() =>
+        // Not a two-term list, so the length floor must fire (20 s → min 60 chars).
+        Assert.Equal("", TextCleanup.DiscardGlossaryEcho("Sabaki", 20.0, new[] { "Sabaki" }));
+
+    [Fact]
     public void TrailingEchoReportAIsStripped()
     {
         var text = "Wir kriegen von der Personalabteilung immer Ein- und Austrittslisten, damit ausgetretene Mitarbeiter im System gesperrt werden. Joschka SumUp lemniscus";

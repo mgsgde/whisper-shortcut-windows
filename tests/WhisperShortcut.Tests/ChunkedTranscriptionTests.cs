@@ -143,6 +143,17 @@ public class ChunkedTranscriptionTests
     }
 
     [Fact]
+    public async Task NoChunks_IsEmpty()
+    {
+        var text = await ChunkedTranscription.TranscribeAsync(
+            Array.Empty<byte[]>(),
+            (_, _) => Task.FromResult("nope"),
+            maxParallel: 2,
+            CancellationToken.None);
+        Assert.Equal("", text);
+    }
+
+    [Fact]
     public async Task EmptyResults_AreSkipped()
     {
         var answers = new[] { "  hello ", "", "\n", "   ", "world  " };

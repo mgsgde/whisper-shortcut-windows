@@ -42,6 +42,20 @@ public class HotkeyPressGateTests
         Assert.False(gate.Accept(1200));
         Assert.True(gate.Accept(1400));
     }
+
+    [Fact]
+    public void ReleasedTracksKeyState()
+    {
+        var gate = new HotkeyPressGate();
+        Assert.True(gate.Released);
+        gate.Armed(0);
+        Assert.False(gate.Released);
+        Assert.False(gate.Accept(500));
+        gate.KeyUp();
+        Assert.True(gate.Released);
+        Assert.False(gate.Accept(299));
+        Assert.True(gate.Accept(300));
+    }
 }
 
 public class HotkeyPolicyTests

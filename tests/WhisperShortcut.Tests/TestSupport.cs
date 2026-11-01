@@ -1,7 +1,7 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Text;
 using System.Text.Json.Nodes;
-using System.Text.RegularExpressions;
 
 namespace WhisperShortcut.Tests;
 
@@ -51,4 +51,48 @@ public sealed class FakeHandler : HttpMessageHandler
     }
 
     public JsonNode Json(int i) => JsonNode.Parse(Calls[i].Body)!;
+}
+
+/// <summary>16-bit PCM WAV factory for speech-gate and pipeline tests.</summary>
+public static class TestWav
+{
+    public const int Rate = 16000;
+
+    /// <summary>Digital silence of <paramref name="ms"/> milliseconds.</summary>
+    public static byte[] Silence(int ms) => Tone((ms, 0, 0));
+
+    /// <summary>A 300 ms tone above the speech-gate threshold, padded with silence.</summary>
+    public static byte[] Speech(int toneMs = 300) =>
+        Tone((500, 0, 0), (toneMs, Math.Pow(10, -30.0 / 20) * Math.Sqrt(2), 220), (500, 0, 0));
+
+    public static byte[] Tone(params (int Ms, double Amp, double Hz)[] segments)
+    {
+        var samples = new List<short>();
+        foreach (var (ms, amp, hz) in segments)
+        {
+            var n = Rate * ms / 1000;
+            for (var i = 0; i < n; i++)
+            {
+                var v = hz == 0 ? amp : amp * Math.Sin(2 * Math.PI * hz * i / Rate);
+                samples.Add((short)Math.Round(v * 32767));
+            }
+        }
+        var data = samples.Count * 2;
+        var wav = new byte[44 + data];
+        "RIFF"u8.CopyTo(wav);
+        BinaryPrimitives.WriteInt32LittleEndian(wav.AsSpan(4), 36 + data);
+        "WAVEfmt "u8.CopyTo(wav.AsSpan(8));
+        BinaryPrimitives.WriteInt32LittleEndian(wav.AsSpan(16), 16);
+        BinaryPrimitives.WriteInt16LittleEndian(wav.AsSpan(20), 1);
+        BinaryPrimitives.WriteInt16LittleEndian(wav.AsSpan(22), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(wav.AsSpan(24), Rate);
+        BinaryPrimitives.WriteInt32LittleEndian(wav.AsSpan(28), Rate * 2);
+        BinaryPrimitives.WriteInt16LittleEndian(wav.AsSpan(32), 2);
+        BinaryPrimitives.WriteInt16LittleEndian(wav.AsSpan(34), 16);
+        "data"u8.CopyTo(wav.AsSpan(36));
+        BinaryPrimitives.WriteInt32LittleEndian(wav.AsSpan(40), data);
+        for (var i = 0; i < samples.Count; i++)
+            BinaryPrimitives.WriteInt16LittleEndian(wav.AsSpan(44 + i * 2), samples[i]);
+        return wav;
+    }
 }

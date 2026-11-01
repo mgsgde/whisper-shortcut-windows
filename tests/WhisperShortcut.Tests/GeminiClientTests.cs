@@ -502,4 +502,50 @@ public class GeminiClientTests
         h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
         Assert.Equal("Halb", await c.TranscribeAsync(Wav, Array.Empty<string>()));
     }
+
+    [Fact]
+    public async Task SettingsConstructor_ReadsKeyAndCustomPromptAtCallTime()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.ApiKey = "from-settings";
+        s.DictateSystemPrompt = "Nur das Gesprochene.";
+        var h = new FakeHandler();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        var c = new GeminiClient(s, new HttpClient(h)) { RetryDelay = TimeSpan.Zero, RetryInfoBuffer = TimeSpan.Zero };
+        await c.TranscribeAsync(Wav, Array.Empty<string>());
+        Assert.Equal("from-settings", h.Calls[0].Request.Headers.GetValues("x-goog-api-key").Single());
+        Assert.Equal("Nur das Gesprochene.", (string)h.Json(0)["contents"]![0]!["parts"]![0]!["text"]!);
+    }
+
+    [Fact]
+    public async Task ServiceDisabled_IsInvalidKey_NoRetry()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.Forbidden,
+            "{\"error\":{\"message\":\"SERVICE_DISABLED: Gemini has not been used in project\"}}"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        Assert.Contains("nicht aktiviert", ex.Message);
+        Assert.Single(h.Calls);
+    }
+
+    [Fact]
+    public async Task BillingMissing_IsInvalidKey_NoRetry()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.Forbidden, "{\"error\":{\"message\":\"BILLING_ACCOUNT_REQUIRED\"}}"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        Assert.Contains("keine Abrechnung", ex.Message);
+        Assert.Single(h.Calls);
+    }
+
+    [Fact]
+    public async Task CheckKey_AttemptTimeout_IsNoConnection()
+    {
+        var h = new ScriptHandler { Script = (_, _) => throw new OperationCanceledException() };
+        var c = new GeminiClient(() => "k", () => "m", () => "m", new HttpClient(h));
+        Assert.Equal(KeyCheck.NoConnection, await c.CheckKeyAsync("k"));
+    }
 }
