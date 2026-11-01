@@ -393,7 +393,9 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
             return new GeminiException(GeminiErrorKind.Quota, IsDailyQuota(body)
                 ? "Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen."
                 : "Gemini ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
-        return new GeminiException(GeminiErrorKind.Server, $"Gemini-Fehler (HTTP {code}). Bitte später erneut versuchen.");
+        if (code == 404)
+            return new GeminiException(GeminiErrorKind.Server, UserCopy.ModelGone("Gemini"));
+        return new GeminiException(GeminiErrorKind.Server, UserCopy.ServerBusy("Gemini"));
     }
 
     /// <summary>Only the status word (e.g. RESOURCE_EXHAUSTED) of a Google error body, for the log: the message can quote request content.</summary>

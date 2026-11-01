@@ -70,8 +70,10 @@ internal sealed class RecordingOverlay : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
-        BackColor = Back;
+        BackColor = OverlayBack;
         DoubleBuffered = true;
+        AccessibleName = Core.UserCopy.OverlayAccessibleName;
+        AccessibleRole = AccessibleRole.StatusBar;
         // Layered, so WS_EX_TRANSPARENT really lets the mouse through to the window below.
         Opacity = 0.97;
         _timer.Tick += (_, _) => OnTick();
@@ -97,7 +99,7 @@ internal sealed class RecordingOverlay : Form
         // ignores both attributes and shows a square pill, which is fine.
         int round = 2; // DWMWCP_ROUND
         DwmSetWindowAttribute(Handle, 33, ref round, sizeof(int));
-        int border = ColorTranslator.ToWin32(Border);
+        int border = ColorTranslator.ToWin32(OverlayBorder);
         DwmSetWindowAttribute(Handle, 34, ref border, sizeof(int));
     }
 
@@ -121,8 +123,8 @@ internal sealed class RecordingOverlay : Form
         IReadOnlyList<string>? quickActions = null)
     {
         _phase = Phase.Recording;
-        _title = mode == Mode.Dictate ? "Diktat läuft" : "Anweisung sprechen";
-        _hint = $"{stopKey} beendet · Esc bricht ab";
+        _title = mode == Mode.Dictate ? Core.UserCopy.OverlayDictateTitle : Core.UserCopy.OverlayPromptTitle;
+        _hint = Core.UserCopy.OverlayStopHint(stopKey);
         // Dictate Prompt: what will be edited is known only after Ctrl+C (up to 0.5 s), see SetSelection.
         _context = mode == Mode.Prompt ? "Markierung wird gelesen …" : null;
         _quick = mode == Mode.Prompt ? quickActions ?? Array.Empty<string>() : Array.Empty<string>();
@@ -159,11 +161,11 @@ internal sealed class RecordingOverlay : Form
         Present();
     }
 
-    public void ShowProcessing(string title = "Wird verarbeitet …")
+    public void ShowProcessing(string title = Core.UserCopy.Processing)
     {
         _phase = Phase.Processing;
         _title = title;
-        _hint = "Kürzel drücken bricht ab";
+        _hint = Core.UserCopy.OverlayCancelHint;
         _context = null;
         Present();
     }
@@ -210,6 +212,16 @@ internal sealed class RecordingOverlay : Form
 
     private float S => DeviceDpi / 96f;
 
+    private static bool Hc => SystemInformation.HighContrast;
+    private static Color OverlayBack => Hc ? SystemColors.Window : Back;
+    private static Color OverlayBorder => Hc ? SystemColors.WindowFrame : Border;
+    private static Color OverlayPrimary => Hc ? SystemColors.WindowText : Primary;
+    private static Color OverlaySecondary => Hc ? SystemColors.GrayText : Secondary;
+    private static Color OverlayMuted => Hc ? SystemColors.GrayText : Muted;
+    private static Color OverlayRed => Hc ? SystemColors.HotTrack : Red;
+    private static Color OverlayAmber => Hc ? SystemColors.WindowText : Amber;
+    private static Color OverlayGreen => Hc ? SystemColors.WindowText : Green;
+
     // A one-word confirmation in a 400 px pill looks lost; fit the pill to its text.
     private int DoneWidth()
     {
@@ -249,6 +261,8 @@ internal sealed class RecordingOverlay : Form
         var area = screen.WorkingArea;
         var location = new Point(area.Left + (area.Width - size.Width) / 2, area.Bottom - size.Height - (int)(28 * S));
         if (Size != size || Location != location) SetBounds(location.X, location.Y, size.Width, size.Height);
+        BackColor = OverlayBack;
+        AccessibleDescription = Core.UserCopy.OverlayAnnouncement(_title, _hint, _context);
         if (!Visible) Show();
         SetClickThrough(!(ShowsCard || _phase == Phase.Warning));
         _timer.Start();
@@ -297,27 +311,27 @@ internal sealed class RecordingOverlay : Form
             string time = Format(elapsed);
             var timeSize = TextRenderer.MeasureText(g, time, _textFont, Size.Empty, TextFormatFlags.NoPadding);
             TextRenderer.DrawText(g, time, _textFont, new Point((int)(right - timeSize.Width), (int)(row1 - timeSize.Height / 2f)),
-                nearLimit ? Amber : Secondary, TextFormatFlags.NoPadding);
+                nearLimit ? OverlayAmber : OverlaySecondary, TextFormatFlags.NoPadding);
             if (_level != null) DrawBars(g, right - timeSize.Width - 12 * s, row1, s);
 
             if (nearLimit && left > TimeSpan.Zero) _hint = $"Endet in {Format(left)} automatisch · Esc bricht ab";
         }
 
         var titleSize = TextRenderer.MeasureText(g, _title, _titleFont, Size.Empty, TextFormatFlags.NoPadding);
-        TextRenderer.DrawText(g, _title, _titleFont, new Point((int)textX, (int)(row1 - titleSize.Height / 2f)), Primary, TextFormatFlags.NoPadding);
+        TextRenderer.DrawText(g, _title, _titleFont, new Point((int)textX, (int)(row1 - titleSize.Height / 2f)), OverlayPrimary, TextFormatFlags.NoPadding);
 
         float y = row1 + 13 * s;
         int width = (int)(right - textX);
         if (_phase == Phase.Warning)
         {
             int lines = WarningWordLines();
-            TextRenderer.DrawText(g, _warningWords, _textFont, new Rectangle((int)textX, (int)y, width, (int)(lines * 19 * s)), Primary,
+            TextRenderer.DrawText(g, _warningWords, _textFont, new Rectangle((int)textX, (int)y, width, (int)(lines * 19 * s)), OverlayPrimary,
                 TextFormatFlags.NoPadding | TextFormatFlags.WordBreak | TextFormatFlags.EndEllipsis);
             y += (lines * 19 + 4) * s;
         }
         if (_context != null)
         {
-            DrawLine(g, _context, _contextWarn ? Amber : Secondary, textX, y, width);
+            DrawLine(g, _context, _contextWarn ? OverlayAmber : OverlaySecondary, textX, y, width);
             y += 20 * s;
         }
         if (ShowsCard)
@@ -326,11 +340,11 @@ internal sealed class RecordingOverlay : Form
         }
 
         string hint = _hint;
-        Color hintColor = Muted;
+        Color hintColor = OverlayMuted;
         if (_phase == Phase.Recording && _peakSoFar != null && DateTime.UtcNow - _started > SilentAfter && _peakSoFar() < SilentPeak)
         {
             hint = "Kein Ton vom Mikrofon. Stumm geschaltet oder gesperrt?";
-            hintColor = Amber;
+            hintColor = OverlayAmber;
         }
         if (hint.Length > 0) DrawLine(g, hint, hintColor, textX, y, width);
     }
@@ -339,12 +353,12 @@ internal sealed class RecordingOverlay : Form
     private float DrawQuickActions(Graphics g, float y, float s)
     {
         float pad = 18 * s;
-        using (var line = new Pen(Border, 1f))
+        using (var line = new Pen(OverlayBorder, 1f))
             g.DrawLine(line, pad, y + 3 * s, Width - pad, y + 3 * s);
         y += 10 * s;
         // Same column as title and context; the indicator gutter stays empty.
         float x = pad + 20 * s, right = Width - pad;
-        DrawLine(g, _quickLabel, Muted, x, y, (int)(right - x));
+        DrawLine(g, _quickLabel, OverlayMuted, x, y, (int)(right - x));
         y += 20 * s;
 
         _rowRects.Clear();
@@ -355,17 +369,17 @@ internal sealed class RecordingOverlay : Form
             _rowRects.Add(row);
             if (i == _hover)
             {
-                using var fill = new SolidBrush(Color.FromArgb(52, 52, 52));
+                using var fill = new SolidBrush(Hc ? SystemColors.Highlight : Color.FromArgb(52, 52, 52));
                 using var path = Rounded(row, 6 * s);
                 g.FillPath(fill, path);
             }
             float mid = row.Y + row.Height / 2;
             string key = $"Strg+{i + 1}";
             var keySize = TextRenderer.MeasureText(g, key, _textFont, Size.Empty, TextFormatFlags.NoPadding);
-            TextRenderer.DrawText(g, key, _textFont, new Point((int)x, (int)(mid - keySize.Height / 2f)), Muted, TextFormatFlags.NoPadding);
+            TextRenderer.DrawText(g, key, _textFont, new Point((int)x, (int)(mid - keySize.Height / 2f)), OverlayMuted, TextFormatFlags.NoPadding);
             TextRenderer.DrawText(g, _quick[i], _textFont,
                 new Rectangle((int)(x + keyWidth), (int)(mid - keySize.Height / 2f), (int)(right - x - keyWidth), keySize.Height + 2),
-                i == _hover ? Primary : Secondary, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
+                i == _hover ? (Hc ? SystemColors.HighlightText : OverlayPrimary) : OverlaySecondary, TextFormatFlags.NoPadding | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
             y += RowHeight * s;
         }
         return y + 6 * s;
@@ -432,11 +446,11 @@ internal sealed class RecordingOverlay : Form
                 float r = 8.5f * s;
                 using var tri = new GraphicsPath();
                 tri.AddPolygon(new[] { new PointF(c.X, c.Y - r), new PointF(c.X + r, c.Y + r * 0.8f), new PointF(c.X - r, c.Y + r * 0.8f) });
-                using var fill = new SolidBrush(Amber);
+                using var fill = new SolidBrush(OverlayAmber);
                 g.FillPath(fill, tri);
-                using var mark = new Pen(Back, 1.9f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                using var mark = new Pen(OverlayBack, 1.9f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
                 g.DrawLine(mark, c.X, c.Y - 3.2f * s, c.X, c.Y + 1.6f * s);
-                using var dot = new SolidBrush(Back);
+                using var dot = new SolidBrush(OverlayBack);
                 float d = 1.15f * s;
                 g.FillEllipse(dot, c.X - d, c.Y + 4.4f * s - d, d * 2, d * 2);
                 break;
@@ -446,17 +460,17 @@ internal sealed class RecordingOverlay : Form
                 // Slow pulse: alive, but not nervous.
                 float pulse = 0.55f + 0.45f * (0.5f + 0.5f * MathF.Sin(_tick * 0.16f));
                 float r = 5.5f * s;
-                using var halo = new SolidBrush(Color.FromArgb((int)(70 * pulse), Red));
+                using var halo = new SolidBrush(Color.FromArgb((int)(70 * pulse), OverlayRed));
                 g.FillEllipse(halo, c.X - r * 1.8f, c.Y - r * 1.8f, r * 3.6f, r * 3.6f);
-                using var dot = new SolidBrush(Red);
+                using var dot = new SolidBrush(OverlayRed);
                 g.FillEllipse(dot, c.X - r, c.Y - r, r * 2, r * 2);
                 break;
             }
             case Phase.Processing:
             {
                 float r = 6.5f * s;
-                using var track = new Pen(Color.FromArgb(70, Amber), 2.2f * s);
-                using var arc = new Pen(Amber, 2.2f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                using var track = new Pen(Color.FromArgb(70, OverlayAmber), 2.2f * s);
+                using var arc = new Pen(OverlayAmber, 2.2f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
                 var box = new RectangleF(c.X - r, c.Y - r, r * 2, r * 2);
                 g.DrawEllipse(track, box);
                 g.DrawArc(arc, box, _tick * 18 % 360, 100);
@@ -465,11 +479,11 @@ internal sealed class RecordingOverlay : Form
             case Phase.Done when _doneNeutral:
             {
                 float r = 8f * s;
-                using var circle = new SolidBrush(Muted);
+                using var circle = new SolidBrush(OverlayMuted);
                 g.FillEllipse(circle, c.X - r, c.Y - r, r * 2, r * 2);
-                using var mark = new Pen(Back, 2f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+                using var mark = new Pen(OverlayBack, 2f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
                 g.DrawLine(mark, c.X, c.Y - 0.5f * s, c.X, c.Y + 3.8f * s);
-                using var dot = new SolidBrush(Back);
+                using var dot = new SolidBrush(OverlayBack);
                 float d = 1.3f * s;
                 g.FillEllipse(dot, c.X - d, c.Y - 4.6f * s - d, d * 2, d * 2);
                 break;
@@ -477,9 +491,9 @@ internal sealed class RecordingOverlay : Form
             case Phase.Done:
             {
                 float r = 8f * s;
-                using var circle = new SolidBrush(Green);
+                using var circle = new SolidBrush(OverlayGreen);
                 g.FillEllipse(circle, c.X - r, c.Y - r, r * 2, r * 2);
-                using var tick = new Pen(Back, 2f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
+                using var tick = new Pen(OverlayBack, 2f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round };
                 g.DrawLines(tick, new[]
                 {
                     new PointF(c.X - 3.6f * s, c.Y + 0.2f * s),
@@ -496,7 +510,7 @@ internal sealed class RecordingOverlay : Form
     {
         float barW = 2f * s, gap = 2f * s, maxH = 18f * s, minH = 2f * s;
         float x = rightEdge - Bars * (barW + gap);
-        using var brush = new SolidBrush(Color.FromArgb(225, 255, 255, 255));
+        using var brush = new SolidBrush(Hc ? OverlayPrimary : Color.FromArgb(225, 255, 255, 255));
         for (int i = 0; i < Bars; i++)
         {
             float v = _levels[(_levelHead + i) % Bars];

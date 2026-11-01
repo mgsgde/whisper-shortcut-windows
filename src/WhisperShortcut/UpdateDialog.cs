@@ -46,6 +46,7 @@ internal sealed class UpdateDialog : Form
         {
             Image = new Icon(TrayIcons.App, 48, 48).ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom,
             Size = new Size(44, 44), Margin = new Padding(0, 0, 14, 0),
+            AccessibleRole = AccessibleRole.None, TabStop = false,
         }, 0, 0);
         var names = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false, Margin = new Padding(0), Anchor = AnchorStyles.Left };
         names.Controls.Add(new ThemedLabel { Text = $"Version {update.Version} ist da", Font = new Font("Segoe UI Semibold", 14f), AutoSize = true, Margin = new Padding(0) });
@@ -59,7 +60,7 @@ internal sealed class UpdateDialog : Form
         root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         var notes = new TextBox
         {
-            Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, WordWrap = true, TabStop = false,
+            Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, WordWrap = true, TabStop = true,
             Text = PlainNotes(update.Notes), Font = Theme.Body, AccessibleName = "Änderungen in dieser Version",
         };
         var notesFrame = new FieldFrame(notes, multiline: true) { Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 12) };

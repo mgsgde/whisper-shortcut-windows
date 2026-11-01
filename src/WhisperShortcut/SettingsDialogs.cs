@@ -58,6 +58,7 @@ internal sealed class ChoiceDialog : Form
             made[i] = new FluentButton(labels[i], accent: i == 0 && !danger)
             {
                 MinimumSize = new Size(112, 32), Danger = i == 0 && danger, Margin = new Padding(i == 0 ? 0 : 8, 0, 0, 0),
+                AccessibleName = labels[i],
             };
             made[i].Click += (_, _) => { _choice = index; Close(); };
             buttons.Controls.Add(made[i]);

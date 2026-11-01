@@ -102,6 +102,7 @@ internal sealed class SettingsForm : Form
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
         Text = "WhisperShortcut – Einstellungen";
+        AccessibleDescription = Core.UserCopy.SettingsAccessibleDescription;
         Font = Theme.Body;
         StartPosition = FormStartPosition.Manual; // centered in Load, after the size is known
         ClientSize = new Size(980, 700);
@@ -115,17 +116,16 @@ internal sealed class SettingsForm : Form
         {
             _welcome = new Banner
             {
-                Text = "Willkommen! Zuerst die Arbeitsweise wählen: Online braucht einen Schlüssel von Google (Gemini) oder OpenAI, "
-                    + "offline werden einmal die Modelle geladen. Dann „Speichern“. Danach in einem beliebigen Programm "
-                    + $"{Hotkey.Display(settings.DictateHotkey)} drücken, sprechen und noch einmal drücken.",
+                Text = Core.UserCopy.Welcome(Hotkey.Display(settings.DictateHotkey)),
+                AccessibleName = Core.UserCopy.WelcomeAccessibleName,
                 AutoSize = true, Padding = new Padding(14, 12, 14, 12), Margin = new Padding(0, 4, 0, 4), Visible = welcome,
             };
             Fit(_welcome, 0);
             general.Controls.Add(_welcome);
         }
         general.Controls.Add(Section("Arbeitsweise", first: true));
-        _onlineMode = new OptionButton("Online") { Checked = !settings.OfflineMode };
-        _offlineMode = new OptionButton("Offline auf diesem PC") { Checked = settings.OfflineMode };
+        _onlineMode = new OptionButton("Online") { Checked = !settings.OfflineMode, AccessibleName = "Arbeitsweise Online" };
+        _offlineMode = new OptionButton("Offline auf diesem PC") { Checked = settings.OfflineMode, AccessibleName = "Arbeitsweise Offline auf diesem PC" };
         // Each option sits in its own card row, so the automatic radio grouping (same parent) does not apply.
         _onlineMode.CheckedChanged += (_, _) => { if (_onlineMode.Checked) _offlineMode.Checked = false; };
         _offlineMode.CheckedChanged += (_, _) => { if (_offlineMode.Checked) _onlineMode.Checked = false; };
@@ -180,7 +180,7 @@ internal sealed class SettingsForm : Form
         // --- offline models: summary here, the downloads on the Offline page ---
         var offlineSection = Section("Offline-Modelle");
         general.Controls.Add(offlineSection);
-        var manage = new FluentButton("Verwalten") { MinimumSize = new Size(ButtonWidth, 32) };
+        var manage = new FluentButton("Verwalten") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Offline-Modelle verwalten" };
         manage.Click += (_, _) => ShowPage(OfflinePage);
         var offlineCard = new Card();
         offlineCard.AddRow(SettingRow("Spracherkennung und Sprachmodell", "", manage, ButtonWidth, out _offlineSummary));
@@ -189,15 +189,16 @@ internal sealed class SettingsForm : Form
 
         // --- microphone ---
         general.Controls.Add(Section("Mikrofon"));
-        _mic = new FluentCombo { Dock = DockStyle.Fill };
+        _mic = new FluentCombo { Dock = DockStyle.Fill, AccessibleName = Core.UserCopy.MicAccessibleName };
         FillMicrophones(settings.Microphone);
-        _micTest = new FluentButton("Testen") { MinimumSize = new Size(100, 32) };
+        _micTest = new FluentButton("Testen") { MinimumSize = new Size(100, 32), AccessibleName = Core.UserCopy.MicTestAccessibleName };
         var micBlock = Block();
         micBlock.Controls.Add(Row(_mic, _micTest));
         _micMeter = new Bar(level: true) { Margin = new Padding(0, 8, 0, 4), Visible = false };
         micBlock.Controls.Add(_micMeter);
         micBlock.Controls.Add(Wrap("„Windows-Standard“ folgt dem Gerät, das in Windows unter System → Sound als Eingabe gewählt ist. "
-            + "Ein Headset ist in der Praxis deutlich besser als das eingebaute Mikrofon.", 2 * RowPadding, small: true));
+            + "Ein Headset ist in der Praxis deutlich besser als das eingebaute Mikrofon. " + Core.UserCopy.MicTestHint,
+            2 * RowPadding, small: true));
         var micCard = new Card();
         micCard.AddRow(micBlock);
         general.Controls.Add(micCard);
@@ -294,7 +295,7 @@ internal sealed class SettingsForm : Form
             Multiline = true, AcceptsReturn = true, AcceptsTab = false, ScrollBars = ScrollBars.Vertical, WordWrap = true,
             Text = (settings.DictatePromptTemplate ?? "").ReplaceLineEndings("\r\n"), AccessibleName = "Vorlage für neue Texte",
         };
-        var samples = new FluentButton("Beispiel einsetzen ▾");
+        var samples = new FluentButton("Beispiel einsetzen ▾") { AccessibleName = "Beispielvorlage einsetzen" };
         _sampleMenu = new ContextMenuStrip();
         _sampleMenu.Items.Add("Praxis: Anamnese, Befund, Therapie", null, (_, _) => ReplaceTemplate(QuoteTemplate.Praxis));
         _sampleMenu.Items.Add("Werkstatt: Auftragsbericht", null, (_, _) => ReplaceTemplate(QuoteTemplate.Werkstatt));
@@ -329,7 +330,7 @@ internal sealed class SettingsForm : Form
             };
             quickTable.Controls.Add(new FieldFrame(_quick[i]) { Margin = new Padding(0, 3, 0, 3) }, 1, i);
         }
-        var quickReset = new LinkLabel { Text = "Vorschläge wiederherstellen", AutoSize = true, Margin = new Padding(0, 8, 0, 0) };
+        var quickReset = new LinkLabel { Text = "Vorschläge wiederherstellen", AutoSize = true, Margin = new Padding(0, 8, 0, 0), AccessibleName = "Vorschläge wiederherstellen" };
         quickReset.LinkClicked += (_, _) =>
         {
             for (int i = 0; i < _quick.Length; i++)
@@ -407,7 +408,8 @@ internal sealed class SettingsForm : Form
         var nav = new Panel { Dock = DockStyle.Left, Width = 260, Padding = new Padding(8, 12, 8, 8) };
         var logo = new PictureBox
         {
-            Image = TrayIcons.App.ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom, Location = new Point(20, 18), Size = new Size(20, 20),
+            Image = new Icon(TrayIcons.App, 64, 64).ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom, Location = new Point(20, 18), Size = new Size(20, 20),
+            AccessibleRole = AccessibleRole.None, TabStop = false,
         };
         var appTitle = new ThemedLabel
         {
@@ -419,7 +421,7 @@ internal sealed class SettingsForm : Form
         int y = 60;
         foreach (var (name, icon) in Pages)
         {
-            var item = new NavItem(name, icon) { Location = new Point(8, y), Size = new Size(244, 38), TabStop = false };
+            var item = new NavItem(name, icon) { Location = new Point(8, y), Size = new Size(244, 38) };
             item.Picked += (_, _) => ShowPage(name);
             _nav.Add(item);
             nav.Controls.Add(item);
@@ -429,8 +431,8 @@ internal sealed class SettingsForm : Form
         _pageHost = new Panel { Dock = DockStyle.Fill };
         foreach (var page in _pages.Values) _pageHost.Controls.Add(page);
 
-        var save = new FluentButton("Speichern", accent: true) { MinimumSize = new Size(120, 32), TabIndex = 0 };
-        var cancel = _close = new FluentButton("Schließen") { MinimumSize = new Size(120, 32), TabIndex = 1 };
+        var save = new FluentButton("Speichern", accent: true) { MinimumSize = new Size(120, 32), TabIndex = 0, AccessibleName = Core.UserCopy.SaveAccessibleName };
+        var cancel = _close = new FluentButton("Schließen") { MinimumSize = new Size(120, 32), TabIndex = 1, AccessibleName = Core.UserCopy.CloseAccessibleName };
         // WHY Save keeps the window open: a window that vanished on Save looked like a crash to testers.
         save.Click += (_, _) => TrySave();
         // "Abbrechen" (with changes) means discard: only the title bar's X and Esc ask whether to save.
@@ -519,7 +521,10 @@ internal sealed class SettingsForm : Form
 
     private void OnUserPreferenceChanged(object? sender, Microsoft.Win32.UserPreferenceChangedEventArgs e)
     {
-        if (e.Category != Microsoft.Win32.UserPreferenceCategory.General || IsDisposed || !IsHandleCreated) return;
+        if (e.Category is not (Microsoft.Win32.UserPreferenceCategory.General
+                or Microsoft.Win32.UserPreferenceCategory.Color
+                or Microsoft.Win32.UserPreferenceCategory.Accessibility)
+            || IsDisposed || !IsHandleCreated) return;
         BeginInvoke(() =>
         {
             if (!Theme.Refresh()) return;
@@ -580,7 +585,7 @@ internal sealed class SettingsForm : Form
         var head = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(RowPadding, 14, RowPadding, 14), Margin = new Padding(0) };
         head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         head.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        head.Controls.Add(new PictureBox { Image = new Icon(TrayIcons.App, 48, 48).ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(48, 48), Margin = new Padding(0, 0, 16, 0) }, 0, 0);
+        head.Controls.Add(new PictureBox { Image = new Icon(TrayIcons.App, 48, 48).ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(48, 48), Margin = new Padding(0, 0, 16, 0), AccessibleRole = AccessibleRole.None, TabStop = false }, 0, 0);
         var names = new FlowLayoutPanel { FlowDirection = FlowDirection.TopDown, AutoSize = true, WrapContents = false, Margin = new Padding(0), Anchor = AnchorStyles.Left };
         names.Controls.Add(new ThemedLabel { Text = "WhisperShortcut für Windows", Font = Theme.Strong, AutoSize = true, Margin = new Padding(0) });
         names.Controls.Add(new ThemedLabel
@@ -616,7 +621,7 @@ internal sealed class SettingsForm : Form
             ((ScrollableControl)_pages[General]).AutoScrollPosition = Point.Empty;
         };
         var tourCard = new Card();
-        tourCard.AddRow(SettingRow("Einführung noch einmal zeigen", "Die Schritte vom ersten Start.", tour, ButtonWidth, out _));
+        tourCard.AddRow(SettingRow("Einführung noch einmal zeigen", Core.UserCopy.WelcomeTourHint, tour, ButtonWidth, out _));
         info.Controls.Add(tourCard);
 
         info.Controls.Add(Section("Daten und Zurücksetzen"));
@@ -744,8 +749,9 @@ internal sealed class SettingsForm : Form
         try { Core.AppData.Reset(); }
         catch (Exception e)
         {
-            Warn("Nicht alles konnte gelöscht werden, vermutlich ist eine Datei noch geöffnet. WhisperShortcut beendet sich jetzt; "
-                + "danach den App-Datenordner von Hand löschen.\n\n" + e.Message);
+            Warn(Core.UserCopy.TechnicalFallback(
+                "Nicht alles konnte gelöscht werden, vermutlich ist eine Datei noch geöffnet. WhisperShortcut beendet sich jetzt; danach den App-Datenordner von Hand löschen.",
+                e.Message));
         }
         _discard = true;
         Application.Exit();
@@ -1110,13 +1116,13 @@ internal sealed class SettingsForm : Form
         key.Section = Section(title);
         page.Controls.Add(key.Section);
         key.Box.AccessibleName = title;
-        var show = new FluentButton("Anzeigen") { MinimumSize = new Size(100, 32) };
+        var show = new FluentButton("Anzeigen") { MinimumSize = new Size(100, 32), AccessibleName = title + " anzeigen oder verbergen" };
         show.Click += (_, _) =>
         {
             key.Box.UseSystemPasswordChar = !key.Box.UseSystemPasswordChar;
             show.Text = key.Box.UseSystemPasswordChar ? "Anzeigen" : "Verbergen";
         };
-        var check = new FluentButton("Prüfen") { MinimumSize = new Size(100, 32) };
+        var check = new FluentButton("Prüfen") { MinimumSize = new Size(100, 32), AccessibleName = title + " prüfen" };
         check.Click += (_, _) => _ = key.CheckAsync();
         var block = Block();
         block.Controls.Add(Row(new FieldFrame(key.Box), show, check));
@@ -1217,10 +1223,11 @@ internal sealed class SettingsForm : Form
             Core.Log.Error($"Mic test failed: {e.GetType().Name}");
             _probe?.Dispose();
             _probe = null;
-            Warn(e is MicrophoneUnavailableException ? e.Message : "Das Mikrofon lässt sich nicht öffnen: " + e.Message);
+            Warn(e is MicrophoneUnavailableException ? e.Message : Core.UserCopy.TechnicalFallback("Das Mikrofon lässt sich nicht öffnen.", e.Message));
             return;
         }
         _micTest.Text = "Stopp";
+        _micTest.AccessibleName = Core.UserCopy.MicTestStopAccessibleName;
         _micMeter.Value = 0;
         _micMeter.Visible = true;
         _meterTimer.Start();
@@ -1233,6 +1240,7 @@ internal sealed class SettingsForm : Form
         _probe = null;
         if (IsDisposed) return;
         _micTest.Text = "Testen";
+        _micTest.AccessibleName = Core.UserCopy.MicTestAccessibleName;
         _micMeter.Visible = false;
     }
 
@@ -1283,7 +1291,7 @@ internal sealed class SettingsForm : Form
         catch (Exception e)
         {
             Core.Log.Error("Deleting model failed", e);
-            Warn("Das Modell konnte nicht gelöscht werden: " + e.Message);
+            Warn(Core.UserCopy.TechnicalFallback("Das Modell konnte nicht gelöscht werden.", e.Message));
         }
         UpdateModelRows();
     }
@@ -1427,6 +1435,21 @@ internal sealed class SettingsForm : Form
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
+        if (IsPageShortcut(keyData, out int step))
+        {
+            ShowAdjacentPage(step);
+            return true;
+        }
+        if (ActiveControl is NavItem && keyData is Keys.Down or Keys.Right)
+        {
+            ShowAdjacentPage(1);
+            return true;
+        }
+        if (ActiveControl is NavItem && keyData is Keys.Up or Keys.Left)
+        {
+            ShowAdjacentPage(-1);
+            return true;
+        }
         // Esc out of habit must not throw away typed glossary terms: close the way the X does.
         // Hotkey fields record Esc themselves, an open dropdown closes itself.
         if (keyData == Keys.Escape && ActiveControl is not HotkeyBox && ActiveControl is not ComboBox { DroppedDown: true })
@@ -1435,6 +1458,32 @@ internal sealed class SettingsForm : Form
             return true;
         }
         return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    private static bool IsPageShortcut(Keys keyData, out int step)
+    {
+        if (keyData is (Keys.Control | Keys.Tab) or (Keys.Control | Keys.Next))
+        {
+            step = 1;
+            return true;
+        }
+        if (keyData is (Keys.Control | Keys.Shift | Keys.Tab) or (Keys.Control | Keys.PageUp))
+        {
+            step = -1;
+            return true;
+        }
+        step = 0;
+        return false;
+    }
+
+    private void ShowAdjacentPage(int step)
+    {
+        var names = Pages.Select(p => p.Name).ToArray();
+        int current = Array.FindIndex(names, n => _nav.Any(item => item.Selected && item.Text == n));
+        if (current < 0) current = 0;
+        int next = Core.UserCopy.NextPage(current, names.Length, step);
+        ShowPage(names[next]);
+        if (next >= 0 && next < _nav.Count) _nav[next].Focus();
     }
 
     /// <summary>
@@ -1468,6 +1517,7 @@ internal sealed class SettingsForm : Form
     {
         bool dirty = _snapshot.Length > 0 && Snapshot() != _snapshot;
         _close.Text = dirty ? "Abbrechen" : "Schließen";
+        _close.AccessibleName = dirty ? Core.UserCopy.CancelAccessibleName : Core.UserCopy.CloseAccessibleName;
         if (dirty)
             (_dirty.Text, _dirty.Tone, _dirty.Visible) = ("Nicht gespeicherte Änderungen", Tone.Secondary, true);
         else
@@ -1539,7 +1589,7 @@ internal sealed class SettingsForm : Form
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck) = before;
-            Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
+            Warn(Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message));
             return false;
         }
         if (_autoStart.Checked != AutoStart.IsEnabled)
@@ -1639,6 +1689,13 @@ internal sealed class SettingsForm : Form
             {
                 // Form-wide: the parent is the small field frame, where Tab would go nowhere.
                 FindForm()?.SelectNextControl(this, e.Modifiers == Keys.None, true, true, true);
+                return;
+            }
+            // Ctrl+Tab / Ctrl+PageDown belong to the settings pages, not to a new hotkey.
+            if (e.Modifiers.HasFlag(Keys.Control) && e.KeyCode is Keys.Tab or Keys.Next or Keys.PageUp)
+            {
+                e.SuppressKeyPress = false;
+                e.Handled = false;
                 return;
             }
             Apply(e.KeyCode, e.Modifiers);

@@ -142,7 +142,7 @@ public class OpenAiClientTests
         for (var i = 0; i < 10; i++) h.Responses.Enqueue((HttpStatusCode.InternalServerError, "{}"));
         var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
         Assert.Equal(GeminiErrorKind.Server, ex.Kind);
-        Assert.Equal("OpenAI-Fehler (HTTP 500). Bitte später erneut versuchen.", ex.Message);
+        Assert.Equal(UserCopy.ServerBusy("OpenAI"), ex.Message);
         Assert.Equal(6, h.Calls.Count);
     }
 
