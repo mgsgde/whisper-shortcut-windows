@@ -39,7 +39,12 @@ public class OfflineCatalogTests
     [Fact]
     public void Entries_AreWellFormed()
     {
-        var all = new List<OfflineComponent> { OfflineCatalog.Parakeet };
+        var all = new List<OfflineComponent>
+        {
+            OfflineCatalog.Parakeet,
+            OfflineCatalog.LlamaServer(Architecture.X64),
+            OfflineCatalog.LlamaServer(Architecture.Arm64),
+        };
         all.AddRange(OfflineCatalog.Llms.Select(l => l.Component));
         foreach (var f in all.SelectMany(c => c.Files))
         {

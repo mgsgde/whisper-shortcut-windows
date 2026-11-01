@@ -13,7 +13,8 @@ internal sealed class OfflineEngine : IDisposable
     private static readonly TimeSpan LlmIdleTimeout = TimeSpan.FromMinutes(15);
 
     private readonly Core.Settings _settings;
-    private readonly HttpClient _http = new() { Timeout = Timeout.InfiniteTimeSpan };
+    private readonly HttpClient _http = Core.NetworkPolicy.CreateDownloadClient(Timeout.InfiniteTimeSpan);
+    private readonly HttpClient _llmHttp = Core.NetworkPolicy.CreateApiClient();
     private readonly Core.ModelDownloader _downloader;
     private readonly Core.LocalLlmClient _llm;
     private readonly KillOnCloseJob _job = new();
@@ -32,7 +33,7 @@ internal sealed class OfflineEngine : IDisposable
     {
         _settings = settings;
         _downloader = new Core.ModelDownloader(_http);
-        _llm = new Core.LocalLlmClient(_http);
+        _llm = new Core.LocalLlmClient(_llmHttp);
         _idleTimer.Tick += (_, _) => _server?.StopIfIdle(LlmIdleTimeout);
         _idleTimer.Start();
     }
@@ -385,6 +386,7 @@ internal sealed class OfflineEngine : IDisposable
         _parakeet?.Dispose();
         _job.Dispose();
         _http.Dispose();
+        _llmHttp.Dispose();
     }
 
     internal sealed class Download

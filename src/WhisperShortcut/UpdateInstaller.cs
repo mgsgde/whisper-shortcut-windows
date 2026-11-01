@@ -35,14 +35,32 @@ internal static class UpdateInstaller
     {
         try
         {
+            if (!Core.UpdateInstallPath.IsAllowedTarget(CurrentExe))
+            {
+                Core.Log.Error("Update: current exe path is not an allowed install target");
+                return false;
+            }
+            string exe;
+            try { exe = Core.UpdateDownloader.PrepareStagedExe(StagingDir); }
+            catch (Core.UpdateException ex)
+            {
+                Core.Log.Error($"Update: staged package rejected ({ex.Message})");
+                return false;
+            }
+            if (!string.Equals(Path.GetFullPath(exe), Path.GetFullPath(stagedExe), StringComparison.OrdinalIgnoreCase))
+            {
+                Core.Log.Error("Update: staged exe path changed after re-verify");
+                return false;
+            }
             bool elevate = !CanWriteNextToExe();
             Core.Log.Info($"Update: starting installer, elevation {(elevate ? "needed" : "not needed")}");
-            var psi = new ProcessStartInfo(stagedExe)
+            var psi = new ProcessStartInfo(exe)
             {
-                Arguments = $"--install-update \"{CurrentExe}\"",
                 UseShellExecute = true,
                 WorkingDirectory = StagingDir,
             };
+            psi.ArgumentList.Add("--install-update");
+            psi.ArgumentList.Add(CurrentExe);
             if (elevate) psi.Verb = "runas";
             // Off the UI thread: with "runas", Process.Start only returns once the admin prompt is answered,
             // which can take minutes (someone with an admin account has to come over). No timeout for that.
@@ -75,6 +93,11 @@ internal static class UpdateInstaller
     /// <summary>Runs inside the staged exe: replaces <paramref name="targetExe"/> with this file. 0 = ok, 1 = failed.</summary>
     public static int RunInstall(string targetExe)
     {
+        if (!Core.UpdateInstallPath.IsAllowedTarget(targetExe) || !File.Exists(targetExe))
+        {
+            Core.Log.Error("Update: install target rejected");
+            return 1;
+        }
         string self = Environment.ProcessPath!;
         string old = targetExe + ".old";
         bool moved = false;

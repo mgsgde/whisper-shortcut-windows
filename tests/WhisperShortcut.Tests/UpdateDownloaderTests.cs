@@ -63,7 +63,35 @@ public class UpdateDownloaderTests : IDisposable
         double last = 0;
         var path = await Run(http, info, new Progress<double>(p => last = p));
         Assert.Equal(exe, File.ReadAllBytes(path));
-        Assert.False(File.Exists(Path.Combine(_dir, "stage", "update.zip")));
+        Assert.True(File.Exists(Path.Combine(_dir, "stage", "update.zip")));
+        Assert.True(File.Exists(Path.Combine(_dir, "stage", "update.zip.sig")));
+    }
+
+    [Fact]
+    public async Task HttpAssetUrl_Throws()
+    {
+        string name = UpdateCheck.AssetName(Architecture.X64);
+        var info = new UpdateInfo("9.9.9", "https://x")
+        {
+            Assets = new Dictionary<string, string>
+            {
+                [name] = "http://evil.example/zip",
+                [name + ".sig"] = "http://evil.example/sig",
+            },
+        };
+        await Assert.ThrowsAsync<UpdateException>(() => Run(new HttpClient(new BytesHandler(new())), info));
+    }
+
+    [Fact]
+    public async Task PrepareStagedExe_ReExtractsFromVerifiedZip()
+    {
+        var exe = new byte[] { 9, 8, 7 };
+        var (http, info) = Setup(MakeZip("WhisperShortcut.exe", exe), null);
+        var stage = Path.Combine(_dir, "stage");
+        var path = await Run(http, info);
+        File.WriteAllBytes(path, new byte[] { 1, 1, 1 });
+        var again = UpdateDownloader.PrepareStagedExe(stage, _key.ExportSubjectPublicKeyInfoPem());
+        Assert.Equal(exe, File.ReadAllBytes(again));
     }
 
     [Fact]

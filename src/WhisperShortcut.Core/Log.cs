@@ -41,7 +41,8 @@ public static class Log
             {
                 var dir = Path.GetDirectoryName(_path);
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {level} {message.Replace('\n', ' ').Replace('\r', ' ')}{Environment.NewLine}";
+                var safe = SecretRedactor.Redact(message).Replace('\n', ' ').Replace('\r', ' ');
+                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {level} {safe}{Environment.NewLine}";
                 File.AppendAllText(_path, line, Encoding.UTF8);
             }
             catch

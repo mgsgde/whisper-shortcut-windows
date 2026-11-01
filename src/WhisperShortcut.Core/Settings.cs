@@ -163,15 +163,24 @@ public sealed class Settings
         {
             var dto = JsonSerializer.Deserialize<Dto>(File.ReadAllText(path), Json);
             if (dto == null) return s;
+            var rewrite = !string.IsNullOrEmpty(dto.ApiKeyPlain) || !string.IsNullOrEmpty(dto.OpenAiKeyPlain);
             if (!string.IsNullOrEmpty(dto.ApiKeyProtected))
             {
                 try { s.ApiKey = protector.Unprotect(dto.ApiKeyProtected) ?? ""; }
                 catch { s.ApiKey = ""; }
             }
+            else if (!string.IsNullOrEmpty(dto.ApiKeyPlain))
+            {
+                s.ApiKey = dto.ApiKeyPlain;
+            }
             if (!string.IsNullOrEmpty(dto.OpenAiKeyProtected))
             {
                 try { s.OpenAiKey = protector.Unprotect(dto.OpenAiKeyProtected) ?? ""; }
                 catch { s.OpenAiKey = ""; }
+            }
+            else if (!string.IsNullOrEmpty(dto.OpenAiKeyPlain))
+            {
+                s.OpenAiKey = dto.OpenAiKeyPlain;
             }
             s.SpeechEngine = ParseEngine(dto.SpeechEngine);
             s.TextEngine = ParseEngine(dto.TextEngine);
@@ -197,6 +206,11 @@ public sealed class Settings
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
                 : QuickActionList.Clean(dto.QuickActions);
+            // A leftover plaintext key field is imported above and must leave the file on the next write.
+            if (rewrite)
+            {
+                try { s.Save(); } catch { }
+            }
         }
         catch (Exception ex)
         {
@@ -262,6 +276,13 @@ public sealed class Settings
     {
         [JsonPropertyName("apiKeyProtected")] public string? ApiKeyProtected { get; set; }
         [JsonPropertyName("openAiKeyProtected")] public string? OpenAiKeyProtected { get; set; }
+        // Read-only migration: a hand-edited or copied file may still hold a raw key. Never written back.
+        [JsonPropertyName("apiKey")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ApiKeyPlain { get; set; }
+        [JsonPropertyName("openAiKey")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? OpenAiKeyPlain { get; set; }
         [JsonPropertyName("speechEngine")] public string? SpeechEngine { get; set; }
         [JsonPropertyName("textEngine")] public string? TextEngine { get; set; }
         [JsonPropertyName("openAiTranscriptionModel")] public string? OpenAiTranscriptionModel { get; set; }

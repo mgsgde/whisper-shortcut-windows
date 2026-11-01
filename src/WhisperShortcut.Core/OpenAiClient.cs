@@ -44,7 +44,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         _apiKey = apiKeyProvider;
         _transcriptionModel = transcriptionModel;
         _promptModel = promptModel;
-        _http = http ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        _http = http ?? NetworkPolicy.CreateApiClient();
     }
 
     /// <summary>Transcribes a WAV (temperature 0). Returns the raw text, "" if nothing was recognised.</summary>

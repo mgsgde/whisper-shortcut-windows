@@ -160,6 +160,35 @@ public class ModelDownloaderTests : IDisposable
     }
 
     [Fact]
+    public async Task HttpNonLoopbackUrl_ThrowsBeforeContactingTheServer()
+    {
+        var data = Bytes(10);
+        var c = Comp("http://example.com/x.bin", data);
+        var ex = await Assert.ThrowsAsync<OfflineDownloadException>(() =>
+            new ModelDownloader(new HttpClient()).DownloadAsync(c, null, CancellationToken.None));
+        Assert.Equal("Download fehlgeschlagen: die Adresse ist nicht HTTPS.", ex.Message);
+    }
+
+    [Fact]
+    public async Task ZipSlip_Throws_AndDoesNotWriteOutside()
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, true))
+        {
+            using var w = new StreamWriter(zip.CreateEntry("../escape.exe").Open());
+            w.Write("evil");
+        }
+        var data = ms.ToArray();
+        using var srv = new TestServer { Data = data };
+        var c = Comp(srv.Url, data, zip: true, name: "b.zip");
+        var ex = await Assert.ThrowsAsync<OfflineDownloadException>(() =>
+            new ModelDownloader(new HttpClient()).DownloadAsync(c, null, CancellationToken.None));
+        Assert.Equal("Download beschädigt, bitte noch einmal versuchen.", ex.Message);
+        Assert.False(File.Exists(Path.Combine(_root, "escape.exe")));
+        Assert.False(ModelDownloader.IsInstalled(c));
+    }
+
+    [Fact]
     public async Task Unreachable_ThrowsNetworkMessage()
     {
         var data = Bytes(10);

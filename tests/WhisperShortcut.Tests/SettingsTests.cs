@@ -210,6 +210,23 @@ public class SettingsTests
     }
 
     [Fact]
+    public void Load_MigratesPlaintextKeysAndRewritesFile()
+    {
+        var path = TempSettingsFile("""{"apiKey":"AIzaSyA1234567890abcdefghijklmnop","openAiKey":"sk-abcdefghijklmnopqrstuvwxyz123456"}""");
+        var s = Settings.Load(path, new Reverse());
+        Assert.Equal("AIzaSyA1234567890abcdefghijklmnop", s.ApiKey);
+        Assert.Equal("sk-abcdefghijklmnopqrstuvwxyz123456", s.OpenAiKey);
+        var raw = File.ReadAllText(path);
+        Assert.DoesNotContain("AIzaSyA1234567890", raw);
+        Assert.DoesNotContain("sk-abcdefghijklmnopqrstuvwxyz123456", raw);
+        Assert.Contains("apiKeyProtected", raw);
+        Assert.Contains("openAiKeyProtected", raw);
+        Assert.DoesNotContain("\"apiKey\":", raw);
+        Assert.DoesNotContain("\"openAiKey\":", raw);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
     public void EffectiveEngines_OfflineMode_OverridesBoth()
     {
         var path = TempSettingsFile("{}");
@@ -250,6 +267,7 @@ public class LogAndAudioTests
         Log.Init(path);
         Log.Info("hello");
         Log.Error("bad", new InvalidOperationException("boom"));
+        Log.Info("secret AIzaSyA1234567890abcdefghijklmnop");
         Log.Init(null);
         // Log is static and other test classes run in parallel: their lines may land here too, so look for ours only.
         var lines = File.ReadAllLines(path);
@@ -257,6 +275,8 @@ public class LogAndAudioTests
         int hello = Array.FindIndex(lines, l => l.Contains("INFO hello"));
         int bad = Array.FindIndex(lines, l => l.Contains("ERROR bad (InvalidOperationException: boom)"));
         Assert.True(hello >= 0 && bad > hello);
+        Assert.DoesNotContain(lines, l => l.Contains("AIzaSyA1234567890"));
+        Assert.Contains(lines, l => l.Contains("secret AIza…"));
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 

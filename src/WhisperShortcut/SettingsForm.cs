@@ -627,7 +627,7 @@ internal sealed class SettingsForm : Form
         var logFile = new FluentButton("Protokoll") { MinimumSize = new Size(96, 32), AccessibleName = "Protokolldatei öffnen" };
         logFile.Click += (_, _) =>
         {
-            if (File.Exists(Core.Log.DefaultPath)) OpenUrl(Core.Log.DefaultPath);
+            if (File.Exists(Core.Log.DefaultPath)) OpenLocal(Core.Log.DefaultPath);
             else OpenFolder(Core.AppData.LocalFolder);
         };
         var logFolder = new FluentButton("Ordner öffnen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Ordner mit Modellen und Protokoll öffnen" };
@@ -692,7 +692,7 @@ internal sealed class SettingsForm : Form
             }
         }
         Core.Log.Info($"Problem report opened (body in URL: {bodyInUrl})");
-        OpenUrl(url);
+        OpenWeb(url);
     }
 
     private async Task CheckUpdateAsync()
@@ -755,13 +755,13 @@ internal sealed class SettingsForm : Form
     {
         try { Directory.CreateDirectory(path); }
         catch (Exception e) { Core.Log.Error($"Creating folder failed: {e.GetType().Name}"); }
-        OpenUrl(path);
+        OpenLocal(path);
     }
 
     private FluentButton LinkButton(string text, string url)
     {
         var button = new FluentButton(text) { MinimumSize = new Size(ButtonWidth, 32) };
-        button.Click += (_, _) => OpenUrl(url);
+        button.Click += (_, _) => OpenWeb(url);
         return button;
     }
 
@@ -1124,7 +1124,7 @@ internal sealed class SettingsForm : Form
         block.Controls.Add(key.Status);
         block.Controls.Add(Wrap(note, 2 * RowPadding, small: true));
         var link = new LinkLabel { Text = linkText, AutoSize = true, Margin = new Padding(0, 2, 0, 0) };
-        link.LinkClicked += (_, _) => OpenUrl(url);
+        link.LinkClicked += (_, _) => OpenWeb(url);
         block.Controls.Add(link);
         key.Card = new Card();
         key.Card.AddRow(block);
@@ -1598,9 +1598,19 @@ internal sealed class SettingsForm : Form
     private void Warn(string text) =>
         MessageBox.Show(this, text, "WhisperShortcut", MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
-    private static void OpenUrl(string url)
+    private static void OpenWeb(string url)
     {
-        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        if (!Core.NetworkPolicy.IsAllowedBrowserUrl(url))
+        {
+            Core.Log.Error("Opening URL refused: not HTTPS");
+            return;
+        }
+        OpenLocal(url);
+    }
+
+    private static void OpenLocal(string path)
+    {
+        try { Process.Start(new ProcessStartInfo(path) { UseShellExecute = true }); }
         catch (Exception e) { Core.Log.Error($"Opening URL failed: {e.GetType().Name}"); }
     }
 

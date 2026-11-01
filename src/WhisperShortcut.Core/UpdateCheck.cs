@@ -38,7 +38,7 @@ public static class UpdateCheck
             if (version.Length == 0) return null;
             string url = ReleasesPage;
             if (doc.RootElement.TryGetProperty("html_url", out var u) && u.ValueKind == JsonValueKind.String
-                && !string.IsNullOrWhiteSpace(u.GetString()))
+                && NetworkPolicy.IsAllowedBrowserUrl(u.GetString()))
                 url = u.GetString()!;
             string notes = doc.RootElement.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.String
                 ? b.GetString() ?? "" : "";
@@ -49,7 +49,7 @@ public static class UpdateCheck
                     if (a.ValueKind != JsonValueKind.Object) continue;
                     if (a.TryGetProperty("name", out var n) && n.ValueKind == JsonValueKind.String
                         && a.TryGetProperty("browser_download_url", out var d) && d.ValueKind == JsonValueKind.String
-                        && !string.IsNullOrEmpty(n.GetString()) && !string.IsNullOrEmpty(d.GetString()))
+                        && !string.IsNullOrEmpty(n.GetString()) && NetworkPolicy.IsAllowedDownloadUrl(d.GetString()))
                         assets[n.GetString()!] = d.GetString()!;
                 }
             return new UpdateInfo(version, url) { Notes = notes, Assets = assets };
@@ -103,6 +103,8 @@ public static class UpdateCheck
     /// </summary>
     public static async Task<UpdateInfo?> CheckAsync(HttpClient http, CancellationToken ct)
     {
+        if (!NetworkPolicy.IsAllowedDownloadUrl(ApiUrl))
+            throw new HttpRequestException("Update feed URL is not HTTPS or localhost.");
         using var request = new HttpRequestMessage(HttpMethod.Get, ApiUrl);
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("WhisperShortcut-Windows", null));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));

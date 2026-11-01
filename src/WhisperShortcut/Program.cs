@@ -35,8 +35,16 @@ internal static class Program
         int feedArg = Array.IndexOf(args, "--update-feed");
         if (feedArg >= 0 && feedArg + 1 < args.Length)
         {
-            Core.UpdateCheck.ApiUrl = args[feedArg + 1];
-            Core.Log.Info($"Update feed override {Core.UpdateCheck.ApiUrl}");
+            var feed = args[feedArg + 1];
+            if (Core.NetworkPolicy.IsAllowedDownloadUrl(feed))
+            {
+                Core.UpdateCheck.ApiUrl = feed;
+                Core.Log.Info($"Update feed override {Core.UpdateCheck.ApiUrl}");
+            }
+            else
+            {
+                Core.Log.Error("Update feed override rejected (need https or localhost)");
+            }
         }
 
         string? testWav = TestWavPath(args);
