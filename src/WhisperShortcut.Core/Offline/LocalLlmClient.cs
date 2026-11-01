@@ -50,9 +50,13 @@ public sealed class LocalLlmClient
     private readonly HttpClient _http;
 
     /// <summary>
-    /// Creates the client. There is no timeout of its own: the caller sets
-    /// <c>HttpClient.Timeout = Timeout.InfiniteTimeSpan</c> and cancels through the token.
+    /// How long one completion may sit with no answer (the Mac's stall watchdog). The caller
+    /// still uses <c>HttpClient.Timeout = Timeout.InfiniteTimeSpan</c> and cancels through the token.
+    /// Tests set this to a few hundred milliseconds.
     /// </summary>
+    public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(90);
+
+    /// <summary>Creates the client.</summary>
     public LocalLlmClient(HttpClient http) => _http = http;
 
     /// <summary>Runs one chat completion (greedy, thinking off) and returns the trimmed answer.</summary>
@@ -69,17 +73,24 @@ public sealed class LocalLlmClient
             ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false },
         };
         string text;
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        timeout.CancelAfter(RequestTimeout);
         try
         {
             using var resp = await _http.PostAsync(new Uri(baseUrl, "v1/chat/completions"),
-                new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json"), ct).ConfigureAwait(false);
-            text = await resp.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+                new StringContent(body.ToJsonString(), System.Text.Encoding.UTF8, "application/json"), timeout.Token).ConfigureAwait(false);
+            text = await resp.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
             if (!resp.IsSuccessStatusCode)
             {
                 // Status and length only: the body can echo the patient text.
                 Log.Error($"local LLM HTTP {(int)resp.StatusCode}, {text.Length} chars");
                 throw Failure(null);
             }
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            Log.Error("local LLM timeout");
+            throw new LocalLlmException("Das lokale Sprachmodell hat nicht geantwortet. Details im Protokoll.");
         }
         catch (HttpRequestException ex)
         {

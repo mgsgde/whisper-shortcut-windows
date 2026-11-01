@@ -1,62 +1,73 @@
-# Windows vs. macOS: Funktionsabgleich (Stand 27.10.2026)
+# Windows vs. macOS: Funktionsabgleich (Stand 1.11.2026)
 
-Geprüft: `main` (47b5bec) gegen die macOS-App v8.63. Fünf parallele Prüfungen (Diktieren, Dictate Prompt,
-Einstellungen/Oberfläche, Gesamtinventar, Zuverlässigkeit), die wichtigsten Befunde von Hand nachgesehen.
-Tests: 143 grün, 5 Live-Tests übersprungen.
+Geprüft: Windows `main` 0.5.4 (`206a89b`) plus diese Branch gegen die macOS-App **v8.73**
+(`https://github.com/mgsgde/whisper-shortcut`, `dd51bb8`). Der vorherige Abgleich (27.10.2026,
+v8.63) ist überholt: das Paket „Verlässlich“ (A1–A9) und die Einstellungs-Seitenleiste sind in
+0.5.x angekommen.
 
-**Kurz:** Die Funktionen, die Windows anbietet (Diktieren, Dictate Prompt, Glossar, Offline,
-Schnellanweisungen, letzte Texte), sind da und an einigen Stellen besser als auf dem Mac. Abgespeckt sind
-sie bei den **Schutzmechanismen und der Fehlerbehandlung**: Der Mac fängt erfundene Wörter, Glossar-Echos
-und Netzfehler ab, Windows meist nicht. Dazu fehlen Einstellmöglichkeiten, die zum Teil schon auf dem Branch
-`feat/settings-sidebar` liegen (nicht gemergt).
+**Kurz:** Diktieren, Dictate Prompt, Glossar, Offline (Parakeet + lokales LLM), Schnellanweisungen,
+letzte Texte, Einfügeziel, Retries und Glossar-Echo sind auf Windows da. Die großen macOS-Blöcke
+(Chat, Vorlesen, Screenshot, Live-Meeting, MCP, Smart Improvement) fehlen weiter. Neu in diesem
+Abgleich: Gesprächsgedächtnis bei Online-Edits, OpenAI-Modell-Migration, 0,2 s Nachlauf nach Stopp,
+Log-Rotation, Stall-Timeouts, CC-BY-Hinweis für Parakeet.
 
-## A. Gleiche Funktion, aber schwächer (gehört zur Parität)
+## A. Gleiche Funktion — erledigt seit 27.10. (nicht mehr Lücke)
 
-| # | Lücke | Windows | Mac | Folge |
+| # | Damals | Jetzt (Windows 0.5.4+) |
+|---|---|---|
+| A1 | Temperatur 1.0 | `GeminiClient` / `OpenAiClient` senden Temperatur 0 |
+| A2 | 1 Retry, Audio weg | 5–6 Versuche mit Backoff, Netzfehler, WAV bleibt, Menü „Letzte Aufnahme erneut verarbeiten“ |
+| A3 | 429 immer „Kontingent“ | `RetryInfo` / `Retry-After`, Tageskontingent getrennt |
+| A4 | Einfügen ins vordere Fenster | Ziel beim Start gemerkt, zurückgeholt oder Zwischenablage (`ClipboardPaster` / `PasteOutcome.ClipboardOnlyTargetChanged`) |
+| A5 | Glossar roh | `GlossaryPrompt`: Notizen weg, falsche Schreibweisen gefiltert, Tie-Breaker, Nachkorrektur |
+| A6 | Kein Echo-Schutz | `DiscardGlossaryEcho`, Retry ohne Glossar, `StripTrailingGlossaryEcho`, `LooksLikeRefusal` |
+| A7 | Gemini-IDs nie migriert | `GeminiModels.Normalize*` (3.7/3.6/2.5/… → 3.8 bzw. 3.1 Flash-Lite) |
+| A8 | Nur Unicode-Text | alle Speicher-Formate, 64-MB-Deckel |
+| A9 | Strg+C nach 2 s tot | 3 s Late-Copy-Watch |
+
+Einstellungen (Martins Liste): Seitenleiste, Modell und System-Prompt pro Modus, automatisch
+einfügen, Zwischenablage wiederherstellen, Info mit Version/Update/Tour/Zurücksetzen, Problem
+melden, Mit Windows starten — in `main`.
+
+## B. Noch offen, aber näher (dieser Branch schließt die markierten)
+
+| # | Lücke | Windows | Mac | Dieser Branch |
 |---|---|---|---|---|
-| 1 | **Keine Temperatur beim Diktat** | `GeminiClient.cs:143` nur `thinkingLevel` | `TranscriptionModels.swift:332-357`, Temperatur 0.0 | Modell läuft bei 1.0, mehr vertauschte/erfundene Wörter. Ein-Zeilen-Fix. |
-| 2 | **Aufnahme geht bei Fehler verloren** | 1 Retry nach 1 s, nur 429/500/503, keine Netzfehler (`GeminiClient.cs:265-285`); ein Stück scheitert → ganzes Diktat weg (`ChunkedTranscription.cs:89-98`); WAV verworfen (`TrayApp.cs:412-427`) | 5–6 Versuche mit Backoff, Netzfehler inkl., Retry pro Stück, Retry-Knopf behält das Audio | 25-min-Diktat weg nach einem WLAN-Aussetzer |
-| 3 | **429 = „Kontingent erschöpft“** | ignoriert `RetryInfo` (`GeminiClient.cs:302`) | wartet die genannte Zeit (`GeminiAPIClient.swift:494-523`) | falsche Meldung, wo eine Minute Warten gereicht hätte |
-| 4 | **Einfügen ins falsche Fenster** | fügt ins Fenster ein, das am Ende vorne ist (`ClipboardPaster.cs:60-88`) | merkt sich die App beim Start (`PasteTargetPolicy.swift`) | Fensterwechsel während der Verarbeitung → Text landet z. B. in Outlook, Markierung dort wird ersetzt |
-| 5 | **Glossar online ungefiltert** | Zeilen roh mit Komma verbunden (`GeminiClient.cs:129-131`); `Bachata (not "Batchata")` geht wörtlich raus | Notizen entfernt, falsche Schreibweisen gefiltert, Tie-Breaker, Nachkorrektur (`SpeechService.swift:124-300`) | die falsche Schreibweise wird dem Modell als Vokabel gegeben |
-| 6 | **Kein Schutz vor Glossar-Echo / Absagen** | nur „zu lang“-Prüfung und Vorspann-Entfernung (`TextCleanup.cs`) | Glossar-Echo-Gate + Retry ohne Glossar, angehängte Glossarliste weg, Chatbot-Absagen und Prompt-Leaks erkannt (`TextProcessingUtility.swift:309-560`) | Glossarwörter am Ende oder „Bitte schicken Sie das Audio“ werden eingefügt |
-| 7 | **Gespeicherte Modell-IDs werden nie migriert** | Modell-ID steht fest in settings.json (`Settings.cs:103`), 404 → „Gemini-Fehler (HTTP 404)“ | `migrateLegacyTranscriptionRawValue` (`TranscriptionModels.swift:498-537`) | wenn Google 3.8 Flash abschaltet, fällt Dictate Prompt bei allen aus, auch nach einem Update |
-| 8 | **Zwischenablage nur als Text gesichert** | nur `CF_UNICODETEXT` (`ClipboardPaster.cs:26`) | alle Typen (`ClipboardManager.swift:68-75`) | kopiertes Bild/Datei/Excel-Zellen nach einem Diktat weg |
-| 9 | **Langsames Strg+C = keine Markierung** | nach 2 s „nichts markiert“ (`ClipboardPaster.cs:168`) | wartet auf späte Kopie | Citrix/großes Word: Markierung wird durch neu verfassten Text ersetzt |
-| 10 | **Lange Diktate langsamer** | Stücke erst nach Stopp, ab 150 s | Stücke schon während des Sprechens | spürbar längere Wartezeit nach Stopp |
-| 11 | **Kein Gesprächsgedächtnis im Prompt-Modus** | jede Anfrage ohne Kontext (`GeminiClient.cs:159-180`) | 5 Runden, 5 min (`PromptConversationHistory.swift`) | „jetzt noch kürzer“ nach einer Bearbeitung weiß nichts mehr |
-| 12 | Kein Stall-Timeout bei Offline-Download und lokalem LLM | `OfflineEngine.cs:16`, `LocalLlmClient.cs:37` | – | Download hängt ewig bei 63 %, Anzeige bleibt auf „Wird verarbeitet“ |
-| 13 | Log ohne Rotation und ohne Stacktrace | `Log.cs:33,45` | – | Fehlerberichte nicht auswertbar |
-| 14 | Kleinkram | 0,2 s Nachlauf nach Stopp fehlt (letztes Wort), 5 statt 9 Schnellanweisungen, kein getippter Prompt, Kürzel nicht abschaltbar | | |
+| 1 | **Gesprächsgedächtnis** | jede Anfrage isoliert | 5 Runden / 5 min, nur Online-Edits, nicht Compose, nicht Offline (`PromptConversationHistory.swift`) | **ja:** `PromptConversationMemory`, an Gemini/OpenAI gehängt |
+| 2 | **OpenAI-Modell-IDs** | unbekannte IDs → Default ohne Nachfolger | `migrateLegacyPromptRawValue` (gpt-5 → GPT-6 …) | **ja:** `OpenAiModels.Renamed` |
+| 3 | **Letztes Wort abgeschnitten** | Stopp sofort | 0,2 s Nachlauf (`audioTailCaptureDelay`) | **ja:** `MicAudioSource.TailCapture` |
+| 4 | **Log wächst, kein Stack** | append only, Exception ohne Stack | – | **ja:** Rotation bei 2 MB, Stacktrace |
+| 5 | **Download/LLM hängt** | kein Stall-Timeout | Stream-Stall-Watchdogs | **ja:** 30 s Download, 90 s lokales LLM |
+| 6 | **CC-BY Parakeet** | nur AGPL auf der Info-Seite | Acknowledgements mit Links | **ja:** Info + README |
+| 7 | Lange Diktate erst nach Stopp | Stücke nach Stopp, ab 150 s | Stücke schon während des Sprechens (`ChunkedDictateRecorder`) | offen (mittel/groß) |
+| 8 | 5 statt 9 Schnellanweisungen | `QuickActionList.Max = 5` | bis 9, plus getipptes Feld in der Karte | offen (UI) |
+| 9 | Getippte Anweisung in der Overlay-Karte | nur Sprache / Strg+1–5 | Textfeld, Return | offen (UI, Fokus) |
+| 10 | Kürzel nicht abschaltbar | immer drei globale Hotkeys | jeder Shortcut änderbar, Glossar ohne Default | offen (klein) |
+| 11 | Temperatur / Thinking wählbar | fest 0 / low bzw. minimal | Settings → Dictate → Advanced | offen (UI) |
+| 12 | Abgebrochene Aufnahme transkribieren | weg | Menüeintrag | offen (klein) |
+| 13 | Bestätigung bei langen Aufnahmen | 30 min hartes Limit | Safeguard-Dialog | offen (UI) |
+| 14 | Benachrichtigungen / englische UI | fest Deutsch, Balloons immer | Sprache, Popup-Einstellungen | offen (groß) |
 
-## B. Einstellungen (Martins Liste) — größtenteils auf `feat/settings-sidebar`
+## C. Funktionen, die es auf Windows gar nicht gibt (Umfang)
 
-Auf dem Branch (nicht in `main`): Seitenleiste, Modell und System-Prompt pro Modus, Schalter „Automatisch
-einfügen“ und „Zwischenablage wiederherstellen“, Info-Seite mit Version, Update-Prüfung, Tour, Zurücksetzen.
-Mit Windows starten gibt es schon in `main`.
+Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle, Vorlesen, Screenshot, Live-Meeting,
+MCP-Server, Smart Improvement und Interaktionslog, Schreibstil pro App, weitere Anbieter (Grok,
+OpenRouter, Anthropic, eigener Server), Templates als eigener Modus, Telemetrie, Welcome-Tour
+über den ersten Start hinaus, Fn-Taste.
 
-Danach noch offen: **Danksagung/Lizenzhinweis für die Parakeet-Gewichte (CC BY 4.0, Pflicht, weil Windows
-Parakeet ausliefert)**, Diktat-Sprache und Genauigkeits-Einstellung, „Abgebrochene Aufnahme transkribieren“,
-Benachrichtigungs-Einstellungen, Bestätigung bei langen Aufnahmen, Englische Oberfläche, Fehler melden aus der App.
+Parakeet: Windows lädt NVIDIA TDT 0.6B v3 (int8, sherpa-onnx). Der Mac empfiehlt Parakeet Ultra
+(Moondream-Retrain, FluidAudio). Gleiche Familie, nicht dasselbe Gewicht.
 
-## C. Funktionen, die es auf Windows gar nicht gibt (Umfang, nicht „abgespeckt“)
+## D. Wo Windows besser ist oder anders bleibt (beibehalten)
 
-Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle (~25k Zeilen Swift, XL), Vorlesen (M), Screenshot (S–M),
-Live-Meeting (L, auch auf dem Mac nur Mikrofon), MCP-Server für KI-Apps (L, ohne Chat sinnvoll), Smart Improvement
-und Interaktionslog (L/M), Schreibstil pro App (M), weitere Anbieter (OpenAI, Grok, OpenRouter, eigener Server; M),
-Telemetrie (S–M).
+Mikrofonwahl mit Pegeltest, Hinweis bei stummem/abgestecktem Mikro, Admin-Fenster und gehaltene
+Tasten, Diktate nicht im Win+V-Verlauf, Schlüssel im Header, SHA-256 der Modelle, „Nicht in
+deinem Diktat“, Schnellanweisung auf das gerade Diktierte, abgeschnittene Offline-Antwort wird
+nicht eingefügt, OpenAI und Gemini gemischt wählbar, Update mit ECDSA-Signatur.
 
-## D. Wo Windows besser ist (beibehalten)
+## Empfohlene Reihenfolge (was noch kommt)
 
-Mikrofonwahl mit Pegeltest, Hinweis bei stummem/abgestecktem Mikro, Erkennung von Admin-Fenstern und gehaltenen
-Tasten, Diktate nicht im Win+V-Verlauf, Schlüssel im Header statt URL, SHA-256-Prüfung der Modelle, breiterer
-„Nicht in deinem Diktat“-Check, Schnellanweisung auf das gerade Diktierte, abgeschnittene Offline-Antwort wird nicht eingefügt.
-
-## Empfohlene Reihenfolge
-
-1. **Paket „Verlässlich“** (A1–A9): Temperatur 0, Retries mit Backoff + Netzfehler + `RetryInfo`, Retry pro Stück,
-   Audio behalten + „Nochmal versuchen“, Einfügeziel merken, Glossar parsen, Echo-/Absage-Schutz,
-   Modell-ID-Migration, Zwischenablage komplett sichern. Klein bis mittel, größter Nutzen.
-2. `feat/settings-sidebar` mergen, CC-BY-Danksagung ergänzen.
-3. Gesprächsgedächtnis im Prompt-Modus, Stücke schon während der Aufnahme.
-4. Danach Umfang: MCP-Server, Vorlesen, Screenshot; Chat zuletzt.
+1. Stücke schon während der Aufnahme (B7) — größter spürbarer Gewinn bei langen Diktaten.
+2. Overlay: getippte Anweisung + 9 Schnellanweisungen (B8–B9).
+3. Kürzel abschaltbar, abgebrochene Aufnahme behalten (B10, B12).
+4. Danach Umfang: MCP, Vorlesen, Screenshot; Chat zuletzt.

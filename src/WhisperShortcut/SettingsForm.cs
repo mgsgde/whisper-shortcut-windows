@@ -664,6 +664,14 @@ internal sealed class SettingsForm : Form
 
         info.Controls.Add(Section("Lizenz"));
         info.Controls.Add(Wrap("Freie Software unter der GNU AGPL-3.0. Die Windows-Version ist ein Ableger von WhisperShortcut für macOS.", 0));
+        info.Controls.Add(Wrap("Offline-Spracherkennung: NVIDIA Parakeet TDT 0.6B v3, lizenziert unter CC BY 4.0, "
+            + "als int8-Umrechnung von csukuangfj, ausgeführt mit sherpa-onnx (Apache 2.0). "
+            + "Offline-Sprachmodell: Qwen (Alibaba) über Unsloth-GGUF, ausgeführt mit llama.cpp (MIT).", 0));
+        var licenseLinks = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 8, 0, 0) };
+        licenseLinks.Controls.Add(LinkButton("NVIDIA Parakeet", "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3"));
+        licenseLinks.Controls.Add(LinkButton("CC BY 4.0", "https://creativecommons.org/licenses/by/4.0/"));
+        licenseLinks.Controls.Add(LinkButton("sherpa-onnx", "https://github.com/k2-fsa/sherpa-onnx"));
+        info.Controls.Add(licenseLinks);
     }
 
     private static string AppVersion => Application.ProductVersion.Split('+')[0];

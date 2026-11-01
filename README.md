@@ -48,3 +48,5 @@ Für Windows auf ARM `-r win-arm64`. `tools/vm.sh` steuert eine Parallels-Window
 ## Lizenz
 
 [AGPL-3.0](LICENSE), wie die macOS-App. `third_party/vcruntime/` enthält die verteilbaren Microsoft-Visual-C++-Laufzeit-DLLs.
+
+Die Offline-Spracherkennung lädt [NVIDIA Parakeet TDT 0.6B v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) ([CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)) als int8-Umrechnung von csukuangfj und führt sie mit [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) (Apache 2.0) aus. Das Offline-Sprachmodell ist Qwen (Alibaba) über Unsloth-GGUF, ausgeführt mit llama.cpp (MIT).

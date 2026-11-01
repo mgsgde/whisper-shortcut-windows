@@ -79,26 +79,49 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     /// <param name="instruction">The instruction as text.</param>
     /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default)
+    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt,
+        CancellationToken ct = default, IReadOnlyList<PromptTurn>? history = null)
     {
         var model = _promptModel();
-        var json = BuildChatBody(model, selection, instruction, customSystemPrompt);
+        var json = BuildChatBody(model, selection, instruction, customSystemPrompt, history);
         var answer = await SendAsync("chat/completions", model,
             () => new StringContent(json, Encoding.UTF8, "application/json"), json.Length, ct).ConfigureAwait(false);
         return ExtractChatText(answer);
     }
 
-    internal static string BuildChatBody(string model, string? selection, string instruction, string? customSystemPrompt) =>
-        new JsonObject
+    internal static string BuildChatBody(string model, string? selection, string instruction, string? customSystemPrompt,
+        IReadOnlyList<PromptTurn>? history = null)
+    {
+        var messages = new JsonArray
+        {
+            new JsonObject { ["role"] = "system", ["content"] = DictatePromptText.SystemPrompt(customSystemPrompt) },
+        };
+        if (history != null)
+        {
+            foreach (var turn in history)
+            {
+                messages.Add(new JsonObject
+                {
+                    ["role"] = "user",
+                    ["content"] = DictatePromptText.LocalUserTurn(turn.SelectedText, turn.UserInstruction),
+                });
+                messages.Add(new JsonObject { ["role"] = "assistant", ["content"] = turn.ModelResponse });
+            }
+        }
+        messages.Add(new JsonObject
+        {
+            ["role"] = "user",
+            ["content"] = DictatePromptText.LocalUserTurn(selection, instruction),
+        });
+        return new JsonObject
         {
             ["model"] = model,
-            ["messages"] = new JsonArray(
-                new JsonObject { ["role"] = "system", ["content"] = DictatePromptText.SystemPrompt(customSystemPrompt) },
-                new JsonObject { ["role"] = "user", ["content"] = DictatePromptText.LocalUserTurn(selection, instruction) }),
+            ["messages"] = messages,
             // WHY: a rewritten long selection is as long as the selection; a cut-off reply must be detectable.
             ["max_completion_tokens"] = MaxCompletionTokens,
             ["reasoning_effort"] = "low",
         }.ToJsonString();
+    }
 
     /// <summary>
     /// Checks an API key with a models-list request before it is saved. Never throws for network

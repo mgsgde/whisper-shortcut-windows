@@ -11,6 +11,8 @@ internal sealed class TestServer : IDisposable
     private readonly HttpListener _l = new();
     public byte[] Data { get; set; } = Array.Empty<byte>();
     public bool IgnoreRange { get; set; }
+    /// <summary>Accepts the request, sends headers, then never writes the body (stall test).</summary>
+    public bool HangAfterHeaders { get; set; }
     public int Requests { get; private set; }
     public string Url { get; }
 
@@ -49,6 +51,12 @@ internal sealed class TestServer : IDisposable
             }
             var len = Data.Length - start;
             ctx.Response.ContentLength64 = len;
+            if (HangAfterHeaders)
+            {
+                try { await Task.Delay(Timeout.InfiniteTimeSpan); }
+                catch { }
+                return;
+            }
             await ctx.Response.OutputStream.WriteAsync(Data.AsMemory((int)start));
             ctx.Response.Close();
         }
@@ -185,6 +193,19 @@ public class ModelDownloaderTests : IDisposable
         Assert.Equal("fake", File.ReadAllText(Path.Combine(c.FullPath, "llama-server.exe")));
         Assert.False(File.Exists(Path.Combine(c.FullPath, "b.zip")));
         Assert.True(ModelDownloader.IsInstalled(c));
+    }
+
+    [Fact]
+    public async Task StalledRead_ThrowsGermanMessage()
+    {
+        var data = Bytes(100_000);
+        using var srv = new TestServer { Data = data, HangAfterHeaders = true };
+        var c = Comp(srv.Url, data);
+        var dl = new ModelDownloader(new HttpClient()) { StallTimeout = TimeSpan.FromMilliseconds(200) };
+        var ex = await Assert.ThrowsAsync<OfflineDownloadException>(() =>
+            dl.DownloadAsync(c, null, CancellationToken.None));
+        Assert.Equal("Download hängt: der Server sendet keine Daten mehr.", ex.Message);
+        Assert.False(ModelDownloader.IsInstalled(c));
     }
 
     [Fact]

@@ -72,6 +72,25 @@ public class OpenAiClientTests
     }
 
     [Fact]
+    public async Task PromptText_WithHistory_InsertsAssistantTurns()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Chat));
+        var history = new[] { new PromptTurn("Lang", "kürzer", "Kurz", DateTime.UtcNow) };
+        await c.PromptTextAsync("Kurz", "höflicher", null, history: history);
+
+        var m = h.Json(0)["messages"]!.AsArray();
+        Assert.Equal(4, m.Count);
+        Assert.Equal("system", (string)m[0]!["role"]!);
+        Assert.Equal("user", (string)m[1]!["role"]!);
+        Assert.Equal(DictatePromptText.LocalUserTurn("Lang", "kürzer"), (string)m[1]!["content"]!);
+        Assert.Equal("assistant", (string)m[2]!["role"]!);
+        Assert.Equal("Kurz", (string)m[2]!["content"]!);
+        Assert.Equal("user", (string)m[3]!["role"]!);
+        Assert.Equal(DictatePromptText.LocalUserTurn("Kurz", "höflicher"), (string)m[3]!["content"]!);
+    }
+
+    [Fact]
     public async Task PromptText_FinishLength_IsTruncated()
     {
         var (c, h) = Make();

@@ -132,10 +132,11 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// <param name="selection">Selected text, or null/empty for a compose turn.</param>
     /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> PromptAsync(byte[] wav, string? selection, string? customSystemPrompt, CancellationToken ct = default)
+    public async Task<string> PromptAsync(byte[] wav, string? selection, string? customSystemPrompt,
+        CancellationToken ct = default, IReadOnlyList<PromptTurn>? history = null)
     {
         var model = _promptModel();
-        var body = BuildPromptBody(wav, selection, customSystemPrompt);
+        var body = BuildPromptBody(wav, selection, customSystemPrompt, history);
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
@@ -148,10 +149,11 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// <param name="instruction">The instruction as text (a quick action, optionally with spoken additions).</param>
     /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default)
+    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt,
+        CancellationToken ct = default, IReadOnlyList<PromptTurn>? history = null)
     {
         var model = _promptModel();
-        var body = BuildPromptTextBody(selection, instruction, customSystemPrompt);
+        var body = BuildPromptTextBody(selection, instruction, customSystemPrompt, history);
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
@@ -182,29 +184,53 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         return root.ToJsonString();
     }
 
-    internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt) =>
-        BuildPromptRequest(customSystemPrompt,
+    internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt,
+        IReadOnlyList<PromptTurn>? history = null) =>
+        BuildPromptRequest(customSystemPrompt, history,
             new JsonObject { ["text"] = DictatePromptText.SelectionBlock(selection) }, AudioPart(wav));
 
-    internal static string BuildPromptTextBody(string? selection, string instruction, string? customSystemPrompt) =>
-        BuildPromptRequest(customSystemPrompt,
+    internal static string BuildPromptTextBody(string? selection, string instruction, string? customSystemPrompt,
+        IReadOnlyList<PromptTurn>? history = null) =>
+        BuildPromptRequest(customSystemPrompt, history,
             new JsonObject { ["text"] = DictatePromptText.LocalUserTurn(selection, instruction) });
 
     // Shared by the audio and the text-only prompt call so both keep the same system prompt and thinking level.
-    private static string BuildPromptRequest(string? customSystemPrompt, params JsonObject[] userParts)
+    private static string BuildPromptRequest(string? customSystemPrompt, IReadOnlyList<PromptTurn>? history,
+        params JsonObject[] userParts)
     {
         var system = DictatePromptText.SystemPrompt(customSystemPrompt);
+        var contents = new JsonArray();
+        if (history != null)
+        {
+            foreach (var turn in history)
+            {
+                contents.Add(new JsonObject
+                {
+                    ["role"] = "user",
+                    ["parts"] = new JsonArray(new JsonObject
+                    {
+                        ["text"] = DictatePromptText.LocalUserTurn(turn.SelectedText, turn.UserInstruction),
+                    }),
+                });
+                contents.Add(new JsonObject
+                {
+                    ["role"] = "model",
+                    ["parts"] = new JsonArray(new JsonObject { ["text"] = turn.ModelResponse }),
+                });
+            }
+        }
+        contents.Add(new JsonObject
+        {
+            ["role"] = "user",
+            ["parts"] = new JsonArray(userParts.Select(p => (JsonNode)p).ToArray()),
+        });
         var root = new JsonObject
         {
             ["systemInstruction"] = new JsonObject
             {
                 ["parts"] = new JsonArray(new JsonObject { ["text"] = system }),
             },
-            ["contents"] = new JsonArray(new JsonObject
-            {
-                ["role"] = "user",
-                ["parts"] = new JsonArray(userParts.Select(p => (JsonNode)p).ToArray()),
-            }),
+            ["contents"] = contents,
             // Deliberate Windows choice: the Mac sends no generationConfig here, but 3.7/3.8 reject "minimal".
             ["generationConfig"] = new JsonObject
             {

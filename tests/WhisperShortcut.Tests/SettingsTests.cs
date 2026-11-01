@@ -134,10 +134,12 @@ public class SettingsTests
     {
         var path = Tmp();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, "{\"promptModel\":\"gemini-3.7-flash\",\"transcriptionModel\":\"quatsch\"}");
+        File.WriteAllText(path, "{\"promptModel\":\"gemini-3.7-flash\",\"transcriptionModel\":\"quatsch\",\"openAiPromptModel\":\"gpt-5\",\"openAiTranscriptionModel\":\"whisper-1\"}");
         var l = Settings.Load(path, new Reverse());
         Assert.Equal("gemini-3.8-flash", l.PromptModel);
         Assert.Equal(Settings.DefaultTranscriptionModel, l.TranscriptionModel);
+        Assert.Equal("gpt-6-sol", l.OpenAiPromptModel);
+        Assert.Equal("gpt-4o-transcribe", l.OpenAiTranscriptionModel);
     }
 
     [Fact]
@@ -249,7 +251,8 @@ public class LogAndAudioTests
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "wsw.log");
         Log.Init(path);
         Log.Info("hello");
-        Log.Error("bad", new InvalidOperationException("boom"));
+        try { throw new InvalidOperationException("boom"); }
+        catch (Exception ex) { Log.Error("bad", ex); }
         Log.Init(null);
         // Log is static and other test classes run in parallel: their lines may land here too, so look for ours only.
         var lines = File.ReadAllLines(path);
@@ -257,7 +260,24 @@ public class LogAndAudioTests
         int hello = Array.FindIndex(lines, l => l.Contains("INFO hello"));
         int bad = Array.FindIndex(lines, l => l.Contains("ERROR bad (InvalidOperationException: boom)"));
         Assert.True(hello >= 0 && bad > hello);
+        Assert.Contains(lines, l => l.Contains("ERROR") && l.Contains("LogAndAudioTests"));
         Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Log_RotatesWhenOverLimit()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "wsw.log");
+        File.WriteAllBytes(path, new byte[Log.RotateAtBytes]);
+        Log.Init(path);
+        Log.Info("after-rotate");
+        Log.Init(null);
+        Assert.True(File.Exists(path + ".1"));
+        Assert.True(new FileInfo(path + ".1").Length >= Log.RotateAtBytes);
+        Assert.Contains("after-rotate", File.ReadAllText(path));
+        Directory.Delete(dir, true);
     }
 
     [Fact]

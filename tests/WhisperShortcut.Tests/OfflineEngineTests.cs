@@ -167,6 +167,15 @@ public class LocalLlmTests
     }
 
     [Fact]
+    public async Task Stall_ThrowsSameUserMessage()
+    {
+        var c = new LocalLlmClient(new HttpClient(new HangHandler())) { RequestTimeout = TimeSpan.FromMilliseconds(200) };
+        var e = await Assert.ThrowsAsync<LocalLlmException>(() =>
+            c.CompleteAsync(new Uri("http://x/"), "s", "u", CancellationToken.None));
+        Assert.Equal("Das lokale Sprachmodell hat nicht geantwortet. Details im Protokoll.", e.Message);
+    }
+
+    [Fact]
     public async Task ErrorsMapToLocalLlmException()
     {
         var (c, h) = Make();

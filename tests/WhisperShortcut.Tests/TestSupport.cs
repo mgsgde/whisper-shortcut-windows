@@ -52,3 +52,13 @@ public sealed class FakeHandler : HttpMessageHandler
 
     public JsonNode Json(int i) => JsonNode.Parse(Calls[i].Body)!;
 }
+
+/// <summary>Never answers; waits until the request token is cancelled (stall/timeout tests).</summary>
+public sealed class HangHandler : HttpMessageHandler
+{
+    protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+    {
+        await Task.Delay(Timeout.Infinite, ct);
+        throw new InvalidOperationException("unreachable");
+    }
+}
