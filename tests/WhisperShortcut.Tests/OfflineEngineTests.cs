@@ -60,6 +60,20 @@ public class ParakeetTests
     }
 
     [Fact]
+    public void Load_MissingModelFile_ThrowsBeforeSherpaLoads()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "wsw-para-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "tokens.txt"), "x 0\n");
+            var ex = Assert.Throws<FileNotFoundException>(() => ParakeetTranscriber.Load(dir, 1));
+            Assert.Contains("encoder.int8.onnx", ex.FileName);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
     public void FromGlossary_CleansDedupesAndLimits()
     {
         var r = ParakeetHotwords.FromGlossary(new[]

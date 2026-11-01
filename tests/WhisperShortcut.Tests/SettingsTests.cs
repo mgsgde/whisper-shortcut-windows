@@ -225,6 +225,75 @@ public class SettingsTests
         Assert.DoesNotContain("effective", File.ReadAllText(path), StringComparison.OrdinalIgnoreCase);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
+
+    [Fact]
+    public void MissingFile_GivesDefaults_WithoutCreatingIt()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("", s.ApiKey);
+        Assert.Equal("", s.OpenAiKey);
+        Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
+        Assert.Equal(Engine.Gemini, s.SpeechEngine);
+        Assert.False(File.Exists(path));
+    }
+
+    [Fact]
+    public void UnprotectFailure_ClearsTheKey()
+    {
+        var path = TempSettingsFile("{\"apiKeyProtected\":\"x\",\"openAiKeyProtected\":\"y\"}");
+        var s = Settings.Load(path, new ThrowingUnprotect());
+        Assert.Equal("", s.ApiKey);
+        Assert.Equal("", s.OpenAiKey);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void UnprotectNull_ClearsTheKey()
+    {
+        var path = TempSettingsFile("{\"apiKeyProtected\":\"x\",\"openAiKeyProtected\":\"y\"}");
+        var s = Settings.Load(path, new NullUnprotect());
+        Assert.Equal("", s.ApiKey);
+        Assert.Equal("", s.OpenAiKey);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void EmptyKeys_AreStoredEmpty_NotProtected()
+    {
+        var path = TempSettingsFile("{}");
+        var s = Settings.Load(path, new Reverse());
+        s.ApiKey = "";
+        s.OpenAiKey = "";
+        s.Save();
+        var raw = File.ReadAllText(path);
+        Assert.Contains("\"apiKeyProtected\": \"\"", raw);
+        Assert.Contains("\"openAiKeyProtected\": \"\"", raw);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void WhitespaceOnlyHotkeys_KeepDefaults()
+    {
+        var path = TempSettingsFile("{\"dictateHotkey\":\"  \",\"promptHotkey\":\"\",\"glossaryHotkey\":\"\\t\"}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
+        Assert.Equal("Ctrl+Shift+P", s.PromptHotkey);
+        Assert.Equal("Ctrl+Shift+K", s.GlossaryHotkey);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    private sealed class ThrowingUnprotect : ISecretProtector
+    {
+        public string Protect(string plain) => plain;
+        public string? Unprotect(string stored) => throw new InvalidOperationException("cannot decrypt");
+    }
+
+    private sealed class NullUnprotect : ISecretProtector
+    {
+        public string Protect(string plain) => plain;
+        public string? Unprotect(string stored) => null;
+    }
 }
 
 public class LogAndAudioTests
@@ -239,6 +308,24 @@ public class LogAndAudioTests
         var wav = await src.StopAsync();
         Assert.Equal(File.ReadAllBytes(path), wav);
         Assert.InRange(Wav.DurationSeconds(wav), 0.5, 120);
+    }
+
+    [Fact]
+    public void AudioSilentException_HasGermanMicMessage()
+    {
+        var ex = new AudioSilentException();
+        Assert.Contains("Mikrofon liefert Stille", ex.Message);
+        Assert.Contains("Datenschutz", ex.Message);
+    }
+
+    [Fact]
+    public void DurationSeconds_UnreadableOrNoFmt_IsZero()
+    {
+        Assert.Equal(0, Wav.DurationSeconds(new byte[8]));
+        Assert.Equal(0, Wav.DurationSeconds(new byte[20]));
+        var speech = TestWav.Speech();
+        Assert.InRange(Wav.DurationSeconds(speech), 1.2, 1.4);
+        Assert.Throws<InvalidDataException>(() => Wav.ReadMonoFloat("RIFFxxxxWAVE"u8.ToArray(), out _));
     }
 
     [Fact]

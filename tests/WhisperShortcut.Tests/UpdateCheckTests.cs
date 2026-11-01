@@ -1,3 +1,4 @@
+using System.Net;
 using WhisperShortcut.Core;
 
 namespace WhisperShortcut.Tests;
@@ -59,4 +60,38 @@ public class UpdateCheckTests
     [InlineData("0.2.x", "0.1.0", false)]
     public void IsNewer(string latest, string current, bool expected) =>
         Assert.Equal(expected, UpdateCheck.IsNewer(latest, current));
+
+    [Fact]
+    public async Task CheckAsync_MapsStatus_AndSendsGithubHeaders()
+    {
+        var prev = UpdateCheck.ApiUrl;
+        var h = new FakeHandler();
+        try
+        {
+            UpdateCheck.ApiUrl = "https://example.test/releases/latest";
+            using var http = new HttpClient(h);
+
+            h.Responses.Enqueue((HttpStatusCode.NotFound, ""));
+            Assert.Null(await UpdateCheck.CheckAsync(http, CancellationToken.None));
+
+            h.Responses.Enqueue((HttpStatusCode.OK,
+                """{"tag_name":"v1.2.3","html_url":"https://github.com/x/y/releases/tag/v1.2.3"}"""));
+            var info = await UpdateCheck.CheckAsync(http, CancellationToken.None);
+            Assert.Equal("1.2.3", info!.Version);
+            Assert.Equal("https://github.com/x/y/releases/tag/v1.2.3", info.Url);
+
+            h.Responses.Enqueue((HttpStatusCode.InternalServerError, "nope"));
+            await Assert.ThrowsAsync<HttpRequestException>(() =>
+                UpdateCheck.CheckAsync(http, CancellationToken.None));
+
+            var req = h.Calls[0].Request;
+            Assert.Equal("https://example.test/releases/latest", req.RequestUri!.ToString());
+            Assert.Contains(req.Headers.UserAgent, ua => ua.Product!.Name == "WhisperShortcut-Windows");
+            Assert.Contains(req.Headers.Accept, a => a.MediaType == "application/vnd.github+json");
+        }
+        finally
+        {
+            UpdateCheck.ApiUrl = prev;
+        }
+    }
 }

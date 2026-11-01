@@ -44,6 +44,27 @@ public class TextCleanupTests
         Assert.Equal(ok, TextCleanup.DiscardImplausible(ok, 1));
         Assert.Equal("", TextCleanup.DiscardImplausible(ok + "a", 1));
         Assert.Equal("x", TextCleanup.DiscardImplausible("x", 0));
+        // 2 s -> 160: the +40 slack is what keeps a dense two-second burst.
+        Assert.Equal(new string('b', 160), TextCleanup.DiscardImplausible(new string('b', 160), 2));
+        Assert.Equal("", TextCleanup.DiscardImplausible(new string('b', 161), 2));
+    }
+
+    [Fact]
+    public void PromptSuffixesAreStripped()
+    {
+        Assert.Equal("Hallo", TextCleanup.Normalize("Hallo with proper punctuation"));
+        Assert.Equal("", TextCleanup.Normalize("with proper punctuation"));
+        Assert.Equal("Ja", TextCleanup.Normalize("Ja remove filler words"));
+    }
+
+    [Fact]
+    public void EmptyAndNullNormalizeToEmpty()
+    {
+        Assert.Equal("", TextCleanup.Normalize(null));
+        Assert.Equal("", TextCleanup.Normalize(""));
+        Assert.Equal("", TextCleanup.ForDictation(null));
+        Assert.Equal("", TextCleanup.StripMarkdown(""));
+        Assert.Equal("", TextCleanup.StripMarkdown(null!));
     }
 }
 

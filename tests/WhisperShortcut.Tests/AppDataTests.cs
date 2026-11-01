@@ -31,4 +31,42 @@ public class AppDataTests
         Directory.Delete(root, true);
         Assert.False(AppData.ResetDone); // only a reset of the real folders sets it
     }
+
+    [Fact]
+    public void Reset_ListsFoldersThatCannotBeDeleted()
+    {
+        var root = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var locked = Path.Combine(root, "locked");
+        Directory.CreateDirectory(locked);
+        var busy = Path.Combine(locked, "busy.bin");
+        File.WriteAllText(busy, "x");
+        try
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                using var fs = new FileStream(busy, FileMode.Open, FileAccess.Read, FileShare.None);
+                var ex = Assert.Throws<IOException>(() => AppData.Reset(new[] { locked }));
+                Assert.Contains("Nicht gelöscht werden konnte", ex.Message);
+                Assert.Contains(locked, ex.Message);
+            }
+            else
+            {
+                File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserExecute);
+                try
+                {
+                    var ex = Assert.Throws<IOException>(() => AppData.Reset(new[] { locked }));
+                    Assert.Contains("Nicht gelöscht werden konnte", ex.Message);
+                }
+                finally
+                {
+                    File.SetUnixFileMode(locked, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+                }
+            }
+        }
+        finally
+        {
+            if (Directory.Exists(root)) Directory.Delete(root, true);
+        }
+        Assert.False(AppData.ResetDone);
+    }
 }

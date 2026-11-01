@@ -224,10 +224,62 @@ public class OpenAiClientTests
         Assert.Equal(KeyCheck.NoConnection, await c.CheckKeyAsync("k"));
     }
 
+    [Fact]
+    public async Task CheckKey_AttemptTimeout_IsNoConnection()
+    {
+        var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(new CancelHandler()));
+        Assert.Equal(KeyCheck.NoConnection, await c.CheckKeyAsync("k"));
+    }
+
+    [Fact]
+    public async Task SettingsConstructor_ReadsKeyAtCallTime()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.OpenAiKey = "sk-from-settings";
+        var h = new FakeHandler();
+        h.Responses.Enqueue((HttpStatusCode.OK, Transcript));
+        var c = new OpenAiClient(s, new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        Assert.Equal("Hallo Welt", await c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal("Bearer sk-from-settings", h.Calls[0].Request.Headers.Authorization!.ToString());
+    }
+
+    [Fact]
+    public async Task Transcribe_UnreadableJson_IsEmpty()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, "not json"));
+        Assert.Equal("", await c.TranscribeAsync(Wav, Array.Empty<string>()));
+    }
+
+    [Fact]
+    public async Task PromptText_UnreadableJson_IsEmpty()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, "not json"));
+        Assert.Equal("", await c.PromptTextAsync("x", "y", "Eigener Prompt"));
+    }
+
+    [Fact]
+    public async Task AttemptTimeout_IsRetried_ThenThrowsTimeout()
+    {
+        var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(new CancelHandler()))
+        { RetryDelay = TimeSpan.Zero };
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(GeminiErrorKind.Timeout, ex.Kind);
+        Assert.Contains("Zeitüberschreitung", ex.Message);
+    }
+
     private sealed class ThrowingHandler : HttpMessageHandler
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
             => throw new HttpRequestException("no network");
+    }
+
+    private sealed class CancelHandler : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+            => throw new OperationCanceledException();
     }
 
     // Answers 429 (with one response header) for the first N calls (default: always), then a chat answer.
