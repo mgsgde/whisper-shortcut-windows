@@ -12,6 +12,8 @@
     <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- sherpa-onnx ships native DLLs (onnxruntime, sherpa-onnx-c-api); a single-file exe must carry them. -->
     <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <!-- ReadyToRun cuts first-start JIT of the tray app and the first dictation on the published exe. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>

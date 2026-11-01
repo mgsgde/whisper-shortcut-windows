@@ -1,7 +1,8 @@
+using System.Buffers;
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Json;
-using System.Text.Json.Nodes;
 
 namespace WhisperShortcut.Core;
 
@@ -120,7 +121,9 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     public async Task<string> TranscribeAsync(byte[] wav, IReadOnlyList<string> glossary, CancellationToken ct = default)
     {
         var model = _transcriptionModel();
-        var body = BuildTranscriptionBody(model, wav, glossary, _transcriptionPrompt?.Invoke());
+        var prompt = _transcriptionPrompt?.Invoke();
+        // Base64+JSON of a dictation is megabytes: keep it off the UI thread that called us.
+        var body = await Task.Run(() => BuildTranscriptionBodyUtf8(model, wav, glossary, prompt), ct).ConfigureAwait(false);
         return await SendAsync(model, body, ct).ConfigureAwait(false);
     }
 
@@ -135,7 +138,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     public async Task<string> PromptAsync(byte[] wav, string? selection, string? customSystemPrompt, CancellationToken ct = default)
     {
         var model = _promptModel();
-        var body = BuildPromptBody(wav, selection, customSystemPrompt);
+        var body = await Task.Run(() => BuildPromptBodyUtf8(wav, selection, customSystemPrompt), ct).ConfigureAwait(false);
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
@@ -151,11 +154,31 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default)
     {
         var model = _promptModel();
-        var body = BuildPromptTextBody(selection, instruction, customSystemPrompt);
+        var body = BuildPromptTextBodyUtf8(selection, instruction, customSystemPrompt);
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
-    internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null)
+    /// <summary>
+    /// Opens the TLS session to Gemini while the user is still speaking, so Stop does not pay the
+    /// handshake on the hot path. Failures are ignored: the real request will try again.
+    /// </summary>
+    public Task PrewarmConnection() =>
+        HttpPrewarm.Connect(_http, "https://generativelanguage.googleapis.com/", "Gemini");
+
+    internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null) =>
+        Encoding.UTF8.GetString(BuildTranscriptionBodyUtf8(model, wav, glossary, customPrompt));
+
+    internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt) =>
+        Encoding.UTF8.GetString(BuildPromptBodyUtf8(wav, selection, customSystemPrompt));
+
+    internal static string BuildPromptTextBody(string? selection, string instruction, string? customSystemPrompt) =>
+        Encoding.UTF8.GetString(BuildPromptTextBodyUtf8(selection, instruction, customSystemPrompt));
+
+    /// <summary>
+    /// Writes the generateContent body with <see cref="Utf8JsonWriter.WriteBase64String(string, ReadOnlySpan{byte})"/>
+    /// so a 2-minute chunk is not first turned into a base64 string, then a JsonObject, then a JSON string.
+    /// </summary>
+    internal static byte[] BuildTranscriptionBodyUtf8(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null)
     {
         var instruction = string.IsNullOrWhiteSpace(customPrompt) ? Prompts.DefaultTranscriptionSystemPrompt : customPrompt.Trim();
         // Notes like `Bachata (not "Batchata")` become tie-breakers; the rejected spelling never goes out as vocabulary.
@@ -164,71 +187,126 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
 
         // 3.7 / 3.8 Flash and Pro reject "minimal" (HTTP 400): clamp to "low" like TranscriptionModels.swift.
         var level = RejectsMinimal(model) ? "low" : "minimal";
-        var root = new JsonObject
+        var writer = new ArrayBufferWriter<byte>(JsonCapacity(wav.Length, instruction.Length));
+        using (var w = new Utf8JsonWriter(writer))
         {
-            ["contents"] = new JsonArray(new JsonObject
-            {
-                ["parts"] = new JsonArray(
-                    new JsonObject { ["text"] = instruction },
-                    AudioPart(wav)),
-            }),
-            ["generationConfig"] = new JsonObject
-            {
-                // Like TranscriptionModels.swift: no sampling noise in a transcript.
-                ["temperature"] = 0.0,
-                ["thinkingConfig"] = new JsonObject { ["thinkingLevel"] = level },
-            },
-        };
-        return root.ToJsonString();
+            w.WriteStartObject();
+            w.WritePropertyName("contents");
+            w.WriteStartArray();
+            w.WriteStartObject();
+            w.WritePropertyName("parts");
+            w.WriteStartArray();
+            w.WriteStartObject();
+            w.WriteString("text", instruction);
+            w.WriteEndObject();
+            WriteAudioPart(w, wav);
+            w.WriteEndArray();
+            w.WriteEndObject();
+            w.WriteEndArray();
+            w.WritePropertyName("generationConfig");
+            w.WriteStartObject();
+            // Like TranscriptionModels.swift: no sampling noise in a transcript.
+            w.WriteNumber("temperature", 0.0);
+            w.WritePropertyName("thinkingConfig");
+            w.WriteStartObject();
+            w.WriteString("thinkingLevel", level);
+            w.WriteEndObject();
+            w.WriteEndObject();
+            w.WriteEndObject();
+        }
+        return writer.WrittenSpan.ToArray();
     }
 
-    internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt) =>
-        BuildPromptRequest(customSystemPrompt,
-            new JsonObject { ["text"] = DictatePromptText.SelectionBlock(selection) }, AudioPart(wav));
-
-    internal static string BuildPromptTextBody(string? selection, string instruction, string? customSystemPrompt) =>
-        BuildPromptRequest(customSystemPrompt,
-            new JsonObject { ["text"] = DictatePromptText.LocalUserTurn(selection, instruction) });
-
-    // Shared by the audio and the text-only prompt call so both keep the same system prompt and thinking level.
-    private static string BuildPromptRequest(string? customSystemPrompt, params JsonObject[] userParts)
+    internal static byte[] BuildPromptBodyUtf8(byte[] wav, string? selection, string? customSystemPrompt)
     {
         var system = DictatePromptText.SystemPrompt(customSystemPrompt);
-        var root = new JsonObject
+        var selectionText = DictatePromptText.SelectionBlock(selection);
+        var writer = new ArrayBufferWriter<byte>(JsonCapacity(wav.Length, system.Length + selectionText.Length));
+        using (var w = new Utf8JsonWriter(writer))
         {
-            ["systemInstruction"] = new JsonObject
+            WritePromptEnvelope(w, system, () =>
             {
-                ["parts"] = new JsonArray(new JsonObject { ["text"] = system }),
-            },
-            ["contents"] = new JsonArray(new JsonObject
-            {
-                ["role"] = "user",
-                ["parts"] = new JsonArray(userParts.Select(p => (JsonNode)p).ToArray()),
-            }),
-            // Deliberate Windows choice: the Mac sends no generationConfig here, but 3.7/3.8 reject "minimal".
-            ["generationConfig"] = new JsonObject
-            {
-                ["thinkingConfig"] = new JsonObject { ["thinkingLevel"] = "low" },
-                // WHY: a rewritten long selection is as long as the selection; a cut-off reply must be detectable.
-                ["maxOutputTokens"] = MaxOutputTokens,
-            },
-        };
-        return root.ToJsonString();
+                w.WriteStartObject();
+                w.WriteString("text", selectionText);
+                w.WriteEndObject();
+                WriteAudioPart(w, wav);
+            });
+        }
+        return writer.WrittenSpan.ToArray();
     }
+
+    internal static byte[] BuildPromptTextBodyUtf8(string? selection, string instruction, string? customSystemPrompt)
+    {
+        var system = DictatePromptText.SystemPrompt(customSystemPrompt);
+        var user = DictatePromptText.LocalUserTurn(selection, instruction);
+        var writer = new ArrayBufferWriter<byte>(JsonCapacity(0, system.Length + user.Length));
+        using (var w = new Utf8JsonWriter(writer))
+        {
+            WritePromptEnvelope(w, system, () =>
+            {
+                w.WriteStartObject();
+                w.WriteString("text", user);
+                w.WriteEndObject();
+            });
+        }
+        return writer.WrittenSpan.ToArray();
+    }
+
+    // Shared by the audio and the text-only prompt call so both keep the same system prompt and thinking level.
+    private static void WritePromptEnvelope(Utf8JsonWriter w, string system, Action writeUserParts)
+    {
+        w.WriteStartObject();
+        w.WritePropertyName("systemInstruction");
+        w.WriteStartObject();
+        w.WritePropertyName("parts");
+        w.WriteStartArray();
+        w.WriteStartObject();
+        w.WriteString("text", system);
+        w.WriteEndObject();
+        w.WriteEndArray();
+        w.WriteEndObject();
+        w.WritePropertyName("contents");
+        w.WriteStartArray();
+        w.WriteStartObject();
+        w.WriteString("role", "user");
+        w.WritePropertyName("parts");
+        w.WriteStartArray();
+        writeUserParts();
+        w.WriteEndArray();
+        w.WriteEndObject();
+        w.WriteEndArray();
+        // Deliberate Windows choice: the Mac sends no generationConfig here, but 3.7/3.8 reject "minimal".
+        w.WritePropertyName("generationConfig");
+        w.WriteStartObject();
+        w.WritePropertyName("thinkingConfig");
+        w.WriteStartObject();
+        w.WriteString("thinkingLevel", "low");
+        w.WriteEndObject();
+        // WHY: a rewritten long selection is as long as the selection; a cut-off reply must be detectable.
+        w.WriteNumber("maxOutputTokens", MaxOutputTokens);
+        w.WriteEndObject();
+        w.WriteEndObject();
+    }
+
+    private static void WriteAudioPart(Utf8JsonWriter w, byte[] wav)
+    {
+        w.WriteStartObject();
+        w.WritePropertyName("inline_data");
+        w.WriteStartObject();
+        w.WriteString("mime_type", "audio/wav");
+        w.WriteBase64String("data", wav);
+        w.WriteEndObject();
+        w.WriteEndObject();
+    }
+
+    // JSON + base64 is ~4/3 of the WAV plus the instruction; size the writer so it does not grow twice.
+    private static int JsonCapacity(int wavBytes, int textChars) =>
+        Math.Max(256, 64 + textChars * 3 + wavBytes + wavBytes / 3);
 
     private static bool RejectsMinimal(string model) =>
         model.Contains("gemini-3.7-flash", StringComparison.OrdinalIgnoreCase)
         || model.Contains("gemini-3.8-flash", StringComparison.OrdinalIgnoreCase)
         || model.Contains("-pro", StringComparison.OrdinalIgnoreCase);
-
-    private static JsonObject AudioPart(byte[] wav) => new()
-    {
-        ["inline_data"] = new JsonObject
-        {
-            ["mime_type"] = "audio/wav",
-            ["data"] = Convert.ToBase64String(wav),
-        },
-    };
 
     /// <summary>
     /// Checks an API key with a cheap models-list request before it is saved. Never throws for
@@ -268,7 +346,14 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         return result;
     }
 
-    private async Task<string> SendAsync(string model, string json, CancellationToken ct, bool rejectTruncated = false)
+    private static ByteArrayContent JsonUtf8Content(byte[] json)
+    {
+        var content = new ByteArrayContent(json);
+        content.Headers.ContentType = new MediaTypeHeaderValue("application/json");
+        return content;
+    }
+
+    private async Task<string> SendAsync(string model, byte[] json, CancellationToken ct, bool rejectTruncated = false)
     {
         var key = _apiKey()?.Trim();
         if (string.IsNullOrEmpty(key))
@@ -289,8 +374,9 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, url)
                 {
-                    Content = new StringContent(json, Encoding.UTF8, "application/json"),
+                    Content = JsonUtf8Content(json),
                 };
+                request.Headers.ExpectContinue = false;
                 request.Headers.Add("x-goog-api-key", key);
                 using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
                 var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);

@@ -206,7 +206,10 @@ public sealed class LlamaServerHost : IDisposable
             {
                 // Not listening yet.
             }
-            await Task.Delay(250).ConfigureAwait(false);
+            // 50 ms while the process is coming up (saves up to 200 ms vs a 250 ms poll);
+            // back off after 10 s so a stuck start does not hammer /health.
+            var delay = sw.Elapsed < TimeSpan.FromSeconds(10) ? 50 : 250;
+            await Task.Delay(delay).ConfigureAwait(false);
         }
         Fail("llama-server did not become healthy in time");
     }
