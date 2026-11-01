@@ -15,9 +15,10 @@ internal sealed class TrayApp : ApplicationContext
 
     /// <summary>
     /// A recording whose processing failed for a reason a second try can fix (network, quota, local model).
-    /// In memory only, never written to disk: it is patient data. Dropped after the next success.
+    /// Also used for a take recovered after a crash. Dropped after the next success.
+    /// <see cref="ClipboardOnly"/> is set for a recovered take: the original window is gone.
     /// </summary>
-    private sealed record FailedRun(byte[] Wav, Mode Mode, double Seconds, string? Selection, string? QuickAction, IntPtr Target);
+    private sealed record FailedRun(byte[] Wav, Mode Mode, double Seconds, string? Selection, string? QuickAction, IntPtr Target, bool ClipboardOnly = false);
 
     private const string RetryHint = " Hier klicken, um es noch einmal zu versuchen.";
 
@@ -160,12 +161,32 @@ internal sealed class TrayApp : ApplicationContext
         {
             OpenWelcome();
         }
+        else if (!testRun && OfferRecoveredRecording())
+        {
+            // A leftover take is more urgent than the missing-key welcome.
+        }
         else if (MissingKey)
         {
             Notify("Willkommen bei WhisperShortcut",
                 "Bitte zuerst den API-Schlüssel eintragen: hier klicken oder auf das blaue Symbol unten rechts.",
                 ToolTipIcon.Info, ShowSettings);
         }
+    }
+
+    /// <summary>
+    /// After a crash or a kill mid-recording the spill file is still there. Offer to transcribe it;
+    /// the original window is gone, so the text stays on the clipboard.
+    /// </summary>
+    private bool OfferRecoveredRecording()
+    {
+        var rec = Core.RecordingCheckpoint.TryRecover();
+        if (rec == null) return false;
+        var mode = string.Equals(rec.Mode, "Prompt", StringComparison.OrdinalIgnoreCase) ? Mode.Prompt : Mode.Dictate;
+        _lastFailed = new FailedRun(rec.Wav, mode, rec.Seconds, null, null, IntPtr.Zero, ClipboardOnly: true);
+        Notify("Aufnahme unterbrochen",
+            $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Hier klicken, um sie zu transkribieren. Der Text landet in der Zwischenablage.",
+            ToolTipIcon.Warning, RetryLast);
+        return true;
     }
 
     // ---------------- hotkeys ----------------
@@ -212,21 +233,32 @@ internal sealed class TrayApp : ApplicationContext
     {
         Core.Log.Info($"Hotkey {mode} in state {_state}");
         var now = Environment.TickCount64;
-        if (_state != State.Idle && !_pressGate.Accept(now))
+        var gateOpen = _state == State.Idle || _pressGate.Accept(now);
+        if (_state != State.Idle && !gateOpen)
         {
             Core.Log.Info($"Hotkey {mode} in state {_state} ignored: {(_pressGate.Released ? "within 300 ms" : "key still held")}");
             return;
         }
-        var before = _state;
-        switch (_state)
+        var decision = Core.RecordingHotkeyPolicy.Decide(
+            recording: _state == State.Recording,
+            processing: _state == State.Processing,
+            sameMode: mode == _mode,
+            gateOpen: gateOpen);
+        if (decision == Core.RecordingHotkeyDecision.Ignore)
         {
-            case State.Idle:
+            Core.Log.Info($"Hotkey {mode} in state {_state} ignored: other mode is already running");
+            return;
+        }
+        var before = _state;
+        switch (decision)
+        {
+            case Core.RecordingHotkeyDecision.Start:
                 StartRecording(mode);
                 break;
-            case State.Recording:
+            case Core.RecordingHotkeyDecision.Stop:
                 _ = StopAndProcessAsync();
                 break;
-            case State.Processing:
+            case Core.RecordingHotkeyDecision.Cancel:
                 _cts?.Cancel();
                 break;
         }
@@ -270,7 +302,8 @@ internal sealed class TrayApp : ApplicationContext
             return;
         }
         if (_state != State.Recording) return;
-        (_audio as MicAudioSource)?.Cancel();
+        (_audio as MicAudioSource)?.Cancel(discardCheckpoint: true);
+        Core.RecordingCheckpoint.DiscardAll();
         _audio = null;
         CancelSelectionCopy(); // no Ctrl+C into the user's window after the cancel
         Sounds.Stop();
@@ -370,7 +403,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         else
         {
-            mic = new MicAudioSource(limit, _settings.Microphone);
+            mic = new MicAudioSource(limit, _settings.Microphone, checkpointMode: mode.ToString());
             mic.MaxDurationReached += () => _ui.Post(_ =>
             {
                 if (_state != State.Recording) return;
@@ -382,6 +415,10 @@ internal sealed class TrayApp : ApplicationContext
                 if (_state != State.Recording) return;
                 Notify("Mikrofon getrennt", "Aufnahme beendet, das Bisherige wird verarbeitet.", ToolTipIcon.Warning);
                 _ = StopAndProcessAsync();
+            }, null);
+            mic.CheckpointFailed += () => _ui.Post(_ =>
+            {
+                Notify("Datenträger voll", Core.DiskSpace.RecordingMessage, ToolTipIcon.Warning);
             }, null);
             _audio = mic;
         }
@@ -471,6 +508,7 @@ internal sealed class TrayApp : ApplicationContext
                 if (seconds < 0.5 && _quickAction == null)
                 {
                     // A double press, not a recording: say so instead of a misleading microphone error.
+                    Core.RecordingCheckpoint.DiscardAll();
                     Notify("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", ToolTipIcon.Info);
                     return;
                 }
@@ -482,8 +520,13 @@ internal sealed class TrayApp : ApplicationContext
                 : await PromptAsync(wav, seconds, selection, retry != null, ct);
             ct.ThrowIfCancellationRequested();
 
-            if (text.Length == 0) return; // already reported
+            if (text.Length == 0)
+            {
+                Core.RecordingCheckpoint.DiscardAll();
+                return; // already reported
+            }
             _lastFailed = null; // this run worked; the old failure is history
+            Core.RecordingCheckpoint.DiscardAll();
             _recent.Add(text);
 
             // A quick-action rewrite that lost most of a long selection must not silently replace it. Spoken
@@ -506,9 +549,11 @@ internal sealed class TrayApp : ApplicationContext
                 return;
             }
 
-            var outcome = _settings.AutoPaste
-                ? await _paster.PasteAsync(text, _pasteTarget, _settings.RestoreClipboard, ct)
-                : (_paster.KeepOnClipboard(text) ? PasteOutcome.ClipboardOnlyByChoice : PasteOutcome.Failed);
+            // A recovered crash has no original window; keep the text on the clipboard.
+            var keepOnly = retry is { ClipboardOnly: true } || !_settings.AutoPaste;
+            var outcome = keepOnly
+                ? (_paster.KeepOnClipboard(text) ? PasteOutcome.ClipboardOnlyByChoice : PasteOutcome.Failed)
+                : await _paster.PasteAsync(text, _pasteTarget, _settings.RestoreClipboard, ct);
             Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, restore {(_settings.RestoreClipboard ? "on" : "off")}");
             switch (outcome)
             {
@@ -564,6 +609,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             // The pill disappearing is the feedback; a balloon on top of it would be noise.
             Core.Log.Info($"{_mode}: cancelled by user");
+            Core.RecordingCheckpoint.DiscardAll();
         }
         catch (SelectionUnreadableException)
         {
@@ -1189,7 +1235,13 @@ internal sealed class TrayApp : ApplicationContext
     private void TrySave()
     {
         try { _settings.Save(); }
-        catch (Exception e) { Core.Log.Error("Saving settings failed", e); }
+        catch (Exception e)
+        {
+            Core.Log.Error("Saving settings failed", e);
+            Notify("Speichern fehlgeschlagen",
+                e is Core.DiskFullException ? e.Message : "Die Einstellungen konnten nicht gespeichert werden.",
+                ToolTipIcon.Warning);
+        }
     }
 
     private static void OpenLog()
@@ -1202,7 +1254,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         _cts?.Cancel();
         _selectionCts?.Cancel();
-        (_audio as MicAudioSource)?.Cancel();
+        (_audio as MicAudioSource)?.Cancel(discardCheckpoint: false);
         _icon.Visible = false;
         _icon.Dispose();
         _keyUpTimer.Dispose();

@@ -225,6 +225,18 @@ public sealed class Settings
     public void Save()
     {
         if (AppData.ResetDone) return; // after "Zurücksetzen" nothing may bring the data folder back
+        try
+        {
+            SaveCore();
+        }
+        catch (IOException ex) when (DiskSpace.IsFull(ex))
+        {
+            throw new DiskFullException(DiskSpace.SettingsMessage, ex);
+        }
+    }
+
+    private void SaveCore()
+    {
         var dir = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var dto = new Dto

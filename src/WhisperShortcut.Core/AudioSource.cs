@@ -38,6 +38,20 @@ public sealed class FileAudioSource : IAudioSource
     public Task<byte[]> StopAsync() => File.ReadAllBytesAsync(_path);
 }
 
+/// <summary>
+/// Sleep, a driver hang or an unplugged default device stop delivering capture buffers without
+/// always raising an error. Three seconds without a buffer means the capture is dead.
+/// </summary>
+public static class CaptureWatchdog
+{
+    /// <summary>How long a live capture may stay silent before it is treated as lost.</summary>
+    public const long StallMs = 3000;
+
+    /// <summary>True when no buffer arrived for at least <paramref name="stallMs"/>.</summary>
+    public static bool IsStalled(long lastBufferMs, long nowMs, long stallMs = StallMs) =>
+        nowMs - lastBufferMs >= stallMs;
+}
+
 /// <summary>Helpers for WAV bytes.</summary>
 public static class Wav
 {

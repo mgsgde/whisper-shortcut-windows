@@ -45,3 +45,39 @@ public static class HotkeyPolicy
     /// </summary>
     public static bool WantGlobalHotkeys(bool settingsInFront, bool idle) => !(settingsInFront && idle);
 }
+
+/// <summary>What a hotkey press should do in the recording state machine.</summary>
+public enum RecordingHotkeyDecision
+{
+    /// <summary>Idle: start a recording in this mode.</summary>
+    Start,
+    /// <summary>Recording in the same mode: stop and process.</summary>
+    Stop,
+    /// <summary>Processing: cancel the request.</summary>
+    Cancel,
+    /// <summary>Bounce, held key, or the other mode while a recording already runs.</summary>
+    Ignore,
+}
+
+/// <summary>
+/// Concurrent or bounced hotkeys. The other mode must not stop a recording that just started
+/// (Ctrl+Shift+D and Ctrl+Shift+P share modifiers and Windows can fire both). A press the
+/// bounce gate rejects must not cancel processing.
+/// </summary>
+public static class RecordingHotkeyPolicy
+{
+    /// <summary>
+    /// Idle always starts (the bounce gate does not apply). Recording stops only in the same mode
+    /// and only when <paramref name="gateOpen"/>. Processing cancels when the gate is open.
+    /// </summary>
+    public static RecordingHotkeyDecision Decide(bool recording, bool processing, bool sameMode, bool gateOpen)
+    {
+        if (processing) return gateOpen ? RecordingHotkeyDecision.Cancel : RecordingHotkeyDecision.Ignore;
+        if (recording)
+        {
+            if (!sameMode) return RecordingHotkeyDecision.Ignore;
+            return gateOpen ? RecordingHotkeyDecision.Stop : RecordingHotkeyDecision.Ignore;
+        }
+        return RecordingHotkeyDecision.Start;
+    }
+}
