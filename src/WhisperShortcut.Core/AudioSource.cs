@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Text;
 
 namespace WhisperShortcut.Core;
 
@@ -41,75 +42,83 @@ public sealed class FileAudioSource : IAudioSource
 /// <summary>Helpers for WAV bytes.</summary>
 public static class Wav
 {
-    /// <summary>Duration in seconds of a PCM WAV (0 when the header cannot be read).</summary>
-    public static double DurationSeconds(byte[] wav)
+    /// <summary>
+    /// Reads a 16-bit PCM WAV (classic or extensible). False when the file is not that format.
+    /// Chunk sizes are walked with 64-bit math so a forged 4 GB chunk cannot wrap the cursor
+    /// backwards or throw <see cref="ArgumentOutOfRangeException"/>.
+    /// </summary>
+    public static bool TryGetPcm(byte[] wav, out int sampleRate, out int channels, out int dataOffset, out int dataLength)
     {
-        if (wav.Length < 12) return 0;
+        sampleRate = channels = dataOffset = dataLength = 0;
+        if (wav.Length < 12) return false;
         var pos = 12;
-        uint byteRate = 0;
+        var haveFmt = false;
+        var haveData = false;
         while (pos + 8 <= wav.Length)
         {
-            var id = System.Text.Encoding.ASCII.GetString(wav, pos, 4);
+            var id = Encoding.ASCII.GetString(wav, pos, 4);
             var size = BinaryPrimitives.ReadUInt32LittleEndian(wav.AsSpan(pos + 4, 4));
             var body = pos + 8;
-            if (id == "fmt " && body + 12 <= wav.Length)
+            if (id == "fmt " && !haveFmt)
             {
-                byteRate = BinaryPrimitives.ReadUInt32LittleEndian(wav.AsSpan(body + 8, 4));
+                if (body + 16 > wav.Length) return false;
+                var format = BinaryPrimitives.ReadUInt16LittleEndian(wav.AsSpan(body, 2));
+                channels = BinaryPrimitives.ReadUInt16LittleEndian(wav.AsSpan(body + 2, 2));
+                sampleRate = (int)BinaryPrimitives.ReadUInt32LittleEndian(wav.AsSpan(body + 4, 4));
+                var bits = BinaryPrimitives.ReadUInt16LittleEndian(wav.AsSpan(body + 14, 2));
+                // 1 = PCM, 0xFFFE = extensible (PCM in practice for 16 bit).
+                if ((format != 1 && format != 0xFFFE) || bits != 16 || channels < 1 || sampleRate <= 0)
+                    return false;
+                haveFmt = true;
             }
-            else if (id == "data")
+            else if (id == "data" && !haveData)
             {
                 var available = (long)wav.Length - body;
+                if (available < 0) return false;
                 var length = size > available ? available : size;
-                return byteRate == 0 ? 0 : (double)length / byteRate;
+                if (length > int.MaxValue) return false;
+                dataOffset = body;
+                dataLength = (int)length;
+                haveData = true;
             }
-            pos = body + (int)Math.Min(size + (size & 1), int.MaxValue - body);
+
+            // size is uint: size+1 can wrap. Never add it as 32-bit into pos.
+            var step = (long)size + (size & 1);
+            if (step > wav.Length - body) break;
+            pos = body + (int)step;
         }
-        return 0;
+        return haveFmt && haveData;
+    }
+
+    /// <summary>
+    /// Duration in seconds of a 16-bit PCM WAV (0 when the header cannot be read).
+    /// Uses the true PCM rate (sampleRate × channels × 2), not the header byteRate, and never throws.
+    /// </summary>
+    public static double DurationSeconds(byte[] wav)
+    {
+        if (!TryGetPcm(wav, out var sampleRate, out var channels, out _, out var dataLength)) return 0;
+        var byteRate = (long)sampleRate * channels * 2;
+        return byteRate <= 0 ? 0 : (double)dataLength / byteRate;
     }
 
     /// <summary>
     /// Decodes 16-bit PCM WAV (mono or stereo, channels averaged) to float samples in -1..1.
-    /// Throws <see cref="InvalidDataException"/> for other formats.
+    /// Throws <see cref="InvalidDataException"/> for other formats; never
+    /// <see cref="ArgumentOutOfRangeException"/> on a malformed chunk size.
     /// </summary>
     public static float[] ReadMonoFloat(byte[] wav, out int sampleRate)
     {
-        sampleRate = 0;
-        if (wav.Length < 12) throw new InvalidDataException("WAV too short.");
-        var pos = 12;
-        int channels = 0, bits = 0;
-        while (pos + 8 <= wav.Length)
+        if (!TryGetPcm(wav, out sampleRate, out var channels, out var dataOffset, out var dataLength))
+            throw new InvalidDataException(wav.Length < 12 ? "WAV too short." : "Only 16-bit PCM WAV is supported.");
+        var frames = dataLength / (2 * channels);
+        var samples = new float[frames];
+        for (var i = 0; i < frames; i++)
         {
-            var id = System.Text.Encoding.ASCII.GetString(wav, pos, 4);
-            var size = BinaryPrimitives.ReadUInt32LittleEndian(wav.AsSpan(pos + 4, 4));
-            var body = pos + 8;
-            if (id == "fmt " && body + 16 <= wav.Length)
-            {
-                var format = BinaryPrimitives.ReadUInt16LittleEndian(wav.AsSpan(body, 2));
-                channels = BinaryPrimitives.ReadUInt16LittleEndian(wav.AsSpan(body + 2, 2));
-                sampleRate = (int)BinaryPrimitives.ReadUInt32LittleEndian(wav.AsSpan(body + 4, 4));
-                bits = BinaryPrimitives.ReadUInt16LittleEndian(wav.AsSpan(body + 14, 2));
-                // 1 = PCM, 0xFFFE = extensible (PCM in practice for 16 bit).
-                if (format != 1 && format != 0xFFFE) throw new InvalidDataException("WAV is not PCM.");
-            }
-            else if (id == "data")
-            {
-                if (bits != 16 || channels < 1 || sampleRate <= 0)
-                    throw new InvalidDataException("Only 16-bit PCM WAV is supported.");
-                var available = (long)wav.Length - body;
-                var length = (int)(size > available ? available : size);
-                var frames = length / (2 * channels);
-                var samples = new float[frames];
-                for (var i = 0; i < frames; i++)
-                {
-                    var sum = 0;
-                    for (var c = 0; c < channels; c++)
-                        sum += BinaryPrimitives.ReadInt16LittleEndian(wav.AsSpan(body + (i * channels + c) * 2, 2));
-                    samples[i] = sum / (float)channels / 32768f;
-                }
-                return samples;
-            }
-            pos = body + (int)Math.Min(size + (size & 1), int.MaxValue - body);
+            var sum = 0;
+            for (var c = 0; c < channels; c++)
+                sum += BinaryPrimitives.ReadInt16LittleEndian(wav.AsSpan(dataOffset + (i * channels + c) * 2, 2));
+            samples[i] = sum / (float)channels / 32768f;
         }
-        throw new InvalidDataException("WAV has no data chunk.");
+        return samples;
     }
 }

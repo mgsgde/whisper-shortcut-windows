@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Net;
 using System.Text;
 using WhisperShortcut.Core;
@@ -102,27 +103,70 @@ public class ParakeetTests
         finally { Directory.Delete(dir, true); }
     }
 
+    private static byte[] MakePcmWav(short[] pcm, int channels, int rate)
+    {
+        var ms = new MemoryStream();
+        var w = new BinaryWriter(ms);
+        w.Write(Encoding.ASCII.GetBytes("RIFF")); w.Write(36 + pcm.Length * 2); w.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
+        w.Write(16); w.Write((short)1); w.Write((short)channels); w.Write(rate); w.Write(rate * channels * 2);
+        w.Write((short)(channels * 2)); w.Write((short)16);
+        w.Write(Encoding.ASCII.GetBytes("data")); w.Write(pcm.Length * 2);
+        foreach (var s in pcm) w.Write(s);
+        return ms.ToArray();
+    }
+
     [Fact]
     public void ReadMonoFloat_MonoAndStereo()
     {
-        static byte[] Make(short[] pcm, int channels, int rate)
-        {
-            var ms = new MemoryStream();
-            var w = new BinaryWriter(ms);
-            w.Write(Encoding.ASCII.GetBytes("RIFF")); w.Write(36 + pcm.Length * 2); w.Write(Encoding.ASCII.GetBytes("WAVEfmt "));
-            w.Write(16); w.Write((short)1); w.Write((short)channels); w.Write(rate); w.Write(rate * channels * 2);
-            w.Write((short)(channels * 2)); w.Write((short)16);
-            w.Write(Encoding.ASCII.GetBytes("data")); w.Write(pcm.Length * 2);
-            foreach (var s in pcm) w.Write(s);
-            return ms.ToArray();
-        }
-        var mono = Wav.ReadMonoFloat(Make(new short[] { 16384, -16384 }, 1, 16000), out var r1);
+        var mono = Wav.ReadMonoFloat(MakePcmWav(new short[] { 16384, -16384 }, 1, 16000), out var r1);
         Assert.Equal(16000, r1);
         Assert.Equal(new[] { 0.5f, -0.5f }, mono);
-        var stereo = Wav.ReadMonoFloat(Make(new short[] { 16384, 0, -16384, -16384 }, 2, 44100), out var r2);
+        var stereo = Wav.ReadMonoFloat(MakePcmWav(new short[] { 16384, 0, -16384, -16384 }, 2, 44100), out var r2);
         Assert.Equal(44100, r2);
         Assert.Equal(new[] { 0.25f, -0.5f }, stereo);
         Assert.Throws<InvalidDataException>(() => Wav.ReadMonoFloat(new byte[4], out _));
+    }
+
+    [Fact]
+    public void DurationSeconds_UsesPcmRate_AndSurvivesHugeChunkSize()
+    {
+        var pcm = MakePcmWav(new short[] { 0, 0, 0, 0, 0, 0, 0, 0 }, 1, 16000);
+        Assert.Equal(8 / 16000.0, Wav.DurationSeconds(pcm), 6);
+
+        // fmt after data: the old walk returned 0 because it left at the data chunk with no rate yet.
+        var swapped = SwapFmtAfterData(pcm);
+        Assert.Equal(8 / 16000.0, Wav.DurationSeconds(swapped), 6);
+        Assert.Equal(8, Wav.ReadMonoFloat(swapped, out var rate).Length);
+        Assert.Equal(16000, rate);
+
+        // A 2 GB LIST chunk used to wrap the 32-bit cursor and throw ArgumentOutOfRangeException.
+        var huge = WithHugeListChunk(pcm);
+        Assert.Equal(0, Wav.DurationSeconds(huge));
+        Assert.Throws<InvalidDataException>(() => Wav.ReadMonoFloat(huge, out _));
+    }
+
+    private static byte[] SwapFmtAfterData(byte[] wav)
+    {
+        // Canonical layout is fmt@12 (24 bytes) then data@36. Swap the two chunks.
+        var fmt = wav.AsSpan(12, 24).ToArray();
+        var data = wav.AsSpan(36).ToArray();
+        var swapped = new byte[wav.Length];
+        wav.AsSpan(0, 12).CopyTo(swapped);
+        data.CopyTo(swapped.AsSpan(12));
+        fmt.CopyTo(swapped.AsSpan(12 + data.Length));
+        return swapped;
+    }
+
+    private static byte[] WithHugeListChunk(byte[] wav)
+    {
+        // Insert LIST with size 0x80000000 between fmt and data so a 32-bit step wraps.
+        var result = new byte[wav.Length + 8];
+        wav.AsSpan(0, 36).CopyTo(result);
+        Encoding.ASCII.GetBytes("LIST").CopyTo(result.AsSpan(36));
+        BinaryPrimitives.WriteUInt32LittleEndian(result.AsSpan(40), 0x80000000);
+        wav.AsSpan(36).CopyTo(result.AsSpan(44));
+        BinaryPrimitives.WriteInt32LittleEndian(result.AsSpan(4), result.Length - 8);
+        return result;
     }
 }
 

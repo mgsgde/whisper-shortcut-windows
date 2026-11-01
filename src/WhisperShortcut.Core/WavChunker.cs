@@ -43,7 +43,7 @@ public static class WavChunker
         var searchWindow = TimeSpan.FromSeconds(30);
         var splitAbove = TimeSpan.FromSeconds(660);
 
-        if (TryParse16(wav, out var sampleRate, out var channels, out _, out _))
+        if (Wav.TryGetPcm(wav, out var sampleRate, out var channels, out _, out _))
         {
             var byteRate = (long)sampleRate * channels * 2;
             // 11 min at this rate would not fit in 24 MB. Keep the piece a minute under the
@@ -52,7 +52,11 @@ public static class WavChunker
             {
                 splitAbove = TimeSpan.FromTicks(maxBytes * TimeSpan.TicksPerSecond / byteRate);
                 chunkLength = splitAbove - TimeSpan.FromSeconds(60);
-                var halfChunk = TimeSpan.FromTicks(chunkLength.Ticks / 2);
+                // Very high rates (e.g. 192 kHz stereo) make splitAbove itself under a minute,
+                // so the "minus 60 s" would go negative and Split would return the whole file.
+                if (chunkLength < TimeSpan.FromSeconds(5))
+                    chunkLength = TimeSpan.FromTicks(Math.Max(splitAbove.Ticks * 4 / 5, TimeSpan.TicksPerSecond));
+                var halfChunk = TimeSpan.FromTicks(Math.Max(1, chunkLength.Ticks / 2));
                 if (searchWindow > halfChunk)
                     searchWindow = halfChunk;
             }
@@ -68,7 +72,7 @@ public static class WavChunker
     /// </summary>
     public static IReadOnlyList<byte[]> Split(byte[] wav, TimeSpan chunkLength, TimeSpan searchWindow, TimeSpan splitAbove)
     {
-        if (!TryParse16(wav, out var sampleRate, out var channels, out var dataOffset, out var dataLength))
+        if (!Wav.TryGetPcm(wav, out var sampleRate, out var channels, out var dataOffset, out var dataLength))
             return new[] { wav };
 
         var frameBytes = channels * 2;
@@ -175,47 +179,5 @@ public static class WavChunker
         BinaryPrimitives.WriteInt32LittleEndian(pcm.AsSpan(40), length);
         source.AsSpan(offset, length).CopyTo(pcm.AsSpan(44));
         return pcm;
-    }
-
-    private static bool TryParse16(byte[] wav, out int sampleRate, out int channels, out int dataOffset, out int dataLength)
-    {
-        sampleRate = channels = dataOffset = dataLength = 0;
-        if (wav.Length < 12) return false;
-        var pos = 12;
-        var haveFmt = false;
-        var haveData = false;
-        while (pos + 8 <= wav.Length)
-        {
-            var id = Encoding.ASCII.GetString(wav, pos, 4);
-            var size = BinaryPrimitives.ReadUInt32LittleEndian(wav.AsSpan(pos + 4, 4));
-            var body = pos + 8;
-            if (id == "fmt " && !haveFmt)
-            {
-                if (body + 16 > wav.Length) return false;
-                var format = BinaryPrimitives.ReadUInt16LittleEndian(wav.AsSpan(body, 2));
-                channels = BinaryPrimitives.ReadUInt16LittleEndian(wav.AsSpan(body + 2, 2));
-                sampleRate = (int)BinaryPrimitives.ReadUInt32LittleEndian(wav.AsSpan(body + 4, 4));
-                var bits = BinaryPrimitives.ReadUInt16LittleEndian(wav.AsSpan(body + 14, 2));
-                // 1 = PCM, 0xFFFE = extensible (PCM in practice for 16 bit), same rule as Wav.ReadMonoFloat.
-                if ((format != 1 && format != 0xFFFE) || bits != 16 || channels < 1 || sampleRate <= 0)
-                    return false;
-                haveFmt = true;
-            }
-            else if (id == "data" && !haveData)
-            {
-                var available = (long)wav.Length - body;
-                if (available < 0) return false;
-                var length = size > available ? available : size;
-                if (length > int.MaxValue) return false;
-                dataOffset = body;
-                dataLength = (int)length;
-                haveData = true;
-            }
-
-            var step = (long)size + (size & 1);
-            if (step > wav.Length - body) break;
-            pos = body + (int)step;
-        }
-        return haveFmt && haveData;
     }
 }
