@@ -141,6 +141,18 @@ public class SettingsTests
     }
 
     [Fact]
+    public void Load_DropsNullGlossaryEntries_SoAddingATermDoesNotCrash()
+    {
+        var path = Tmp();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{\"glossary\":[null,\"Ramipril\",null]}");
+        var l = Settings.Load(path, new Reverse());
+        Assert.Equal(new[] { "Ramipril" }, l.Glossary);
+        Assert.Equal(GlossaryAddResult.Added, GlossaryEdit.TryAdd(l.Glossary, "Goedde", out _));
+        Assert.Equal(new[] { "Ramipril", "Goedde" }, l.Glossary);
+    }
+
+    [Fact]
     public void CustomOrEmpty_Cases()
     {
         var def = "Zeile eins\nZeile zwei";

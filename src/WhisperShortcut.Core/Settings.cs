@@ -177,7 +177,9 @@ public sealed class Settings
             s.TextEngine = ParseEngine(dto.TextEngine);
             s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
             s.OpenAiPromptModel = OpenAiModels.NormalizePrompt(dto.OpenAiPromptModel);
-            s.Glossary = dto.Glossary ?? new();
+            // JSON null entries (hand-edited or a half-written file) must not stay in the list:
+            // GlossaryEdit.TryAdd would then NullRef when the user adds a term.
+            s.Glossary = (dto.Glossary ?? new()).Where(t => t != null).ToList()!;
             s.DictatePromptTemplate = dto.DictatePromptTemplate ?? dto.LegacyPromptSystemPrompt ?? "";
             s.DictateSystemPrompt = CustomOrEmpty(dto.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt);
             s.PromptModeSystemPrompt = CustomOrEmpty(dto.PromptModeSystemPrompt, Prompts.DefaultPromptModeSystemPrompt);

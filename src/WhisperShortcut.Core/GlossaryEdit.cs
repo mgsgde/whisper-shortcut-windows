@@ -114,6 +114,7 @@ public static class GlossaryEdit
     {
         foreach (var line in glossary)
         {
+            if (line == null) continue;
             if (string.Equals(line, term, StringComparison.CurrentCultureIgnoreCase)) return true;
             var note = line.IndexOf(" (", StringComparison.Ordinal);
             if (note >= 0 && string.Equals(line[..note], term, StringComparison.CurrentCultureIgnoreCase))

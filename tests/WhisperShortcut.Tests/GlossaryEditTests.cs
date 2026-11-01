@@ -31,6 +31,15 @@ public class GlossaryEditTests
     }
 
     [Fact]
+    public void NullEntries_AreIgnoredWhenCheckingDuplicates()
+    {
+        var glossary = new List<string> { null!, "Keep" };
+        Assert.Equal(GlossaryAddResult.Added, GlossaryEdit.TryAdd(glossary, "Goedde", out var term));
+        Assert.Equal("Goedde", term);
+        Assert.Equal(new[] { null, "Keep", "Goedde" }, glossary);
+    }
+
+    [Fact]
     public void Duplicate_MatchesCaseInsensitively_IncludingTheNameBeforeANote()
     {
         var glossary = new List<string> { "Gödde", "Bachata (not \"Batchata\")" };
