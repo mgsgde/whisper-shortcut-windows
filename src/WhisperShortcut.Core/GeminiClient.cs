@@ -81,10 +81,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// </summary>
     internal const int MaxOutputTokens = 65536;
 
-    private const int MaxAttempts = 5;
-    private const int MaxServerErrorAttempts = 6;
-    private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan MaxRetryInfoDelay = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan MaxRetryInfoDelay = HttpRetry.MaxWait;
 
     /// <summary>
     /// Base of the exponential backoff between retries (1.5 s, doubling per attempt, capped at 15 s;
@@ -306,7 +303,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
                 failure = MapStatus(response.StatusCode, text);
                 kind = $"HTTP {code}";
                 // A daily quota will not recover within seconds: fail at once.
-                if (code is not (429 or 500 or 502 or 503 or 504) || (code == 429 && IsDailyQuota(text)))
+                if (!HttpRetry.IsTransientStatus(code) || (code == 429 && IsDailyQuota(text)))
                     throw failure;
                 serverError = code >= 500;
                 if (code == 429) retryInfo = ParseRetryInfo(text);
@@ -327,7 +324,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
             }
 
             // Retryable failure: 5 attempts, 6 when the server itself is failing.
-            if (attempt >= (serverError ? MaxServerErrorAttempts : MaxAttempts)) throw failure;
+            if (attempt >= (serverError ? HttpRetry.MaxServerErrorAttempts : HttpRetry.MaxAttempts)) throw failure;
             TimeSpan delay;
             if (retryInfo is { } info)
             {
@@ -337,8 +334,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
             }
             else
             {
-                delay = TimeSpan.FromTicks((long)Math.Min(
-                    RetryDelay.Ticks * Math.Pow(2, attempt - 1), MaxBackoff.Ticks));
+                delay = HttpRetry.Backoff(RetryDelay, attempt);
             }
             Log.Info($"Gemini {model}: attempt {attempt} failed ({kind}), retrying in {delay.TotalSeconds:0.#} s");
             await Task.Delay(delay, ct).ConfigureAwait(false);
@@ -401,10 +397,13 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     {
         try
         {
-            using var doc = System.Text.Json.JsonDocument.Parse(body);
-            return doc.RootElement.GetProperty("error").TryGetProperty("status", out var s) ? s.GetString() ?? "" : "";
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.TryGetProperty("error", out var err)
+                && err.TryGetProperty("status", out var s)
+                && s.ValueKind == JsonValueKind.String
+                ? s.GetString() ?? "" : "";
         }
-        catch { return ""; }
+        catch (JsonException) { return ""; }
     }
 
     /// <summary>

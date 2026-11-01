@@ -1,0 +1,11 @@
+<Project>
+  <PropertyGroup>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <AnalysisLevel>latest</AnalysisLevel>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <!-- Core and tests are built on Linux CI. The WinForms app and the VM feedserver are Windows-only. -->
+    <TreatWarningsAsErrors Condition="'$(MSBuildProjectName)' == 'WhisperShortcut.Core' or '$(MSBuildProjectName)' == 'WhisperShortcut.Tests'">true</TreatWarningsAsErrors>
+  </PropertyGroup>
+</Project>

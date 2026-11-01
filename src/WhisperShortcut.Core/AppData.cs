@@ -9,8 +9,8 @@ public static class AppData
     /// <summary>%LOCALAPPDATA%\WhisperShortcut: log file and offline models.</summary>
     public static string LocalFolder => Path.GetDirectoryName(Log.DefaultPath)!;
 
-    /// <summary>Folder of the log file (inside <see cref="LocalFolder"/>).</summary>
-    public static string LogFolder => Path.GetDirectoryName(Log.DefaultPath)!;
+    /// <summary>Folder of the log file. Same path as <see cref="LocalFolder"/> today; kept as a named alias for callers.</summary>
+    public static string LogFolder => LocalFolder;
 
     /// <summary>Every folder the app writes to, distinct. Recent texts live in memory only.</summary>
     public static IReadOnlyList<string> Folders => new[] { SettingsFolder, LocalFolder, LogFolder, OfflineCatalog.Root }

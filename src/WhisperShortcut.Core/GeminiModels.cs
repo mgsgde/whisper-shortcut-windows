@@ -1,29 +1,23 @@
 namespace WhisperShortcut.Core;
 
-/// <summary>One selectable Gemini model with its display name and a short hint for the settings window.</summary>
-/// <param name="Id">API model id.</param>
-/// <param name="Name">Display name.</param>
-/// <param name="Description">One-line hint shown beside the name.</param>
-public sealed record GeminiModel(string Id, string Name, string Description);
-
 /// <summary>The models offered per mode, and the mapping of stored (possibly removed) ids onto them.</summary>
 public static class GeminiModels
 {
     /// <summary>Models offered for Dictate, in display order.</summary>
-    public static IReadOnlyList<GeminiModel> Transcription { get; } = new[]
+    public static IReadOnlyList<ModelInfo> Transcription { get; } = new[]
     {
-        new GeminiModel("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", "Schnell und günstig, für Diktate empfohlen"),
-        new GeminiModel("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "Neuer, etwas teurer"),
-        new GeminiModel("gemini-3.8-flash", "Gemini 3.8 Flash", "Genauer bei schwieriger Aufnahme, langsamer"),
+        new ModelInfo("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", "Schnell und günstig, für Diktate empfohlen"),
+        new ModelInfo("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "Neuer, etwas teurer"),
+        new ModelInfo("gemini-3.8-flash", "Gemini 3.8 Flash", "Genauer bei schwieriger Aufnahme, langsamer"),
     };
 
     /// <summary>Models offered for Dictate Prompt, in display order.</summary>
-    public static IReadOnlyList<GeminiModel> Prompt { get; } = new[]
+    public static IReadOnlyList<ModelInfo> Prompt { get; } = new[]
     {
-        new GeminiModel("gemini-3.8-flash", "Gemini 3.8 Flash", "Schnell und gründlich, empfohlen"),
-        new GeminiModel("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "Am schnellsten, für kurze Änderungen"),
-        new GeminiModel("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", "Günstig, einfache Aufgaben"),
-        new GeminiModel("gemini-4-argon", "Gemini 4 Argon", "Beste Texte, deutlich langsamer, nur mit bezahltem Schlüssel"),
+        new ModelInfo("gemini-3.8-flash", "Gemini 3.8 Flash", "Schnell und gründlich, empfohlen"),
+        new ModelInfo("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "Am schnellsten, für kurze Änderungen"),
+        new ModelInfo("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", "Günstig, einfache Aufgaben"),
+        new ModelInfo("gemini-4-argon", "Gemini 4 Argon", "Beste Texte, deutlich langsamer, nur mit bezahltem Schlüssel"),
     };
 
     // Same migration as the Mac app: ids that no longer exist map to their successor.
@@ -48,7 +42,7 @@ public static class GeminiModels
     public static string NormalizePrompt(string? id) =>
         Normalize(id, Prompt, Settings.DefaultPromptModel, argonAllowed: true);
 
-    private static string Normalize(string? id, IReadOnlyList<GeminiModel> list, string fallback, bool argonAllowed)
+    private static string Normalize(string? id, IReadOnlyList<ModelInfo> list, string fallback, bool argonAllowed)
     {
         var t = id?.Trim();
         if (string.IsNullOrEmpty(t)) return fallback;

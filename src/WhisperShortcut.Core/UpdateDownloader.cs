@@ -32,13 +32,13 @@ public static class UpdateDownloader
             byte[] sig;
             using (var ms = new MemoryStream())
             {
-                await GetAsync(http, sigUrl, ms, null, ct);
+                await GetAsync(http, sigUrl, ms, null, ct).ConfigureAwait(false);
                 sig = ms.ToArray();
             }
             long bytes;
             await using (var fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
-                await GetAsync(http, zipUrl, fs, progress, ct);
+                await GetAsync(http, zipUrl, fs, progress, ct).ConfigureAwait(false);
                 bytes = fs.Length;
             }
             Log.Info($"Update {info.Version}: downloaded {zipName}, {bytes} bytes");
@@ -86,16 +86,16 @@ public static class UpdateDownloader
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);
             request.Headers.UserAgent.Add(new ProductInfoHeaderValue("WhisperShortcut-Windows", null));
-            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             response.EnsureSuccessStatusCode();
             long? total = response.Content.Headers.ContentLength;
-            await using var source = await response.Content.ReadAsStreamAsync(ct);
+            await using var source = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
             var buffer = new byte[81920];
             long done = 0;
             int n;
-            while ((n = await source.ReadAsync(buffer, ct)) > 0)
+            while ((n = await source.ReadAsync(buffer, ct).ConfigureAwait(false)) > 0)
             {
-                await target.WriteAsync(buffer.AsMemory(0, n), ct);
+                await target.WriteAsync(buffer.AsMemory(0, n), ct).ConfigureAwait(false);
                 done += n;
                 if (total is > 0) progress?.Report(Math.Min(1.0, (double)done / total.Value));
             }

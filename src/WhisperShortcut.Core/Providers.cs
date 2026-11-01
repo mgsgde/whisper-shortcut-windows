@@ -1,5 +1,11 @@
 namespace WhisperShortcut.Core;
 
+/// <summary>One selectable model with its display name and a short hint for the settings window.</summary>
+/// <param name="Id">API model id.</param>
+/// <param name="Name">Display name.</param>
+/// <param name="Description">One-line hint shown beside the name.</param>
+public sealed record ModelInfo(string Id, string Name, string Description);
+
 /// <summary>Where a step (speech recognition, text processing) runs.</summary>
 public enum Engine
 {

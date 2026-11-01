@@ -773,7 +773,7 @@ internal sealed class SettingsForm : Form
         return card;
     }
 
-    private static FluentCombo ModelChoice(IReadOnlyList<Core.GeminiModel> models, string selected)
+    private static FluentCombo ModelChoice(IReadOnlyList<Core.ModelInfo> models, string selected)
     {
         var combo = new FluentCombo { Width = ComboWidth };
         foreach (var m in models) combo.Items.Add(new ModelItem(m));
@@ -796,7 +796,7 @@ internal sealed class SettingsForm : Form
         return card;
     }
 
-    private sealed record ModelItem(Core.GeminiModel Model)
+    private sealed record ModelItem(Core.ModelInfo Model)
     {
         public override string ToString() => Model.Name;
     }

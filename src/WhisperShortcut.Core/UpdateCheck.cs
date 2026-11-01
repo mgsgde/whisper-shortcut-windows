@@ -106,9 +106,9 @@ public static class UpdateCheck
         using var request = new HttpRequestMessage(HttpMethod.Get, ApiUrl);
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("WhisperShortcut-Windows", null));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
-        using var response = await http.SendAsync(request, ct);
+        using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
-        return Parse(await response.Content.ReadAsStringAsync(ct));
+        return Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
     }
 }

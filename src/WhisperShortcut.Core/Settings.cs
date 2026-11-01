@@ -166,12 +166,12 @@ public sealed class Settings
             if (!string.IsNullOrEmpty(dto.ApiKeyProtected))
             {
                 try { s.ApiKey = protector.Unprotect(dto.ApiKeyProtected) ?? ""; }
-                catch { s.ApiKey = ""; }
+                catch (Exception) { s.ApiKey = ""; }
             }
             if (!string.IsNullOrEmpty(dto.OpenAiKeyProtected))
             {
                 try { s.OpenAiKey = protector.Unprotect(dto.OpenAiKeyProtected) ?? ""; }
-                catch { s.OpenAiKey = ""; }
+                catch (Exception) { s.OpenAiKey = ""; }
             }
             s.SpeechEngine = ParseEngine(dto.SpeechEngine);
             s.TextEngine = ParseEngine(dto.TextEngine);
