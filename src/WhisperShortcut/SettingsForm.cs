@@ -56,6 +56,9 @@ internal sealed class SettingsForm : Form
     // Vorlagen page: a working copy of the templates, written to the settings only on Save.
     private readonly List<Core.DictationTemplate> _templates;
     private readonly HotkeyBox _templateKey;
+    private readonly ToggleSwitch _sendScreenshots;
+    private readonly HotkeyBox _screenshotKey;
+    private readonly Label _screenshotOff;
     private readonly FluentCombo _templateChoice;
     private readonly FluentButton _templateRemove;
     private readonly Card _templateEditor;
@@ -354,6 +357,22 @@ internal sealed class SettingsForm : Form
         var quickCard = new Card();
         quickCard.AddRow(quickBlock);
         prompt.Controls.Add(quickCard);
+
+        // --- screenshot: an image as context for the next instruction or template (off by default: patient data) ---
+        prompt.Controls.Add(Section("Screenshot"));
+        _sendScreenshots = new ToggleSwitch { Checked = settings.SendScreenshots, AccessibleName = "Screenshots mitsenden" };
+        _screenshotKey = new HotkeyBox(settings.ScreenshotHotkey ?? "", allowEmpty: true) { AccessibleName = "Tastenkürzel Screenshot" };
+        var shotCard = new Card();
+        shotCard.AddRow(SettingRow("Screenshots mitsenden", "Achtung: Auf dem Bildschirm der Praxissoftware stehen meist Patientendaten, "
+            + "und das Bild geht an das Sprachmodell in der Cloud (Gemini oder OpenAI).", _sendScreenshots, ToggleWidth, out _));
+        shotCard.AddRow(SettingRow("Tastenkürzel Screenshot", "Öffnet die Bildschirmauswahl von Windows (wie Win+Umschalt+S). Den Bereich "
+            + "aufziehen, z. B. Laborwerte: Das Bild geht mit der nächsten Anweisung oder Vorlage mit, nur dieses eine Mal, und wird "
+            + "nach 5 Minuten verworfen. Entf entfernt das Kürzel.",
+            new FieldFrame(_screenshotKey) { Width = KeyWidth, Dock = DockStyle.None }, KeyWidth, out _));
+        prompt.Controls.Add(shotCard);
+        _screenshotOff = Wrap("Offline und mit dem Sprachmodell auf diesem PC geht kein Bild mit: Es würde den PC verlassen, "
+            + "und das lokale Modell kann keine Bilder lesen.", 0);
+        prompt.Controls.Add(_screenshotOff);
 
         // ================= page: Vorlagen (dictation templates) =================
         var templatesPage = NewPage(TemplatesPage, "Direkt in ein festes Format diktieren, z. B. eine Behandlungsdokumentation mit "
@@ -1330,6 +1349,9 @@ internal sealed class SettingsForm : Form
         bool openAiText = online && SelectedEngine(_textEngine) == Core.Engine.OpenAI;
         (_dictateGeminiCard.Visible, _dictateOpenAiCard.Visible) = (!openAiSpeech, openAiSpeech);
         (_promptGeminiCard.Visible, _promptOpenAiCard.Visible) = (!openAiText, openAiText);
+        bool shotsPossible = online && SelectedEngine(_textEngine) != Core.Engine.Local;
+        _sendScreenshots.Enabled = _screenshotKey.Enabled = shotsPossible;
+        _screenshotOff.Visible = !shotsPossible;
         _offlineState.Text = _offlineMode.Checked
             ? "Der Offline-Modus ist an: Aufnahmen und Texte bleiben auf diesem PC. Beides muss einmal geladen sein."
             : SelectedEngine(_speechEngine) == Core.Engine.Local && SelectedEngine(_textEngine) != Core.Engine.Local
@@ -1496,7 +1518,7 @@ internal sealed class SettingsForm : Form
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
-        _autoUpdate.Checked.ToString(), _templateKey.Value,
+        _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value,
     }.Concat(_quick.Select(q => q.Text))
      .Concat(_templates.Select(t => string.Join("\u0002", t.Id, t.Name, t.Instructions, t.Hotkey))));
 
@@ -1605,6 +1627,9 @@ internal sealed class SettingsForm : Form
         _settings.Sounds = _sounds.Checked;
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
         var beforeTemplates = (_settings.Templates, _settings.TemplateHotkey);
+        var beforeShots = (_settings.SendScreenshots, _settings.ScreenshotHotkey);
+        _settings.SendScreenshots = _sendScreenshots.Checked;
+        _settings.ScreenshotHotkey = Hotkey.TryParse(_screenshotKey.Value, out var shotKey) ? shotKey.ToString() : "";
         _settings.Templates = _templates.Select(t => new Core.DictationTemplate
         {
             Id = t.Id, Name = t.Name.Trim(), Instructions = t.Instructions.ReplaceLineEndings("\n").Trim(),
@@ -1625,6 +1650,7 @@ internal sealed class SettingsForm : Form
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck) = before;
             (_settings.Templates, _settings.TemplateHotkey) = beforeTemplates;
+            (_settings.SendScreenshots, _settings.ScreenshotHotkey) = beforeShots;
             Warn("Die Einstellungen konnten nicht gespeichert werden: " + e.Message);
             return false;
         }
@@ -1633,7 +1659,7 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")})");
         RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.DictatePromptTemplate);
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;
@@ -1773,6 +1799,22 @@ internal sealed class SettingsForm : Form
         var taken = new List<(string Owner, Hotkey Key)> { ("Diktieren", app[0]), ("Text bearbeiten", app[1]), ("Glossar", app[2]) };
         const string Rule = "Bitte ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+V, oder es mit Entf entfernen. "
             + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
+        if (_screenshotKey.Value.Length > 0)
+        {
+            if (!Hotkey.TryParse(_screenshotKey.Value, out var shot) || !IsSafe(shot))
+            {
+                ShowPage(PromptPage);
+                Warn("Kürzel für Screenshots: " + Rule);
+                return false;
+            }
+            if (taken.FirstOrDefault(k => k.Key == shot) is { Owner: { } owner })
+            {
+                ShowPage(PromptPage);
+                Warn($"{shot.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Screenshots ein anderes Kürzel wählen.");
+                return false;
+            }
+            taken.Add(("Screenshot", shot));
+        }
         if (_templateKey.Value.Length > 0)
         {
             if (!Hotkey.TryParse(_templateKey.Value, out var picker) || !IsSafe(picker))

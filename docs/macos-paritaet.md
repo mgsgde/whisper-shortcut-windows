@@ -70,3 +70,12 @@ von „Text bearbeiten“ gelten nicht; eine Markierung wird in das Format gebra
 Auswahl mit 1, 2, 3 während der Aufnahme (das allgemeine Kürzel nimmt die zuletzt benutzte), und die Aufnahme
 geht immer erst durch die Spracherkennung (in Stücken) und dann als Text ans Sprachmodell, damit auch mehrminütige
 Befunde vollständig ankommen.
+
+## Nachtrag 02.11.2026: Screenshot für „Text bearbeiten“ und Vorlagen
+
+Nachgezogen (Mac: Abschnitt „Screenshot“, `dictatePromptUsesScreenshotSelection`): eigenes Kürzel „Screenshot“
+(ab Werk frei) öffnet die Bildschirmauswahl von Windows (`ms-screenclip:`, wie Win+Umschalt+S). Das Bild kommt über
+die Zwischenablage, die danach sofort wiederhergestellt wird, und geht einmal mit der nächsten Anweisung oder
+Vorlage an Gemini bzw. OpenAI; nach 5 Minuten ungenutzt wird es verworfen. Ab Werk aus (Schalter „Screenshots
+mitsenden“, Patientendaten), offline und mit dem lokalen Sprachmodell gesperrt. Anders als auf dem Mac: kein
+Bildschirmfoto ohne eigene Auswahl, das Kürzel wirkt nur, wenn keine Aufnahme läuft.

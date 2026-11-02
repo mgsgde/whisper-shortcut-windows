@@ -575,4 +575,66 @@ public class GeminiClientTests
         var ex = await Assert.ThrowsAsync<GeminiException>(() => c.CompleteTextAsync("s", "u"));
         Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
     }
+
+    private static readonly ScreenshotImage Shot = new(new byte[] { 0x89, 0x50, 0x4E, 0x47, 9 }, "image/png");
+
+    [Fact]
+    public async Task PromptText_WithImage_PartsAreTextHeaderImage()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.PromptTextAsync("Text", "Kürzen", null, Shot);
+
+        var parts = h.Json(0)["contents"]![0]!["parts"]!.AsArray();
+        Assert.Equal(3, parts.Count);
+        Assert.Equal(ScreenshotPrompt.Header, (string)parts[1]!["text"]!);
+        Assert.Equal("image/png", (string)parts[2]!["inline_data"]!["mime_type"]!);
+        Assert.Equal(Convert.ToBase64String(Shot.Data), (string)parts[2]!["inline_data"]!["data"]!);
+    }
+
+    [Fact]
+    public async Task Prompt_WithImage_AudioComesLast()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.PromptAsync(Wav, "Text", null, Shot);
+
+        var parts = h.Json(0)["contents"]![0]!["parts"]!.AsArray();
+        Assert.Equal(4, parts.Count);
+        Assert.NotNull(parts[0]!["text"]);
+        Assert.Equal(ScreenshotPrompt.Header, (string)parts[1]!["text"]!);
+        Assert.Equal("image/png", (string)parts[2]!["inline_data"]!["mime_type"]!);
+        Assert.Equal("audio/wav", (string)parts[3]!["inline_data"]!["mime_type"]!);
+    }
+
+    [Fact]
+    public async Task Complete_WithImage_HasHeaderAndImage()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.CompleteTextAsync("System", "User", Shot);
+
+        var parts = h.Json(0)["contents"]![0]!["parts"]!.AsArray();
+        Assert.Equal("User", (string)parts[0]!["text"]!);
+        Assert.Equal(ScreenshotPrompt.Header, (string)parts[1]!["text"]!);
+        Assert.Equal(Convert.ToBase64String(Shot.Data), (string)parts[2]!["inline_data"]!["data"]!);
+    }
+
+    [Fact]
+    public async Task NullImage_BodyIdenticalToOldOverloads()
+    {
+        var (c, h) = Make();
+        for (var i = 0; i < 6; i++) h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.PromptAsync(Wav, "Text", "Mein Prompt");
+        await c.PromptAsync(Wav, "Text", "Mein Prompt", null);
+        await c.PromptTextAsync("Text", "Kürzen", null);
+        await c.PromptTextAsync("Text", "Kürzen", null, null);
+        await c.CompleteTextAsync("System", "User");
+        await c.CompleteTextAsync("System", "User", null);
+
+        Assert.Equal(h.Calls[0].Body, h.Calls[1].Body);
+        Assert.Equal(h.Calls[2].Body, h.Calls[3].Body);
+        Assert.Equal(h.Calls[4].Body, h.Calls[5].Body);
+        Assert.DoesNotContain("SCREENSHOT", h.Calls[4].Body);
+    }
 }
