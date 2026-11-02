@@ -111,7 +111,7 @@ internal sealed class TrayApp : ApplicationContext
         _recentMenu = new ToolStripMenuItem("Letzte Texte");
         _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Enabled = false };
         // An update restarts the app: not in the middle of a dictation or a meeting.
-        _updates = new UpdateService(_settings, () => _state == State.Idle && !_meeting.IsActive, Quit);
+        _updates = new UpdateService(_settings, () => _state == State.Idle && _meeting?.IsActive != true, Quit);
         _updateItem = new ToolStripMenuItem("Update installieren …", null, (_, _) => _updates.ShowDialog())
         {
             Visible = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold),

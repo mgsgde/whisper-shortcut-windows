@@ -523,4 +523,29 @@ public class QuickActionRequestTests
         Assert.True(Settings.Load(path, new PlainSecretProtector()).AutoUpdateCheck);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
+
+    [Fact]
+    public void Meeting_settings_default_round_trip_and_unknown_mode()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("", s.MeetingHotkey);
+        Assert.Equal("auto", s.MeetingAudioMode);
+        Assert.True(s.MeetingSummary);
+
+        s.MeetingHotkey = "Ctrl+Shift+M";
+        s.MeetingAudioMode = "mix";
+        s.MeetingSummary = false;
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Ctrl+Shift+M", t.MeetingHotkey);
+        Assert.Equal("mix", t.MeetingAudioMode);
+        Assert.False(t.MeetingSummary);
+
+        File.WriteAllText(path, "{\"meetingAudioMode\":\"bogus\",\"meetingHotkey\":\"\"}");
+        var u = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("auto", u.MeetingAudioMode);
+        Assert.Equal("", u.MeetingHotkey);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
 }

@@ -148,6 +148,9 @@ internal sealed class MeetingController : IDisposable
         Core.Log.Info($"Meeting: start, preference {Core.MeetingAudioRouting.Name(preference)}, output form factor {output.FormFactor?.ToString() ?? "none"}, mix {_mixes}");
 
         var session = new Core.LiveMeetingSession(_store, _transcribe, Core.MeetingAudioRouting.MetadataName(_mixes));
+        // One more try after 5 s: GeminiClient already retries a chunk 5–6 times with backoff, and a longer wait
+        // here would let the queue fall behind a one-minute chunk cadence during an outage (the audio is on disk anyway).
+        session.RetryDelays = new[] { TimeSpan.FromSeconds(5) };
         try
         {
             session.Start();
