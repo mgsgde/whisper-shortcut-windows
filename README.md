@@ -42,8 +42,7 @@ Release: `tools/release.sh <version> <notes.md>` testet, baut beide exe und ZIPs
 privaten Schlüssel. Die exe ist der Download, die ZIP holt sich das Update in der App. Jede ZIP braucht ihre
 `.sig`-Datei, sonst lehnen installierte Apps das Update ab.
 
-Für Windows auf ARM `-r win-arm64`. `tools/vm.sh` steuert eine Parallels-Windows-VM vom Mac aus
-(Tastenkürzel, Screenshots, Protokoll) für Tests ohne echten PC.
+Für Windows auf ARM `-r win-arm64`.
 
 ## Lizenz
 
