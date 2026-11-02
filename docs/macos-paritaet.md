@@ -42,9 +42,14 @@ Benachrichtigungs-Einstellungen, Bestätigung bei langen Aufnahmen, Englische Ob
 ## C. Funktionen, die es auf Windows gar nicht gibt (Umfang, nicht „abgespeckt“)
 
 Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle (~25k Zeilen Swift, XL), Vorlesen (M), Screenshot (S–M),
-Live-Meeting (L, auch auf dem Mac nur Mikrofon), MCP-Server für KI-Apps (L, ohne Chat sinnvoll), Smart Improvement
+MCP-Server für KI-Apps (L, ohne Chat sinnvoll), Smart Improvement
 und Interaktionslog (L/M), Schreibstil pro App (M), weitere Anbieter (OpenAI, Grok, OpenRouter, eigener Server; M),
 Telemetrie (S–M).
+
+**Nachtrag 02.11.2026:** Live-Meeting ist da (Mikrofon + PC-Ton per WASAPI-Loopback, Modus Automatisch /
+Nur Mikrofon / Mikrofon + PC-Ton, Abschnitte bis 60 s mit Schnitt in Pausen wie auf dem Mac, Ton fehlgeschlagener
+Abschnitte bleibt und wird nachgetragen, Ordner pro Meeting mit `transcript.md`, `meeting.json`, `summary.md`).
+Lese-API für den MCP-Server: `MeetingStore` in Core. Ohne Chat-Fenster, Live-Notizen und Sprecher-Zuordnung.
 
 ## D. Wo Windows besser ist (beibehalten)
 

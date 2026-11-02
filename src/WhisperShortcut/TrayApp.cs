@@ -72,6 +72,7 @@ internal sealed class TrayApp : ApplicationContext
     private long _armedKeyDeadline;
     private readonly ToolStripMenuItem _offlineItem;
     private readonly SynchronizationContext _ui;
+    private readonly MeetingController _meeting;
 
     public TrayApp(string? testWav, bool fakeGemini)
     {
@@ -109,7 +110,8 @@ internal sealed class TrayApp : ApplicationContext
         _copyLast = new ToolStripMenuItem("Letzten Text kopieren", null, (_, _) => CopyRecent(_recent.Latest));
         _recentMenu = new ToolStripMenuItem("Letzte Texte");
         _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Enabled = false };
-        _updates = new UpdateService(_settings, () => _state == State.Idle, Quit);
+        // An update restarts the app: not in the middle of a dictation or a meeting.
+        _updates = new UpdateService(_settings, () => _state == State.Idle && !_meeting.IsActive, Quit);
         _updateItem = new ToolStripMenuItem("Update installieren …", null, (_, _) => _updates.ShowDialog())
         {
             Visible = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold),
@@ -119,10 +121,16 @@ internal sealed class TrayApp : ApplicationContext
         var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings()) { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         var logItem = new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog());
         var quitItem = new ToolStripMenuItem("Beenden", null, (_, _) => Quit());
+        _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        _meeting = new MeetingController(_settings, _ui, TranscribeMeetingChunkAsync, SummarizeMeetingAsync, MeetingUnavailable,
+            Notify, TrySave, () => new[] { _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey },
+            suspend => { if (suspend) { _hotkeys.UnregisterAll(); _globalHotkeysOn = false; } else SyncGlobalHotkeys(notify: true); },
+            fakeAudio: testWav != null || fakeGemini);
         var menu = new ContextMenuStrip();
         menu.Items.AddRange(new ToolStripItem[]
         {
             title, _statusItem, _updateItem, new ToolStripSeparator(), _dictateInfo, _promptInfo, _glossaryInfo, new ToolStripSeparator(),
+            _meeting.MenuItem, new ToolStripSeparator(),
             _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
             _offlineItem, settingsItem, logItem, new ToolStripSeparator(), quitItem,
         });
@@ -134,7 +142,6 @@ internal sealed class TrayApp : ApplicationContext
         };
         UpdateRecentMenu();
 
-        _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         _icon = new NotifyIcon { Icon = TrayIcons.Ready, ContextMenuStrip = menu, Visible = true };
         // One left click opens the settings (Click alone would also fire on right click, which opens the menu).
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
@@ -155,6 +162,7 @@ internal sealed class TrayApp : ApplicationContext
         };
         // Test runs (VM loop) must not pop update notices into the screenshots.
         if (!testRun) _updates.Start();
+        _ui.Post(_ => _meeting.OnStartup(), null);
 
         if (firstRun && !testRun)
         {
@@ -181,12 +189,15 @@ internal sealed class TrayApp : ApplicationContext
         _globalHotkeysOn = true;
         _hotkeys.UnregisterAll();
         var failed = new List<string>();
-        foreach (var (stored, action) in new (string, Action)[]
+        var keys = new List<(string, Action)>
         {
             (_settings.DictateHotkey, () => OnHotkey(Mode.Dictate)),
             (_settings.PromptHotkey, () => OnHotkey(Mode.Prompt)),
             (_settings.GlossaryHotkey, () => _ = AddSelectionToGlossaryAsync()),
-        })
+        };
+        // No meeting hotkey by default: the tray menu starts a meeting.
+        if (!string.IsNullOrWhiteSpace(_settings.MeetingHotkey)) keys.Add((_settings.MeetingHotkey, _meeting.Toggle));
+        foreach (var (stored, action) in keys)
         {
             if (!Hotkey.TryParse(stored, out var key) || !_hotkeys.Register(key, action))
                 failed.Add(Hotkey.Display(stored));
@@ -867,6 +878,49 @@ internal sealed class TrayApp : ApplicationContext
         Core.SpokenPunctuation.Apply(await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
             (chunk, c) => _offline.TranscribeAsync(chunk, c), maxParallel: 1, ct));
 
+    // ---------------- live meeting ----------------
+
+    /// <summary>
+    /// Why a meeting cannot start (or its backlog cannot be retried) with the current engines, or null.
+    /// Offline works: Parakeet transcribes meeting chunks like long dictations.
+    /// </summary>
+    private string? MeetingUnavailable()
+    {
+        if (_fakeGemini) return null;
+        if (_settings.EffectiveSpeechEngine == Core.Engine.Local && !OfflineEngine.SpeechInstalled)
+            return "Die Offline-Spracherkennung ist noch nicht geladen. In den Einstellungen unter „Offline-Modelle“ laden.";
+        if (MissingKeyFor(Mode.Dictate) is { } provider)
+            return $"Noch kein {provider}-Schlüssel eingetragen. Bitte zuerst in den Einstellungen eintragen.";
+        return null;
+    }
+
+    /// <summary>
+    /// One meeting chunk through the dictation path: same engine, glossary and cleanup, but no paste.
+    /// Runs on a worker thread of the meeting session; touches no UI.
+    /// </summary>
+    private async Task<string> TranscribeMeetingChunkAsync(byte[] wav, CancellationToken ct)
+    {
+        if (_fakeGemini) return "Das ist ein Testabschnitt aus dem Meeting.";
+        string raw = GlossaryBackstops(await TranscribeAsync(wav, ct));
+        string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), Core.Wav.DurationSeconds(wav));
+        return Core.TextCleanup.LooksLikeRefusal(text) ? "" : text;
+    }
+
+    /// <summary>End-of-meeting summary with the Dictate Prompt model of the chosen text engine.</summary>
+    private Task<string> SummarizeMeetingAsync(string transcript, CancellationToken ct)
+    {
+        if (_fakeGemini) return Task.FromResult("Hauptpunkte:\n- Testmeeting ohne Gemini");
+        var text = Core.MeetingPrompts.Clip(transcript);
+        return _settings.EffectiveTextEngine switch
+        {
+            Core.Engine.Local when !OfflineEngine.LlmInstalled(_offline.SelectedLlm) =>
+                throw new InvalidOperationException("The offline language model is not installed."),
+            Core.Engine.Local => _offline.PromptAsync(text, Core.MeetingPrompts.SummaryInstruction, Core.MeetingPrompts.SummarySystemPrompt, ct),
+            Core.Engine.OpenAI => _openAi.PromptTextAsync(text, Core.MeetingPrompts.SummaryInstruction, Core.MeetingPrompts.SummarySystemPrompt, ct),
+            _ => _gemini.PromptTextAsync(text, Core.MeetingPrompts.SummaryInstruction, Core.MeetingPrompts.SummarySystemPrompt, ct),
+        };
+    }
+
     // ---------------- glossary ----------------
 
     /// <summary>
@@ -1200,6 +1254,7 @@ internal sealed class TrayApp : ApplicationContext
 
     private void Quit()
     {
+        _meeting.Shutdown(); // ends a running meeting properly; audio not transcribed yet stays on disk
         _cts?.Cancel();
         _selectionCts?.Cancel();
         (_audio as MicAudioSource)?.Cancel();
@@ -1209,6 +1264,7 @@ internal sealed class TrayApp : ApplicationContext
         _updateNoticeTimer.Dispose();
         _updates.Dispose();
         _overlay.Dispose();
+        _meeting.Dispose();
         _hotkeys.Dispose();
         _offline.Dispose();
         ExitThread();
