@@ -143,7 +143,7 @@ internal sealed class UpdateDialog : Form
         {
             // No overall timeout: 60 MB on a slow practice line can take minutes. A stalled connection
             // ends through HttpClient's per-request timeout; closing the window cancels.
-            using var http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
+            using var http = Core.NetworkPolicy.CreateDownloadClient(TimeSpan.FromMinutes(10));
             var progress = new Progress<double>(p =>
             {
                 if (IsDisposed) return;
@@ -236,6 +236,8 @@ internal sealed class UpdateDialog : Form
 
     private static void OpenUrl(string url)
     {
+        if (!Core.NetworkPolicy.IsAllowedBrowserUrl(url))
+            url = Core.UpdateCheck.ReleasesPage;
         try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
         catch (Exception e) { Core.Log.Error($"Opening the release page failed: {e.GetType().Name}"); }
     }

@@ -68,6 +68,9 @@ public sealed class LocalLlmClient
             ["max_tokens"] = 4096,
             ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false },
         };
+        if (!baseUrl.IsLoopback)
+            throw Failure(null);
+
         string text;
         try
         {

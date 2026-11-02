@@ -220,8 +220,17 @@ public class LocalLlmTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, Reply("abgeschnitten", "length")));
-        var e = await Assert.ThrowsAsync<LocalLlmException>(() => c.CompleteAsync(new Uri("http://x/"), "s", "u", CancellationToken.None));
+        var e = await Assert.ThrowsAsync<LocalLlmException>(() => c.CompleteAsync(new Uri("http://127.0.0.1:9/"), "s", "u", CancellationToken.None));
         Assert.Equal("Der Text ist für das Offline-Modell zu lang. Bitte einen kürzeren Abschnitt markieren.", e.Message);
+    }
+
+    [Fact]
+    public async Task NonLoopback_IsRejectedWithoutNetwork()
+    {
+        var (c, h) = Make();
+        await Assert.ThrowsAsync<LocalLlmException>(() =>
+            c.CompleteAsync(new Uri("https://evil.example/"), "s", "u", CancellationToken.None));
+        Assert.Empty(h.Calls);
     }
 
     [Fact]
@@ -230,7 +239,7 @@ public class LocalLlmTests
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.InternalServerError, "boom"));
         h.Responses.Enqueue((HttpStatusCode.OK, "not json"));
-        var u = new Uri("http://x/");
+        var u = new Uri("http://127.0.0.1:9/");
         var e1 = await Assert.ThrowsAsync<LocalLlmException>(() => c.CompleteAsync(u, "s", "u", CancellationToken.None));
         Assert.Equal("Das lokale Sprachmodell hat nicht geantwortet. Details im Protokoll.", e1.Message);
         await Assert.ThrowsAsync<LocalLlmException>(() => c.CompleteAsync(u, "s", "u", CancellationToken.None));

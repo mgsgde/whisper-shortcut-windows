@@ -17,6 +17,19 @@ public class UpdateCheckTests
     }
 
     [Fact]
+    public void Parse_RejectsUnsafeHtmlUrlAndHttpAssets()
+    {
+        var info = UpdateCheck.Parse("""
+            {"tag_name":"v1.0.0","html_url":"javascript:alert(1)","assets":[
+              {"name":"ok.zip","browser_download_url":"https://github.com/x/ok.zip"},
+              {"name":"bad.zip","browser_download_url":"http://evil.example/bad.zip"}]}
+            """)!;
+        Assert.Equal(UpdateCheck.ReleasesPage, info.Url);
+        Assert.True(info.Assets.ContainsKey("ok.zip"));
+        Assert.False(info.Assets.ContainsKey("bad.zip"));
+    }
+
+    [Fact]
     public void Parse_ReadsNotesAndAssets()
     {
         var info = UpdateCheck.Parse("""

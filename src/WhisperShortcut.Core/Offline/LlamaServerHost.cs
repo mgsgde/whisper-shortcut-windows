@@ -18,7 +18,7 @@ public sealed class LlamaServerHost : IDisposable
     private readonly Action<Process>? _onStarted;
     private readonly object _gate = new();
     private readonly Queue<string> _ring = new();
-    private readonly HttpClient _health = new() { Timeout = TimeSpan.FromSeconds(2) };
+    private readonly HttpClient _health = NetworkPolicy.CreateApiClient(TimeSpan.FromSeconds(2));
 
     private Process? _process;
     private Uri? _baseUrl;

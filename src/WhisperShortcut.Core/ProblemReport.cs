@@ -1,5 +1,4 @@
 using System.Text;
-using System.Text.RegularExpressions;
 
 namespace WhisperShortcut.Core;
 
@@ -9,7 +8,7 @@ public sealed record ProblemReportInfo(
     string TranscriptionModel, string PromptModel, string OfflineLlm);
 
 /// <summary>Builds the prefilled GitHub issue behind "Problem melden".</summary>
-public static partial class ProblemReport
+public static class ProblemReport
 {
     /// <summary>Longest issue URL we open; browsers and GitHub choke far above this.</summary>
     public const int MaxUrlLength = 7000;
@@ -19,16 +18,8 @@ public static partial class ProblemReport
 
     private const string IssuesNew = "https://github.com/mgsgde/whisper-shortcut-windows/issues/new";
 
-    [GeneratedRegex(@"AIza[0-9A-Za-z_\-]{20,}")]
-    private static partial Regex GeminiKey();
-
-    // sk-..., sk-proj-..., sk-svcacct-...; 20+ chars after "sk-" so ordinary German text is left alone.
-    [GeneratedRegex(@"sk-[A-Za-z0-9_\-]{20,}")]
-    private static partial Regex OpenAiKey();
-
-    /// <summary>Masks anything that looks like a Gemini or OpenAI API key.</summary>
-    public static string Redact(string line) =>
-        OpenAiKey().Replace(GeminiKey().Replace(line, "AIza…"), "sk-…");
+    /// <summary>Masks Gemini and OpenAI keys and bearer tokens.</summary>
+    public static string Redact(string line) => SecretRedactor.Redact(line);
 
     /// <summary>The Markdown body: an empty "what happened" section to type into, the environment and the log tail.</summary>
     public static string Body(ProblemReportInfo info, IEnumerable<string> logLines)

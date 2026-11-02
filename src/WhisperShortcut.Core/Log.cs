@@ -55,7 +55,7 @@ public static class Log
                 var dir = Path.GetDirectoryName(_path);
                 if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
                 RotateIfNeeded(_path);
-                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {level} {OneLine(message)}{Environment.NewLine}";
+                var line = $"{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff} {level} {OneLine(SecretRedactor.Redact(message))}{Environment.NewLine}";
                 File.AppendAllText(_path, line, Encoding.UTF8);
             }
             catch

@@ -104,7 +104,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         _apiKey = apiKeyProvider;
         _transcriptionModel = transcriptionModel;
         _promptModel = promptModel;
-        _http = http ?? new HttpClient { Timeout = Timeout.InfiniteTimeSpan };
+        _http = http ?? NetworkPolicy.CreateApiClient();
     }
 
     /// <summary>

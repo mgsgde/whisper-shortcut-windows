@@ -26,7 +26,7 @@ public static class UpdateDownloader
 
         ResetDir(stagingDir);
         string zipPath = Path.Combine(stagingDir, "update.zip");
-        string exePath = Path.Combine(stagingDir, "WhisperShortcut.exe");
+        string sigPath = Path.Combine(stagingDir, "update.zip.sig");
         try
         {
             byte[] sig;
@@ -35,6 +35,9 @@ public static class UpdateDownloader
                 await GetAsync(http, sigUrl, ms, null, ct).ConfigureAwait(false);
                 sig = ms.ToArray();
             }
+            if (sig.Length == 0 || sig.Length > 1024)
+                throw new UpdateException("Die Signatur fehlt. Bitte das Update von der Download-Seite holen.");
+            await File.WriteAllBytesAsync(sigPath, sig, ct);
             long bytes;
             await using (var fs = new FileStream(zipPath, FileMode.Create, FileAccess.Write, FileShare.None))
             {
@@ -42,27 +45,7 @@ public static class UpdateDownloader
                 bytes = fs.Length;
             }
             Log.Info($"Update {info.Version}: downloaded {zipName}, {bytes} bytes");
-
-            bool ok;
-            await using (var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.Read))
-                ok = UpdateSignature.Verify(fs, sig, publicKeyPem);
-            if (!ok)
-            {
-                Log.Error($"Update {info.Version}: signature check failed for {zipName}");
-                ResetDir(stagingDir);
-                throw new UpdateException("Die Datei ist beschädigt oder nicht von Magnus signiert. Nichts wurde installiert.");
-            }
-
-            using (var zip = ZipFile.OpenRead(zipPath))
-            {
-                var entry = zip.Entries.FirstOrDefault(e =>
-                    string.Equals(e.Name, "WhisperShortcut.exe", StringComparison.OrdinalIgnoreCase));
-                if (entry == null) throw new UpdateException("In der ZIP fehlt WhisperShortcut.exe.");
-                entry.ExtractToFile(exePath, overwrite: true);
-            }
-            File.Delete(zipPath);
-            Log.Info($"Update {info.Version}: extracted exe");
-            return exePath;
+            return PrepareStagedExe(stagingDir, publicKeyPem);
         }
         catch (UpdateException)
         {
@@ -74,6 +57,47 @@ public static class UpdateDownloader
         }
     }
 
+    /// <summary>
+    /// Re-checks the staged ZIP signature and extracts the exe. Called after the download and
+    /// again immediately before the installer starts, so a swapped file in %LOCALAPPDATA% is not run.
+    /// </summary>
+    public static string PrepareStagedExe(string stagingDir, string publicKeyPem = UpdateSignature.PublicKeyPem)
+    {
+        string zipPath = Path.Combine(stagingDir, "update.zip");
+        string sigPath = Path.Combine(stagingDir, "update.zip.sig");
+        string exePath = Path.Combine(stagingDir, UpdateInstallPath.ExeName);
+        if (!File.Exists(zipPath) || !File.Exists(sigPath))
+            throw new UpdateException("Die Datei ist beschädigt oder nicht von Magnus signiert. Nichts wurde installiert.");
+        var sig = File.ReadAllBytes(sigPath);
+        if (sig.Length == 0 || sig.Length > 1024)
+            throw new UpdateException("Die Datei ist beschädigt oder nicht von Magnus signiert. Nichts wurde installiert.");
+        bool ok;
+        using (var fs = new FileStream(zipPath, FileMode.Open, FileAccess.Read, FileShare.Read))
+            ok = UpdateSignature.Verify(fs, sig, publicKeyPem);
+        if (!ok)
+        {
+            Log.Error("Update: signature check failed for staged zip");
+            ResetDir(stagingDir);
+            throw new UpdateException("Die Datei ist beschädigt oder nicht von Magnus signiert. Nichts wurde installiert.");
+        }
+        ExtractSignedExe(zipPath, exePath);
+        Log.Info("Update: extracted exe");
+        return exePath;
+    }
+
+    private static void ExtractSignedExe(string zipPath, string exePath)
+    {
+        using var zip = ZipFile.OpenRead(zipPath);
+        var entry = zip.Entries.FirstOrDefault(e =>
+            string.Equals(e.Name, UpdateInstallPath.ExeName, StringComparison.OrdinalIgnoreCase));
+        if (entry == null) throw new UpdateException("In der ZIP fehlt WhisperShortcut.exe.");
+        var destDir = Path.GetDirectoryName(exePath)!;
+        // entry.Name is the file name only, but FullName could be "folder/WhisperShortcut.exe" —
+        // we always write to the fixed staging path, never to FullName.
+        Directory.CreateDirectory(destDir);
+        entry.ExtractToFile(exePath, overwrite: true);
+    }
+
     private static void ResetDir(string dir)
     {
         if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true);
@@ -82,6 +106,8 @@ public static class UpdateDownloader
 
     private static async Task GetAsync(HttpClient http, string url, Stream target, IProgress<double>? progress, CancellationToken ct)
     {
+        if (!NetworkPolicy.IsAllowedDownloadUrl(url))
+            throw new UpdateException("Download fehlgeschlagen. Bitte die Internetverbindung prüfen.");
         try
         {
             using var request = new HttpRequestMessage(HttpMethod.Get, url);

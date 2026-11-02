@@ -68,7 +68,7 @@ public sealed class ModelDownloader
 
         foreach (var file in c.Files)
         {
-            var target = Path.Combine(dir, file.RelativePath);
+            var target = SafeCombine(dir, file.RelativePath);
             Directory.CreateDirectory(Path.GetDirectoryName(target)!);
             if (File.Exists(target) && new FileInfo(target).Length == file.Size)
             {
@@ -85,13 +85,13 @@ public sealed class ModelDownloader
         {
             foreach (var file in c.Files)
             {
-                var zip = Path.Combine(dir, file.RelativePath);
+                var zip = SafeCombine(dir, file.RelativePath);
                 try
                 {
                     using (var archive = ZipFile.OpenRead(zip)) { _ = archive.Entries.Count; }
-                    ZipFile.ExtractToDirectory(zip, dir, overwriteFiles: true);
+                    SafePath.ExtractZipTo(zip, dir);
                 }
-                catch (InvalidDataException ex)
+                catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
                 {
                     File.Delete(zip);
                     throw new OfflineDownloadException("Download beschädigt, bitte noch einmal versuchen.", ex);
@@ -121,7 +121,7 @@ public sealed class ModelDownloader
         long missing = 0;
         foreach (var file in c.Files)
         {
-            var target = Path.Combine(c.FullPath, file.RelativePath);
+            var target = SafeCombine(c.FullPath, file.RelativePath);
             long have = File.Exists(target) ? new FileInfo(target).Length
                 : File.Exists(target + ".part") ? new FileInfo(target + ".part").Length : 0;
             missing += Math.Max(0, file.Size - have);
@@ -138,8 +138,19 @@ public sealed class ModelDownloader
 
     private static double Fraction(long done, long total) => total <= 0 ? 1.0 : Math.Min(1.0, (double)done / total);
 
+    private static string SafeCombine(string directory, string relative)
+    {
+        try { return SafePath.CombineUnder(directory, relative); }
+        catch (ArgumentException ex)
+        {
+            throw new OfflineDownloadException("Download beschädigt, bitte noch einmal versuchen.", ex);
+        }
+    }
+
     private async Task DownloadFileAsync(ModelFile file, string target, Action<long> bytes, CancellationToken ct)
     {
+        if (!NetworkPolicy.IsAllowedDownloadUrl(file.Url))
+            throw new OfflineDownloadException("Download fehlgeschlagen: die Adresse ist nicht HTTPS.");
         var part = target + ".part";
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         long have = 0;
