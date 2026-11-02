@@ -67,6 +67,7 @@ internal sealed class TrayApp : ApplicationContext
     private bool _updateNoticePending;
     private bool _glossaryBusy;
     private bool _globalHotkeysOn;
+    private string _busyStatus = Core.UserCopy.Processing;
     private readonly Core.HotkeyPressGate _pressGate = new();
     private readonly System.Windows.Forms.Timer _keyUpTimer = new() { Interval = 30 };
     private Keys _armedKey;
@@ -115,7 +116,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Visible = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold),
         };
-        var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
+        var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold), AccessibleName = "WhisperShortcut" };
         _offlineItem = new ToolStripMenuItem("Offline: nichts verlässt den PC", null, (_, _) => ToggleOffline()) { CheckOnClick = false };
         var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings()) { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         var logItem = new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog());
@@ -446,7 +447,9 @@ internal sealed class TrayApp : ApplicationContext
             _audio = null;
             CancelSelectionCopy();
             Sounds.Error();
-            Notify("Aufnahme nicht möglich", e.Message, ToolTipIcon.Error);
+            Notify("Aufnahme nicht möglich",
+                e is MicrophoneUnavailableException ? e.Message : Core.UserCopy.TechnicalFallback("Die Aufnahme konnte nicht starten.", e.Message),
+                ToolTipIcon.Error);
             return;
         }
         Sounds.Start();
@@ -487,8 +490,11 @@ internal sealed class TrayApp : ApplicationContext
         _audio = null;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
+        _busyStatus = _quickAction != null ? Core.UserCopy.QuickActionBusy(_quickAction)
+            : _mode == Mode.Dictate ? Core.UserCopy.Transcribing
+            : Core.UserCopy.RecognizingInstruction;
         SetState(State.Processing);
-        _overlay.ShowProcessing(_quickAction != null ? $"{_quickAction} …" : "Wird verarbeitet …");
+        _overlay.ShowProcessing(_busyStatus);
         Sounds.Stop();
         _unsupported = Array.Empty<string>();
         bool done = false;
@@ -728,12 +734,13 @@ internal sealed class TrayApp : ApplicationContext
         }
 
         // Only Gemini hears the instruction itself; a local or OpenAI text model gets it transcribed.
-        if (_settings.EffectiveTextEngine != Core.Engine.Gemini) return await PromptFromTranscriptAsync(wav, selection, systemPrompt, ct);
+            if (_settings.EffectiveTextEngine != Core.Engine.Gemini) return await PromptFromTranscriptAsync(wav, selection, systemPrompt, ct);
         if (!HasSpeech(wav))
         {
             Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
             return "";
         }
+        SetBusy(Core.UserCopy.EditingText);
         var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct);
 
         string? instruction = null;
@@ -766,6 +773,7 @@ internal sealed class TrayApp : ApplicationContext
     /// </summary>
     private async Task<string> PromptFromTranscriptAsync(byte[] wav, string? selection, string systemPrompt, CancellationToken ct)
     {
+        SetBusy(Core.UserCopy.Transcribing);
         string instruction = (await TranscribeAsync(wav, ct)).Trim();
         Core.Log.Info($"Prompt via transcript ({_settings.EffectiveTextEngine}): instruction {instruction.Length} chars");
         if (instruction.Length == 0)
@@ -782,6 +790,7 @@ internal sealed class TrayApp : ApplicationContext
             return "";
         }
 
+        SetBusy(Core.UserCopy.EditingText);
         var sw = Stopwatch.StartNew();
         string text = Reply(await PromptTextAsync(selection, instruction, systemPrompt, ct), new[] { instruction, selection, systemPrompt });
         Core.Log.Info($"Prompt via transcript: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
@@ -796,6 +805,7 @@ internal sealed class TrayApp : ApplicationContext
     private async Task<string> QuickActionAsync(string quick, byte[] wav, double seconds, string? selection, string systemPrompt, CancellationToken ct)
     {
         // Under a second nothing was said yet; a recognizer would only guess at the silence.
+        if (seconds >= 1.0) SetBusy(Core.UserCopy.Transcribing);
         string transcript = seconds < 1.0 ? ""
             : _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen"
             // Parakeet gets the glossary as hotwords already; the backstops are for the cloud models.
@@ -810,6 +820,7 @@ internal sealed class TrayApp : ApplicationContext
             return "";
         }
         var (target, instruction) = request.Value;
+        SetBusy(Core.UserCopy.QuickActionBusy(quick));
 
         string raw;
         var sw = Stopwatch.StartNew();
@@ -859,10 +870,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             case Core.Engine.Local:
                 if (!_offline.LlmReady)
-                {
-                    SetStatusText("Sprachmodell wird geladen …");
-                    _overlay.ShowProcessing("Sprachmodell wird geladen …");
-                }
+                    SetBusy(Core.UserCopy.LoadingLlm);
                 return _offline.PromptAsync(selection, instruction, systemPrompt, ct);
             case Core.Engine.OpenAI:
                 return _openAi.PromptTextAsync(selection, instruction, systemPrompt, ct);
@@ -1052,8 +1060,8 @@ internal sealed class TrayApp : ApplicationContext
         string key = Hotkey.Display(_mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey);
         (string status, Icon icon) = state switch
         {
-            State.Recording => ($"Aufnahme läuft – {key} beendet sie", TrayIcons.Recording),
-            State.Processing => ("Wird verarbeitet …", TrayIcons.Processing),
+            State.Recording => (Core.UserCopy.RecordingStatus(key), TrayIcons.Recording),
+            State.Processing => (_busyStatus, TrayIcons.Processing),
             _ when MissingKey => ("Kein API-Schlüssel eingetragen", TrayIcons.Ready),
             _ when !OfflineModelsReady(Mode.Dictate) => ("Spracherkennung noch nicht geladen", TrayIcons.Ready),
             _ when _settings.OfflineMode => ("Bereit (offline, nichts verlässt diesen PC)", TrayIcons.Ready),
@@ -1117,10 +1125,20 @@ internal sealed class TrayApp : ApplicationContext
         }
     }
 
+    private void SetBusy(string status)
+    {
+        _busyStatus = status;
+        if (_state == State.Processing)
+        {
+            SetStatusText(status);
+            _overlay.ShowProcessing(status);
+        }
+    }
+
     private void SetStatusText(string status)
     {
         string tip = $"WhisperShortcut – {status}";
-        _icon.Text = tip.Length <= 127 ? tip : tip[..127]; // NotifyIcon throws above 127 characters
+        _icon.Text = tip.Length <= 127 ? tip : tip[..127]; // NotifyIcon throws above 127 characters; also the tray's screen-reader name
         _statusItem.Text = status;
     }
 

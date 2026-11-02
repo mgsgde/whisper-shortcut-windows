@@ -13,13 +13,16 @@ namespace WhisperShortcut;
 internal static class Theme
 {
     public static bool Dark { get; private set; } = ReadDark();
+    public static bool HighContrast { get; private set; } = SystemInformation.HighContrast;
 
-    /// <summary>Re-reads "app mode" from Windows. True when it changed.</summary>
+    /// <summary>Re-reads app mode and high contrast from Windows. True when either changed.</summary>
     public static bool Refresh()
     {
         bool dark = ReadDark();
-        if (dark == Dark) return false;
+        bool hc = SystemInformation.HighContrast;
+        if (dark == Dark && hc == HighContrast) return false;
         Dark = dark;
+        HighContrast = hc;
         return true;
     }
 
@@ -35,33 +38,34 @@ internal static class Theme
 
     private static Color Pick(int light, int dark) => Color.FromArgb(255, Color.FromArgb(Dark ? dark : light));
 
-    public static Color Window => Pick(0xF3F3F3, 0x202020);
-    public static Color Card => Pick(0xFBFBFB, 0x2B2B2B);
-    public static Color CardBorder => Pick(0xE5E5E5, 0x1D1D1D);
-    public static Color Divider => Pick(0xEAEAEA, 0x1D1D1D);
-    public static Color Text => Pick(0x1B1B1B, 0xFFFFFF);
-    public static Color Secondary => Pick(0x616161, 0xC5C5C5);
-    public static Color Disabled => Pick(0xA0A0A0, 0x787878);
-    public static Color Field => Pick(0xFFFFFF, 0x2F2F2F);
-    public static Color FieldBorder => Pick(0xE0E0E0, 0x3A3A3A);
-    public static Color FieldBottom => Pick(0x8A8A8A, 0x9A9A9A);
-    public static Color ItemSelected => Pick(0xE8F1FA, 0x3A3A3A);
-    public static Color NavSelected => Pick(0xEAEAEA, 0x2D2D2D);
-    public static Color NavHover => Pick(0xEDEDED, 0x292929);
-    public static Color Accent => Pick(0x005FB8, 0x60CDFF);
-    public static Color AccentHover => Pick(0x1A6FC0, 0x5BBDEC);
-    public static Color AccentPressed => Pick(0x3381CA, 0x55A9D1);
-    public static Color AccentText => Pick(0xFFFFFF, 0x000000);
-    public static Color Button => Pick(0xFEFEFE, 0x373737);
-    public static Color ButtonHover => Pick(0xF6F6F6, 0x3D3D3D);
-    public static Color ButtonPressed => Pick(0xF0F0F0, 0x323232);
-    public static Color ButtonBorder => Pick(0xD3D3D3, 0x454545);
-    public static Color Track => Pick(0xD9D9D9, 0x454545);
-    public static Color Good => Pick(0x0F7B0F, 0x6CCB5F);
-    public static Color Bad => Pick(0xC42B1C, 0xFF99A4);
-    public static Color Caution => Pick(0x9D5D00, 0xFCE100);
-    public static Color BannerBack => Pick(0xE6F0FA, 0x1E3246);
-    public static Color BannerText => Pick(0x003E73, 0xCDE6FF);
+    public static Color Window => HighContrast ? SystemColors.Window : Pick(0xF3F3F3, 0x202020);
+    public static Color Card => HighContrast ? SystemColors.Window : Pick(0xFBFBFB, 0x2B2B2B);
+    public static Color CardBorder => HighContrast ? SystemColors.WindowFrame : Pick(0xE5E5E5, 0x1D1D1D);
+    public static Color Divider => HighContrast ? SystemColors.WindowFrame : Pick(0xEAEAEA, 0x1D1D1D);
+    public static Color Text => HighContrast ? SystemColors.WindowText : Pick(0x1B1B1B, 0xFFFFFF);
+    public static Color Secondary => HighContrast ? SystemColors.GrayText : Pick(0x616161, 0xC5C5C5);
+    public static Color Disabled => HighContrast ? SystemColors.GrayText : Pick(0xA0A0A0, 0x787878);
+    public static Color Field => HighContrast ? SystemColors.Window : Pick(0xFFFFFF, 0x2F2F2F);
+    public static Color FieldBorder => HighContrast ? SystemColors.WindowFrame : Pick(0xE0E0E0, 0x3A3A3A);
+    public static Color FieldBottom => HighContrast ? SystemColors.WindowFrame : Pick(0x8A8A8A, 0x9A9A9A);
+    public static Color ItemSelected => HighContrast ? SystemColors.Highlight : Pick(0xE8F1FA, 0x3A3A3A);
+    public static Color NavSelected => HighContrast ? SystemColors.Highlight : Pick(0xEAEAEA, 0x2D2D2D);
+    public static Color NavHover => HighContrast ? SystemColors.HotTrack : Pick(0xEDEDED, 0x292929);
+    public static Color Accent => HighContrast ? SystemColors.Highlight : Pick(0x005FB8, 0x60CDFF);
+    public static Color AccentHover => HighContrast ? SystemColors.Highlight : Pick(0x1A6FC0, 0x5BBDEC);
+    public static Color AccentPressed => HighContrast ? SystemColors.Highlight : Pick(0x3381CA, 0x55A9D1);
+    public static Color AccentText => HighContrast ? SystemColors.HighlightText : Pick(0xFFFFFF, 0x000000);
+    public static Color Button => HighContrast ? SystemColors.ButtonFace : Pick(0xFEFEFE, 0x373737);
+    public static Color ButtonHover => HighContrast ? SystemColors.ButtonFace : Pick(0xF6F6F6, 0x3D3D3D);
+    public static Color ButtonPressed => HighContrast ? SystemColors.ButtonShadow : Pick(0xF0F0F0, 0x323232);
+    public static Color ButtonBorder => HighContrast ? SystemColors.WindowFrame : Pick(0xD3D3D3, 0x454545);
+    public static Color Track => HighContrast ? SystemColors.WindowFrame : Pick(0xD9D9D9, 0x454545);
+    public static Color Good => HighContrast ? SystemColors.WindowText : Pick(0x0F7B0F, 0x6CCB5F);
+    public static Color Bad => HighContrast ? SystemColors.WindowText : Pick(0xC42B1C, 0xFF99A4);
+    public static Color Caution => HighContrast ? SystemColors.WindowText : Pick(0x9D5D00, 0xFCE100);
+    public static Color BannerBack => HighContrast ? SystemColors.Info : Pick(0xE6F0FA, 0x1E3246);
+    public static Color BannerText => HighContrast ? SystemColors.InfoText : Pick(0x003E73, 0xCDE6FF);
+    public static Color OnSelected => HighContrast ? SystemColors.HighlightText : Text;
 
     public static Color Fore(Tone tone) => tone switch
     {
@@ -128,7 +132,7 @@ internal static class Theme
     public static void TitleBar(Form form)
     {
         if (!form.IsHandleCreated) return;
-        int dark = Dark ? 1 : 0;
+        int dark = Dark && !HighContrast ? 1 : 0;
         _ = DwmSetWindowAttribute(form.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
         int caption = ColorTranslator.ToWin32(Window);
         _ = DwmSetWindowAttribute(form.Handle, DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
@@ -425,11 +429,15 @@ internal sealed class ToggleSwitch : CheckBox
         AutoSize = false;
         Size = new Size(88, 28);
         Font = Theme.Body;
+        AnnounceState();
     }
 
     protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
     protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
     protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+    protected override void OnCheckedChanged(EventArgs e) { AnnounceState(); Invalidate(); base.OnCheckedChanged(e); }
+
+    private void AnnounceState() => AccessibleDescription = Checked ? "Ein" : "Aus";
 
     protected override void OnPaint(PaintEventArgs e)
     {
@@ -564,7 +572,8 @@ internal sealed class FluentCombo : ComboBox
         using (var back = new SolidBrush(selected ? Theme.ItemSelected : Theme.Field))
             e.Graphics.FillRectangle(back, e.Bounds);
         var text = Rectangle.Inflate(e.Bounds, -LogicalToDeviceUnits(6), 0);
-        TextRenderer.DrawText(e.Graphics, GetItemText(Items[e.Index]), Font, text, Enabled ? Theme.Text : Theme.Disabled,
+        Color fore = !Enabled ? Theme.Disabled : selected ? Theme.OnSelected : Theme.Text;
+        TextRenderer.DrawText(e.Graphics, GetItemText(Items[e.Index]), Font, text, fore,
             TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.SingleLine);
         if (edit && Focused && ShowFocusCues) ControlPaint.DrawFocusRectangle(e.Graphics, text, Theme.Text, Theme.Field);
     }
@@ -583,6 +592,8 @@ internal sealed class NavItem : Button
         FlatStyle = FlatStyle.Flat;
         FlatAppearance.BorderSize = 0;
         Font = Theme.Body;
+        TabStop = true;
+        AccessibleRole = AccessibleRole.PageTab;
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
     }
 
@@ -632,12 +643,13 @@ internal sealed class NavItem : Button
             using var path = Theme.Rounded(new RectangleF(r.X + 1, (Height - barH) / 2, barW, barH), barW / 2);
             g.FillPath(bar, path);
         }
+        Color fore = Theme.HighContrast && _selected ? Theme.OnSelected : Theme.Text;
         int left = LogicalToDeviceUnits(14);
-        TextRenderer.DrawText(g, _icon, Theme.Icons, new Rectangle(left, 0, LogicalToDeviceUnits(20), Height), Theme.Text,
+        TextRenderer.DrawText(g, _icon, Theme.Icons, new Rectangle(left, 0, LogicalToDeviceUnits(20), Height), fore,
             TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
         int textLeft = left + LogicalToDeviceUnits(32);
         TextRenderer.DrawText(g, Text, Font, new Rectangle(textLeft, 0, Width - textLeft - LogicalToDeviceUnits(4), Height),
-            Theme.Text, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+            fore, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
         if (Focused && ShowFocusCues)
         {
             using var ring = new Pen(Theme.Text, LogicalToDeviceUnits(2));

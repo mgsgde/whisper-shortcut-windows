@@ -55,9 +55,7 @@ public sealed class LlamaServerHost : IDisposable
     private const int IllegalInstruction = unchecked((int)0xC000001D);
 
     /// <summary>User text for <see cref="CrashedOnUnsupportedCpu"/>.</summary>
-    public const string UnsupportedCpuMessage =
-        "Der Prozessor dieses PCs kann das Offline-Sprachmodell nicht ausführen. Diktieren geht offline weiter; " +
-        "für „Text bearbeiten“ bitte in den Einstellungen auf „Online mit Gemini“ wechseln.";
+    public const string UnsupportedCpuMessage = UserCopy.UnsupportedCpu;
 
     /// <summary>
     /// True when the server died with an illegal instruction, typically on the first request. The ARM64

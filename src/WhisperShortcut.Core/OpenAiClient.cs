@@ -226,7 +226,9 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
             return new GeminiException("OpenAI", GeminiErrorKind.Quota, errorCode == "insufficient_quota"
                 ? "OpenAI-Guthaben aufgebraucht. Bitte das Konto unter platform.openai.com prüfen."
                 : "OpenAI ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
-        return new GeminiException("OpenAI", GeminiErrorKind.Server, $"OpenAI-Fehler (HTTP {code}). Bitte später erneut versuchen.");
+        if (code == 404)
+            return new GeminiException("OpenAI", GeminiErrorKind.Server, UserCopy.ModelGone("OpenAI"));
+        return new GeminiException("OpenAI", GeminiErrorKind.Server, UserCopy.ServerBusy("OpenAI"));
     }
 
     /// <summary>error.code, else error.type, of an OpenAI error body ("insufficient_quota" wins if either has it); "" when absent. Never the message (it can quote content).</summary>
