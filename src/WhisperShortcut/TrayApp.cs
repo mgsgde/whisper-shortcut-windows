@@ -65,7 +65,7 @@ internal sealed class TrayApp : ApplicationContext
     private IReadOnlyList<string> _unsupported = Array.Empty<string>();
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
-    private Action? _balloonClick;
+    private readonly Toast _toast = new();
     private readonly UpdateService _updates;
     private readonly ToolStripMenuItem _updateItem;
     // A found update waits for the end of a recording; the notice then comes a little later, so it does not
@@ -164,7 +164,6 @@ internal sealed class TrayApp : ApplicationContext
         _icon = new NotifyIcon { Icon = TrayIcons.Ready, ContextMenuStrip = menu, Visible = true };
         // One left click opens the settings (Click alone would also fire on right click, which opens the menu).
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
-        _icon.BalloonTipClicked += (_, _) => _balloonClick?.Invoke();
         _mcp = new McpService(_settings, _ui, () => _state != State.Idle, () => _settingsForm?.HasUnsavedChanges == true, AfterMcpApply);
         _mcp.StartIfEnabled();
 
@@ -1485,9 +1484,8 @@ internal sealed class TrayApp : ApplicationContext
 
     private void Notify(string title, string text, ToolTipIcon icon, Action? onClick = null)
     {
-        _balloonClick = onClick;
         Core.Log.Info($"Notify: {title}");  // title only: the text can quote an error message
-        _icon.ShowBalloonTip(6000, title, text, icon);
+        _toast.Present(title, text, icon, onClick);
     }
 
     /// <summary>
@@ -1670,6 +1668,7 @@ internal sealed class TrayApp : ApplicationContext
         _updateNoticeTimer.Dispose();
         _updates.Dispose();
         _overlay.Dispose();
+        _toast.Dispose();
         _meeting.Dispose();
         _hotkeys.Dispose();
         _offline.Dispose();
