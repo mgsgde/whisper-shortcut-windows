@@ -85,6 +85,13 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         return ExtractChatText(answer);
     }
 
+    /// <summary>
+    /// Opens the TLS session to OpenAI while the user is still speaking, so Stop does not pay the
+    /// handshake on the hot path. Failures are ignored: the real request will try again.
+    /// </summary>
+    public Task PrewarmConnection() =>
+        HttpPrewarm.Connect(_http, "https://api.openai.com/", "OpenAI");
+
     internal static string BuildChatBody(string model, string? selection, string instruction, string? customSystemPrompt) =>
         new JsonObject
         {
@@ -154,6 +161,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
             try
             {
                 using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl + path) { Content = buildContent() };
+                request.Headers.ExpectContinue = false;
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
                 using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
                 var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);

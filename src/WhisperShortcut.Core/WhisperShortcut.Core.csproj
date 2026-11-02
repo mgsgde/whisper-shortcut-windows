@@ -9,4 +9,8 @@
     <PackageReference Include="org.k2fsa.sherpa.onnx" Version="1.13.8" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="WhisperShortcut.Tests" />
+  </ItemGroup>
+
 </Project>

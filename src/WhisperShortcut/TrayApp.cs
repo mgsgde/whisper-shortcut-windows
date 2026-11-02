@@ -309,6 +309,17 @@ internal sealed class TrayApp : ApplicationContext
         ? new[] { _settings.EffectiveSpeechEngine }
         : new[] { _settings.EffectiveSpeechEngine, _settings.EffectiveTextEngine };
 
+    /// <summary>HEAD the cloud API origin so TCP+TLS is done before the user presses Stop.</summary>
+    private void PrewarmCloudConnections(Mode mode)
+    {
+        if (_fakeGemini) return;
+        foreach (var engine in EnginesFor(mode).Distinct())
+        {
+            if (engine == Core.Engine.Gemini) _ = _gemini.PrewarmConnection();
+            else if (engine == Core.Engine.OpenAI) _ = _openAi.PrewarmConnection();
+        }
+    }
+
     /// <summary>The provider whose key a mode needs but lacks (null: all there). Local engines need none.</summary>
     private string? MissingKeyFor(Mode mode)
     {
@@ -361,6 +372,8 @@ internal sealed class TrayApp : ApplicationContext
         _selection = _selectionCts != null ? _paster.CopySelectionAsync(_selectionCts.Token) : null;
         // Loading the language model takes seconds to half a minute; do it while the user speaks.
         if (mode == Mode.Prompt && _settings.EffectiveTextEngine == Core.Engine.Local) _offline.PrewarmLlm();
+        // TLS to Gemini/OpenAI while the user speaks: the first request after Stop skips the handshake.
+        PrewarmCloudConnections(mode);
 
         var limit = mode == Mode.Dictate ? MicAudioSource.DictateLimit : MicAudioSource.PromptLimit;
         MicAudioSource? mic = null;

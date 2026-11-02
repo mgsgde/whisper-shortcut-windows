@@ -1,4 +1,5 @@
 using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace WhisperShortcut.Core;
@@ -43,8 +44,10 @@ public static class WavChunker
         var searchWindow = TimeSpan.FromSeconds(30);
         var splitAbove = TimeSpan.FromSeconds(660);
 
-        if (Wav.TryGetPcm(wav, out var sampleRate, out var channels, out _, out _))
+        if (Wav.TryGetPcm16(wav, out var pcm))
         {
+            var sampleRate = pcm.SampleRate;
+            var channels = pcm.Channels;
             var byteRate = (long)sampleRate * channels * 2;
             // 11 min at this rate would not fit in 24 MB. Keep the piece a minute under the
             // shortened limit; the pause search stays 30 s and never more than half a piece.
@@ -72,8 +75,12 @@ public static class WavChunker
     /// </summary>
     public static IReadOnlyList<byte[]> Split(byte[] wav, TimeSpan chunkLength, TimeSpan searchWindow, TimeSpan splitAbove)
     {
-        if (!Wav.TryGetPcm(wav, out var sampleRate, out var channels, out var dataOffset, out var dataLength))
+        if (!Wav.TryGetPcm16(wav, out var pcm))
             return new[] { wav };
+        var sampleRate = pcm.SampleRate;
+        var channels = pcm.Channels;
+        var dataOffset = pcm.DataOffset;
+        var dataLength = pcm.DataLength;
 
         var frameBytes = channels * 2;
         var byteRate = sampleRate * frameBytes;
@@ -142,10 +149,18 @@ public static class WavChunker
 
     private static long SumAbs(byte[] wav, int offset, int samples)
     {
-        long sum = 0;
+        var span = wav.AsSpan(offset, samples * 2);
+        if (BitConverter.IsLittleEndian)
+        {
+            var src = MemoryMarshal.Cast<byte, short>(span);
+            long sum = 0;
+            foreach (var s in src) sum += Math.Abs((int)s);
+            return sum;
+        }
+        long fallback = 0;
         for (var i = 0; i < samples; i++)
-            sum += Math.Abs((int)BinaryPrimitives.ReadInt16LittleEndian(wav.AsSpan(offset + i * 2, 2)));
-        return sum;
+            fallback += Math.Abs((int)BinaryPrimitives.ReadInt16LittleEndian(span.Slice(i * 2, 2)));
+        return fallback;
     }
 
     /// <summary>Whole frames for <paramref name="time"/>. Half-frames round away from zero so 10 ms at 16 kHz is 160, not 159.</summary>

@@ -1,3 +1,4 @@
+using System.Runtime.InteropServices;
 using NAudio.Wave;
 
 namespace WhisperShortcut;
@@ -63,14 +64,16 @@ internal sealed class MicAudioSource : Core.IAudioSource
 
     public void Start()
     {
-        _buffer = new MemoryStream();
+        // 90 s at 16 kHz mono: typical dictations fit without MemoryStream doubling copies.
+        _buffer = new MemoryStream(16_000 * 2 * 90 + 64);
         _writer = new WaveFileWriter(new NAudio.Utils.IgnoreDisposeStream(_buffer), _format);
         // Level is read from the UI thread; publish the reset so the meter does not show the previous take.
         Volatile.Write(ref _peak, 0);
         _level = 0;
         _limitHit = false;
         _stopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        _waveIn = new WaveInEvent { DeviceNumber = Microphones.DeviceNumber(_microphone), WaveFormat = _format, BufferMilliseconds = 50 };
+        // 20 ms: Stop waits for the last buffer, so this is ~30 ms less tail than 50 ms and is still safe for WinMM.
+        _waveIn = new WaveInEvent { DeviceNumber = Microphones.DeviceNumber(_microphone), WaveFormat = _format, BufferMilliseconds = 20 };
         _waveIn.DataAvailable += OnData;
         _waveIn.RecordingStopped += (_, e) =>
         {
@@ -111,9 +114,10 @@ internal sealed class MicAudioSource : Core.IAudioSource
         }
         int bufferPeak = 0;
         int peak = _peak;
-        for (int i = 0; i + 1 < e.BytesRecorded; i += 2)
+        var samples = MemoryMarshal.Cast<byte, short>(e.Buffer.AsSpan(0, e.BytesRecorded & ~1));
+        foreach (var s in samples)
         {
-            int sample = Math.Abs((int)BitConverter.ToInt16(e.Buffer, i));
+            int sample = Math.Abs((int)s);
             if (sample > bufferPeak) bufferPeak = sample;
             if (sample > peak) peak = sample;
         }
