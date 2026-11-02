@@ -132,10 +132,21 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// <param name="selection">Selected text, or null/empty for a compose turn.</param>
     /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> PromptAsync(byte[] wav, string? selection, string? customSystemPrompt, CancellationToken ct = default)
+    public Task<string> PromptAsync(byte[] wav, string? selection, string? customSystemPrompt, CancellationToken ct = default) =>
+        PromptAsync(wav, selection, customSystemPrompt, null, ct);
+
+    /// <summary>
+    /// Dictate Prompt with an optional screenshot sent inline in the same user turn (one request only, never stored).
+    /// </summary>
+    /// <param name="wav">WAV bytes of the spoken instruction.</param>
+    /// <param name="selection">Selected text, or null/empty for a compose turn.</param>
+    /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
+    /// <param name="image">Screenshot to send along, or null.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> PromptAsync(byte[] wav, string? selection, string? customSystemPrompt, ScreenshotImage? image, CancellationToken ct = default)
     {
         var model = _promptModel();
-        var body = BuildPromptBody(wav, selection, customSystemPrompt);
+        var body = BuildPromptBody(wav, selection, customSystemPrompt, image);
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
@@ -148,10 +159,19 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// <param name="instruction">The instruction as text (a quick action, optionally with spoken additions).</param>
     /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default)
+    public Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default) =>
+        PromptTextAsync(selection, instruction, customSystemPrompt, null, ct);
+
+    /// <summary>Like the overload without image, plus an optional screenshot sent inline in the same user turn.</summary>
+    /// <param name="selection">Text to edit, or null/empty for a compose turn.</param>
+    /// <param name="instruction">The instruction as text.</param>
+    /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
+    /// <param name="image">Screenshot to send along, or null.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, ScreenshotImage? image, CancellationToken ct = default)
     {
         var model = _promptModel();
-        var body = BuildPromptTextBody(selection, instruction, customSystemPrompt);
+        var body = BuildPromptTextBody(selection, instruction, customSystemPrompt, image);
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
@@ -163,15 +183,23 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// <param name="systemPrompt">The whole system instruction.</param>
     /// <param name="userText">The whole user turn.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> CompleteTextAsync(string systemPrompt, string userText, CancellationToken ct = default)
+    public Task<string> CompleteTextAsync(string systemPrompt, string userText, CancellationToken ct = default) =>
+        CompleteTextAsync(systemPrompt, userText, null, ct);
+
+    /// <summary>Like the overload without image, plus an optional screenshot sent inline in the same user turn.</summary>
+    /// <param name="systemPrompt">The whole system instruction.</param>
+    /// <param name="userText">The whole user turn.</param>
+    /// <param name="image">Screenshot to send along, or null.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> CompleteTextAsync(string systemPrompt, string userText, ScreenshotImage? image, CancellationToken ct = default)
     {
         var model = _promptModel();
-        var body = BuildCompleteBody(systemPrompt, userText);
+        var body = BuildCompleteBody(systemPrompt, userText, image);
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
-    internal static string BuildCompleteBody(string systemPrompt, string userText) =>
-        BuildPromptRequest(systemPrompt, new JsonObject { ["text"] = userText });
+    internal static string BuildCompleteBody(string systemPrompt, string userText, ScreenshotImage? image = null) =>
+        BuildPromptRequest(systemPrompt, new JsonObject { ["text"] = userText }, image);
 
     internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null)
     {
@@ -200,17 +228,32 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         return root.ToJsonString();
     }
 
-    internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt) =>
+    internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt, ScreenshotImage? image = null) =>
         BuildPromptRequest(DictatePromptText.SystemPrompt(customSystemPrompt),
-            new JsonObject { ["text"] = DictatePromptText.SelectionBlock(selection) }, AudioPart(wav));
+            new JsonObject { ["text"] = DictatePromptText.SelectionBlock(selection) }, image, AudioPart(wav));
 
-    internal static string BuildPromptTextBody(string? selection, string instruction, string? customSystemPrompt) =>
+    internal static string BuildPromptTextBody(string? selection, string instruction, string? customSystemPrompt, ScreenshotImage? image = null) =>
         BuildPromptRequest(DictatePromptText.SystemPrompt(customSystemPrompt),
-            new JsonObject { ["text"] = DictatePromptText.LocalUserTurn(selection, instruction) });
+            new JsonObject { ["text"] = DictatePromptText.LocalUserTurn(selection, instruction) }, image);
 
     // Shared by the audio and the text-only prompt call so both keep the same system prompt and thinking level.
-    private static string BuildPromptRequest(string system, params JsonObject[] userParts)
+    // Part order: text, screenshot header, screenshot, audio.
+    private static string BuildPromptRequest(string system, JsonObject textPart, ScreenshotImage? image, params JsonObject[] audioParts)
     {
+        var userParts = new List<JsonObject> { textPart };
+        if (image != null)
+        {
+            userParts.Add(new JsonObject { ["text"] = ScreenshotPrompt.Header });
+            userParts.Add(new JsonObject
+            {
+                ["inline_data"] = new JsonObject
+                {
+                    ["mime_type"] = image.MimeType,
+                    ["data"] = Convert.ToBase64String(image.Data),
+                },
+            });
+        }
+        userParts.AddRange(audioParts);
         var root = new JsonObject
         {
             ["systemInstruction"] = new JsonObject

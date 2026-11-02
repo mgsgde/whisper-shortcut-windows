@@ -79,10 +79,19 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     /// <param name="instruction">The instruction as text.</param>
     /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default)
+    public Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default) =>
+        PromptTextAsync(selection, instruction, customSystemPrompt, null, ct);
+
+    /// <summary>Like the overload without image, plus an optional screenshot sent inline in the same user message.</summary>
+    /// <param name="selection">Text to edit, or null/empty for a compose turn.</param>
+    /// <param name="instruction">The instruction as text.</param>
+    /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
+    /// <param name="image">Screenshot to send along, or null.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, ScreenshotImage? image, CancellationToken ct = default)
     {
         var model = _promptModel();
-        var json = BuildChatBody(model, selection, instruction, customSystemPrompt);
+        var json = BuildChatBody(model, selection, instruction, customSystemPrompt, image);
         var answer = await SendAsync("chat/completions", model,
             () => new StringContent(json, Encoding.UTF8, "application/json"), json.Length, ct).ConfigureAwait(false);
         return ExtractChatText(answer);
@@ -96,30 +105,52 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     /// <param name="systemPrompt">The whole system message.</param>
     /// <param name="userText">The whole user message.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> CompleteTextAsync(string systemPrompt, string userText, CancellationToken ct = default)
+    public Task<string> CompleteTextAsync(string systemPrompt, string userText, CancellationToken ct = default) =>
+        CompleteTextAsync(systemPrompt, userText, null, ct);
+
+    /// <summary>Like the overload without image, plus an optional screenshot sent inline in the same user message.</summary>
+    /// <param name="systemPrompt">The whole system message.</param>
+    /// <param name="userText">The whole user message.</param>
+    /// <param name="image">Screenshot to send along, or null.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> CompleteTextAsync(string systemPrompt, string userText, ScreenshotImage? image, CancellationToken ct = default)
     {
         var model = _promptModel();
-        var json = BuildCompleteBody(model, systemPrompt, userText);
+        var json = BuildCompleteBody(model, systemPrompt, userText, image);
         var answer = await SendAsync("chat/completions", model,
             () => new StringContent(json, Encoding.UTF8, "application/json"), json.Length, ct).ConfigureAwait(false);
         return ExtractChatText(answer);
     }
 
-    internal static string BuildChatBody(string model, string? selection, string instruction, string? customSystemPrompt) =>
+    internal static string BuildChatBody(string model, string? selection, string instruction, string? customSystemPrompt, ScreenshotImage? image = null) =>
         BuildCompleteBody(model, DictatePromptText.SystemPrompt(customSystemPrompt),
-            DictatePromptText.LocalUserTurn(selection, instruction));
+            DictatePromptText.LocalUserTurn(selection, instruction), image);
 
-    internal static string BuildCompleteBody(string model, string systemPrompt, string userText) =>
+    internal static string BuildCompleteBody(string model, string systemPrompt, string userText, ScreenshotImage? image = null) =>
         new JsonObject
         {
             ["model"] = model,
             ["messages"] = new JsonArray(
                 new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
-                new JsonObject { ["role"] = "user", ["content"] = userText }),
+                new JsonObject { ["role"] = "user", ["content"] = image == null ? userText : UserContentWithImage(userText, image) }),
             // WHY: a rewritten long selection is as long as the selection; a cut-off reply must be detectable.
             ["max_completion_tokens"] = MaxCompletionTokens,
             ["reasoning_effort"] = "low",
         }.ToJsonString();
+
+    // Content array: text, screenshot header, image (same order as the Gemini request).
+    private static JsonArray UserContentWithImage(string userText, ScreenshotImage image) => new(
+        new JsonObject { ["type"] = "text", ["text"] = userText },
+        new JsonObject { ["type"] = "text", ["text"] = ScreenshotPrompt.Header },
+        new JsonObject
+        {
+            ["type"] = "image_url",
+            ["image_url"] = new JsonObject
+            {
+                ["url"] = $"data:{image.MimeType};base64,{Convert.ToBase64String(image.Data)}",
+                ["detail"] = "high",
+            },
+        });
 
     /// <summary>
     /// Checks an API key with a models-list request before it is saved. Never throws for network
