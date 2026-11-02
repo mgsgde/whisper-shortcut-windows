@@ -47,6 +47,9 @@ internal sealed class RecordingOverlay : Form
     // The recording applies a dictation template (title and selection line differ from Dictate Prompt).
     private bool _template;
     private bool _contextWarn;
+    // A held screenshot goes along with this run: one extra line says so (patient data leaves the PC with it).
+    private bool _screenshot;
+    private const string ScreenshotLine = "Bildschirmfoto angehängt, geht mit an das Sprachmodell";
     private Func<float>? _level;
     private Func<float>? _peakSoFar;
     private TimeSpan _limit;
@@ -122,10 +125,12 @@ internal sealed class RecordingOverlay : Form
     /// <param name="level">Live level 0..1 (null for a test WAV: no bars, no silence warning).</param>
     /// <param name="quickActions">Dictate Prompt: the instructions offered as Ctrl+1–5 rows (empty: plain pill).</param>
     /// <param name="templateName">A template recording: its name is the title, and no quick instructions are offered.</param>
+    /// <param name="screenshot">A held screenshot is sent with this run: shown as its own line.</param>
     public void ShowRecording(Mode mode, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar,
-        IReadOnlyList<string>? quickActions = null, string? templateName = null)
+        IReadOnlyList<string>? quickActions = null, string? templateName = null, bool screenshot = false)
     {
         _phase = Phase.Recording;
+        _screenshot = screenshot && mode != Mode.Dictate;
         _template = templateName != null;
         _title = _template ? Core.UserCopy.OverlayTemplateTitle(templateName!)
             : mode == Mode.Dictate ? Core.UserCopy.OverlayDictateTitle : Core.UserCopy.OverlayPromptTitle;
@@ -246,6 +251,8 @@ internal sealed class RecordingOverlay : Form
 
     private bool ShowsCard => _phase == Phase.Recording && _quick.Count > 0;
 
+    private bool ShowsScreenshot => _phase == Phase.Recording && _screenshot;
+
     // Card: header (34), context (20), divider (10), label (20), rows (24 each), gap (6), hint (20), bottom (8).
     private const float RowHeight = 24, CardTop = 84;
 
@@ -254,8 +261,9 @@ internal sealed class RecordingOverlay : Form
         float s = S;
         if (_phase == Phase.Done) return new Size(DoneWidth(), (int)(44 * s));
         if (_phase == Phase.Warning) return new Size((int)(460 * s), (int)((34 + WarningWordLines() * 19 + 4 + 20 + 8) * s));
-        if (ShowsCard) return new Size((int)(440 * s), (int)((CardTop + _quick.Count * RowHeight + 6 + 20 + 8) * s));
-        int lines = _context != null ? 2 : 1;
+        float shot = ShowsScreenshot ? 20 : 0;
+        if (ShowsCard) return new Size((int)(440 * s), (int)((CardTop + shot + _quick.Count * RowHeight + 6 + 20 + 8) * s));
+        int lines = (_context != null ? 2 : 1) + (ShowsScreenshot ? 1 : 0);
         return new Size((int)(400 * s), (int)((34 + 20 * lines + 8) * s));
     }
 
@@ -346,6 +354,11 @@ internal sealed class RecordingOverlay : Form
         if (_context != null)
         {
             DrawLine(g, _context, _contextWarn ? OverlayAmber : OverlaySecondary, textX, y, width);
+            y += 20 * s;
+        }
+        if (ShowsScreenshot)
+        {
+            DrawLine(g, ScreenshotLine, Secondary, textX, y, width);
             y += 20 * s;
         }
         if (ShowsCard)

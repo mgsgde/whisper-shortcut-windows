@@ -76,11 +76,32 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     /// <param name="instruction">The instruction as text.</param>
     /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
     /// <param name="ct">Cancellation.</param>
+    /// <param name="history">Earlier online edit turns (PromptConversationMemory); null = none.</param>
+    public Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt,
+        CancellationToken ct = default, IReadOnlyList<PromptTurn>? history = null) =>
+        PromptTextAsync(selection, instruction, customSystemPrompt, ct, history, null);
+
+    /// <summary>Like the overload without image, plus an optional screenshot sent inline in the same user message.</summary>
+    /// <param name="selection">Text to edit, or null/empty for a compose turn.</param>
+    /// <param name="instruction">The instruction as text.</param>
+    /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
+    /// <param name="image">Screenshot to send along, or null.</param>
+    /// <param name="ct">Cancellation.</param>
+    public Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, ScreenshotImage? image, CancellationToken ct = default) =>
+        PromptTextAsync(selection, instruction, customSystemPrompt, ct, null, image);
+
+    /// <summary>Text prompt with both earlier turns and an optional screenshot (only the new turn carries the image).</summary>
+    /// <param name="selection">Text to edit, or null/empty for a compose turn.</param>
+    /// <param name="instruction">The instruction as text.</param>
+    /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
+    /// <param name="ct">Cancellation.</param>
+    /// <param name="history">Earlier online edit turns; null = none.</param>
+    /// <param name="image">Screenshot to send along, or null.</param>
     public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt,
-        CancellationToken ct = default, IReadOnlyList<PromptTurn>? history = null)
+        CancellationToken ct, IReadOnlyList<PromptTurn>? history, ScreenshotImage? image)
     {
         var model = _promptModel();
-        var json = BuildChatBody(model, selection, instruction, customSystemPrompt, history);
+        var json = BuildChatBody(model, selection, instruction, customSystemPrompt, history, image);
         var answer = await SendAsync("chat/completions", model,
             () => new StringContent(json, Encoding.UTF8, "application/json"), json.Length, ct).ConfigureAwait(false);
         return ExtractChatText(answer);
@@ -101,25 +122,35 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     /// <param name="systemPrompt">The whole system message.</param>
     /// <param name="userText">The whole user message.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> CompleteTextAsync(string systemPrompt, string userText, CancellationToken ct = default)
+    public Task<string> CompleteTextAsync(string systemPrompt, string userText, CancellationToken ct = default) =>
+        CompleteTextAsync(systemPrompt, userText, null, ct);
+
+    /// <summary>Like the overload without image, plus an optional screenshot sent inline in the same user message.</summary>
+    /// <param name="systemPrompt">The whole system message.</param>
+    /// <param name="userText">The whole user message.</param>
+    /// <param name="image">Screenshot to send along, or null.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> CompleteTextAsync(string systemPrompt, string userText, ScreenshotImage? image, CancellationToken ct = default)
     {
         var model = _promptModel();
-        var json = BuildCompleteBody(model, systemPrompt, userText);
+        var json = BuildCompleteBody(model, systemPrompt, userText, image);
         var answer = await SendAsync("chat/completions", model,
             () => new StringContent(json, Encoding.UTF8, "application/json"), json.Length, ct).ConfigureAwait(false);
         return ExtractChatText(answer);
     }
 
     internal static string BuildChatBody(string model, string? selection, string instruction, string? customSystemPrompt,
-        IReadOnlyList<PromptTurn>? history = null) =>
+        IReadOnlyList<PromptTurn>? history = null, ScreenshotImage? image = null) =>
         BuildChatRequest(model, DictatePromptText.SystemPrompt(customSystemPrompt), history,
-            DictatePromptText.LocalUserTurn(selection, instruction));
+            DictatePromptText.LocalUserTurn(selection, instruction), image);
 
-    internal static string BuildCompleteBody(string model, string systemPrompt, string userText) =>
-        BuildChatRequest(model, systemPrompt, null, userText);
+    internal static string BuildCompleteBody(string model, string systemPrompt, string userText, ScreenshotImage? image = null) =>
+        BuildChatRequest(model, systemPrompt, null, userText, image);
 
     // Shared by Dictate Prompt and templates so both keep the same reasoning effort and output limit.
-    private static string BuildChatRequest(string model, string systemPrompt, IReadOnlyList<PromptTurn>? history, string userText)
+    // Only the new user message carries the screenshot; earlier turns stay text.
+    private static string BuildChatRequest(string model, string systemPrompt, IReadOnlyList<PromptTurn>? history, string userText,
+        ScreenshotImage? image = null)
     {
         var messages = new JsonArray
         {
@@ -137,7 +168,11 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
                 messages.Add(new JsonObject { ["role"] = "assistant", ["content"] = turn.ModelResponse });
             }
         }
-        messages.Add(new JsonObject { ["role"] = "user", ["content"] = userText });
+        messages.Add(new JsonObject
+        {
+            ["role"] = "user",
+            ["content"] = image == null ? userText : UserContentWithImage(userText, image),
+        });
         return new JsonObject
         {
             ["model"] = model,
@@ -147,6 +182,20 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
             ["reasoning_effort"] = "low",
         }.ToJsonString();
     }
+
+    // Content array: text, screenshot header, image (same order as the Gemini request).
+    private static JsonArray UserContentWithImage(string userText, ScreenshotImage image) => new(
+        new JsonObject { ["type"] = "text", ["text"] = userText },
+        new JsonObject { ["type"] = "text", ["text"] = ScreenshotPrompt.Header },
+        new JsonObject
+        {
+            ["type"] = "image_url",
+            ["image_url"] = new JsonObject
+            {
+                ["url"] = $"data:{image.MimeType};base64,{Convert.ToBase64String(image.Data)}",
+                ["detail"] = "high",
+            },
+        });
 
     /// <summary>
     /// Checks an API key with a models-list request before it is saved. Never throws for network

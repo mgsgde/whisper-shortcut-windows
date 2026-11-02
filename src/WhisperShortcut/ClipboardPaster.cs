@@ -48,6 +48,7 @@ internal sealed class ClipboardPaster
     private static readonly TimeSpan LateCopySettle = TimeSpan.FromMilliseconds(100);
     /// <summary>Above this the snapshot falls back to text only, so a 200 MB image never sits in memory.</summary>
     private const long SnapshotCap = 64L * 1024 * 1024;
+    private const uint CF_DIB = 8;
 
     private readonly IntPtr _owner;
 
@@ -351,6 +352,87 @@ internal sealed class ClipboardPaster
             if (_lateWatch == self) _lateWatch = null;
             self.Dispose();
         }
+    }
+
+    /// <summary>
+    /// Screenshot hotkey: <paramref name="launch"/> opens the Windows snip UI, which delivers its image through the
+    /// clipboard. Waits for it (see <see cref="Core.SnipWatch"/>) and returns the raw image: the "PNG" format if
+    /// offered, else CF_DIB (<c>IsPng</c> false). Null on cancel or timeout. After a capture the user's clipboard
+    /// is put back at once (empty again when it was empty): the screen shot is patient data, not clipboard content.
+    /// A cancel leaves the clipboard alone, since a change then was the user's own copy.
+    /// </summary>
+    public async Task<(byte[] Data, bool IsPng)?> CaptureSnipAsync(Func<bool> launch, Func<bool> snipUiRunning, CancellationToken ct)
+    {
+        CancelLateWatch();
+        // A paste restore still waiting: the clipboard holds our pasted text, the user's is the saved one.
+        ClipboardSnapshot? previous = _pendingRestore != null && GetClipboardSequenceNumber() == _pendingSequence
+            ? _pendingOriginal : TrySnapshot();
+        uint before = GetClipboardSequenceNumber();
+        if (!launch()) return null;
+
+        uint png = RegisterClipboardFormat("PNG");
+        var watch = new Core.SnipWatch();
+        var started = DateTime.UtcNow;
+        bool uiRunning = false;
+        for (int tick = 0; ; tick++)
+        {
+            try { await Task.Delay(100, ct); }
+            catch (OperationCanceledException)
+            {
+                // Cancelled just as the snip arrived: the image must not stay on the clipboard.
+                if (GetClipboardSequenceNumber() != before && (IsClipboardFormatAvailable(png) || IsClipboardFormatAvailable(CF_DIB)))
+                    _ = previous != null ? Restore(previous) : Clear();
+                throw;
+            }
+            // Enumerating processes is not free: twice a second is enough for the cancel check.
+            if (tick % 5 == 0) uiRunning = snipUiRunning();
+            bool changed = GetClipboardSequenceNumber() != before;
+            bool hasImage = changed && (IsClipboardFormatAvailable(png) || IsClipboardFormatAvailable(CF_DIB));
+            var step = watch.Next(DateTime.UtcNow - started, changed, hasImage, uiRunning);
+            switch (step)
+            {
+                case Core.SnipStep.Waiting:
+                    continue;
+                case Core.SnipStep.Captured:
+                    // The snip writes its formats one after another: let it finish (no cancel here, the clipboard must be cleaned up).
+                    await Task.Delay(250, CancellationToken.None);
+                    var image = TryReadImage(png);
+                    bool restored = previous != null ? Restore(previous) : Clear();
+                    Core.Log.Info($"Snip: {(image == null ? "image unreadable" : $"{(image.Value.IsPng ? "PNG" : "DIB")} {image.Value.Data.Length / 1024} KB")}, "
+                        + $"clipboard {(restored ? "restored" : "not restored")}");
+                    return image;
+                default:
+                    Core.Log.Info($"Snip: no image ({step}), clipboard left alone");
+                    return null;
+            }
+        }
+    }
+
+    private (byte[] Data, bool IsPng)? TryReadImage(uint png)
+    {
+        if (!Open()) return null;
+        try
+        {
+            foreach (var (format, isPng) in new[] { (png, true), (CF_DIB, false) })
+            {
+                IntPtr handle = GetClipboardData(format);
+                if (handle == IntPtr.Zero) continue;
+                long size = (long)GlobalSize(handle);
+                if (size <= 0 || size > SnapshotCap) continue;
+                var snap = new ClipboardSnapshot();
+                CopyFormat(snap, format, handle, size);
+                if (snap.Items.Count == 1) return (snap.Items[0].Data, isPng);
+            }
+            return null;
+        }
+        finally { CloseClipboard(); }
+    }
+
+    private bool Clear()
+    {
+        if (!Open()) return false;
+        try { return EmptyClipboard(); }
+        finally { CloseClipboard(); }
     }
 
     // ---- keyboard ----

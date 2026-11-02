@@ -126,6 +126,15 @@ public sealed class Settings
     /// <summary>Generic hotkey that applies the last-used template; "" = unassigned.</summary>
     public string TemplateHotkey { get; set; } = "";
 
+    /// <summary>
+    /// Send a screenshot taken with the Screenshot hotkey along with the next Dictate Prompt or template request.
+    /// Off by default: screens of practice software show patient data.
+    /// </summary>
+    public bool SendScreenshots { get; set; }
+
+    /// <summary>Hotkey that opens the Windows snip UI; "" = unassigned.</summary>
+    public string ScreenshotHotkey { get; set; } = "";
+
     /// <summary>Id of the template the generic hotkey applied last; "" = none yet.</summary>
     public string LastTemplateId { get; set; } = "";
 
@@ -208,6 +217,8 @@ public sealed class Settings
             if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
             s.Templates = LoadTemplates(dto.Templates);
             s.TemplateHotkey = dto.TemplateHotkey ?? "";
+            s.SendScreenshots = dto.SendScreenshots ?? false;
+            s.ScreenshotHotkey = dto.ScreenshotHotkey ?? "";
             s.LastTemplateId = dto.LastTemplateId ?? "";
             s.Microphone = dto.Microphone ?? "";
             s.OfflineMode = dto.OfflineMode ?? false;
@@ -308,6 +319,8 @@ public sealed class Settings
                 Id = t.Id, Name = t.Name, Instructions = t.Instructions, Hotkey = t.Hotkey,
             }).ToList(),
             TemplateHotkey = TemplateHotkey,
+            SendScreenshots = SendScreenshots,
+            ScreenshotHotkey = ScreenshotHotkey,
             LastTemplateId = LastTemplateId,
             Microphone = Microphone,
             OfflineMode = OfflineMode,
@@ -360,6 +373,8 @@ public sealed class Settings
         [JsonPropertyName("glossaryHotkey")] public string? GlossaryHotkey { get; set; }
         [JsonPropertyName("templates")] public List<TemplateDto?>? Templates { get; set; }
         [JsonPropertyName("templateHotkey")] public string? TemplateHotkey { get; set; }
+        [JsonPropertyName("sendScreenshots")] public bool? SendScreenshots { get; set; }
+        [JsonPropertyName("screenshotHotkey")] public string? ScreenshotHotkey { get; set; }
         [JsonPropertyName("lastTemplateId")] public string? LastTemplateId { get; set; }
         [JsonPropertyName("microphone")] public string? Microphone { get; set; }
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }

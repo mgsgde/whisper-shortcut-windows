@@ -646,4 +646,32 @@ public class QuickActionRequestTests
         Assert.Equal(new[] { "G" }, s.Glossary);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
+
+    [Fact]
+    public void Screenshots_DefaultsOffAndEmpty_OldFileLoadsDefaults()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, "{\"dictateHotkey\":\"Ctrl+Shift+X\"}");
+        var old = Settings.Load(path, new PlainSecretProtector());
+        Assert.False(old.SendScreenshots);
+        Assert.Equal("", old.ScreenshotHotkey);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void Screenshots_RoundTrip()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(dir, "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.SendScreenshots = true;
+        s.ScreenshotHotkey = "Ctrl+Shift+S";
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.True(t.SendScreenshots);
+        Assert.Equal("Ctrl+Shift+S", t.ScreenshotHotkey);
+        Directory.Delete(dir, true);
+    }
 }

@@ -19,7 +19,8 @@ internal sealed class TrayApp : ApplicationContext
     /// <see cref="ClipboardOnly"/> is set for a recovered take: the original window is gone.
     /// </summary>
     private sealed record FailedRun(byte[] Wav, Mode Mode, double Seconds, string? Selection, string? QuickAction, IntPtr Target,
-        Core.DictationTemplate? Template = null, string StopKey = "", bool ClipboardOnly = false);
+        Core.DictationTemplate? Template = null, string StopKey = "", bool ClipboardOnly = false,
+        Core.ScreenshotImage? Screenshot = null);
 
     private const string RetryHint = " Hier klicken, um es noch einmal zu versuchen.";
 
@@ -81,6 +82,11 @@ internal sealed class TrayApp : ApplicationContext
     private long _armedKeyDeadline;
     private readonly ToolStripMenuItem _offlineItem;
     private readonly SynchronizationContext _ui;
+    // Screenshot hotkey: the image waits here for the next Dictate Prompt or template run (memory only, 5 min).
+    private readonly Core.ScreenshotHold _heldShot = new(() => DateTime.UtcNow);
+    private readonly System.Windows.Forms.Timer _shotExpiry = new() { Interval = 15_000 };
+    private Core.ScreenshotImage? _runShot;
+    private CancellationTokenSource? _snipCts;
 
     public TrayApp(string? testWav, bool fakeGemini)
     {
@@ -151,6 +157,11 @@ internal sealed class TrayApp : ApplicationContext
         _icon.BalloonTipClicked += (_, _) => _balloonClick?.Invoke();
 
         _keyUpTimer.Tick += (_, _) => PollArmedKey();
+        _shotExpiry.Tick += (_, _) =>
+        {
+            if (_heldShot.DropIfExpired()) Core.Log.Info("Screenshot dropped: unused for 5 minutes");
+            if (!_heldShot.HasImage) _shotExpiry.Stop();
+        };
         RegisterHotkeys();
         SetState(State.Idle);
         // A finished download changes the idle status ("Modelle noch nicht geladen" → "Bereit").
@@ -222,6 +233,9 @@ internal sealed class TrayApp : ApplicationContext
             if (!Hotkey.TryParse(stored, out var key) || !_hotkeys.Register(key, action))
                 failed.Add(Hotkey.Display(stored));
         }
+        if (_settings.ScreenshotHotkey.Length > 0
+            && (!Hotkey.TryParse(_settings.ScreenshotHotkey, out var shotKey) || !_hotkeys.Register(shotKey, OnScreenshotHotkey)))
+            failed.Add(Hotkey.Display(_settings.ScreenshotHotkey));
 
         // Template keys come after the app's own, which win on a clash (see TemplateHotkeys).
         var appHotkeys = new (string Name, string Hotkey)[]
@@ -229,6 +243,7 @@ internal sealed class TrayApp : ApplicationContext
             ("Diktieren", _settings.DictateHotkey),
             ("Text bearbeiten", _settings.PromptHotkey),
             ("Glossar", _settings.GlossaryHotkey),
+            ("Screenshot", _settings.ScreenshotHotkey),
         };
         var templates = _settings.Templates;
         var pickerActive = Core.TemplateHotkeys.PickerIsActive(_settings.TemplateHotkey, templates, appHotkeys, CanonicalHotkey);
@@ -397,6 +412,7 @@ internal sealed class TrayApp : ApplicationContext
         Core.RecordingCheckpoint.DiscardAll();
         _audio = null;
         CancelSelectionCopy(); // no Ctrl+C into the user's window after the cancel
+        _runShot = null; // discarded with the recording
         Sounds.Stop();
         _overlay.HideOverlay();
         SetState(State.Idle);
@@ -421,6 +437,63 @@ internal sealed class TrayApp : ApplicationContext
         Core.Log.Info($"Quick action {index + 1}");
         _quickAction = _settings.QuickActions[index];
         _ = StopAndProcessAsync();
+    }
+
+    // ---------------- screenshot ----------------
+
+    /// <summary>
+    /// Screenshot hotkey: opens the Windows snip UI and holds the image for the next Dictate Prompt or template run.
+    /// A second press while the snip UI is open stops waiting. Only when idle: a running recording has its input already.
+    /// </summary>
+    private void OnScreenshotHotkey()
+    {
+        Core.Log.Info($"Hotkey Screenshot in state {_state}");
+        if (_snipCts != null)
+        {
+            _snipCts.Cancel();
+            return;
+        }
+        if (_state != State.Idle) return;
+        if (!Core.ScreenshotPolicy.Allowed(_settings))
+        {
+            Sounds.Error();
+            Notify("Screenshots sind aus",
+                _settings.OfflineMode || _settings.EffectiveTextEngine == Core.Engine.Local
+                    ? "Offline geht kein Bild an ein Sprachmodell: Das lokale Modell kann keine Bilder lesen, und nichts soll den PC verlassen."
+                    : "Hier klicken und unter „Text bearbeiten“ → „Screenshots mitsenden“ einschalten.",
+                ToolTipIcon.Info, ShowSettings);
+            return;
+        }
+        _ = CaptureScreenshotAsync();
+    }
+
+    private async Task CaptureScreenshotAsync()
+    {
+        using var cts = _snipCts = new CancellationTokenSource();
+        try
+        {
+            var image = await ScreenshotCapture.CaptureAsync(_paster, cts.Token);
+            if (image == null) return; // cancelled in the snip UI or timed out; the log says which
+            _heldShot.Hold(image);
+            _shotExpiry.Start();
+            Core.Log.Info($"Screenshot held for the next turn ({image.Data.Length / 1024} KB)");
+            ShowDoneIfFree("Bildschirmfoto für die nächste Anweisung gemerkt");
+        }
+        catch (OperationCanceledException) { Core.Log.Info("Snip: waiting stopped by the hotkey"); }
+        catch (Exception e)
+        {
+            Core.Log.Error("Snip failed", e);
+            Notify("Screenshot fehlgeschlagen", "Das Bild konnte nicht übernommen werden. Details stehen im Protokoll.", ToolTipIcon.Warning);
+        }
+        finally { _snipCts = null; }
+    }
+
+    /// <summary>Screenshots switched off or offline: a held image must not go out later.</summary>
+    private void DropScreenshotIfNotAllowed()
+    {
+        if (Core.ScreenshotPolicy.Allowed(_settings) || !_heldShot.HasImage) return;
+        _heldShot.Clear();
+        Core.Log.Info("Screenshot dropped: screenshots are off or offline");
     }
 
     // ---------------- recording ----------------
@@ -459,6 +532,12 @@ internal sealed class TrayApp : ApplicationContext
 
     private void StartRecording(Mode mode, string stored)
     {
+        // The snip UI is open: its image is about to arrive over the clipboard, a Ctrl+C now would collide with it.
+        if (_snipCts != null)
+        {
+            Core.Log.Info($"Hotkey {mode} ignored: waiting for the snip UI");
+            return;
+        }
         if (!OfflineModelsReady(mode))
         {
             Core.Log.Info($"Hotkey {mode} with a local engine, models missing");
@@ -547,10 +626,13 @@ internal sealed class TrayApp : ApplicationContext
         }
         Sounds.Start();
         SetState(State.Recording);
+        // One turn only: a Dictate run leaves the image for the next Dictate Prompt or template run.
+        _runShot = mode != Mode.Dictate && Core.ScreenshotPolicy.Allowed(_settings) ? _heldShot.Take() : null;
+        if (_runShot != null) Core.Log.Info($"{mode}: screenshot attached ({_runShot.Data.Length / 1024} KB)");
         _overlay.ShowRecording(mode, Hotkey.Display(stored), limit,
             mic != null ? () => mic.Level : null, mic != null ? () => mic.PeakSoFar : null,
             mode == Mode.Prompt ? _settings.QuickActions : null,
-            templateName: mode == Mode.Template ? _template!.DisplayName : null);
+            templateName: mode == Mode.Template ? _template!.DisplayName : null, screenshot: _runShot != null);
         if (_selection != null)
         {
             var pending = _selection;
@@ -576,6 +658,7 @@ internal sealed class TrayApp : ApplicationContext
         _template = run.Template;
         _stopKey = run.StopKey;
         _quickAction = run.QuickAction;
+        _runShot = Core.ScreenshotPolicy.Allowed(_settings) ? run.Screenshot : null; // switched off or offline since
         _paster.CancelLateWatch(); // a flag from the old recording must not block this run
         _pasteTarget = run.Target;
         _ = ProcessAsync(null, run);
@@ -600,7 +683,7 @@ internal sealed class TrayApp : ApplicationContext
         double seconds = 0;
         string? selection = null;
         // What a retry needs; null when the audio itself is lost (then there is nothing to try again).
-        FailedRun? Failed() => wav == null ? null : new FailedRun(wav, _mode, seconds, selection, _quickAction, _pasteTarget, _template, _stopKey);
+        FailedRun? Failed() => wav == null ? null : new FailedRun(wav, _mode, seconds, selection, _quickAction, _pasteTarget, _template, _stopKey, Screenshot: _runShot);
 
         try
         {
@@ -791,6 +874,7 @@ internal sealed class TrayApp : ApplicationContext
             _selectionCts = null;
             _selection = null;
             _quickAction = null;
+            _runShot = null; // a failed run keeps it in _lastFailed for the retry
             if (!done) _overlay.HideOverlay();
             SetState(State.Idle);
         }
@@ -853,7 +937,7 @@ internal sealed class TrayApp : ApplicationContext
             return "";
         }
         SetBusy(Core.UserCopy.EditingText);
-        var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct, HistoryFor(selection));
+        var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct, HistoryFor(selection), _runShot);
 
         string? instruction = null;
         if (selection == null)
@@ -930,10 +1014,10 @@ internal sealed class TrayApp : ApplicationContext
                     raw = await _offline.CompleteAsync(system, user, Core.LocalLlmClient.TemplateMaxTokens, ct);
                     break;
                 case Core.Engine.OpenAI:
-                    raw = await _openAi.CompleteTextAsync(system, user, ct);
+                    raw = await _openAi.CompleteTextAsync(system, user, _runShot, ct);
                     break;
                 default:
-                    raw = await _gemini.CompleteTextAsync(system, user, ct);
+                    raw = await _gemini.CompleteTextAsync(system, user, _runShot, ct);
                     break;
             }
         }
@@ -1070,9 +1154,9 @@ internal sealed class TrayApp : ApplicationContext
                     SetBusy(Core.UserCopy.LoadingLlm);
                 return _offline.PromptAsync(selection, instruction, systemPrompt, ct);
             case Core.Engine.OpenAI:
-                return _openAi.PromptTextAsync(selection, instruction, systemPrompt, ct, HistoryFor(selection));
+                return _openAi.PromptTextAsync(selection, instruction, systemPrompt, ct, HistoryFor(selection), _runShot);
             default:
-                return _gemini.PromptTextAsync(selection, instruction, systemPrompt, ct, HistoryFor(selection));
+                return _gemini.PromptTextAsync(selection, instruction, systemPrompt, ct, HistoryFor(selection), _runShot);
         }
     }
 
@@ -1406,6 +1490,7 @@ internal sealed class TrayApp : ApplicationContext
             SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
             _offline.Prewarm(); // offline mode may just have been switched on
             _offline.GlossaryChanged(); // the Glossary may have been edited
+            DropScreenshotIfNotAllowed();
         };
         _settingsForm.FormClosed += (_, _) =>
         {
@@ -1439,6 +1524,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         _settings.OfflineMode = offline;
         if (offline) _promptMemory.Clear();
+        DropScreenshotIfNotAllowed();
         // Back to the chosen engines: they may need a key that was never entered.
         if (!offline && MissingKeyFor(Mode.Prompt) is { } provider)
         {
@@ -1488,6 +1574,8 @@ internal sealed class TrayApp : ApplicationContext
         _icon.Visible = false;
         _icon.Dispose();
         _keyUpTimer.Dispose();
+        _snipCts?.Cancel();
+        _shotExpiry.Dispose();
         _updateNoticeTimer.Dispose();
         _updates.Dispose();
         _overlay.Dispose();

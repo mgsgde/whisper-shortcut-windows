@@ -350,4 +350,64 @@ public class OpenAiClientTests
         var ex = await Assert.ThrowsAsync<GeminiException>(() => c.CompleteTextAsync("s", "u"));
         Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
     }
+
+    private static readonly ScreenshotImage Shot = new(new byte[] { 0x89, 0x50, 0x4E, 0x47, 9 }, "image/png");
+
+    [Fact]
+    public async Task PromptText_WithImage_UserContentIsArray()
+    {
+        var h = new FakeHandler();
+        var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        await c.PromptTextAsync("Text", "Kürzen", null, Shot);
+
+        var content = h.Json(0)["messages"]![1]!["content"]!.AsArray();
+        Assert.Equal(3, content.Count);
+        Assert.Equal("text", (string)content[0]!["type"]!);
+        Assert.Equal("text", (string)content[1]!["type"]!);
+        Assert.Equal(ScreenshotPrompt.Header, (string)content[1]!["text"]!);
+        Assert.Equal("image_url", (string)content[2]!["type"]!);
+        Assert.Equal("data:image/png;base64," + Convert.ToBase64String(Shot.Data), (string)content[2]!["image_url"]!["url"]!);
+        Assert.Equal("high", (string)content[2]!["image_url"]!["detail"]!);
+    }
+
+    [Fact]
+    public async Task Complete_WithImage_KeepsUserTextFirst()
+    {
+        var h = new FakeHandler();
+        var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        await c.CompleteTextAsync("System", "User", Shot);
+
+        var content = h.Json(0)["messages"]![1]!["content"]!.AsArray();
+        Assert.Equal("User", (string)content[0]!["text"]!);
+    }
+
+    [Fact]
+    public async Task PromptText_HistoryAndImage_OnlyNewMessageCarriesImage()
+    {
+        var h = new FakeHandler();
+        var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        var history = new[] { new PromptTurn("Lang", "kürzer", "Kurz", DateTime.UtcNow) };
+        await c.PromptTextAsync("Text", "Kürzen", null, default, history, Shot);
+
+        var messages = h.Json(0)["messages"]!.AsArray();
+        Assert.Equal(4, messages.Count);
+        Assert.IsType<string>((string)messages[1]!["content"]!);
+        Assert.Equal("assistant", (string)messages[2]!["role"]!);
+        Assert.Equal(3, messages[3]!["content"]!.AsArray().Count);
+    }
+
+    [Fact]
+    public async Task NullImage_BodyIdenticalToOldOverloads()
+    {
+        var h = new FakeHandler();
+        var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        await c.PromptTextAsync("Text", "Kürzen", null);
+        await c.PromptTextAsync("Text", "Kürzen", null, null);
+        await c.CompleteTextAsync("System", "User");
+        await c.CompleteTextAsync("System", "User", null);
+
+        Assert.Equal(h.Calls[0].Body, h.Calls[1].Body);
+        Assert.Equal(h.Calls[2].Body, h.Calls[3].Body);
+        Assert.Equal("User", (string)h.Json(2)["messages"]![1]!["content"]!);
+    }
 }
