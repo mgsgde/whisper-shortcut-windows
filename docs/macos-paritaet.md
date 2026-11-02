@@ -52,7 +52,7 @@ melden, Mit Windows starten — in `main`.
 
 Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle, Vorlesen, Screenshot, Live-Meeting,
 MCP-Server, Smart Improvement und Interaktionslog, Schreibstil pro App, weitere Anbieter (Grok,
-OpenRouter, Anthropic, eigener Server), Templates als eigener Modus, Telemetrie, Welcome-Tour
+OpenRouter, Anthropic, eigener Server), Telemetrie, Welcome-Tour
 über den ersten Start hinaus, Fn-Taste.
 
 Parakeet: Windows lädt NVIDIA TDT 0.6B v3 (int8, sherpa-onnx). Der Mac empfiehlt Parakeet Ultra
@@ -71,3 +71,13 @@ nicht eingefügt, OpenAI und Gemini gemischt wählbar, Update mit ECDSA-Signatur
 2. Overlay: getippte Anweisung + 9 Schnellanweisungen (B8–B9).
 3. Kürzel abschaltbar, abgebrochene Aufnahme behalten (B10, B12).
 4. Danach Umfang: MCP, Vorlesen, Screenshot; Chat zuletzt.
+
+## Nachtrag 02.11.2026: Diktiervorlagen (Mac v8.72)
+
+Nachgezogen: Seite „Vorlagen“ (Name, Format-Anweisungen, optional eigenes Kürzel), allgemeines Kürzel für die
+zuletzt benutzte Vorlage (ab Werk frei). Eine Vorlagen-Aufnahme ist ein eigener Durchlauf: Die Anweisungen der
+Vorlage sind der ganze System-Prompt, die Anweisungen, die „Vorlage für neue Texte“ und die Schnellanweisungen
+von „Text bearbeiten“ gelten nicht; eine Markierung wird in das Format gebracht. Anders als auf dem Mac: keine
+Auswahl mit 1, 2, 3 während der Aufnahme (das allgemeine Kürzel nimmt die zuletzt benutzte), und die Aufnahme
+geht immer erst durch die Spracherkennung (in Stücken) und dann als Text ans Sprachmodell, damit auch mehrminütige
+Befunde vollständig ankommen.

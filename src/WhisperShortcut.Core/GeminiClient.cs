@@ -164,6 +164,24 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     public Task PrewarmConnection() =>
         HttpPrewarm.Connect(_http, "https://generativelanguage.googleapis.com/", "Gemini");
 
+    /// <summary>
+    /// Text-only call with a complete <paramref name="systemPrompt"/> and a complete <paramref name="userText"/>
+    /// (nothing from <see cref="DictatePromptText"/> is added). Same model, thinking level and output limit as
+    /// <see cref="PromptTextAsync"/>; a cut-off reply throws <see cref="GeminiErrorKind.Truncated"/>. Returns the raw model text.
+    /// </summary>
+    /// <param name="systemPrompt">The whole system instruction.</param>
+    /// <param name="userText">The whole user turn.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> CompleteTextAsync(string systemPrompt, string userText, CancellationToken ct = default)
+    {
+        var model = _promptModel();
+        var body = BuildCompleteBodyUtf8(systemPrompt, userText);
+        return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
+    }
+
+    internal static string BuildCompleteBody(string systemPrompt, string userText) =>
+        Encoding.UTF8.GetString(BuildCompleteBodyUtf8(systemPrompt, userText));
+
     internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null) =>
         Encoding.UTF8.GetString(BuildTranscriptionBodyUtf8(model, wav, glossary, customPrompt));
 
@@ -247,6 +265,22 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
             {
                 w.WriteStartObject();
                 w.WriteString("text", user);
+                w.WriteEndObject();
+            });
+        }
+        return writer.WrittenSpan.ToArray();
+    }
+
+    // Templates: the whole system prompt and the whole user turn come from the caller; no history.
+    internal static byte[] BuildCompleteBodyUtf8(string systemPrompt, string userText)
+    {
+        var writer = new ArrayBufferWriter<byte>(JsonCapacity(0, systemPrompt.Length + userText.Length));
+        using (var w = new Utf8JsonWriter(writer))
+        {
+            WritePromptEnvelope(w, systemPrompt, null, () =>
+            {
+                w.WriteStartObject();
+                w.WriteString("text", userText);
                 w.WriteEndObject();
             });
         }

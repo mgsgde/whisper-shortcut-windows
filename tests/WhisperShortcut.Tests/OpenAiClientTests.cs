@@ -325,4 +325,29 @@ public class OpenAiClientTests
             return Task.FromResult(r);
         }
     }
+
+    [Fact]
+    public async Task CompleteText_SendsGivenSystemAndUserText_Verbatim()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Chat));
+        Assert.Equal("Fertig", await c.CompleteTextAsync("Eigene Anweisung", "Der ganze Text"));
+
+        var j = h.Json(0);
+        Assert.Equal("low", (string)j["reasoning_effort"]!);
+        Assert.Equal(32000, (int)j["max_completion_tokens"]!);
+        var m = j["messages"]!.AsArray();
+        Assert.Equal("Eigene Anweisung", (string)m[0]!["content"]!);
+        Assert.DoesNotContain(Prompts.DefaultPromptModeSystemPrompt, (string)m[0]!["content"]!);
+        Assert.Equal("Der ganze Text", (string)m[1]!["content"]!);
+    }
+
+    [Fact]
+    public async Task CompleteText_FinishLength_IsTruncated()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"abc\"}}]}"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.CompleteTextAsync("s", "u"));
+        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+    }
 }

@@ -221,7 +221,7 @@ public class LocalLlmTests
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, Reply("abgeschnitten", "length")));
         var e = await Assert.ThrowsAsync<LocalLlmException>(() => c.CompleteAsync(new Uri("http://127.0.0.1:9/"), "s", "u", CancellationToken.None));
-        Assert.Equal("Der Text ist für das Offline-Modell zu lang. Bitte einen kürzeren Abschnitt markieren.", e.Message);
+        Assert.Equal("Der Text ist für das Offline-Modell zu lang. Bitte kürzer diktieren oder einen kürzeren Abschnitt markieren.", e.Message);
     }
 
     [Fact]

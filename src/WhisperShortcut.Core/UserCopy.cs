@@ -47,10 +47,12 @@ public static class UserCopy
 
     public const string OverlayDictateTitle = "Diktat läuft";
     public const string OverlayPromptTitle = "Anweisung sprechen";
+    public static string OverlayTemplateTitle(string templateName) => $"Vorlage „{templateName}“";
     public static string OverlayStopHint(string stopKey) => $"{stopKey} beendet · Esc bricht ab";
     public const string OverlayCancelHint = "Kürzel oder Esc bricht ab";
 
     public static string QuickActionBusy(string action) => action.Trim().Length == 0 ? Processing : action.Trim() + " …";
+    public static string TemplateBusy(string templateName) => $"Vorlage „{templateName}“ …";
 
     /// <summary>Status bar / screen reader text for the recording pill.</summary>
     public static string OverlayAnnouncement(string title, string hint, string? context)

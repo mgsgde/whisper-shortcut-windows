@@ -5,7 +5,7 @@ namespace WhisperShortcut;
 
 /// <summary>
 /// Settings window in the style of the Windows 11 settings, ordered like the macOS app: pages on the
-/// left (Allgemein, Diktieren, Dictate Prompt, Glossar, Offline, Info), the page on the right as
+/// left (Allgemein, Diktieren, Dictate Prompt, Vorlagen, Glossar, Offline, Info), the page on the right as
 /// rounded cards, Speichern/Abbrechen below. Light or dark follows Windows. German UI.
 /// </summary>
 internal sealed class SettingsForm : Form
@@ -53,6 +53,19 @@ internal sealed class SettingsForm : Form
     private readonly ThemedLabel _glossaryCount;
     private readonly TextBox _template;
     private readonly TextBox[] _quick = new TextBox[Core.QuickActionList.Max];
+    // Vorlagen page: a working copy of the templates, written to the settings only on Save.
+    private readonly List<Core.DictationTemplate> _templates;
+    private readonly HotkeyBox _templateKey;
+    private readonly FluentCombo _templateChoice;
+    private readonly FluentButton _templateRemove;
+    private readonly Card _templateEditor;
+    private readonly Label _templateEmpty;
+    private readonly TextBox _templateName;
+    private readonly TextBox _templateInstructions;
+    private readonly HotkeyBox _templateOwnKey;
+    private readonly ThemedLabel _templateState;
+    // Set while the editor fields are filled from a template, so their change events do not write back.
+    private bool _loadingTemplate;
     private readonly ContextMenuStrip _sampleMenu;
     private readonly Core.PromptHistory _history = Core.PromptHistory.Load(Core.PromptHistory.DefaultPath);
     private readonly HistoryLink _dictateHistory, _promptHistory, _templateHistory;
@@ -74,12 +87,12 @@ internal sealed class SettingsForm : Form
     private bool _discard;
 
     public const string General = "Allgemein", DictatePage = "Diktieren", PromptPage = "Text bearbeiten",
-        GlossaryPage = "Glossar", OfflinePage = "Offline", InfoPage = "Info";
+        TemplatesPage = "Vorlagen", GlossaryPage = "Glossar", OfflinePage = "Offline", InfoPage = "Info";
 
     // Segoe Fluent Icons (Windows 11) / Segoe MDL2 Assets (Windows 10) glyphs for the navigation.
     private static readonly (string Name, string Icon)[] Pages =
     {
-        (General, ""), (DictatePage, ""), (PromptPage, ""),
+        (General, ""), (DictatePage, ""), (PromptPage, ""), (TemplatesPage, "\uE8A5"),
         (GlossaryPage, ""), (OfflinePage, ""), (InfoPage, ""),
     };
 
@@ -343,6 +356,69 @@ internal sealed class SettingsForm : Form
         quickCard.AddRow(quickBlock);
         prompt.Controls.Add(quickCard);
 
+        // ================= page: Vorlagen (dictation templates) =================
+        var templatesPage = NewPage(TemplatesPage, "Direkt in ein festes Format diktieren, z. B. eine Behandlungsdokumentation mit "
+            + "Anamnese, Befund und Therapie: Kürzel drücken, wie gewohnt sprechen, noch einmal drücken. Ist beim Drücken Text markiert, "
+            + "bringt die Vorlage die Markierung in das Format.");
+        _templates = (settings.Templates ?? new()).Select(t => t.Clone()).ToList();
+        _templateKey = new HotkeyBox(settings.TemplateHotkey ?? "", allowEmpty: true) { AccessibleName = "Tastenkürzel Vorlage" };
+        templatesPage.Controls.Add(KeyCard(_templateKey, "Wendet die zuletzt benutzte Vorlage an. Ins Feld klicken und die Kombination "
+            + "drücken, z. B. Strg+Umschalt+V. Entf entfernt das Kürzel."));
+        _templateKey.ValueChanged += UpdateTemplateState;
+
+        templatesPage.Controls.Add(Section("Meine Vorlagen"));
+        _templateChoice = new FluentCombo { AccessibleName = "Vorlage auswählen" };
+        var templateAdd = new FluentButton("Neue Vorlage");
+        _templateRemove = new FluentButton("Löschen");
+        templateAdd.Click += (_, _) => AddTemplate();
+        _templateRemove.Click += (_, _) => RemoveTemplate();
+        _templateChoice.SelectedIndexChanged += (_, _) => { if (!_loadingTemplate) LoadTemplate(); };
+        var listBlock = Block();
+        listBlock.Controls.Add(Row(_templateChoice, templateAdd, _templateRemove));
+        _templateEmpty = Wrap("Noch keine Vorlage. „Neue Vorlage“ legt eine an.", 2 * RowPadding, small: true);
+        listBlock.Controls.Add(_templateEmpty);
+        var listCard = new Card();
+        listCard.AddRow(listBlock);
+        templatesPage.Controls.Add(listCard);
+
+        _templateName = new TextBox { AccessibleName = "Name der Vorlage", PlaceholderText = "z. B. Behandlungsnotiz", MaxLength = 60 };
+        _templateInstructions = new TextBox
+        {
+            Multiline = true, AcceptsReturn = true, AcceptsTab = false, ScrollBars = ScrollBars.Vertical, WordWrap = true,
+            AccessibleName = "Anweisungen der Vorlage",
+            PlaceholderText = "z. B.: " + TemplateExample,
+        };
+        _templateOwnKey = new HotkeyBox("", allowEmpty: true) { AccessibleName = "Eigenes Tastenkürzel der Vorlage" };
+        _templateState = new ThemedLabel { AutoSize = true, Tone = Tone.Secondary, Font = Theme.Small, Margin = new Padding(0, 4, 0, 0) };
+        Fit(_templateState, 2 * RowPadding + 160);
+        _templateName.TextChanged += (_, _) => TemplateEdited();
+        _templateInstructions.TextChanged += (_, _) => TemplateEdited();
+        _templateOwnKey.ValueChanged += TemplateEdited;
+        var example = new LinkLabel { Text = "Beispiel einsetzen", AutoSize = true, Margin = new Padding(0, 4, 0, 0), Anchor = AnchorStyles.Right };
+        example.LinkClicked += (_, _) => InsertTemplateExample();
+
+        _templateEditor = new Card();
+        _templateEditor.AddRow(SettingRow("Name", "Steht während der Aufnahme in der Anzeige.",
+            new FieldFrame(_templateName) { Width = ComboWidth, Dock = DockStyle.None }, ComboWidth, out _));
+        var formatBlock = Block();
+        formatBlock.Controls.Add(new ThemedLabel { Text = "Format", AutoSize = true, Margin = new Padding(0, 0, 0, 4) });
+        formatBlock.Controls.Add(Wrap("Was gesagt wird, wird wie gewohnt erkannt und dann in dieses Format gebracht. Nur diese Anweisungen gelten: "
+            + "nicht die Anweisungen, die Vorlage für neue Texte oder die Schnellanweisungen von „Text bearbeiten“.", 2 * RowPadding, small: true));
+        formatBlock.Controls.Add(new FieldFrame(_templateInstructions, multiline: true) { Height = 240 });
+        var formatFooter = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0, 4, 0, 0) };
+        formatFooter.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        formatFooter.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        _templateState.Anchor = AnchorStyles.Left;
+        formatFooter.Controls.Add(_templateState, 0, 0);
+        formatFooter.Controls.Add(example, 1, 0);
+        formatBlock.Controls.Add(formatFooter);
+        _templateEditor.AddRow(formatBlock);
+        _templateEditor.AddRow(SettingRow("Eigenes Kürzel (optional)", "Startet genau diese Vorlage, z. B. über eine Taste am Diktiermikrofon. "
+            + "Meist reicht das Kürzel oben. Entf entfernt es.",
+            new FieldFrame(_templateOwnKey) { Width = KeyWidth, Dock = DockStyle.None }, KeyWidth, out _));
+        templatesPage.Controls.Add(_templateEditor);
+        FillTemplateChoice(Math.Max(0, _templates.FindIndex(t => t.Id == settings.LastTemplateId)));
+
         // ================= page: Glossar =================
         _glossaryKey = new HotkeyBox(settings.GlossaryHotkey) { AccessibleName = "Tastenkürzel Glossar" };
         _glossary = new TextBox
@@ -488,7 +564,7 @@ internal sealed class SettingsForm : Form
         // Any edit: show the "not saved" hint next to the buttons.
         var dirtyTimer = new System.Windows.Forms.Timer { Interval = 400 };
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would flicker the hint.
-        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi };
+        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice };
         dirtyTimer.Tick += (_, _) =>
         {
             if (combos.Any(c => c.DroppedDown)) return;
@@ -1471,8 +1547,9 @@ internal sealed class SettingsForm : Form
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
-        _autoUpdate.Checked.ToString(),
-    }.Concat(_quick.Select(q => q.Text)));
+        _autoUpdate.Checked.ToString(), _templateKey.Value,
+    }.Concat(_quick.Select(q => q.Text))
+     .Concat(_templates.Select(t => string.Join("\u0002", t.Id, t.Name, t.Instructions, t.Hotkey))));
 
     private static string SelectedModel(FluentCombo combo) => ((ModelItem)combo.SelectedItem!).Model.Id;
 
@@ -1589,13 +1666,14 @@ internal sealed class SettingsForm : Form
                 return false;
             }
         }
+        if (!CheckTemplateKeys(parsed)) return false;
 
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
             _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
             _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
-            _settings.AutoUpdateCheck);
+            _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _geminiKey.Value;
@@ -1619,6 +1697,12 @@ internal sealed class SettingsForm : Form
         _settings.RestoreClipboard = _restoreClipboard.Checked;
         _settings.Sounds = _sounds.Checked;
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
+        _settings.Templates = _templates.Select(t => new Core.DictationTemplate
+        {
+            Id = t.Id, Name = t.Name.Trim(), Instructions = t.Instructions.ReplaceLineEndings("\n").Trim(),
+            Hotkey = Hotkey.TryParse(t.Hotkey, out var own) ? own.ToString() : "",
+        }).ToList();
+        _settings.TemplateHotkey = Hotkey.TryParse(_templateKey.Value, out var picker) ? picker.ToString() : "";
         try
         {
             _settings.Save();
@@ -1631,7 +1715,7 @@ internal sealed class SettingsForm : Form
                 _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
-            _settings.AutoUpdateCheck) = before;
+            _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId) = before;
             Warn(Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message));
             return false;
         }
@@ -1640,7 +1724,7 @@ internal sealed class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")})");
         RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.DictatePromptTemplate);
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;
@@ -1663,6 +1747,165 @@ internal sealed class SettingsForm : Form
         _dictateHistory.Reload();
         _promptHistory.Reload();
         _templateHistory.Reload();
+    }
+
+    // ---------------- Vorlagen ----------------
+
+    private const string TemplateExample = "Das Diktat ist eine ärztliche Behandlungsdokumentation. Schreibe sie mit den Abschnitten "
+        + "„Anamnese:“, „Befund:“ und „Therapie:“, jeder Abschnitt in einer neuen Zeile. Ordne alles Gesagte dem passenden Abschnitt zu. "
+        + "Übernimm alle Angaben vollständig und genau (Zahlen, Dosierungen, Seitenangaben). Fasse nichts zusammen, lass nichts weg "
+        + "und füge nichts hinzu. Wurde zu einem Abschnitt nichts gesagt, lass ihn weg.";
+
+    private sealed record TemplateItem(Core.DictationTemplate Template, int Index)
+    {
+        public override string ToString() => $"{Index + 1}   {Template.DisplayName}";
+    }
+
+    private Core.DictationTemplate? CurrentTemplate =>
+        _templateChoice.SelectedItem is TemplateItem item && item.Index < _templates.Count ? _templates[item.Index] : null;
+
+    /// <summary>Refills the list (after add or remove) and shows template <paramref name="select"/>.</summary>
+    private void FillTemplateChoice(int select)
+    {
+        _loadingTemplate = true;
+        _templateChoice.BeginUpdate();
+        _templateChoice.Items.Clear();
+        for (int i = 0; i < _templates.Count; i++) _templateChoice.Items.Add(new TemplateItem(_templates[i], i));
+        _templateChoice.SelectedIndex = _templates.Count == 0 ? -1 : Math.Clamp(select, 0, _templates.Count - 1);
+        _templateChoice.EndUpdate();
+        _loadingTemplate = false;
+        LoadTemplate();
+    }
+
+    /// <summary>Shows the selected template in the editor; with none, only the "Neue Vorlage" hint.</summary>
+    private void LoadTemplate()
+    {
+        var t = CurrentTemplate;
+        bool any = t != null;
+        _templateEditor.Visible = any;
+        _templateEmpty.Visible = !any;
+        _templateChoice.Enabled = any;
+        _templateRemove.Enabled = any;
+        _loadingTemplate = true;
+        _templateName.Text = t?.Name ?? "";
+        _templateInstructions.Text = (t?.Instructions ?? "").ReplaceLineEndings("\r\n");
+        _templateOwnKey.SetValue(t?.Hotkey ?? "");
+        _loadingTemplate = false;
+        UpdateTemplateState();
+    }
+
+    /// <summary>A field of the selected template changed: keep it in the working copy, refresh the list entry.</summary>
+    private void TemplateEdited()
+    {
+        if (_loadingTemplate || CurrentTemplate is not { } t) return;
+        bool renamed = t.Name != _templateName.Text;
+        t.Name = _templateName.Text;
+        t.Instructions = _templateInstructions.Text;
+        t.Hotkey = _templateOwnKey.Value;
+        if (renamed)
+        {
+            // WHY replace the item: a combo box draws the text it read when the item was added.
+            int index = _templateChoice.SelectedIndex;
+            _loadingTemplate = true;
+            _templateChoice.Items[index] = new TemplateItem(t, index);
+            _templateChoice.SelectedIndex = index;
+            _loadingTemplate = false;
+        }
+        UpdateTemplateState();
+    }
+
+    /// <summary>One line under the format box: what is missing, or which key starts this template.</summary>
+    private void UpdateTemplateState()
+    {
+        var t = CurrentTemplate;
+        bool hasPicker = Hotkey.TryParse(_templateKey.Value, out var picker);
+        _templateState.Text = t == null ? ""
+            : !t.IsUsable ? "Noch ohne Anweisungen: beschreiben, wie der Text aussehen soll, damit die Vorlage etwas tut."
+            : Hotkey.TryParse(t.Hotkey, out var own)
+                ? $"Startet mit {own.ToDisplayString()}" + (hasPicker ? $", als zuletzt benutzte auch mit {picker.ToDisplayString()}" : "")
+            : hasPicker ? $"Startet als zuletzt benutzte Vorlage mit {picker.ToDisplayString()}"
+            : "Noch ohne Kürzel: oben das Kürzel für Vorlagen festlegen oder unten ein eigenes.";
+    }
+
+    private void AddTemplate()
+    {
+        _templates.Add(new Core.DictationTemplate());
+        FillTemplateChoice(_templates.Count - 1);
+        _templateName.Focus();
+    }
+
+    private void RemoveTemplate()
+    {
+        if (CurrentTemplate is not { } t) return;
+        if (ChoiceDialog.Ask(this, "Vorlage löschen?", $"„{t.DisplayName}“ wird gelöscht, sobald die Einstellungen gespeichert werden.",
+                new[] { "Löschen", "Abbrechen" }, danger: true) != 0) return;
+        int index = _templateChoice.SelectedIndex;
+        _templates.RemoveAt(index);
+        FillTemplateChoice(index);
+    }
+
+    private void InsertTemplateExample()
+    {
+        if (CurrentTemplate == null) return;
+        if (_templateInstructions.Text.Trim().Length > 0 && _templateInstructions.Text.Trim() != TemplateExample
+            && ChoiceDialog.Ask(this, "Anweisungen ersetzen?", "Die jetzigen Anweisungen dieser Vorlage werden ersetzt.",
+                new[] { "Ersetzen", "Abbrechen" }) != 0) return;
+        _templateInstructions.Text = TemplateExample;
+        if (_templateName.Text.Trim().Length == 0) _templateName.Text = "Behandlungsnotiz";
+    }
+
+    /// <summary>
+    /// The Vorlagen key and each template's own key: valid, and not taken by Diktieren, Text bearbeiten, Glossar,
+    /// the Vorlagen key or an earlier template. Same rules and the same kind of warning as the other hotkeys.
+    /// </summary>
+    /// <param name="app">The parsed app hotkeys in the order Diktieren, Text bearbeiten, Glossar.</param>
+    private bool CheckTemplateKeys(Hotkey[] app)
+    {
+        var taken = new List<(string Owner, Hotkey Key)> { ("Diktieren", app[0]), ("Text bearbeiten", app[1]), ("Glossar", app[2]) };
+        const string Rule = "Bitte ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+V, oder es mit Entf entfernen. "
+            + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
+        if (_templateKey.Value.Length > 0)
+        {
+            if (!Hotkey.TryParse(_templateKey.Value, out var picker) || !IsSafe(picker))
+            {
+                ShowPage(TemplatesPage);
+                Warn("Kürzel für Vorlagen: " + Rule);
+                return false;
+            }
+            if (taken.FirstOrDefault(k => k.Key == picker) is { Owner: { } owner })
+            {
+                ShowPage(TemplatesPage);
+                Warn($"{picker.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Vorlagen ein anderes Kürzel wählen.");
+                return false;
+            }
+            taken.Add(("Vorlagen (zuletzt benutzte)", picker));
+        }
+        for (int i = 0; i < _templates.Count; i++)
+        {
+            var t = _templates[i];
+            if (t.Hotkey.Length == 0) continue;
+            if (!Hotkey.TryParse(t.Hotkey, out var key) || !IsSafe(key))
+            {
+                ShowTemplate(i);
+                Warn($"Vorlage „{t.DisplayName}“: " + Rule);
+                return false;
+            }
+            if (taken.FirstOrDefault(k => k.Key == key) is { Owner: { } owner })
+            {
+                ShowTemplate(i);
+                Warn($"{key.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für die Vorlage „{t.DisplayName}“ ein anderes Kürzel wählen.");
+                return false;
+            }
+            taken.Add(($"Vorlage „{t.DisplayName}“", key));
+        }
+        return true;
+    }
+
+    private void ShowTemplate(int index)
+    {
+        ShowPage(TemplatesPage);
+        if (_templateChoice.SelectedIndex != index) FillTemplateChoice(index);
+        _templateOwnKey.Focus();
     }
 
     /// <summary>The glossary hotkey added a term while this window is open: show it, so Save keeps it.</summary>
@@ -1710,15 +1953,30 @@ internal sealed class SettingsForm : Form
     /// <summary>Text box that records a key combination instead of text.</summary>
     private sealed class HotkeyBox : TextBox
     {
+        private readonly bool _allowEmpty;
+
         public string Value { get; private set; }
 
-        public HotkeyBox(string stored)
+        /// <summary>The user recorded or removed a combination (not raised by <see cref="SetValue"/>).</summary>
+        public event Action? ValueChanged;
+
+        /// <param name="allowEmpty">Optional key (Vorlagen): Entf or Backspace removes it, the field then reads „Kein Kürzel“.</param>
+        public HotkeyBox(string stored, bool allowEmpty = false)
         {
+            _allowEmpty = allowEmpty;
             Value = stored;
             Text = Hotkey.Display(stored);
             ReadOnly = true;
             ShortcutsEnabled = false;
             TextAlign = HorizontalAlignment.Center;
+            if (allowEmpty) PlaceholderText = "Kein Kürzel";
+        }
+
+        /// <summary>Shows another stored combination ("" = none), e.g. when a different template is selected.</summary>
+        public void SetValue(string stored)
+        {
+            Value = stored;
+            Text = Hotkey.Display(stored);
         }
 
         protected override bool IsInputKey(Keys keyData) => true;
@@ -1751,13 +2009,20 @@ internal sealed class SettingsForm : Form
                 e.Handled = false;
                 return;
             }
+            if (_allowEmpty && e.KeyCode is Keys.Delete or Keys.Back && e.Modifiers == Keys.None)
+            {
+                Value = "";
+                Text = "";
+                ValueChanged?.Invoke();
+                return;
+            }
             Apply(e.KeyCode, e.Modifiers);
         }
 
         protected override void OnKeyUp(KeyEventArgs e)
         {
             // Released without a main key: show the stored combination again.
-            if (Hotkey.TryParse(Value, out _) && Text.EndsWith('+')) Text = Hotkey.Display(Value);
+            if (Text.EndsWith('+')) Text = Hotkey.Display(Value);
         }
 
         protected override void OnLeave(EventArgs e)
@@ -1784,6 +2049,7 @@ internal sealed class SettingsForm : Form
             }
             Value = parsed.ToString();
             Text = parsed.ToDisplayString();
+            ValueChanged?.Invoke();
         }
     }
 }

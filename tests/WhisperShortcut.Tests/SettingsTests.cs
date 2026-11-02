@@ -576,4 +576,74 @@ public class QuickActionRequestTests
         Assert.True(Settings.Load(path, new PlainSecretProtector()).AutoUpdateCheck);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
+
+    private static string TempSettingsPath()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        return Path.Combine(dir, "settings.json");
+    }
+
+    [Fact]
+    public void Templates_RoundTrip()
+    {
+        var path = TempSettingsPath();
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Empty(s.Templates);
+        Assert.Equal("", s.TemplateHotkey);
+        Assert.Equal("", s.LastTemplateId);
+
+        var a = new DictationTemplate { Name = "Anamnese", Instructions = "Zeile 1\nZeile 2\n\nZeile 4", Hotkey = "Ctrl+Shift+1" };
+        var b = new DictationTemplate { Name = "Brief", Instructions = "Schreibe einen Brief.", Hotkey = "" };
+        s.Templates = new() { a, b };
+        s.TemplateHotkey = "Ctrl+Shift+T";
+        s.LastTemplateId = b.Id;
+        s.Save();
+
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(2, t.Templates.Count);
+        Assert.Equal(a.Id, t.Templates[0].Id);
+        Assert.Equal("Anamnese", t.Templates[0].Name);
+        Assert.Equal("Zeile 1\nZeile 2\n\nZeile 4", t.Templates[0].Instructions);
+        Assert.Equal("Ctrl+Shift+1", t.Templates[0].Hotkey);
+        Assert.Equal(b.Id, t.Templates[1].Id);
+        Assert.Equal("", t.Templates[1].Hotkey);
+        Assert.Equal("Ctrl+Shift+T", t.TemplateHotkey);
+        Assert.Equal(b.Id, t.LastTemplateId);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Templates_OldFileWithoutTheKeys_LoadsEmptyAndKeepsOtherFields()
+    {
+        var path = TempSettingsPath();
+        File.WriteAllText(path, "{\"dictateHotkey\":\"Ctrl+Shift+X\",\"glossary\":[\"Müller\"],\"sounds\":false}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Empty(s.Templates);
+        Assert.Equal("", s.TemplateHotkey);
+        Assert.Equal("", s.LastTemplateId);
+        Assert.Equal("Ctrl+Shift+X", s.DictateHotkey);
+        Assert.Equal(new[] { "Müller" }, s.Glossary);
+        Assert.False(s.Sounds);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Templates_EntryWithMissingIdAndNullFields_GetsFreshIdAndEmptyStrings()
+    {
+        var path = TempSettingsPath();
+        File.WriteAllText(path, "{\"templates\":[null,{\"name\":null,\"instructions\":null,\"hotkey\":null},{\"id\":\"  \",\"name\":\"X\",\"instructions\":\"a\\r\\nb\"}],\"templateHotkey\":null,\"glossary\":[\"G\"]}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(2, s.Templates.Count);
+        Assert.True(Guid.TryParse(s.Templates[0].Id, out _));
+        Assert.Equal("", s.Templates[0].Name);
+        Assert.Equal("", s.Templates[0].Instructions);
+        Assert.Equal("", s.Templates[0].Hotkey);
+        Assert.True(Guid.TryParse(s.Templates[1].Id, out _));
+        Assert.NotEqual(s.Templates[0].Id, s.Templates[1].Id);
+        Assert.Equal("a\nb", s.Templates[1].Instructions);
+        Assert.Equal("", s.TemplateHotkey);
+        Assert.Equal(new[] { "G" }, s.Glossary);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
 }

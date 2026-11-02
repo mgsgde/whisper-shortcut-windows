@@ -120,6 +120,15 @@ public sealed class Settings
     /// <summary>Hotkey that appends the selected text to the Glossary.</summary>
     public string GlossaryHotkey { get; set; } = "Ctrl+Shift+K";
 
+    /// <summary>Dictation templates ("Vorlagen"), in the order the user arranged them.</summary>
+    public List<DictationTemplate> Templates { get; set; } = new();
+
+    /// <summary>Generic hotkey that applies the last-used template; "" = unassigned.</summary>
+    public string TemplateHotkey { get; set; } = "";
+
+    /// <summary>Id of the template the generic hotkey applied last; "" = none yet.</summary>
+    public string LastTemplateId { get; set; } = "";
+
     /// <summary>Offline mode: dictation and Dictate Prompt run on this PC (Parakeet + local LLM).</summary>
     public bool OfflineMode { get; set; }
 
@@ -197,6 +206,9 @@ public sealed class Settings
             if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
             if (!string.IsNullOrWhiteSpace(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey;
             if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
+            s.Templates = LoadTemplates(dto.Templates);
+            s.TemplateHotkey = dto.TemplateHotkey ?? "";
+            s.LastTemplateId = dto.LastTemplateId ?? "";
             s.Microphone = dto.Microphone ?? "";
             s.OfflineMode = dto.OfflineMode ?? false;
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
@@ -220,6 +232,25 @@ public sealed class Settings
             try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
         }
         return s;
+    }
+
+    // Missing list = old file: no templates. Null entries are skipped; a blank id gets a fresh one.
+    private static List<DictationTemplate> LoadTemplates(List<TemplateDto?>? dtos)
+    {
+        var list = new List<DictationTemplate>();
+        if (dtos == null) return list;
+        foreach (var d in dtos)
+        {
+            if (d == null) continue;
+            list.Add(new DictationTemplate
+            {
+                Id = string.IsNullOrWhiteSpace(d.Id) ? DictationTemplate.NewId() : d.Id,
+                Name = d.Name ?? "",
+                Instructions = (d.Instructions ?? "").Replace("\r\n", "\n").Replace('\r', '\n'),
+                Hotkey = d.Hotkey ?? "",
+            });
+        }
+        return list;
     }
 
     // Unknown or missing = Gemini, the engine every old settings file used.
@@ -272,6 +303,12 @@ public sealed class Settings
             DictateHotkey = DictateHotkey,
             PromptHotkey = PromptHotkey,
             GlossaryHotkey = GlossaryHotkey,
+            Templates = Templates.Select(t => (TemplateDto?)new TemplateDto
+            {
+                Id = t.Id, Name = t.Name, Instructions = t.Instructions, Hotkey = t.Hotkey,
+            }).ToList(),
+            TemplateHotkey = TemplateHotkey,
+            LastTemplateId = LastTemplateId,
             Microphone = Microphone,
             OfflineMode = OfflineMode,
             OfflineLlmId = OfflineLlmId,
@@ -284,6 +321,14 @@ public sealed class Settings
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
         File.Move(tmp, _path, overwrite: true);
+    }
+
+    private sealed class TemplateDto
+    {
+        [JsonPropertyName("id")] public string? Id { get; set; }
+        [JsonPropertyName("name")] public string? Name { get; set; }
+        [JsonPropertyName("instructions")] public string? Instructions { get; set; }
+        [JsonPropertyName("hotkey")] public string? Hotkey { get; set; }
     }
 
     private sealed class Dto
@@ -313,6 +358,9 @@ public sealed class Settings
         [JsonPropertyName("dictateHotkey")] public string? DictateHotkey { get; set; }
         [JsonPropertyName("promptHotkey")] public string? PromptHotkey { get; set; }
         [JsonPropertyName("glossaryHotkey")] public string? GlossaryHotkey { get; set; }
+        [JsonPropertyName("templates")] public List<TemplateDto?>? Templates { get; set; }
+        [JsonPropertyName("templateHotkey")] public string? TemplateHotkey { get; set; }
+        [JsonPropertyName("lastTemplateId")] public string? LastTemplateId { get; set; }
         [JsonPropertyName("microphone")] public string? Microphone { get; set; }
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
         [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
