@@ -24,6 +24,12 @@ internal sealed class MicAudioSource : Core.IAudioSource
     /// <summary>Dictate Prompt sends the audio inline in one request, so it stays at 5 minutes.</summary>
     public static readonly TimeSpan PromptLimit = TimeSpan.FromMinutes(5);
 
+    /// <summary>
+    /// How long capture keeps running after Stop, so the last word is not cut off
+    /// (Mac: MenuBarController.audioTailCaptureDelay).
+    /// </summary>
+    public static readonly TimeSpan TailCapture = TimeSpan.FromMilliseconds(200);
+
     /// <summary>Raised (on a background thread) when the recording hits <see cref="MaxDuration"/>.</summary>
     public event Action? MaxDurationReached;
 
@@ -194,6 +200,9 @@ internal sealed class MicAudioSource : Core.IAudioSource
             if (_waveIn == null || _writer == null || _buffer == null) return Array.Empty<byte>();
             waveIn = _waveIn;
         }
+        // Keep the device open briefly so the last syllable after the hotkey is still captured.
+        // A max-duration stop already has everything; waiting would only add silence.
+        if (!_limitHit) await Task.Delay(TailCapture);
         try { waveIn.StopRecording(); } catch { /* already stopped after a device loss */ }
         await Task.WhenAny(_stopped!.Task, Task.Delay(2000));
 

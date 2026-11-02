@@ -28,5 +28,7 @@ public interface ISpeechProvider
 public interface ITextProvider
 {
     /// <summary>Applies <paramref name="instruction"/> to <paramref name="selection"/>; null/empty selection = compose. Raw model text.</summary>
-    Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default);
+    /// <param name="history">Earlier online edit turns to send (Mac: last 5, 5 min); null or empty = none.</param>
+    Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt,
+        CancellationToken ct = default, IReadOnlyList<PromptTurn>? history = null);
 }

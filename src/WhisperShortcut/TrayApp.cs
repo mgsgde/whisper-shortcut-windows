@@ -68,6 +68,7 @@ internal sealed class TrayApp : ApplicationContext
     private bool _glossaryBusy;
     private bool _globalHotkeysOn;
     private string _busyStatus = Core.UserCopy.Processing;
+    private readonly Core.PromptConversationMemory _promptMemory = new();
     private readonly Core.HotkeyPressGate _pressGate = new();
     private readonly System.Windows.Forms.Timer _keyUpTimer = new() { Interval = 30 };
     private Keys _armedKey;
@@ -746,7 +747,7 @@ internal sealed class TrayApp : ApplicationContext
             return "";
         }
         SetBusy(Core.UserCopy.EditingText);
-        var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct);
+        var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct, HistoryFor(selection));
 
         string? instruction = null;
         if (selection == null)
@@ -768,6 +769,7 @@ internal sealed class TrayApp : ApplicationContext
         // With a selection Gemini hears the instruction itself; there is no transcript to compare with.
         string text = Reply(await answer, instruction == null ? null : new[] { instruction, systemPrompt });
         Core.Log.Info($"Prompt: answer {text.Length} chars");
+        RememberPrompt(selection, instruction ?? Core.PromptConversationMemory.SpokenPlaceholder, text);
         if (text.Length == 0) Notify("Nichts erkannt", "Gemini hat keinen Text geliefert. Bitte die Anweisung noch einmal sprechen.", ToolTipIcon.Info);
         return text;
     }
@@ -799,6 +801,7 @@ internal sealed class TrayApp : ApplicationContext
         var sw = Stopwatch.StartNew();
         string text = Reply(await PromptTextAsync(selection, instruction, systemPrompt, ct), new[] { instruction, selection, systemPrompt });
         Core.Log.Info($"Prompt via transcript: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
+        RememberPrompt(selection, instruction, text);
         if (text.Length == 0) Notify("Nichts erkannt", "Das Sprachmodell hat keinen Text geliefert. Bitte die Anweisung noch einmal sprechen.", ToolTipIcon.Info);
         return text;
     }
@@ -840,6 +843,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         string text = Reply(raw, new[] { transcript, selection, quick, systemPrompt });
         Core.Log.Info($"Prompt quick action: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
+        RememberPrompt(target, instruction, text);
         if (text.Length == 0) Notify("Nichts erkannt", "Es kam kein Text zurück. Bitte noch einmal versuchen.", ToolTipIcon.Info);
         return text;
     }
@@ -868,6 +872,25 @@ internal sealed class TrayApp : ApplicationContext
             _ => TranscribeOnlineAsync(_gemini, wav, ct),
         };
 
+    /// <summary>
+    /// Earlier online edit turns to send with this request. Compose and Offline Mode send none
+    /// (Mac SpeechService.includesPromptHistory).
+    /// </summary>
+    private IReadOnlyList<Core.PromptTurn>? HistoryFor(string? selection)
+    {
+        if (!Core.PromptConversationMemory.Includes(isCompose: string.IsNullOrEmpty(selection), offline: _settings.OfflineMode))
+            return null;
+        var turns = _promptMemory.TurnsForApi();
+        return turns.Count == 0 ? null : turns;
+    }
+
+    /// <summary>Keeps a finished turn so "jetzt noch kürzer" still sees the previous edit.</summary>
+    private void RememberPrompt(string? selection, string instruction, string response)
+    {
+        if (!Core.PromptConversationMemory.Records(_settings.OfflineMode)) return;
+        _promptMemory.Append(selection, instruction, response);
+    }
+
     /// <summary>A text-only Dictate Prompt call with the chosen text engine.</summary>
     private Task<string> PromptTextAsync(string? selection, string instruction, string systemPrompt, CancellationToken ct)
     {
@@ -878,9 +901,9 @@ internal sealed class TrayApp : ApplicationContext
                     SetBusy(Core.UserCopy.LoadingLlm);
                 return _offline.PromptAsync(selection, instruction, systemPrompt, ct);
             case Core.Engine.OpenAI:
-                return _openAi.PromptTextAsync(selection, instruction, systemPrompt, ct);
+                return _openAi.PromptTextAsync(selection, instruction, systemPrompt, ct, HistoryFor(selection));
             default:
-                return _gemini.PromptTextAsync(selection, instruction, systemPrompt, ct);
+                return _gemini.PromptTextAsync(selection, instruction, systemPrompt, ct, HistoryFor(selection));
         }
     }
 
@@ -1210,6 +1233,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Sounds.Enabled = _settings.Sounds;
             _hotkeyCheckPending = true;
+            if (_settings.OfflineMode) _promptMemory.Clear();
             SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
             _offline.Prewarm(); // offline mode may just have been switched on
             _offline.GlossaryChanged(); // the Glossary may have been edited
@@ -1245,6 +1269,7 @@ internal sealed class TrayApp : ApplicationContext
             return;
         }
         _settings.OfflineMode = offline;
+        if (offline) _promptMemory.Clear();
         // Back to the chosen engines: they may need a key that was never entered.
         if (!offline && MissingKeyFor(Mode.Prompt) is { } provider)
         {

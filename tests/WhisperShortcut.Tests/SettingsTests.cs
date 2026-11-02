@@ -134,10 +134,12 @@ public class SettingsTests
     {
         var path = Tmp();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        File.WriteAllText(path, "{\"promptModel\":\"gemini-3.7-flash\",\"transcriptionModel\":\"quatsch\"}");
+        File.WriteAllText(path, "{\"promptModel\":\"gemini-3.7-flash\",\"transcriptionModel\":\"quatsch\",\"openAiPromptModel\":\"gpt-5\",\"openAiTranscriptionModel\":\"whisper-1\"}");
         var l = Settings.Load(path, new Reverse());
         Assert.Equal("gemini-3.8-flash", l.PromptModel);
         Assert.Equal(Settings.DefaultTranscriptionModel, l.TranscriptionModel);
+        Assert.Equal("gpt-6-sol", l.OpenAiPromptModel);
+        Assert.Equal("gpt-4o-transcribe", l.OpenAiTranscriptionModel);
     }
 
     [Fact]

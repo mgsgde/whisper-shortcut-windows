@@ -19,6 +19,12 @@ public sealed class ModelDownloader
     private readonly HttpClient _http;
 
     /// <summary>
+    /// How long a single Read may sit with no bytes before the download is treated as hung
+    /// (the Mac's stall watchdog). Tests set this to a few hundred milliseconds.
+    /// </summary>
+    public TimeSpan StallTimeout { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
     /// Creates the downloader. Use an HttpClient with a long (or infinite) <c>Timeout</c>: the
     /// per-request timeout would otherwise cut off multi-GB bodies; cancel through the token instead.
     /// </summary>
@@ -162,9 +168,11 @@ public sealed class ModelDownloader
         {
             try
             {
+                using var stall = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                stall.CancelAfter(StallTimeout);
                 using var req = new HttpRequestMessage(HttpMethod.Get, file.Url);
                 if (have > 0) req.Headers.Range = new RangeHeaderValue(have, null);
-                using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
+                using var resp = await _http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, stall.Token).ConfigureAwait(false);
 
                 if (have > 0 && resp.StatusCode == HttpStatusCode.OK)
                 {
@@ -177,14 +185,15 @@ public sealed class ModelDownloader
                     throw new OfflineDownloadException($"Download fehlgeschlagen: Server antwortet mit Status {(int)resp.StatusCode}.");
                 }
 
-                await using var net = await resp.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
+                await using var net = await resp.Content.ReadAsStreamAsync(stall.Token).ConfigureAwait(false);
                 await using var fs = new FileStream(part, have > 0 ? FileMode.Append : FileMode.Create,
                     FileAccess.Write, FileShare.Read, BufferSize, useAsync: true);
                 var buf = new byte[BufferSize];
                 while (true)
                 {
+                    stall.CancelAfter(StallTimeout);
                     int n;
-                    try { n = await net.ReadAsync(buf, ct).ConfigureAwait(false); }
+                    try { n = await net.ReadAsync(buf, stall.Token).ConfigureAwait(false); }
                     catch (IOException ex) { throw Network(ex); }
                     if (n == 0) break;
                     hash.AppendData(buf, 0, n);
@@ -192,6 +201,10 @@ public sealed class ModelDownloader
                     have += n;
                     bytes(have);
                 }
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                throw new OfflineDownloadException("Download hängt: der Server sendet keine Daten mehr.");
             }
             catch (HttpRequestException ex) { throw Network(ex); }
         }

@@ -132,10 +132,11 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// <param name="selection">Selected text, or null/empty for a compose turn.</param>
     /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> PromptAsync(byte[] wav, string? selection, string? customSystemPrompt, CancellationToken ct = default)
+    public async Task<string> PromptAsync(byte[] wav, string? selection, string? customSystemPrompt,
+        CancellationToken ct = default, IReadOnlyList<PromptTurn>? history = null)
     {
         var model = _promptModel();
-        var body = await Task.Run(() => BuildPromptBodyUtf8(wav, selection, customSystemPrompt), ct).ConfigureAwait(false);
+        var body = await Task.Run(() => BuildPromptBodyUtf8(wav, selection, customSystemPrompt, history), ct).ConfigureAwait(false);
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
@@ -148,10 +149,11 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// <param name="instruction">The instruction as text (a quick action, optionally with spoken additions).</param>
     /// <param name="customSystemPrompt">User's own system prompt; null/empty = default.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct = default)
+    public async Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt,
+        CancellationToken ct = default, IReadOnlyList<PromptTurn>? history = null)
     {
         var model = _promptModel();
-        var body = BuildPromptTextBodyUtf8(selection, instruction, customSystemPrompt);
+        var body = BuildPromptTextBodyUtf8(selection, instruction, customSystemPrompt, history);
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
@@ -214,14 +216,15 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         return writer.WrittenSpan.ToArray();
     }
 
-    internal static byte[] BuildPromptBodyUtf8(byte[] wav, string? selection, string? customSystemPrompt)
+    internal static byte[] BuildPromptBodyUtf8(byte[] wav, string? selection, string? customSystemPrompt,
+        IReadOnlyList<PromptTurn>? history = null)
     {
         var system = DictatePromptText.SystemPrompt(customSystemPrompt);
         var selectionText = DictatePromptText.SelectionBlock(selection);
-        var writer = new ArrayBufferWriter<byte>(JsonCapacity(wav.Length, system.Length + selectionText.Length));
+        var writer = new ArrayBufferWriter<byte>(JsonCapacity(wav.Length, system.Length + selectionText.Length + HistoryChars(history)));
         using (var w = new Utf8JsonWriter(writer))
         {
-            WritePromptEnvelope(w, system, () =>
+            WritePromptEnvelope(w, system, history, () =>
             {
                 w.WriteStartObject();
                 w.WriteString("text", selectionText);
@@ -232,14 +235,15 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         return writer.WrittenSpan.ToArray();
     }
 
-    internal static byte[] BuildPromptTextBodyUtf8(string? selection, string instruction, string? customSystemPrompt)
+    internal static byte[] BuildPromptTextBodyUtf8(string? selection, string instruction, string? customSystemPrompt,
+        IReadOnlyList<PromptTurn>? history = null)
     {
         var system = DictatePromptText.SystemPrompt(customSystemPrompt);
         var user = DictatePromptText.LocalUserTurn(selection, instruction);
-        var writer = new ArrayBufferWriter<byte>(JsonCapacity(0, system.Length + user.Length));
+        var writer = new ArrayBufferWriter<byte>(JsonCapacity(0, system.Length + user.Length + HistoryChars(history)));
         using (var w = new Utf8JsonWriter(writer))
         {
-            WritePromptEnvelope(w, system, () =>
+            WritePromptEnvelope(w, system, history, () =>
             {
                 w.WriteStartObject();
                 w.WriteString("text", user);
@@ -250,7 +254,8 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     }
 
     // Shared by the audio and the text-only prompt call so both keep the same system prompt and thinking level.
-    private static void WritePromptEnvelope(Utf8JsonWriter w, string system, Action writeUserParts)
+    // Earlier turns (PromptConversationMemory) go before the new one as user/model pairs.
+    private static void WritePromptEnvelope(Utf8JsonWriter w, string system, IReadOnlyList<PromptTurn>? history, Action writeUserParts)
     {
         w.WriteStartObject();
         w.WritePropertyName("systemInstruction");
@@ -264,6 +269,11 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         w.WriteEndObject();
         w.WritePropertyName("contents");
         w.WriteStartArray();
+        foreach (var turn in history ?? Array.Empty<PromptTurn>())
+        {
+            WriteTextTurn(w, "user", DictatePromptText.LocalUserTurn(turn.SelectedText, turn.UserInstruction));
+            WriteTextTurn(w, "model", turn.ModelResponse);
+        }
         w.WriteStartObject();
         w.WriteString("role", "user");
         w.WritePropertyName("parts");
@@ -284,6 +294,22 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         w.WriteEndObject();
         w.WriteEndObject();
     }
+
+    private static void WriteTextTurn(Utf8JsonWriter w, string role, string text)
+    {
+        w.WriteStartObject();
+        w.WriteString("role", role);
+        w.WritePropertyName("parts");
+        w.WriteStartArray();
+        w.WriteStartObject();
+        w.WriteString("text", text);
+        w.WriteEndObject();
+        w.WriteEndArray();
+        w.WriteEndObject();
+    }
+
+    private static int HistoryChars(IReadOnlyList<PromptTurn>? history) =>
+        history?.Sum(t => (t.SelectedText?.Length ?? 0) + t.UserInstruction.Length + t.ModelResponse.Length + 64) ?? 0;
 
     private static void WriteAudioPart(Utf8JsonWriter w, byte[] wav)
     {

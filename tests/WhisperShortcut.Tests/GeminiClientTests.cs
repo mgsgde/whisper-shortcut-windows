@@ -103,6 +103,27 @@ public class GeminiClientTests
     }
 
     [Fact]
+    public async Task PromptText_WithHistory_PrependsEarlierTurns()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        var history = new[]
+        {
+            new PromptTurn("Lang", "kürzer", "Kurz", DateTime.UtcNow),
+        };
+        await c.PromptTextAsync("Kurz", "jetzt höflicher", null, history: history);
+
+        var contents = h.Json(0)["contents"]!.AsArray();
+        Assert.Equal(3, contents.Count);
+        Assert.Equal("user", (string)contents[0]!["role"]!);
+        Assert.Equal(DictatePromptText.LocalUserTurn("Lang", "kürzer"), (string)contents[0]!["parts"]![0]!["text"]!);
+        Assert.Equal("model", (string)contents[1]!["role"]!);
+        Assert.Equal("Kurz", (string)contents[1]!["parts"]![0]!["text"]!);
+        Assert.Equal("user", (string)contents[2]!["role"]!);
+        Assert.Equal(DictatePromptText.LocalUserTurn("Kurz", "jetzt höflicher"), (string)contents[2]!["parts"]![0]!["text"]!);
+    }
+
+    [Fact]
     public async Task PromptWithoutSelection_UsesComposeMarker_AndCustomPrompt()
     {
         var (c, h) = Make();

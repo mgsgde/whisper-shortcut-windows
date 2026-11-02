@@ -28,6 +28,10 @@ public class OpenAiModelsTests
     [InlineData("gpt-6-luna", "gpt-6-luna")]
     [InlineData("gpt-5.4-mini", "gpt-5.4-mini")]
     [InlineData("gpt-4o", "gpt-6-sol")]
+    [InlineData("gpt-5", "gpt-6-sol")]
+    [InlineData("gpt-5.6-sol", "gpt-6-sol")]
+    [InlineData("gpt-5-mini", "gpt-5.4-mini")]
+    [InlineData("gpt-5.6-luna", "gpt-6-luna")]
     [InlineData("gpt-4o-transcribe", "gpt-6-sol")]
     [InlineData(null, "gpt-6-sol")]
     public void NormalizePrompt(string? id, string expected) =>

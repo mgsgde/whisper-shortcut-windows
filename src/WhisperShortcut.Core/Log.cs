@@ -67,10 +67,17 @@ public static class Log
 
     private static void RotateIfNeeded(string path)
     {
-        var info = new FileInfo(path);
-        if (!info.Exists || info.Length < MaxFileBytes) return;
-        var bak = path + ".1";
-        File.Delete(bak);
-        File.Move(path, bak);
+        try
+        {
+            var info = new FileInfo(path);
+            if (!info.Exists || info.Length < MaxFileBytes) return;
+            var bak = path + ".1";
+            File.Delete(bak);
+            File.Move(path, bak);
+        }
+        catch
+        {
+            // A failed rotate must not block the write that follows.
+        }
     }
 }
