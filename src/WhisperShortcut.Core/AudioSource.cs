@@ -82,6 +82,29 @@ public static class CaptureWatchdog
 /// <summary>Helpers for WAV bytes.</summary>
 public static class Wav
 {
+    /// <summary>Encodes mono 16-bit samples as a standalone WAV (44-byte PCM header), same layout as the chunker's pieces.</summary>
+    public static byte[] Encode16(ReadOnlySpan<short> samples, int sampleRate)
+    {
+        var length = samples.Length * 2;
+        var pcm = new byte[44 + length];
+        System.Text.Encoding.ASCII.GetBytes("RIFF").CopyTo(pcm, 0);
+        BinaryPrimitives.WriteInt32LittleEndian(pcm.AsSpan(4), 36 + length);
+        System.Text.Encoding.ASCII.GetBytes("WAVE").CopyTo(pcm, 8);
+        System.Text.Encoding.ASCII.GetBytes("fmt ").CopyTo(pcm, 12);
+        BinaryPrimitives.WriteInt32LittleEndian(pcm.AsSpan(16), 16);
+        BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(20), 1);
+        BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(22), 1);
+        BinaryPrimitives.WriteInt32LittleEndian(pcm.AsSpan(24), sampleRate);
+        BinaryPrimitives.WriteInt32LittleEndian(pcm.AsSpan(28), sampleRate * 2);
+        BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(32), 2);
+        BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(34), 16);
+        System.Text.Encoding.ASCII.GetBytes("data").CopyTo(pcm, 36);
+        BinaryPrimitives.WriteInt32LittleEndian(pcm.AsSpan(40), length);
+        for (var i = 0; i < samples.Length; i++)
+            BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(44 + i * 2), samples[i]);
+        return pcm;
+    }
+
     // Little-endian fourccs: avoids Encoding.ASCII.GetString on every chunk of a long file.
     private const uint IdFmt = 0x20746D66; // "fmt "
     private const uint IdData = 0x61746164; // "data"

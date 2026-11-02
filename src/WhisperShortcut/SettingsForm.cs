@@ -1888,6 +1888,8 @@ internal sealed class SettingsForm : Form
     private bool CheckTemplateKeys(Hotkey[] app)
     {
         var taken = new List<(string Owner, Hotkey Key)> { ("Diktieren", app[0]), ("Text bearbeiten", app[1]), ("Glossar", app[2]) };
+        // The Live Meeting key is set from the tray menu, not here, but it is just as taken.
+        if (Hotkey.TryParse(_settings.MeetingHotkey, out var meetingKey)) taken.Add(("Live Meeting", meetingKey));
         const string Rule = "Bitte ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+V, oder es mit Entf entfernen. "
             + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
         if (_screenshotKey.Value.Length > 0)

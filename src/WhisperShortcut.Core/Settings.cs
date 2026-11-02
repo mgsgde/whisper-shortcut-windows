@@ -138,6 +138,15 @@ public sealed class Settings
     /// <summary>Id of the template the generic hotkey applied last; "" = none yet.</summary>
     public string LastTemplateId { get; set; } = "";
 
+    /// <summary>Hotkey that starts/stops a Live Meeting. Empty = no hotkey (unassigned by default).</summary>
+    public string MeetingHotkey { get; set; } = "";
+
+    /// <summary>Which audio a Live Meeting records: "auto", "mic" or "mix" (see <see cref="MeetingAudioRouting"/>).</summary>
+    public string MeetingAudioMode { get; set; } = "auto";
+
+    /// <summary>Write a summary when a Live Meeting ends.</summary>
+    public bool MeetingSummary { get; set; } = true;
+
     /// <summary>Offline mode: dictation and Dictate Prompt run on this PC (Parakeet + local LLM).</summary>
     public bool OfflineMode { get; set; }
 
@@ -221,6 +230,9 @@ public sealed class Settings
             s.ScreenshotHotkey = dto.ScreenshotHotkey ?? "";
             s.LastTemplateId = dto.LastTemplateId ?? "";
             s.Microphone = dto.Microphone ?? "";
+            s.MeetingHotkey = dto.MeetingHotkey ?? "";
+            s.MeetingAudioMode = MeetingAudioRouting.Name(MeetingAudioRouting.Parse(dto.MeetingAudioMode));
+            s.MeetingSummary = dto.MeetingSummary ?? true;
             s.OfflineMode = dto.OfflineMode ?? false;
             s.OfflineLlmId = dto.OfflineLlmId ?? "";
             s.AutoPaste = dto.AutoPaste ?? true;
@@ -323,6 +335,9 @@ public sealed class Settings
             ScreenshotHotkey = ScreenshotHotkey,
             LastTemplateId = LastTemplateId,
             Microphone = Microphone,
+            MeetingHotkey = MeetingHotkey,
+            MeetingAudioMode = MeetingAudioMode,
+            MeetingSummary = MeetingSummary,
             OfflineMode = OfflineMode,
             OfflineLlmId = OfflineLlmId,
             QuickActions = QuickActions,
@@ -377,6 +392,9 @@ public sealed class Settings
         [JsonPropertyName("screenshotHotkey")] public string? ScreenshotHotkey { get; set; }
         [JsonPropertyName("lastTemplateId")] public string? LastTemplateId { get; set; }
         [JsonPropertyName("microphone")] public string? Microphone { get; set; }
+        [JsonPropertyName("meetingHotkey")] public string? MeetingHotkey { get; set; }
+        [JsonPropertyName("meetingAudioMode")] public string? MeetingAudioMode { get; set; }
+        [JsonPropertyName("meetingSummary")] public bool? MeetingSummary { get; set; }
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
         [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
         [JsonPropertyName("quickActions")] public List<string>? QuickActions { get; set; }

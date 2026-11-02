@@ -50,10 +50,15 @@ melden, Mit Windows starten — in `main`.
 
 ## C. Funktionen, die es auf Windows gar nicht gibt (Umfang)
 
-Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle, Vorlesen, Screenshot, Live-Meeting,
+Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle, Vorlesen, Screenshot,
 MCP-Server, Smart Improvement und Interaktionslog, Schreibstil pro App, weitere Anbieter (Grok,
 OpenRouter, Anthropic, eigener Server), Telemetrie, Welcome-Tour
 über den ersten Start hinaus, Fn-Taste.
+
+**Nachtrag 02.11.2026:** Live-Meeting ist da (Mikrofon + PC-Ton per WASAPI-Loopback, Modus Automatisch /
+Nur Mikrofon / Mikrofon + PC-Ton, Abschnitte bis 60 s mit Schnitt in Pausen wie auf dem Mac, Ton fehlgeschlagener
+Abschnitte bleibt und wird nachgetragen, Ordner pro Meeting mit `transcript.md`, `meeting.json`, `summary.md`).
+Lese-API für den MCP-Server: `MeetingStore` in Core. Ohne Chat-Fenster, Live-Notizen und Sprecher-Zuordnung.
 
 Parakeet: Windows lädt NVIDIA TDT 0.6B v3 (int8, sherpa-onnx). Der Mac empfiehlt Parakeet Ultra
 (Moondream-Retrain, FluidAudio). Gleiche Familie, nicht dasselbe Gewicht.
