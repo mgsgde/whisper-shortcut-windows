@@ -159,7 +159,7 @@ internal sealed class SettingsForm : Form
             Core.KeyCheck.Forbidden => ("✗ Google kennt den Schlüssel, lässt ihn aber nicht an Gemini. In Google AI Studio einen neuen Schlüssel erstellen.", Tone.Bad),
             Core.KeyCheck.NoConnection => ("Keine Verbindung zu Google. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
             _ => ("Google hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
-        });
+        }, k => SaveCheckedKey(k, gemini: true));
         AddKeyCard(general, _geminiKey, "Gemini-API-Schlüssel", "Bitte einen Schlüssel aus einem Google-Projekt mit Abrechnung verwenden: "
             + "Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen.",
             "Schlüssel in Google AI Studio erstellen", "https://aistudio.google.com/apikey");
@@ -170,7 +170,7 @@ internal sealed class SettingsForm : Form
             Core.KeyCheck.Forbidden => ("✗ OpenAI kennt den Schlüssel, er darf aber keine Modelle benutzen. Rechte des Projekts prüfen.", Tone.Bad),
             Core.KeyCheck.NoConnection => ("Keine Verbindung zu OpenAI. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
             _ => ("OpenAI hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
-        });
+        }, k => SaveCheckedKey(k, gemini: false));
         AddKeyCard(general, _openAiKey, "OpenAI-API-Schlüssel", "Ein API-Schlüssel mit Guthaben auf platform.openai.com. "
             + "Ein ChatGPT-Abo zählt dafür nicht.",
             "Schlüssel bei OpenAI erstellen", "https://platform.openai.com/api-keys");
@@ -1037,6 +1037,36 @@ internal sealed class SettingsForm : Form
             if (key.Card.Visible && key.Value.Length > 0) _ = key.CheckAsync();
     }
 
+    /// <summary>
+    /// A key the check confirmed is saved right away, on its own: pasting it is the whole job, nobody
+    /// expects a Speichern after a green tick. Other edits in the window stay unsaved. True when newly saved.
+    /// </summary>
+    private bool SaveCheckedKey(string key, bool gemini)
+    {
+        var before = gemini ? _settings.ApiKey : _settings.OpenAiKey;
+        if (key == before || _snapshot.Length == 0) return false;
+        if (gemini) _settings.ApiKey = key; else _settings.OpenAiKey = key;
+        try
+        {
+            _settings.Save();
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error($"Saving the checked key failed: {e.GetType().Name}");
+            if (gemini) _settings.ApiKey = before; else _settings.OpenAiKey = before;
+            return false;
+        }
+        Core.Log.Info($"{(gemini ? "Gemini" : "OpenAI")} key saved after a successful check");
+        // The key is no longer an unsaved change; everything else keeps its state (fields as in Snapshot()).
+        var parts = _snapshot.Split('\u0001');
+        parts[gemini ? 2 : 3] = key;
+        _snapshot = string.Join('\u0001', parts);
+        _savedHintUntil = Environment.TickCount64 + 3000;
+        UpdateSaveState();
+        Saved?.Invoke();
+        return true;
+    }
+
     /// <summary>One API key: the field, Anzeigen / Prüfen, and a check that runs while the key is pasted.</summary>
     private sealed class KeyField : IDisposable
     {
@@ -1048,14 +1078,17 @@ internal sealed class SettingsForm : Form
 
         private readonly Func<string, CancellationToken, Task<Core.KeyCheck>> _check;
         private readonly Func<Core.KeyCheck, (string Text, Tone Tone)> _message;
+        private readonly Func<string, bool> _commit;
         private readonly System.Windows.Forms.Timer _debounce = new() { Interval = 700 };
         private CancellationTokenSource? _cts;
 
+        /// <param name="commit">Saves a key the check confirmed; true when it was not saved before.</param>
         public KeyField(string value, Func<string, CancellationToken, Task<Core.KeyCheck>> check,
-            Func<Core.KeyCheck, (string Text, Tone Tone)> message)
+            Func<Core.KeyCheck, (string Text, Tone Tone)> message, Func<string, bool> commit)
         {
             _check = check;
             _message = message;
+            _commit = commit;
             Box = new TextBox { UseSystemPasswordChar = true, Text = value };
             // Pasting a key is the moment to know whether it works, not after Speichern.
             Box.TextChanged += (_, _) =>
@@ -1088,6 +1121,8 @@ internal sealed class SettingsForm : Form
             }
             if (cts.IsCancellationRequested || Box.IsDisposed) return;
             var (text, tone) = _message(result);
+            // Value may have changed while Google answered: only the key that was checked is saved.
+            if (result == Core.KeyCheck.Ok && key == Value && _commit(key)) text = "✓ Schlüssel funktioniert und ist gespeichert";
             SetStatus(text, tone);
         }
 
