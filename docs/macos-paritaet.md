@@ -50,8 +50,8 @@ melden, Mit Windows starten — in `main`.
 
 ## C. Funktionen, die es auf Windows gar nicht gibt (Umfang)
 
-Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle, Vorlesen, Screenshot,
-MCP-Server, Smart Improvement und Interaktionslog, Schreibstil pro App, weitere Anbieter (Grok,
+Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle, Vorlesen,
+Smart Improvement und Interaktionslog, Schreibstil pro App, weitere Anbieter (Grok,
 OpenRouter, Anthropic, eigener Server), Telemetrie, Welcome-Tour
 über den ersten Start hinaus, Fn-Taste.
 
@@ -75,7 +75,7 @@ nicht eingefügt, OpenAI und Gemini gemischt wählbar, Update mit ECDSA-Signatur
 1. Stücke schon während der Aufnahme (B7) — größter spürbarer Gewinn bei langen Diktaten.
 2. Overlay: getippte Anweisung + 9 Schnellanweisungen (B8–B9).
 3. Kürzel abschaltbar, abgebrochene Aufnahme behalten (B10, B12).
-4. Danach Umfang: MCP, Vorlesen, Screenshot; Chat zuletzt.
+4. Danach Umfang: Vorlesen; Chat zuletzt (Screenshot, Live-Meeting und MCP sind nachgezogen, siehe unten).
 
 ## Nachtrag 02.11.2026: Diktiervorlagen (Mac v8.72)
 
@@ -95,3 +95,14 @@ die Zwischenablage, die danach sofort wiederhergestellt wird, und geht einmal mi
 Vorlage an Gemini bzw. OpenAI; nach 5 Minuten ungenutzt wird es verworfen. Ab Werk aus (Schalter „Screenshots
 mitsenden“, Patientendaten), offline und mit dem lokalen Sprachmodell gesperrt. Anders als auf dem Mac: kein
 Bildschirmfoto ohne eigene Auswahl, das Kürzel wirkt nur, wenn keine Aufnahme läuft.
+
+## E. MCP-Server (Stand 02.11.2026)
+
+Da, unter Einstellungen → Claude & KI-Apps (`src/WhisperShortcut.Core/Mcp/`, `McpService.cs`). Gleiche Namen und
+Semantik wie `WhisperShortcut/MCP/` auf dem Mac: `get_configuration` (mit `tune_recipe`), `get_settings` /
+`update_settings`, `add_glossary_terms`, `update_system_prompt` (`dictation`, `dictate_prompt`), `report_problem`,
+`get_proposal_status`, Prompt `tune_whisper_shortcut`, Ressourcen `whisper-shortcut://…`, Zugriffsstufen
+read/propose/apply mit Änderungsliste und Undo, zwei Schlüssel (lesen / ändern, DPAPI). Nur auf Windows:
+`update_quick_instructions`, Anbieterwahl (`dictation.engine`, `dictate_prompt.engine`). Bewusst nicht: Schlüssel,
+Offline-Modus und Mikrofon über KI-Apps. Fehlt noch: Meeting-Werkzeuge (eigener Provider auf `MeetingStore`, der
+jetzt da ist), Vorlagen-Werkzeug (Vorlagen sind jetzt da), `get_recent_interactions` (Windows speichert keine Diktate), Codex.

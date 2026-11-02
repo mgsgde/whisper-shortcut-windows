@@ -88,6 +88,7 @@ internal sealed class TrayApp : ApplicationContext
     private Core.ScreenshotImage? _runShot;
     private CancellationTokenSource? _snipCts;
     private readonly MeetingController _meeting;
+    private readonly McpService _mcp;
 
     public TrayApp(string? testWav, bool fakeGemini)
     {
@@ -164,6 +165,8 @@ internal sealed class TrayApp : ApplicationContext
         // One left click opens the settings (Click alone would also fire on right click, which opens the menu).
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
         _icon.BalloonTipClicked += (_, _) => _balloonClick?.Invoke();
+        _mcp = new McpService(_settings, _ui, () => _state != State.Idle, () => _settingsForm?.HasUnsavedChanges == true, AfterMcpApply);
+        _mcp.StartIfEnabled();
 
         _keyUpTimer.Tick += (_, _) => PollArmedKey();
         _shotExpiry.Tick += (_, _) =>
@@ -1533,7 +1536,7 @@ internal sealed class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, welcome);
+        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, welcome, _mcp);
         // Activation messages can still arrive after FormClosed: only the open window may re-evaluate.
         _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.
@@ -1548,6 +1551,7 @@ internal sealed class TrayApp : ApplicationContext
             _offline.Prewarm(); // offline mode may just have been switched on
             _offline.GlossaryChanged(); // the Glossary may have been edited
             DropScreenshotIfNotAllowed();
+            _mcp.SyncOfflineMode();
         };
         _settingsForm.FormClosed += (_, _) =>
         {
@@ -1591,6 +1595,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         TrySave();
         Core.Log.Info($"Tray: offline mode {(offline ? "on" : "off")}");
+        _mcp.SyncOfflineMode();
         _offline.Prewarm();
         SetState(_state);
         _overlay.ShowDone(offline ? "Offline: nichts verlässt den PC" : EnginesLabel(), neutral: true);
@@ -1603,6 +1608,34 @@ internal sealed class TrayApp : ApplicationContext
         var (speech, text) = (_settings.EffectiveSpeechEngine, _settings.EffectiveTextEngine);
         if (speech == Core.Engine.Local && text == Core.Engine.Local) return "Alles auf diesem PC";
         return speech == text ? $"Online mit {Name(speech)}" : $"Sprache: {Name(speech)} · Text: {Name(text)}";
+    }
+
+    /// <summary>
+    /// An AI app changed the settings (directly, through an accepted suggestion, or an Undo): apply them like
+    /// „Speichern“ does. An open settings window still shows the old values, so it reopens on the same page;
+    /// writes wait while it has unsaved edits (<see cref="McpService.WriteBlockedReason"/>), so nothing is lost.
+    /// </summary>
+    private void AfterMcpApply()
+    {
+        Sounds.Enabled = _settings.Sounds;
+        if (_globalHotkeysOn) RegisterHotkeys(); // a hotkey may have changed; otherwise they register when the window leaves the front
+        SetState(_state);
+        _offline.Prewarm(); // the engine may have been switched to this PC
+        _offline.GlossaryChanged();
+        DropScreenshotIfNotAllowed(); // a local text engine must not get a held screenshot later
+        if (_settingsForm is not { IsDisposed: false } form) return;
+        _ui.Post(_ =>
+        {
+            if (_settingsForm != form || form.HasUnsavedChanges) return;
+            var (page, location) = (form.CurrentPage, form.Location);
+            form.CloseDiscarding();
+            ShowSettings();
+            if (_settingsForm is { } fresh)
+            {
+                fresh.Location = location;
+                fresh.ShowPage(page);
+            }
+        }, null);
     }
 
     private void TrySave()
@@ -1640,6 +1673,7 @@ internal sealed class TrayApp : ApplicationContext
         _meeting.Dispose();
         _hotkeys.Dispose();
         _offline.Dispose();
+        _mcp.Dispose();
         ExitThread();
     }
 }
