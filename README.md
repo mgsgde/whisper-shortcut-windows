@@ -15,6 +15,13 @@ sprechen, der Text steht dort, wo der Cursor blinkt. Läuft als Symbol im Infobe
 - **Online oder offline:** online mit Google Gemini oder OpenAI (eigener API-Schlüssel), offline komplett auf dem PC
   (Parakeet für die Spracherkennung, ein lokales Sprachmodell über llama.cpp). Offline verlässt nichts den PC.
   Gemischt geht auch, pro Schritt wählbar: z. B. Spracherkennung auf dem PC, Texte bearbeiten online.
+- **Claude & KI-Apps:** Claude Desktop oder Claude Code kann WhisperShortcut einrichten („Richte mein Diktieren
+  ein“): Namen und Fachwörter ins Glossar, Anweisungen und Schnellanweisungen vorschlagen, Modelle, Anbieter und
+  Tastenkürzel anpassen. Einschalten unter Einstellungen → Claude & KI-Apps, dann „Verbinden“ (Claude Desktop braucht
+  Node.js). Wählbar: nur lesen, jede Änderung bestätigen oder direkt übernehmen (mit Liste und „Rückgängig“); neue
+  Anweisungen warten immer auf die Bestätigung. Nur auf diesem PC erreichbar (127.0.0.1), mit Zugangsschlüssel,
+  im Offline-Modus pausiert. Diktate, Aufnahmen und API-Schlüssel gibt die App nicht heraus. Dieselben Werkzeuge wie
+  auf dem Mac (`get_configuration`, `add_glossary_terms`, `update_settings`, …), damit dieselben Prompts funktionieren.
 
 ## Download
 

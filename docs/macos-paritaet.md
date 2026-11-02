@@ -42,7 +42,7 @@ Benachrichtigungs-Einstellungen, Bestätigung bei langen Aufnahmen, Englische Ob
 ## C. Funktionen, die es auf Windows gar nicht gibt (Umfang, nicht „abgespeckt“)
 
 Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle (~25k Zeilen Swift, XL), Vorlesen (M), Screenshot (S–M),
-Live-Meeting (L, auch auf dem Mac nur Mikrofon), MCP-Server für KI-Apps (L, ohne Chat sinnvoll), Smart Improvement
+Live-Meeting (L, auch auf dem Mac nur Mikrofon), Smart Improvement
 und Interaktionslog (L/M), Schreibstil pro App (M), weitere Anbieter (OpenAI, Grok, OpenRouter, eigener Server; M),
 Telemetrie (S–M).
 
@@ -59,4 +59,15 @@ Tasten, Diktate nicht im Win+V-Verlauf, Schlüssel im Header statt URL, SHA-256-
    Modell-ID-Migration, Zwischenablage komplett sichern. Klein bis mittel, größter Nutzen.
 2. `feat/settings-sidebar` mergen, CC-BY-Danksagung ergänzen.
 3. Gesprächsgedächtnis im Prompt-Modus, Stücke schon während der Aufnahme.
-4. Danach Umfang: MCP-Server, Vorlesen, Screenshot; Chat zuletzt.
+4. Danach Umfang: Vorlesen, Screenshot; Chat zuletzt.
+
+## E. MCP-Server (Stand 02.11.2026)
+
+Da, unter Einstellungen → Claude & KI-Apps (`src/WhisperShortcut.Core/Mcp/`, `McpService.cs`). Gleiche Namen und
+Semantik wie `WhisperShortcut/MCP/` auf dem Mac: `get_configuration` (mit `tune_recipe`), `get_settings` /
+`update_settings`, `add_glossary_terms`, `update_system_prompt` (`dictation`, `dictate_prompt`), `report_problem`,
+`get_proposal_status`, Prompt `tune_whisper_shortcut`, Ressourcen `whisper-shortcut://…`, Zugriffsstufen
+read/propose/apply mit Änderungsliste und Undo, zwei Schlüssel (lesen / ändern, DPAPI). Nur auf Windows:
+`update_quick_instructions`, Anbieterwahl (`dictation.engine`, `dictate_prompt.engine`). Bewusst nicht: Schlüssel,
+Offline-Modus und Mikrofon über KI-Apps. Fehlt noch: Meeting-Werkzeuge (eigener Provider, sobald `MeetingStore`
+da ist), Vorlagen-Werkzeug (nach PR #26), `get_recent_interactions` (Windows speichert keine Diktate), Codex.

@@ -8,7 +8,7 @@ namespace WhisperShortcut;
 /// left (Allgemein, Diktieren, Dictate Prompt, Glossar, Offline, Info), the page on the right as
 /// rounded cards, Speichern/Abbrechen below. Light or dark follows Windows. German UI.
 /// </summary>
-internal sealed class SettingsForm : Form
+internal sealed partial class SettingsForm : Form
 {
     private readonly Core.Settings _settings;
     private readonly OfflineEngine _offline;
@@ -80,7 +80,7 @@ internal sealed class SettingsForm : Form
     private static readonly (string Name, string Icon)[] Pages =
     {
         (General, ""), (DictatePage, ""), (PromptPage, ""),
-        (GlossaryPage, ""), (OfflinePage, ""), (InfoPage, ""),
+        (GlossaryPage, ""), (OfflinePage, ""), (AiAppsPage, "\uE8F2"), (InfoPage, ""),
     };
 
     // Inset (96 dpi) of a description inside a card row with a control of this width on the right.
@@ -88,7 +88,7 @@ internal sealed class SettingsForm : Form
     private const int KeyWidth = 200, ComboWidth = 300, ToggleWidth = 88, ButtonWidth = 120;
 
     /// <param name="welcome">First start: a short "what to do now" box on top of the first page.</param>
-    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, UpdateService updates, bool welcome = false)
+    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, UpdateService updates, bool welcome = false, McpService? mcp = null)
     {
         _settings = settings;
         _updates = updates;
@@ -399,6 +399,9 @@ internal sealed class SettingsForm : Form
             // Switching to online shows the key field: say right away whether the stored key works.
             if (_onlineMode.Checked && IsHandleCreated) CheckVisibleKeys();
         };
+
+        // ================= page: Claude & KI-Apps (SettingsForm.AiApps.cs) =================
+        BuildAiAppsPage(mcp);
 
         // ================= page: Info =================
         BuildInfoPage();
