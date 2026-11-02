@@ -60,3 +60,13 @@ Tasten, Diktate nicht im Win+V-Verlauf, Schlüssel im Header statt URL, SHA-256-
 2. `feat/settings-sidebar` mergen, CC-BY-Danksagung ergänzen.
 3. Gesprächsgedächtnis im Prompt-Modus, Stücke schon während der Aufnahme.
 4. Danach Umfang: MCP-Server, Vorlesen, Screenshot; Chat zuletzt.
+
+## Nachtrag 02.11.2026: Diktiervorlagen (Mac v8.72)
+
+Nachgezogen: Seite „Vorlagen“ (Name, Format-Anweisungen, optional eigenes Kürzel), allgemeines Kürzel für die
+zuletzt benutzte Vorlage (ab Werk frei). Eine Vorlagen-Aufnahme ist ein eigener Durchlauf: Die Anweisungen der
+Vorlage sind der ganze System-Prompt, die Anweisungen, die „Vorlage für neue Texte“ und die Schnellanweisungen
+von „Text bearbeiten“ gelten nicht; eine Markierung wird in das Format gebracht. Anders als auf dem Mac: keine
+Auswahl mit 1, 2, 3 während der Aufnahme (das allgemeine Kürzel nimmt die zuletzt benutzte), und die Aufnahme
+geht immer erst durch die Spracherkennung (in Stücken) und dann als Text ans Sprachmodell, damit auch mehrminütige
+Befunde vollständig ankommen.

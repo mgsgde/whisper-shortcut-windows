@@ -47,6 +47,13 @@ public sealed class LocalLlmClient
 {
     private static readonly Regex Think = new(@"<think>.*?</think>", RegexOptions.Singleline | RegexOptions.CultureInvariant);
 
+    /// <summary>
+    /// Output-token limit of a dictation-template turn. WHY: a several-minute dictation comes back about as long as
+    /// it went in (roughly 5-6k tokens for ten minutes of speech), so the 4096 default would cut it off; the
+    /// server runs with -c 16384, which holds this plus the transcript.
+    /// </summary>
+    public const int TemplateMaxTokens = 8192;
+
     private readonly HttpClient _http;
 
     /// <summary>
@@ -55,8 +62,11 @@ public sealed class LocalLlmClient
     /// </summary>
     public LocalLlmClient(HttpClient http) => _http = http;
 
-    /// <summary>Runs one chat completion (greedy, thinking off) and returns the trimmed answer.</summary>
-    public async Task<string> CompleteAsync(Uri baseUrl, string system, string user, CancellationToken ct)
+    /// <summary>
+    /// Runs one chat completion (greedy, thinking off) and returns the trimmed answer. An answer that hits
+    /// <paramref name="maxTokens"/> throws instead of being returned cut off.
+    /// </summary>
+    public async Task<string> CompleteAsync(Uri baseUrl, string system, string user, CancellationToken ct, int maxTokens = 4096)
     {
         var body = new JsonObject
         {
@@ -65,7 +75,7 @@ public sealed class LocalLlmClient
                 new JsonObject { ["role"] = "user", ["content"] = user }),
             // Greedy like the Mac's Offline Mode: the same input should give the same output.
             ["temperature"] = 0,
-            ["max_tokens"] = 4096,
+            ["max_tokens"] = maxTokens,
             ["chat_template_kwargs"] = new JsonObject { ["enable_thinking"] = false },
         };
         string text;
@@ -96,7 +106,7 @@ public sealed class LocalLlmClient
             {
                 // A cut-off answer would replace the user's whole selection with half a text.
                 Log.Error("local LLM answer cut off at max_tokens");
-                throw new LocalLlmException("Der Text ist für das Offline-Modell zu lang. Bitte einen kürzeren Abschnitt markieren.");
+                throw new LocalLlmException("Der Text ist für das Offline-Modell zu lang. Bitte kürzer diktieren oder einen kürzeren Abschnitt markieren.");
             }
             return Think.Replace(content, "").Trim();
         }

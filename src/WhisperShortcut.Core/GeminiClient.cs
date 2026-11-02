@@ -155,6 +155,24 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Text-only call with a complete <paramref name="systemPrompt"/> and a complete <paramref name="userText"/>
+    /// (nothing from <see cref="DictatePromptText"/> is added). Same model, thinking level and output limit as
+    /// <see cref="PromptTextAsync"/>; a cut-off reply throws <see cref="GeminiErrorKind.Truncated"/>. Returns the raw model text.
+    /// </summary>
+    /// <param name="systemPrompt">The whole system instruction.</param>
+    /// <param name="userText">The whole user turn.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> CompleteTextAsync(string systemPrompt, string userText, CancellationToken ct = default)
+    {
+        var model = _promptModel();
+        var body = BuildCompleteBody(systemPrompt, userText);
+        return await SendAsync(model, body, ct, rejectTruncated: true).ConfigureAwait(false);
+    }
+
+    internal static string BuildCompleteBody(string systemPrompt, string userText) =>
+        BuildPromptRequest(systemPrompt, new JsonObject { ["text"] = userText });
+
     internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null)
     {
         var instruction = string.IsNullOrWhiteSpace(customPrompt) ? Prompts.DefaultTranscriptionSystemPrompt : customPrompt.Trim();
@@ -183,17 +201,16 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     }
 
     internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt) =>
-        BuildPromptRequest(customSystemPrompt,
+        BuildPromptRequest(DictatePromptText.SystemPrompt(customSystemPrompt),
             new JsonObject { ["text"] = DictatePromptText.SelectionBlock(selection) }, AudioPart(wav));
 
     internal static string BuildPromptTextBody(string? selection, string instruction, string? customSystemPrompt) =>
-        BuildPromptRequest(customSystemPrompt,
+        BuildPromptRequest(DictatePromptText.SystemPrompt(customSystemPrompt),
             new JsonObject { ["text"] = DictatePromptText.LocalUserTurn(selection, instruction) });
 
     // Shared by the audio and the text-only prompt call so both keep the same system prompt and thinking level.
-    private static string BuildPromptRequest(string? customSystemPrompt, params JsonObject[] userParts)
+    private static string BuildPromptRequest(string system, params JsonObject[] userParts)
     {
-        var system = DictatePromptText.SystemPrompt(customSystemPrompt);
         var root = new JsonObject
         {
             ["systemInstruction"] = new JsonObject

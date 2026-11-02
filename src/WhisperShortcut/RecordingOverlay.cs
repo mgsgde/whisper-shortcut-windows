@@ -44,6 +44,8 @@ internal sealed class RecordingOverlay : Form
     private string _title = "";
     private string _hint = "";
     private string? _context;
+    // The recording applies a dictation template (title and selection line differ from Dictate Prompt).
+    private bool _template;
     private bool _contextWarn;
     private Func<float>? _level;
     private Func<float>? _peakSoFar;
@@ -117,14 +119,17 @@ internal sealed class RecordingOverlay : Form
 
     /// <param name="level">Live level 0..1 (null for a test WAV: no bars, no silence warning).</param>
     /// <param name="quickActions">Dictate Prompt: the instructions offered as Ctrl+1–5 rows (empty: plain pill).</param>
+    /// <param name="templateName">A template recording: its name is the title, and no quick instructions are offered.</param>
     public void ShowRecording(Mode mode, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar,
-        IReadOnlyList<string>? quickActions = null)
+        IReadOnlyList<string>? quickActions = null, string? templateName = null)
     {
         _phase = Phase.Recording;
-        _title = mode == Mode.Dictate ? "Diktat läuft" : "Anweisung sprechen";
+        _template = templateName != null;
+        _title = _template ? $"Vorlage „{templateName}“" : mode == Mode.Dictate ? "Diktat läuft" : "Anweisung sprechen";
         _hint = $"{stopKey} beendet · Esc bricht ab";
-        // Dictate Prompt: what will be edited is known only after Ctrl+C (up to 0.5 s), see SetSelection.
-        _context = mode == Mode.Prompt ? "Markierung wird gelesen …" : null;
+        // Dictate Prompt and templates: the selection is known only after Ctrl+C (up to 0.5 s), see SetSelection.
+        _context = mode != Mode.Dictate ? "Markierung wird gelesen …" : null;
+        if (_template) quickActions = null;
         _quick = mode == Mode.Prompt ? quickActions ?? Array.Empty<string>() : Array.Empty<string>();
         _quickLabel = "Oder direkt anwenden:";
         _hover = -1;
@@ -138,11 +143,19 @@ internal sealed class RecordingOverlay : Form
         Present();
     }
 
-    /// <summary>Dictate Prompt: the selection is known. null = nothing selected, new text is written.</summary>
+    /// <summary>Dictate Prompt or a template: the selection is known. null = nothing selected.</summary>
     public void SetSelection(string? selection)
     {
         if (_phase != Phase.Recording || _context == null) return;
-        if (selection == null)
+        if (_template)
+        {
+            // A template formats what it gets; with nothing marked that is the dictation, which is the normal case.
+            _context = selection == null
+                ? "Nichts markiert: das Diktat kommt in dieses Format"
+                : $"Bringt die Markierung in dieses Format ({selection.Length.ToString("N0", System.Globalization.CultureInfo.GetCultureInfo("de-DE"))} Zeichen)";
+            _contextWarn = false;
+        }
+        else if (selection == null)
         {
             // Nothing to edit: what the user says is the text (a finding, a letter) or a request for one.
             _title = "Text oder Anweisung sprechen";

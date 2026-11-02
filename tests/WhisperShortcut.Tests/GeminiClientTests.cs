@@ -548,4 +548,31 @@ public class GeminiClientTests
         var c = new GeminiClient(() => "k", () => "m", () => "m", new HttpClient(h));
         Assert.Equal(KeyCheck.NoConnection, await c.CheckKeyAsync("k"));
     }
+
+    [Fact]
+    public async Task CompleteText_SendsGivenSystemAndUserText_Verbatim()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.CompleteTextAsync("Eigene Anweisung" + Prompts.PromptModeOutputRule, "Der ganze Text");
+
+        var j = h.Json(0);
+        var system = (string)j["systemInstruction"]!["parts"]![0]!["text"]!;
+        Assert.Equal("Eigene Anweisung" + Prompts.PromptModeOutputRule, system);
+        Assert.DoesNotContain(Prompts.DefaultPromptModeSystemPrompt, system);
+        var parts = j["contents"]![0]!["parts"]!.AsArray();
+        Assert.Single(parts);
+        Assert.Equal("Der ganze Text", (string)parts[0]!["text"]!);
+        Assert.Equal("low", (string)j["generationConfig"]!["thinkingConfig"]!["thinkingLevel"]!);
+        Assert.Equal(65536, (int)j["generationConfig"]!["maxOutputTokens"]!);
+    }
+
+    [Fact]
+    public async Task CompleteText_MaxTokens_Throws()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.CompleteTextAsync("s", "u"));
+        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+    }
 }

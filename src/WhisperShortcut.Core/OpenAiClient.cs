@@ -88,13 +88,34 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         return ExtractChatText(answer);
     }
 
+    /// <summary>
+    /// Text-only call with a complete <paramref name="systemPrompt"/> and a complete <paramref name="userText"/>
+    /// (nothing from <see cref="DictatePromptText"/> is added). Same model, reasoning effort and output limit as
+    /// <see cref="PromptTextAsync"/>; a cut-off reply (finish_reason "length") throws <see cref="GeminiErrorKind.Truncated"/>.
+    /// </summary>
+    /// <param name="systemPrompt">The whole system message.</param>
+    /// <param name="userText">The whole user message.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> CompleteTextAsync(string systemPrompt, string userText, CancellationToken ct = default)
+    {
+        var model = _promptModel();
+        var json = BuildCompleteBody(model, systemPrompt, userText);
+        var answer = await SendAsync("chat/completions", model,
+            () => new StringContent(json, Encoding.UTF8, "application/json"), json.Length, ct).ConfigureAwait(false);
+        return ExtractChatText(answer);
+    }
+
     internal static string BuildChatBody(string model, string? selection, string instruction, string? customSystemPrompt) =>
+        BuildCompleteBody(model, DictatePromptText.SystemPrompt(customSystemPrompt),
+            DictatePromptText.LocalUserTurn(selection, instruction));
+
+    internal static string BuildCompleteBody(string model, string systemPrompt, string userText) =>
         new JsonObject
         {
             ["model"] = model,
             ["messages"] = new JsonArray(
-                new JsonObject { ["role"] = "system", ["content"] = DictatePromptText.SystemPrompt(customSystemPrompt) },
-                new JsonObject { ["role"] = "user", ["content"] = DictatePromptText.LocalUserTurn(selection, instruction) }),
+                new JsonObject { ["role"] = "system", ["content"] = systemPrompt },
+                new JsonObject { ["role"] = "user", ["content"] = userText }),
             // WHY: a rewritten long selection is as long as the selection; a cut-off reply must be detectable.
             ["max_completion_tokens"] = MaxCompletionTokens,
             ["reasoning_effort"] = "low",
