@@ -50,7 +50,7 @@ public sealed class ModelDownloader
         if (IsInstalled(c)) { progress?.Report(1.0); return; }
         var needGb = CheckFreeSpace(c);
         try { await DownloadCoreAsync(c, progress, ct).ConfigureAwait(false); }
-        catch (IOException ex) when (IsDiskFull(ex))
+        catch (IOException ex) when (DiskSpace.IsFull(ex))
         {
             // A write ran out of space after all (the check is an estimate); the .part file stays for a resume.
             throw NoSpace(FreeBytes(c.FullPath) ?? 0, needGb, ex);
@@ -104,10 +104,6 @@ public sealed class ModelDownloader
         progress?.Report(1.0);
         Log.Info($"offline download done: {c.Id}, {SizeOnDisk(c)} bytes on disk");
     }
-
-    private const int DiskFullHResult = unchecked((int)0x80070070);
-
-    private static bool IsDiskFull(IOException ex) => ex.HResult == DiskFullHResult;
 
     private static long? FreeBytes(string path)
     {

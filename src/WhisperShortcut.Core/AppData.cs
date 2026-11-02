@@ -12,7 +12,10 @@ public static class AppData
     /// <summary>Folder of the log file. Same path as <see cref="LocalFolder"/> today; kept as a named alias for callers.</summary>
     public static string LogFolder => LocalFolder;
 
-    /// <summary>Every folder the app writes to, distinct. Recent texts live in memory only.</summary>
+    /// <summary>
+    /// Every folder the app writes to, distinct. Recent texts live in memory only. An unfinished
+    /// recording may sit in <c>unfinished</c> under <see cref="LocalFolder"/> until the next start.
+    /// </summary>
     public static IReadOnlyList<string> Folders => new[] { SettingsFolder, LocalFolder, LogFolder, OfflineCatalog.Root }
         .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
