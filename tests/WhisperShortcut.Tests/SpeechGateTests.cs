@@ -78,6 +78,14 @@ public class SpeechGateTests
         BinaryPrimitives.WriteInt16LittleEndian(wav.AsSpan(34), 8); // bits per sample
         Assert.True(SpeechGate.HasSpeech(wav));
         Assert.True(SpeechGate.HasSpeech(new byte[10]));
+
+        // A forged 2 GB LIST chunk between fmt and data used to throw ArgumentOutOfRangeException.
+        var huge = new byte[wav.Length + 8];
+        wav.AsSpan(0, 36).CopyTo(huge);
+        "LIST"u8.CopyTo(huge.AsSpan(36));
+        BinaryPrimitives.WriteUInt32LittleEndian(huge.AsSpan(40), 0x80000000);
+        wav.AsSpan(36).CopyTo(huge.AsSpan(44));
+        Assert.True(SpeechGate.HasSpeech(huge));
     }
 
     [Fact]

@@ -26,9 +26,15 @@ public class ProblemReportTests
     [Fact]
     public void Body_RedactsKeysInLogLines()
     {
-        var body = ProblemReport.Body(Info, new[] { "key AIzaSyA1234567890abcdefghijklmnop leaked" });
+        var body = ProblemReport.Body(Info, new[]
+        {
+            "key AIzaSyA1234567890abcdefghijklmnop leaked",
+            "openai sk-proj-abcdefghijklmnopqrstuvwxyz012345 leaked",
+        });
         Assert.DoesNotContain("AIzaSyA1234567890", body);
+        Assert.DoesNotContain("sk-proj-abcdefghijklmnopqrstuvwxyz012345", body);
         Assert.Contains("key AIza… leaked", body);
+        Assert.Contains("openai sk-… leaked", body);
     }
 
     [Fact]

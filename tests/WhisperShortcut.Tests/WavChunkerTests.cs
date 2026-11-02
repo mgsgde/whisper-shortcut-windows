@@ -113,6 +113,19 @@ public class WavChunkerTests
             Assert.True(part.Length <= 24_000_000);
     }
 
+    [Fact]
+    public void OpenAi_HighRateStereo_StillSplitsUnderByteCap()
+    {
+        // 768_000 B/s: 35 s is already over 24 MB, and the 24 MB time cap itself is under a minute.
+        // The old "minus 60 s" then produced a negative chunk length and returned the whole file.
+        var wav = Tone(192000, 2, 35, null);
+        var parts = WavChunker.SplitForOpenAi(wav);
+        Assert.True(parts.Count > 1);
+        foreach (var part in parts)
+            Assert.True(part.Length <= 24_000_000);
+        Assert.True(wav.AsSpan(44).SequenceEqual(ConcatPcm(parts)));
+    }
+
     private static void AssertRoundTrip(byte[] wav, IReadOnlyList<byte[]> parts)
     {
         foreach (var part in parts)

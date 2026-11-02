@@ -31,7 +31,7 @@ public static class SpeechGate
         {
             samples = Wav.ReadMonoFloat(wav, out rate);
         }
-        catch (InvalidDataException)
+        catch (Exception ex) when (ex is InvalidDataException or ArgumentException)
         {
             return new SpeechLevel(0, MinLoudFrames, MinLoudFrames);
         }

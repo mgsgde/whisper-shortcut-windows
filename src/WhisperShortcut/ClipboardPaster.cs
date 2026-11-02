@@ -179,7 +179,7 @@ internal sealed class ClipboardPaster
         _pendingOriginal = original;
         _pendingSequence = ourSequence;
 
-        await Task.Delay(50);
+        await Task.Delay(50, ct);
         SendChord(0x56); // V
         Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars), restore {(restoreClipboard ? "on" : "off")}");
 

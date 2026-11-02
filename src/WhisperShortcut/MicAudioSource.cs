@@ -28,6 +28,7 @@ internal sealed class MicAudioSource : Core.IAudioSource
     public event Action? DeviceLost;
 
     private readonly WaveFormat _format = new(16000, 16, 1);
+    private readonly object _gate = new();
     private WaveInEvent? _waveIn;
     private MemoryStream? _buffer;
     private WaveFileWriter? _writer;
@@ -88,15 +89,26 @@ internal sealed class MicAudioSource : Core.IAudioSource
         {
             _waveIn.Dispose();
             _waveIn = null;
+            _writer?.Dispose();
+            _writer = null;
+            _buffer = null;
             throw new MicrophoneUnavailableException(e);
         }
     }
 
     private void OnData(object? sender, WaveInEventArgs e)
     {
-        var writer = _writer;
-        if (writer == null || _limitHit) return;
-        writer.Write(e.Buffer, 0, e.BytesRecorded);
+        bool limit = false;
+        lock (_gate)
+        {
+            if (_writer == null || _limitHit) return;
+            _writer.Write(e.Buffer, 0, e.BytesRecorded);
+            if (_writer.TotalTime >= MaxDuration)
+            {
+                _limitHit = true;
+                limit = true;
+            }
+        }
         int bufferPeak = 0;
         int peak = _peak;
         for (int i = 0; i + 1 < e.BytesRecorded; i += 2)
@@ -107,25 +119,37 @@ internal sealed class MicAudioSource : Core.IAudioSource
         }
         if (peak != _peak) Volatile.Write(ref _peak, peak);
         _level = bufferPeak / 32768f;
-        if (writer.TotalTime >= MaxDuration)
-        {
-            _limitHit = true;
-            MaxDurationReached?.Invoke();
-        }
+        if (limit) MaxDurationReached?.Invoke();
     }
 
     public async Task<byte[]> StopAsync()
     {
         _level = 0;
-        if (_waveIn == null || _writer == null || _buffer == null) return Array.Empty<byte>();
-        _waveIn.StopRecording();
+        WaveInEvent? waveIn;
+        lock (_gate)
+        {
+            if (_waveIn == null || _writer == null || _buffer == null) return Array.Empty<byte>();
+            waveIn = _waveIn;
+        }
+        waveIn.StopRecording();
         await Task.WhenAny(_stopped!.Task, Task.Delay(2000));
-        _waveIn.Dispose();
-        _waveIn = null;
-        _writer.Dispose(); // writes the RIFF sizes; the stream stays open
-        _writer = null;
-        var bytes = _buffer.ToArray();
-        _buffer = null;
+
+        WaveFileWriter? writer;
+        MemoryStream? buffer;
+        lock (_gate)
+        {
+            // Drop the writer first so a late DataAvailable cannot Write after Dispose.
+            waveIn = _waveIn;
+            writer = _writer;
+            buffer = _buffer;
+            _waveIn = null;
+            _writer = null;
+            _buffer = null;
+        }
+        // WaveIn.Dispose may wait for the capture callback; do not hold _gate across it.
+        waveIn?.Dispose();
+        writer?.Dispose(); // writes the RIFF sizes; the stream stays open
+        var bytes = buffer?.ToArray() ?? Array.Empty<byte>();
         var peak = Volatile.Read(ref _peak);
         Core.Log.Info($"Mic: {bytes.Length} bytes, peak {peak * 100 / 32768} %");
         // Only digital silence (peak below ~-60 dBFS, what a privacy-blocked device delivers) is a device
@@ -138,12 +162,19 @@ internal sealed class MicAudioSource : Core.IAudioSource
 
     public void Cancel()
     {
-        try { _waveIn?.StopRecording(); } catch { }
-        _waveIn?.Dispose();
-        _waveIn = null;
-        _writer?.Dispose();
-        _writer = null;
-        _buffer = null;
-        _level = 0;
+        WaveInEvent? waveIn;
+        WaveFileWriter? writer;
+        lock (_gate)
+        {
+            waveIn = _waveIn;
+            writer = _writer;
+            _waveIn = null;
+            _writer = null;
+            _buffer = null;
+            _level = 0;
+        }
+        try { waveIn?.StopRecording(); } catch { }
+        waveIn?.Dispose();
+        writer?.Dispose();
     }
 }
