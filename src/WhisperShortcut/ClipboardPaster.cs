@@ -16,6 +16,8 @@ internal enum PasteOutcome
     ClipboardOnlyByChoice,
     /// <summary>The user switched to another window since the recording started and the old one could not be brought back. Text stays on the clipboard.</summary>
     ClipboardOnlyTargetChanged,
+    /// <summary>The window the recording started in was closed. Text stays on the clipboard.</summary>
+    ClipboardOnlyTargetGone,
     /// <summary>The window in front is one of our own (settings, a message box): Ctrl+V would vanish there. Text stays on the clipboard.</summary>
     ClipboardOnlyOwnWindow,
     /// <summary>Could not write the clipboard at all.</summary>
@@ -40,7 +42,6 @@ internal sealed class ClipboardPaster
     // 500 ms (the plan's first number) was too short: a hand holding the hotkey 600 ms made Ctrl+V arrive
     // as Ctrl+Alt+V (= AltGr+V, typed "√" in Notepad). Found in the VM with `vm.sh hold 600`.
     private static readonly TimeSpan ModifierWait = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan CopyDeadline = TimeSpan.FromMilliseconds(2000);
     /// <summary>After the deadline a slow app may still deliver its Ctrl+C; the Mac keeps watching too.</summary>
     private static readonly TimeSpan LateCopyWindow = TimeSpan.FromMilliseconds(3000);
     /// <summary>A copy bumps the sequence number more than once (empty, then each format): let it settle.</summary>
@@ -56,6 +57,9 @@ internal sealed class ClipboardPaster
     private ClipboardSnapshot? _pendingOriginal;
     private uint _pendingSequence;
     private CancellationTokenSource? _pendingRestore;
+
+    // Sequence number after our last clipboard write (text or restore): a change to it is not a copy.
+    private uint _lastOwnWriteSequence;
 
     // Late-copy watch (see CopySelectionAsync). Only touched on the UI thread.
     private CancellationTokenSource? _lateWatch;
@@ -98,6 +102,19 @@ internal sealed class ClipboardPaster
     /// <summary>The foreground window belongs to this process (settings window or one of its dialogs).</summary>
     public static bool ForegroundIsOwnWindow() => BelongsToThisProcess(GetForegroundWindow());
 
+    private static Core.ForegroundKind ClassifyForeground()
+    {
+        var hwnd = GetForegroundWindow();
+        if (hwnd == IntPtr.Zero) return Core.ForegroundKind.None;
+        if (BelongsToThisProcess(hwnd)) return Core.ForegroundKind.Own;
+        var root = GetAncestor(hwnd, GA_ROOT);
+        var name = new System.Text.StringBuilder(256);
+        GetClassName(root != IntPtr.Zero ? root : hwnd, name, name.Capacity);
+        return Core.PasteTargetPolicy.IsShellWindowClass(name.ToString())
+            ? Core.ForegroundKind.Shell
+            : Core.ForegroundKind.Foreign;
+    }
+
     /// <summary>Leaves <paramref name="text"/> on the clipboard without pasting (the caller tells the user).</summary>
     public bool KeepOnClipboard(string text)
     {
@@ -108,8 +125,9 @@ internal sealed class ClipboardPaster
     /// <summary>
     /// Puts <paramref name="text"/> at the cursor: save the clipboard, set ours, Ctrl+V, and after
     /// 2000 ms put the old clipboard back (unless <paramref name="restoreClipboard"/> is off), but only when nobody else wrote it in between.
-    /// Pastes only into <paramref name="target"/> (the window in front when the recording began); when the
-    /// user went elsewhere the text stays on the clipboard. <c>IntPtr.Zero</c> means: no target to check.
+    /// Pastes only into <paramref name="target"/> (the window in front when the recording began). It is brought
+    /// back only when nothing, our own window or the taskbar is in front; with another window in front or the
+    /// target closed the text stays on the clipboard. <c>IntPtr.Zero</c> means: no target to check.
     /// </summary>
     public async Task<PasteOutcome> PasteAsync(string text, IntPtr target, bool restoreClipboard = true, CancellationToken ct = default)
     {
@@ -120,33 +138,35 @@ internal sealed class ClipboardPaster
         if (!released)
             return WriteText(text) ? PasteOutcome.ClipboardOnlyKeysHeld : PasteOutcome.Failed;
 
-        // WHY: a dictation started over our own message box would be pasted into it and lost.
-        if (BelongsToThisProcess(target) || (target == IntPtr.Zero && ForegroundIsOwnWindow()))
+        bool hasTarget = target != IntPtr.Zero;
+        var action = Core.PasteTargetPolicy.Decide(hasTarget, hasTarget && BelongsToThisProcess(target),
+            hasTarget && IsWindow(target), hasTarget && IsIconic(target),
+            hasTarget && ForegroundRoot() == target, ClassifyForeground());
+        switch (action)
         {
-            Core.Log.Info("Paste: target is one of our own windows, leaving text on the clipboard");
-            return WriteText(text) ? PasteOutcome.ClipboardOnlyOwnWindow : PasteOutcome.Failed;
-        }
-
-        if (target != IntPtr.Zero && ForegroundRoot() != target)
-        {
-            bool back = false;
-            string why;
-            if (!IsWindow(target)) why = "target window is gone";
-            else if (IsIconic(target)) why = "target window is minimised";
-            else
+            case Core.PasteTargetAction.ClipboardOnlyOwnWindow:
+                Core.Log.Info("Paste: target is one of our own windows, leaving text on the clipboard");
+                return WriteText(text) ? PasteOutcome.ClipboardOnlyOwnWindow : PasteOutcome.Failed;
+            case Core.PasteTargetAction.ClipboardOnlyTargetGone:
+                Core.Log.Info("Paste: the recording's window is gone, leaving text on the clipboard");
+                return WriteText(text) ? PasteOutcome.ClipboardOnlyTargetGone : PasteOutcome.Failed;
+            case Core.PasteTargetAction.ClipboardOnlyTargetChanged:
+                Core.Log.Info("Paste: another window is in front (or the target is minimised), not taking focus back, leaving text on the clipboard");
+                return WriteText(text) ? PasteOutcome.ClipboardOnlyTargetChanged : PasteOutcome.Failed;
+            case Core.PasteTargetAction.ActivateTargetThenPaste:
             {
                 // Windows may refuse (foreground lock); then the check below simply fails. No input tricks.
                 bool asked = SetForegroundWindow(target);
                 for (int i = 0; i < 10 && ForegroundRoot() != target; i++) await Task.Delay(20, ct);
-                back = ForegroundRoot() == target;
-                why = asked ? "target did not come to the front" : "SetForegroundWindow refused";
+                if (ForegroundRoot() != target)
+                {
+                    string why = asked ? "target did not come to the front" : "SetForegroundWindow refused";
+                    Core.Log.Info($"Paste: could not bring the recording's window back ({why}), leaving text on the clipboard");
+                    return WriteText(text) ? PasteOutcome.ClipboardOnlyTargetChanged : PasteOutcome.Failed;
+                }
+                Core.Log.Info("Paste: brought the recording's window back");
+                break;
             }
-            if (!back)
-            {
-                Core.Log.Info($"Paste: foreground changed since the recording began ({why}), leaving text on the clipboard");
-                return WriteText(text) ? PasteOutcome.ClipboardOnlyTargetChanged : PasteOutcome.Failed;
-            }
-            Core.Log.Info("Paste: foreground changed, brought the target window back");
         }
 
         if (ForegroundIsOwnWindow())
@@ -258,26 +278,28 @@ internal sealed class ClipboardPaster
         uint before = GetClipboardSequenceNumber();
         SendChord(0x43); // C
 
-        var deadline = DateTime.UtcNow + CopyDeadline;
+        var started = DateTime.UtcNow;
+        TimeSpan? changedAt = null;
         try
         {
-            while (DateTime.UtcNow < deadline)
+            while (true)
             {
                 await Task.Delay(15, ct);
-                if (GetClipboardSequenceNumber() == before) continue;
-                // Some apps announce the change before the data is readable; give them a few tries.
+                var elapsed = DateTime.UtcNow - started;
+                bool changed = Core.SelectionCopyPolicy.CopyChanged(before, GetClipboardSequenceNumber(), _lastOwnWriteSequence);
                 string? copied = null;
-                for (int i = 0; i < 5 && copied == null; i++)
-                {
-                    if (!TryReadText(out copied)) await Task.Delay(15, ct);
-                }
+                bool readable = changed && TryReadText(out copied);
+                if (changed && changedAt == null) changedAt = elapsed;
+                var r = Core.SelectionCopyPolicy.Poll(changed, readable, elapsed, changedAt);
+                if (r == Core.CopyPollResult.Wait) continue;
+                if (r == Core.CopyPollResult.NoSelection) break;
                 if (previous != null) Restore(previous);
-                if (copied == null)
+                if (r == Core.CopyPollResult.Unreadable)
                 {
                     Core.Log.Error("Copy: clipboard changed but could not be read");
                     throw new SelectionUnreadableException();
                 }
-                var trimmed = copied.Trim();
+                var trimmed = (copied ?? "").Trim();
                 Core.Log.Info($"Copy: selection {(trimmed.Length == 0 ? "empty" : trimmed.Length + " chars")}");
                 return trimmed.Length == 0 ? null : trimmed;
             }
@@ -285,7 +307,7 @@ internal sealed class ClipboardPaster
         catch (OperationCanceledException)
         {
             // Ctrl+C is out already: the selection may have replaced the user's clipboard.
-            if (previous != null && GetClipboardSequenceNumber() != before) Restore(previous);
+            if (previous != null && Core.SelectionCopyPolicy.CopyChanged(before, GetClipboardSequenceNumber(), _lastOwnWriteSequence)) Restore(previous);
             throw;
         }
         Core.Log.Info("Copy: clipboard unchanged after 2000 ms, no selection");
@@ -309,7 +331,7 @@ internal sealed class ClipboardPaster
             while (DateTime.UtcNow < end)
             {
                 await Task.Delay(30, self.Token);
-                if (GetClipboardSequenceNumber() == _lateBaseline) continue;
+                if (!Core.SelectionCopyPolicy.CopyChanged(_lateBaseline, GetClipboardSequenceNumber(), _lastOwnWriteSequence)) continue;
                 _lateCopyArrived = true;
                 await Task.Delay(LateCopySettle, self.Token);
                 if (previous == null)
@@ -504,6 +526,14 @@ internal sealed class ClipboardPaster
     /// </summary>
     private bool Restore(ClipboardSnapshot snap)
     {
+        bool ok = RestoreCore(snap);
+        // Read after CloseClipboard so the number is the one our write ended on.
+        if (ok) _lastOwnWriteSequence = GetClipboardSequenceNumber();
+        return ok;
+    }
+
+    private bool RestoreCore(ClipboardSnapshot snap)
+    {
         if (!Open()) return false;
         try
         {
@@ -544,6 +574,14 @@ internal sealed class ClipboardPaster
     }
 
     private bool WriteText(string text)
+    {
+        bool ok = WriteTextCore(text);
+        // Read after CloseClipboard so the number is the one our write ended on.
+        if (ok) _lastOwnWriteSequence = GetClipboardSequenceNumber();
+        return ok;
+    }
+
+    private bool WriteTextCore(string text)
     {
         if (!Open()) return false;
         try

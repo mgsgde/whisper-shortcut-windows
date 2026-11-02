@@ -593,7 +593,7 @@ internal sealed class TrayApp : ApplicationContext
                     done = true;
                     break;
                 case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld or PasteOutcome.ClipboardOnlyTargetChanged
-                    or PasteOutcome.ClipboardOnlyOwnWindow when _unsupported.Count > 0:
+                    or PasteOutcome.ClipboardOnlyOwnWindow or PasteOutcome.ClipboardOnlyTargetGone when _unsupported.Count > 0:
                     // The balloon would bury the warning; the card says both.
                     _overlay.ShowWarning(_unsupported, pasted: false);
                     done = true;
@@ -611,6 +611,11 @@ internal sealed class TrayApp : ApplicationContext
                 case PasteOutcome.ClipboardOnlyTargetChanged:
                     Notify("Bitte selbst einfügen",
                         "Du hast das Fenster gewechselt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
+                        ToolTipIcon.Info);
+                    break;
+                case PasteOutcome.ClipboardOnlyTargetGone:
+                    Notify("Bitte selbst einfügen",
+                        "Das Fenster, in dem die Aufnahme begann, ist geschlossen. Der Text liegt in der Zwischenablage: Strg+V drücken.",
                         ToolTipIcon.Info);
                     break;
                 case PasteOutcome.ClipboardOnlyOwnWindow:
