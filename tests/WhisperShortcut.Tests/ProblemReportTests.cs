@@ -41,6 +41,7 @@ public class ProblemReportTests
     public void Redact_LeavesShortAndPlainText()
     {
         Assert.Equal("AIza short", ProblemReport.Redact("AIza short"));
+        Assert.Equal("sk-short", ProblemReport.Redact("sk-short"));
         Assert.Equal("nothing here", ProblemReport.Redact("nothing here"));
     }
 

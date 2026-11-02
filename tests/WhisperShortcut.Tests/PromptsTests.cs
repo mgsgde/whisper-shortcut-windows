@@ -23,11 +23,11 @@ public class PromptsTests
     public void PromptsEqualSwiftSource()
     {
         var t = Swift("AppConstants.swift", 7, 90);
-        Assert.Equal(Multi(t, "defaultTranscriptionSystemPrompt"), Prompts.DefaultTranscriptionSystemPrompt);
-        Assert.Equal(Multi(t, "defaultPromptModeSystemPrompt"), Prompts.DefaultPromptModeSystemPrompt);
-        Assert.Equal(Single(t, "promptModeOutputRule"), Prompts.PromptModeOutputRule);
-        Assert.Equal(Single(t, "dictatePromptComposeMarker"), Prompts.DictatePromptComposeMarker);
-        Assert.Equal(Single(t, "clipboardSelectionHeader"), Prompts.ClipboardSelectionHeader);
+        Assert.Equal(Prompts.DefaultTranscriptionSystemPrompt, Multi(t, "defaultTranscriptionSystemPrompt"));
+        Assert.Equal(Prompts.DefaultPromptModeSystemPrompt, Multi(t, "defaultPromptModeSystemPrompt"));
+        Assert.Equal(Prompts.PromptModeOutputRule, Single(t, "promptModeOutputRule"));
+        Assert.Equal(Prompts.DictatePromptComposeMarker, Single(t, "dictatePromptComposeMarker"));
+        Assert.Equal(Prompts.ClipboardSelectionHeader, Single(t, "clipboardSelectionHeader"));
         Assert.StartsWith("You are a professional transcription service.", Prompts.DefaultTranscriptionSystemPrompt);
         Assert.EndsWith("Start directly with the transcribed words.", Prompts.DefaultTranscriptionSystemPrompt);
     }
@@ -40,6 +40,6 @@ public class PromptsTests
         var end = t.IndexOf("+ glossary", start, StringComparison.Ordinal);
         var literals = Regex.Matches(t[start..end], "\"((?:[^\"\\\\\\n]|\\\\.)*)\"")
             .Select(m => m.Groups[1].Value.Replace("\\n", "\n"));
-        Assert.Equal(string.Concat(literals), Prompts.GlossaryHintHeader);
+        Assert.Equal(Prompts.GlossaryHintHeader, string.Concat(literals));
     }
 }

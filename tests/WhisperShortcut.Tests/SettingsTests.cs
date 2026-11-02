@@ -348,7 +348,8 @@ public class LogAndAudioTests
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "wsw.log");
         Log.Init(path);
         Log.Info("hello");
-        Log.Error("bad", new InvalidOperationException("boom"));
+        try { throw new InvalidOperationException("boom"); }
+        catch (Exception ex) { Log.Error("bad", ex); }
         Log.Init(null);
         // Log is static and other test classes run in parallel: their lines may land here too, so look for ours only.
         var lines = File.ReadAllLines(path);
@@ -356,7 +357,25 @@ public class LogAndAudioTests
         int hello = Array.FindIndex(lines, l => l.Contains("INFO hello"));
         int bad = Array.FindIndex(lines, l => l.Contains("ERROR bad (InvalidOperationException: boom)"));
         Assert.True(hello >= 0 && bad > hello);
+        Assert.Contains("Log_WritesLines_AndIsNoopBeforeInit", lines[bad]);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Log_RotatesWhenFileExceedsLimit()
+    {
+        Log.Init(null);
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(dir, "wsw.log");
+        Directory.CreateDirectory(dir);
+        File.WriteAllBytes(path, new byte[Log.MaxFileBytes]);
+        Log.Init(path);
+        Log.Info("after-rotate");
+        Log.Init(null);
+        Assert.True(File.Exists(path + ".1"));
+        Assert.Equal(Log.MaxFileBytes, new FileInfo(path + ".1").Length);
+        Assert.Contains("after-rotate", File.ReadAllText(path));
+        Directory.Delete(dir, true);
     }
 
     [Fact]

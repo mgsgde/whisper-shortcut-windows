@@ -17,10 +17,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
 {
     private const string BaseUrl = "https://api.openai.com/v1/";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
-    private const int MaxAttempts = 5;
-    private const int MaxServerErrorAttempts = 6;
-    private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(15);
-    private static readonly TimeSpan MaxRetryAfter = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan MaxRetryAfter = HttpRetry.MaxWait;
 
     /// <summary>Output-token ceiling for edit calls, so a long selection gets room and a cut-off reply is detectable.</summary>
     internal const int MaxCompletionTokens = 32000;
@@ -173,7 +170,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
                 failure = MapStatus(code, errorCode);
                 kind = $"HTTP {code}";
                 // An empty account will not recover within seconds: fail at once.
-                if (code is not (429 or 500 or 502 or 503 or 504) || (code == 429 && errorCode == "insufficient_quota"))
+                if (!HttpRetry.IsTransientStatus(code) || (code == 429 && errorCode == "insufficient_quota"))
                     throw failure;
                 serverError = code >= 500;
                 if (code == 429) retryAfter = ParseRetryAfter(response.Headers);
@@ -193,7 +190,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
                 kind = "network";
             }
 
-            if (attempt >= (serverError ? MaxServerErrorAttempts : MaxAttempts)) throw failure;
+            if (attempt >= (serverError ? HttpRetry.MaxServerErrorAttempts : HttpRetry.MaxAttempts)) throw failure;
             TimeSpan delay;
             if (retryAfter is { } wait)
             {
@@ -203,8 +200,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
             }
             else
             {
-                delay = TimeSpan.FromTicks((long)Math.Min(
-                    RetryDelay.Ticks * Math.Pow(2, attempt - 1), MaxBackoff.Ticks));
+                delay = HttpRetry.Backoff(RetryDelay, attempt);
             }
             Log.Info($"OpenAI {model}: attempt {attempt} failed ({kind}), retrying in {delay.TotalSeconds:0.#} s");
             await Task.Delay(delay, ct).ConfigureAwait(false);

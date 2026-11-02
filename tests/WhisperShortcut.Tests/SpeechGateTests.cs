@@ -89,13 +89,13 @@ public class SpeechGateTests
     }
 
     [Fact]
-    public void FileAudioSourceBytesAreJudgedLikeTheMic()
+    public async Task FileAudioSourceBytesAreJudgedLikeTheMic()
     {
         var path = Path.Combine(Path.GetTempPath(), $"gate-{Guid.NewGuid():N}.wav");
         File.WriteAllBytes(path, Wav((2000, 0, 0)));
         try
         {
-            var bytes = new FileAudioSource(path).StopAsync().GetAwaiter().GetResult();
+            var bytes = await new FileAudioSource(path).StopAsync();
             Assert.False(SpeechGate.HasSpeech(bytes));
         }
         finally { File.Delete(path); }

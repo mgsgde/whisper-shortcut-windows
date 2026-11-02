@@ -14,7 +14,6 @@ public class LocalLlmException : Exception
     public LocalLlmException(string message, Exception? inner = null) : base(message, inner) { }
 }
 
-
 /// <summary>llama-server died with an illegal instruction: this CPU cannot run the llama.cpp build.</summary>
 public sealed class UnsupportedCpuException : LocalLlmException
 {
