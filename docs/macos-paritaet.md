@@ -181,3 +181,14 @@ Stücken, eingefügt nur ins Fenster vom Start (wartet sonst und holt nach). Die
 Kürzel übernimmt ihre Rolle. Offen: Einstellung „Satzzeichen“ (#322, Hook in `LiveDictation.FinishPiece`) und
 „Zwischenablage nach dem Einfügen leeren“ (gibt es auf Windows nicht, Hook in `ClipboardAtEnd`), kein Schutz für
 Passwortfelder (Windows hat kein `IsSecureEventInputEnabled`).
+
+**Nachtrag 03.11.2026, Kürzel und Menü wie auf dem Mac:** Ziffern-Kürzel wie `ShortcutConfig.default`, Modifier
+Alt statt `⌃⌥` (Strg+Alt ist AltGr): Alt+1 Diktieren, Alt+2 Dictate Prompt, Alt+3 Bildschirmfoto (bleibt in der
+Zwischenablage), Alt+0 Einstellungen öffnen/schließen, Alt+5 Live diktieren und Alt+7 Glossar vorgeschlagen, aber
+aus. Rechte Strg statt Fn (`FnDictationToggle`, gleiches Verhalten). Bestehende Installationen behalten ihre
+alten Kürzel (wie der Mac `legacyCommandDigit`). Neue Installationen: keine Signaltöne, Screenshots an.
+Tray-Menü in der Reihenfolge und mit den Titeln von `MenuBarController.createMenu`. Abweichungen: kein
+Vorlesen (Alt+4) und kein Chat; an der Stelle von Chat steht „Live-Meeting“ (Mac startet es im Chat-Fenster);
+„Letzte Aufnahme erneut verarbeiten“ statt „Abgebrochene Aufnahme transkribieren“; „Feedback senden“ enthält
+„Problem melden …“ und „Protokoll öffnen“ statt der Mac-Kanäle; kein „Einrichtung abschließen …“. Der
+Offline-Schalter im Menü entfällt (Mac hat keinen), offline bleibt in den Einstellungen.

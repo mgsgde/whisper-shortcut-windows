@@ -35,11 +35,16 @@ internal sealed class TrayApp : ApplicationContext
     private readonly Core.OpenAiClient _openAi;
     private readonly OfflineEngine _offline;
     private readonly ToolStripMenuItem _statusItem;
-    private readonly ToolStripMenuItem _dictateInfo;
-    private readonly ToolStripMenuItem _liveInfo;
-    private readonly ToolStripMenuItem _promptInfo;
-    private readonly ToolStripMenuItem _glossaryInfo;
-    private readonly ToolStripMenuItem _templateInfo;
+    // Menu rows in the Mac's order (MenuBarController.createMenu); each shows its shortcut on the right.
+    private readonly ToolStripMenuItem _stopItem;
+    private readonly ToolStripSeparator _stopSeparator;
+    private readonly ToolStripMenuItem _proposalsItem;
+    private readonly ToolStripMenuItem _dictateItem;
+    private readonly ToolStripMenuItem _promptItem;
+    private readonly ToolStripMenuItem _screenshotItem;
+    private readonly ToolStripMenuItem _glossaryItem;
+    private readonly ToolStripMenuItem _liveItem;
+    private readonly ToolStripMenuItem _settingsItem;
     private readonly ToolStripMenuItem _copyLast;
     private readonly ToolStripMenuItem _recentMenu;
     private readonly ToolStripMenuItem _retryItem;
@@ -93,7 +98,6 @@ internal sealed class TrayApp : ApplicationContext
     private readonly System.Windows.Forms.Timer _keyUpTimer = new() { Interval = 30 };
     private Keys _armedKey;
     private long _armedKeyDeadline;
-    private readonly ToolStripMenuItem _offlineItem;
     private readonly SynchronizationContext _ui;
     // Screenshot hotkey: the image waits here for the next Dictate Prompt or template run (memory only, 5 min).
     private readonly Core.ScreenshotHold _heldShot = new(() => DateTime.UtcNow);
@@ -134,25 +138,31 @@ internal sealed class TrayApp : ApplicationContext
         _paster = new ClipboardPaster(_hotkeys.Handle);
 
         _statusItem = new ToolStripMenuItem("Bereit") { Enabled = false };
-        _dictateInfo = new ToolStripMenuItem { Enabled = false };
-        _liveInfo = new ToolStripMenuItem { Enabled = false, Visible = false };
-        _promptInfo = new ToolStripMenuItem { Enabled = false };
-        _glossaryInfo = new ToolStripMenuItem { Enabled = false };
-        _templateInfo = new ToolStripMenuItem { Enabled = false, Visible = false };
-        _copyLast = new ToolStripMenuItem("Letzten Text kopieren", null, (_, _) => CopyRecent(_recent.Latest));
-        _recentMenu = new ToolStripMenuItem("Letzte Texte");
-        _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Enabled = false };
+        // Titles are the Mac's German ones (Localizable.xcstrings).
+        _stopItem = new ToolStripMenuItem("Stopp", null, (_, _) => StopCurrentOperation()) { Visible = false };
+        _stopSeparator = new ToolStripSeparator { Visible = false };
+        _proposalsItem = new ToolStripMenuItem("Änderungen von KI-Apps prüfen …", null, (_, _) => _mcp?.ShowPendingProposals()) { Visible = false };
+        _dictateItem = new ToolStripMenuItem("Diktieren", null, (_, _) => OnHotkey(Mode.Dictate));
+        _promptItem = new ToolStripMenuItem("Dictate Prompt", null, (_, _) => OnHotkey(Mode.Prompt));
+        _screenshotItem = new ToolStripMenuItem("Bildschirmfoto", null, (_, _) => OnScreenshotHotkey());
+        _glossaryItem = new ToolStripMenuItem("Auswahl zum Glossar hinzufügen", null, (_, _) => _ = AddSelectionToGlossaryAsync());
+        _liveItem = new ToolStripMenuItem("Live diktieren", null, (_, _) => OnLiveHotkey());
+        _copyLast = new ToolStripMenuItem("Letzte Transkription kopieren", null, (_, _) => CopyRecent(_recent.Latest));
+        _recentMenu = new ToolStripMenuItem("Letzte Transkriptionen");
+        _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Visible = false };
         // An update restarts the app: not in the middle of a dictation or a meeting.
         _updates = new UpdateService(_settings, () => _state == State.Idle && _meeting?.IsActive != true, Quit);
         _updateItem = new ToolStripMenuItem("Update installieren …", null, (_, _) => _updates.ShowDialog())
         {
             Visible = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold),
         };
-        var title = new ToolStripMenuItem("WhisperShortcut") { Enabled = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold), AccessibleName = "WhisperShortcut" };
-        _offlineItem = new ToolStripMenuItem("Offline: nichts verlässt den PC", null, (_, _) => ToggleOffline()) { CheckOnClick = false };
-        var settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings()) { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
-        var logItem = new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog());
-        var quitItem = new ToolStripMenuItem("Beenden", null, (_, _) => Quit());
+        _settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings());
+        var welcomeItem = new ToolStripMenuItem("Einführung …", null, (_, _) => ShowSettings(welcome: true));
+        // Mac: „Feedback senden“ with the problem report first. Windows adds the log, which the report points to.
+        var feedbackItem = new ToolStripMenuItem("Feedback senden");
+        feedbackItem.DropDownItems.Add(new ToolStripMenuItem("Problem melden …", null, (_, _) => ShowSettings()));
+        feedbackItem.DropDownItems.Add(new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog()));
+        var quitItem = new ToolStripMenuItem("WhisperShortcut beenden", null, (_, _) => Quit());
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         _meeting = new MeetingController(_settings, _ui, TranscribeMeetingChunkAsync, SummarizeMeetingAsync, MeetingUnavailable,
             Notify, TrySave, () => new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveGlossaryHotkey,
@@ -164,16 +174,18 @@ internal sealed class TrayApp : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.AddRange(new ToolStripItem[]
         {
-            title, _statusItem, _updateItem, new ToolStripSeparator(), _dictateInfo, _liveInfo, _promptInfo, _glossaryInfo, _templateInfo, new ToolStripSeparator(),
-            _meeting.MenuItem, new ToolStripSeparator(),
+            _statusItem, _updateItem, new ToolStripSeparator(),
+            _proposalsItem, _stopItem, _stopSeparator,
+            _dictateItem, _promptItem, _screenshotItem, _glossaryItem, _liveItem, new ToolStripSeparator(),
             _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
-            _offlineItem, settingsItem, logItem, new ToolStripSeparator(), quitItem,
+            // Mac: the meeting starts from the Chat window, which Windows does not have; its row sits where Chat is.
+            _meeting.MenuItem, new ToolStripSeparator(),
+            _settingsItem, welcomeItem, feedbackItem, quitItem,
         });
         menu.Opening += (_, _) =>
         {
             UpdateRecentMenu();
-            _retryItem.Enabled = _lastFailed != null && _state == State.Idle;
-            _offlineItem.Checked = _settings.OfflineMode;
+            UpdateMenuRows();
         };
         UpdateRecentMenu();
 
@@ -314,14 +326,7 @@ internal sealed class TrayApp : ApplicationContext
         if (skipped.Count > 0)
             Core.Log.Info($"Template hotkeys: {skipped.Count} skipped, key already owned (template position {string.Join(", ", skipped)})");
         SyncSessionHotkeys();
-        _dictateInfo.Text = $"Diktieren: {Hotkey.Display(_settings.DictateHotkey)}";
-        _liveInfo.Text = $"Live diktieren: {Hotkey.Display(_settings.ActiveLiveDictateHotkey)}";
-        _liveInfo.Visible = !string.IsNullOrWhiteSpace(_settings.ActiveLiveDictateHotkey);
-        _promptInfo.Text = $"Text bearbeiten oder schreiben lassen: {Hotkey.Display(_settings.PromptHotkey)}";
-        _glossaryInfo.Text = $"Markierung ins Glossar: {Hotkey.Display(_settings.ActiveGlossaryHotkey)}";
-        _glossaryInfo.Visible = !string.IsNullOrWhiteSpace(_settings.ActiveGlossaryHotkey);
-        _templateInfo.Text = $"Vorlage anwenden: {Hotkey.Display(_settings.TemplateHotkey)}";
-        _templateInfo.Visible = pickerActive;
+        UpdateMenuRows();
         // WHY remembered: the settings window closing re-registers with notify, which would repeat the same warning.
         var failedKey = string.Join("|", failed.OrderBy(n => n, StringComparer.Ordinal));
         if (failed.Count == 0) _lastWarnedHotkeys = "";
@@ -333,6 +338,40 @@ internal sealed class TrayApp : ApplicationContext
                 + "Hier klicken und in den Einstellungen ein anderes wählen.",
                 ToolTipIcon.Warning, ShowSettings);
         }
+    }
+
+    /// <summary>
+    /// The menu rows as the Mac shows them (makeItem, updateUI): every action row is clickable and shows its shortcut
+    /// when it is on; Diktieren and Dictate Prompt read „… beenden“ while their own recording runs; „Stopp“ and the
+    /// recovery rows only appear when they can do something.
+    /// </summary>
+    private void UpdateMenuRows()
+    {
+        static string Key(string active) => active.Length > 0 ? Hotkey.Display(active) : "";
+        bool idle = _state == State.Idle;
+        _stopItem.Visible = _stopSeparator.Visible = !idle;
+        _proposalsItem.Visible = _mcp != null && _mcp.Proposals.Pending.Count > 0;
+        bool recording = _state == State.Recording;
+        _dictateItem.Text = recording && _mode == Mode.Dictate && _live == null ? "Diktat beenden" : "Diktieren";
+        _dictateItem.ShortcutKeyDisplayString = Key(_settings.ActiveDictateHotkey);
+        _promptItem.Text = recording && _mode == Mode.Prompt ? "Prompt-Diktat beenden" : "Dictate Prompt";
+        _promptItem.ShortcutKeyDisplayString = Key(_settings.ActivePromptHotkey);
+        _screenshotItem.ShortcutKeyDisplayString = Key(_settings.ActiveScreenshotHotkey);
+        _glossaryItem.ShortcutKeyDisplayString = Key(_settings.ActiveGlossaryHotkey);
+        _liveItem.ShortcutKeyDisplayString = Key(_settings.ActiveLiveDictateHotkey);
+        _settingsItem.ShortcutKeyDisplayString = Key(_settings.ActiveOpenSettingsHotkey);
+        // Mac: both history rows hide while the history is empty.
+        _copyLast.Visible = _recent.Latest != null;
+        _recentMenu.Visible = _recent.Items.Count > 0;
+        _retryItem.Visible = _lastFailed != null && idle;
+    }
+
+    /// <summary>The menu's „Stopp“ (Mac stopCurrentOperation): stops a recording, cancels the processing.</summary>
+    private void StopCurrentOperation()
+    {
+        Core.Log.Info($"Menu Stopp in state {_state}");
+        if (_state == State.Recording) _ = StopAndProcessAsync();
+        else if (_state == State.Processing) _cts?.Cancel();
     }
 
     private void OnHotkey(Mode mode)
@@ -1951,46 +1990,6 @@ internal sealed class TrayApp : ApplicationContext
         _settingsForm.Show();
         _settingsForm.Activate();
         _settingsForm.BringToFront();
-    }
-
-    /// <summary>
-    /// Tray switch between online and offline, e.g. before a session with patient data. Without the
-    /// models (or without a key for online) it opens the settings instead of leaving a mode that cannot work.
-    /// </summary>
-    private void ToggleOffline()
-    {
-        if (_state != State.Idle) return;
-        bool offline = !_settings.OfflineMode;
-        if (offline && !OfflineEngine.SpeechInstalled)
-        {
-            Notify("Offline-Modelle fehlen", "Für den Offline-Modus zuerst die Spracherkennung laden: hier klicken.", ToolTipIcon.Info, ShowSettings);
-            return;
-        }
-        _settings.OfflineMode = offline;
-        if (offline) _promptMemory.Clear();
-        DropScreenshotIfNotAllowed();
-        // Back to the chosen engines: they may need a key that was never entered.
-        if (!offline && MissingKeyFor(Mode.Prompt) is { } provider)
-        {
-            _settings.OfflineMode = true;
-            Notify("Schlüssel fehlt", $"Für den Online-Modus zuerst den {provider}-Schlüssel eintragen: hier klicken.", ToolTipIcon.Info, ShowSettings);
-            return;
-        }
-        TrySave();
-        Core.Log.Info($"Tray: offline mode {(offline ? "on" : "off")}");
-        _mcp.SyncOfflineMode();
-        _offline.Prewarm();
-        SetState(_state);
-        _overlay.ShowDone(offline ? "Offline: nichts verlässt den PC" : EnginesLabel(), neutral: true);
-    }
-
-    /// <summary>"Sprache: Gemini · Text: OpenAI", or one name when both are the same.</summary>
-    private string EnginesLabel()
-    {
-        static string Name(Core.Engine e) => e switch { Core.Engine.Local => "auf diesem PC", Core.Engine.OpenAI => "OpenAI", _ => "Gemini" };
-        var (speech, text) = (_settings.EffectiveSpeechEngine, _settings.EffectiveTextEngine);
-        if (speech == Core.Engine.Local && text == Core.Engine.Local) return "Alles auf diesem PC";
-        return speech == text ? $"Online mit {Name(speech)}" : $"Sprache: {Name(speech)} · Text: {Name(text)}";
     }
 
     /// <summary>
