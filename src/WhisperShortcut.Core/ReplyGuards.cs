@@ -34,4 +34,23 @@ public static class ReplyGuards
     /// </summary>
     public static bool IsOwnWindow(uint windowProcessId, uint ownProcessId) =>
         windowProcessId != 0 && windowProcessId == ownProcessId;
+
+    /// <summary>
+    /// Returns <paramref name="text"/> unchanged when it has non-whitespace content, otherwise throws
+    /// <see cref="EmptyModelReplyException"/> (Mac: PromptReplyCleanup.validate, empty after trim).
+    /// </summary>
+    public static string RequireReply(string text, string message)
+    {
+        if (string.IsNullOrWhiteSpace(text)) throw new EmptyModelReplyException(message);
+        return text;
+    }
+}
+
+/// <summary>
+/// The model answered with nothing. Retryable: the recording is kept (Mac: TranscriptionError.emptyModelReply).
+/// The message is German and shown to the user as is.
+/// </summary>
+public sealed class EmptyModelReplyException : Exception
+{
+    public EmptyModelReplyException(string message) : base(message) { }
 }

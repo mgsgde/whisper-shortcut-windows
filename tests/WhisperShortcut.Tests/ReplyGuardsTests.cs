@@ -36,4 +36,20 @@ public class ReplyGuardsTests
         Assert.False(ReplyGuards.IsOwnWindow(43, 42));
         Assert.False(ReplyGuards.IsOwnWindow(0, 0));
     }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("   \n")]
+    public void RequireReply_EmptyThrowsWithMessage(string text)
+    {
+        var e = Assert.Throws<EmptyModelReplyException>(() => ReplyGuards.RequireReply(text, "Leer."));
+        Assert.Equal("Leer.", e.Message);
+    }
+
+    [Fact]
+    public void RequireReply_NonEmptyIsReturnedUnchanged()
+    {
+        Assert.Equal("x", ReplyGuards.RequireReply("x", "Leer."));
+        Assert.Equal(" x\n", ReplyGuards.RequireReply(" x\n", "Leer."));
+    }
 }

@@ -860,6 +860,12 @@ internal sealed class TrayApp : ApplicationContext
             Sounds.Error();
             NotifyRetryable("Offline-Sprachmodell", e.Message, Failed());
         }
+        catch (Core.EmptyModelReplyException e)
+        {
+            Core.Log.Error($"{_mode}: empty model reply");
+            Sounds.Error();
+            NotifyRetryable("Keine Antwort", e.Message, Failed());
+        }
         catch (Core.GeminiException e)
         {
             Core.Log.Error($"{_mode}: Gemini {e.Kind}");
@@ -976,8 +982,8 @@ internal sealed class TrayApp : ApplicationContext
         // With a selection Gemini hears the instruction itself; there is no transcript to compare with.
         string text = Reply(await answer, instruction == null ? null : new[] { instruction, systemPrompt });
         Core.Log.Info($"Prompt: answer {text.Length} chars");
+        text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
         RememberPrompt(selection, instruction ?? Core.PromptConversationMemory.SpokenPlaceholder, text);
-        if (text.Length == 0) Notify("Nichts erkannt", "Gemini hat keinen Text geliefert. Bitte die Anweisung noch einmal sprechen.", ToolTipIcon.Info);
         return text;
     }
 
@@ -1040,7 +1046,7 @@ internal sealed class TrayApp : ApplicationContext
         }
         string text = Reply(raw, new[] { transcript, selection, template.Instructions });
         Core.Log.Info($"Template: transcript {transcript.Length} chars, selection {selection?.Length ?? 0} chars, answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
-        if (text.Length == 0) Notify("Nichts erkannt", "Es kam kein Text zurück. Bitte noch einmal versuchen.", ToolTipIcon.Info);
+        text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
         return text;
     }
 
@@ -1071,8 +1077,8 @@ internal sealed class TrayApp : ApplicationContext
         var sw = Stopwatch.StartNew();
         string text = Reply(await PromptTextAsync(selection, instruction, systemPrompt, ct), new[] { instruction, selection, systemPrompt });
         Core.Log.Info($"Prompt via transcript: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
+        text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
         RememberPrompt(selection, instruction, text);
-        if (text.Length == 0) Notify("Nichts erkannt", "Das Sprachmodell hat keinen Text geliefert. Bitte die Anweisung noch einmal sprechen.", ToolTipIcon.Info);
         return text;
     }
 
@@ -1113,8 +1119,8 @@ internal sealed class TrayApp : ApplicationContext
         }
         string text = Reply(raw, new[] { transcript, selection, quick, systemPrompt });
         Core.Log.Info($"Prompt quick action: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
+        text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
         RememberPrompt(target, instruction, text);
-        if (text.Length == 0) Notify("Nichts erkannt", "Es kam kein Text zurück. Bitte noch einmal versuchen.", ToolTipIcon.Info);
         return text;
     }
 
@@ -1125,7 +1131,7 @@ internal sealed class TrayApp : ApplicationContext
     /// </summary>
     private string Reply(string raw, string?[]? sources)
     {
-        string text = Core.TextCleanup.StripMarkdown(Core.TextCleanup.Normalize(raw));
+        string text = Core.TextCleanup.StripMarkdown(Core.TextCleanup.NormalizeReply(raw));
         if (sources == null || text.Length == 0) return text;
         _unsupported = Core.DictationFidelityCheck.UnsupportedWords(text, sources);
         // Count only: the words are patient data and stay out of the log.
