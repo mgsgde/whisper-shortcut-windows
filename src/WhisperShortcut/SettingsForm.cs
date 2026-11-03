@@ -58,6 +58,7 @@ internal sealed partial class SettingsForm : Form
     private readonly HotkeyBox _templateKey;
     private readonly ToggleSwitch _sendScreenshots;
     private readonly HotkeyBox _screenshotKey;
+    private readonly HotkeyBox _liveKey;
     private readonly Label _screenshotOff;
     private readonly FluentCombo _templateChoice;
     private readonly FluentButton _templateRemove;
@@ -268,6 +269,15 @@ internal sealed partial class SettingsForm : Form
         _dictateKey = new HotkeyBox(settings.DictateHotkey) { AccessibleName = "Tastenkürzel Diktieren" };
         dictate.Controls.Add(KeyCard(_dictateKey, "Ins Feld klicken und die neue Kombination drücken, z. B. Strg+Umschalt+D. "
             + "Solange dieses Fenster im Vordergrund ist, sind die Kürzel aus."));
+        // Live diktieren (macOS Dictate Live): no default key, so it is off until the user picks one (Mac: shortcut ships disabled).
+        dictate.Controls.Add(Section("Live diktieren"));
+        _liveKey = new HotkeyBox(settings.LiveDictateHotkey ?? "", allowEmpty: true) { AccessibleName = "Tastenkürzel Live diktieren" };
+        var liveCard = new Card();
+        liveCard.AddRow(SettingRow("Tastenkürzel Live diktieren", "Der Text erscheint schon beim Sprechen: nach jeder kurzen Pause "
+            + "das fertige Stück an der Cursorstelle. Nur mit der Spracherkennung auf diesem PC (Parakeet). Ohne Kürzel ist es aus; "
+            + "zum Einschalten eine Kombination drücken, z. B. Strg+Umschalt+L. Entf entfernt das Kürzel.",
+            new FieldFrame(_liveKey) { Width = KeyWidth, Dock = DockStyle.None }, KeyWidth, out _));
+        dictate.Controls.Add(liveCard);
         dictate.Controls.Add(Section("Modell"));
         _dictateModel = ModelChoice(Core.GeminiModels.Transcription, settings.TranscriptionModel);
         dictate.Controls.Add(_dictateGeminiCard = ModelCard(_dictateModel, "Gemini-Modell", "Gilt, wenn die Spracherkennung über Gemini läuft "
@@ -1572,7 +1582,7 @@ internal sealed partial class SettingsForm : Form
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
-        _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value,
+        _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value, _liveKey.Value,
     }.Concat(_quick.Select(q => q.Text))
      .Concat(_templates.Select(t => string.Join("\u0002", t.Id, t.Name, t.Instructions, t.Hotkey))));
 
@@ -1699,7 +1709,7 @@ internal sealed partial class SettingsForm : Form
             _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.ScreenshotHotkey);
+            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _geminiKey.Value;
@@ -1725,6 +1735,7 @@ internal sealed partial class SettingsForm : Form
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
         _settings.SendScreenshots = _sendScreenshots.Checked;
         _settings.ScreenshotHotkey = Hotkey.TryParse(_screenshotKey.Value, out var shotKey) ? shotKey.ToString() : "";
+        _settings.LiveDictateHotkey = Hotkey.TryParse(_liveKey.Value, out var liveKey) ? liveKey.ToString() : "";
         _settings.Templates = _templates.Select(t => new Core.DictationTemplate
         {
             Id = t.Id, Name = t.Name.Trim(), Instructions = t.Instructions.ReplaceLineEndings("\n").Trim(),
@@ -1744,7 +1755,7 @@ internal sealed partial class SettingsForm : Form
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.ScreenshotHotkey) = before;
+            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey) = before;
             Warn(Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message));
             return false;
         }
@@ -1753,7 +1764,7 @@ internal sealed partial class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")})");
         RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.DictatePromptTemplate);
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;
@@ -1895,6 +1906,22 @@ internal sealed partial class SettingsForm : Form
         if (Hotkey.TryParse(_settings.MeetingHotkey, out var meetingKey)) taken.Add(("Live Meeting", meetingKey));
         const string Rule = "Bitte ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+V, oder es mit Entf entfernen. "
             + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
+        if (_liveKey.Value.Length > 0)
+        {
+            if (!Hotkey.TryParse(_liveKey.Value, out var live) || !IsSafe(live))
+            {
+                ShowPage(DictatePage);
+                Warn("Kürzel für Live diktieren: " + Rule);
+                return false;
+            }
+            if (taken.FirstOrDefault(k => k.Key == live) is { Owner: { } owner })
+            {
+                ShowPage(DictatePage);
+                Warn($"{live.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Live diktieren ein anderes Kürzel wählen.");
+                return false;
+            }
+            taken.Add(("Live diktieren", live));
+        }
         if (_screenshotKey.Value.Length > 0)
         {
             if (!Hotkey.TryParse(_screenshotKey.Value, out var shot) || !IsSafe(shot))

@@ -106,3 +106,11 @@ read/propose/apply mit Änderungsliste und Undo, zwei Schlüssel (lesen / änder
 `update_quick_instructions`, Anbieterwahl (`dictation.engine`, `dictate_prompt.engine`). Bewusst nicht: Schlüssel,
 Offline-Modus und Mikrofon über KI-Apps. Fehlt noch: Meeting-Werkzeuge (eigener Provider auf `MeetingStore`, der
 jetzt da ist), Vorlagen-Werkzeug (Vorlagen sind jetzt da), `get_recent_interactions` (Windows speichert keine Diktate), Codex.
+
+**Nachtrag 03.11.2026 — Live diktieren (macOS #324 „Dictate Live“):** eigenes Kürzel unter Diktieren (ohne
+Vorgabe, also aus, bis man eins wählt), nur mit Parakeet auf diesem PC und „Automatisch einfügen“ an. Schnitt in
+Pausen wie auf dem Mac (mind. 1,5 s, 0,6 s Stille; zusätzlich höchstens 30 s), 0,4 s Abstand zwischen den
+Stücken, eingefügt nur ins Fenster vom Start (wartet sonst und holt nach). Die Mac-Fn-Taste gibt es nicht; das
+Kürzel übernimmt ihre Rolle. Offen: Einstellung „Satzzeichen“ (#322, Hook in `LiveDictation.FinishPiece`) und
+„Zwischenablage nach dem Einfügen leeren“ (gibt es auf Windows nicht, Hook in `ClipboardAtEnd`), kein Schutz für
+Passwortfelder (Windows hat kein `IsSecureEventInputEnabled`).

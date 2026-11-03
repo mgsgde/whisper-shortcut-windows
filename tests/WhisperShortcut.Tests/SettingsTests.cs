@@ -699,4 +699,18 @@ public class QuickActionRequestTests
         Assert.Equal("", u.MeetingHotkey);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
+
+    [Fact]
+    public void LiveDictateHotkey_defaults_to_empty_and_round_trips()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("", s.LiveDictateHotkey);
+
+        s.LiveDictateHotkey = "Ctrl+Alt+L";
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Ctrl+Alt+L", t.LiveDictateHotkey);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
 }
