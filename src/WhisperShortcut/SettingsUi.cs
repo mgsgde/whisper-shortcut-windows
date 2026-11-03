@@ -82,7 +82,9 @@ internal static class Theme
     public static readonly Font Body = FontOr("Segoe UI Variable Text", "Segoe UI", 10.5f);
     public static readonly Font Small = FontOr("Segoe UI Variable Small", "Segoe UI", 9f);
     public static readonly Font Strong = new("Segoe UI Semibold", 10.5f);
-    public static readonly Font Section = new("Segoe UI Semibold", 10.5f);
+    // Mac section headings are large (SectionHeader); between the 20 pt page title and the 10.5 pt body.
+    public static readonly Font Section = new("Segoe UI Semibold", 14f);
+    public static readonly Font SectionIcon = FontOr("Segoe Fluent Icons", "Segoe MDL2 Assets", 14f);
     public static readonly Font Title = new("Segoe UI Semibold", 20f);
     public static readonly Font AppTitle = new("Segoe UI Semibold", 11f);
     public static readonly Font Icons = FontOr("Segoe Fluent Icons", "Segoe MDL2 Assets", 12f);

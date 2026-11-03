@@ -194,7 +194,7 @@ internal sealed partial class SettingsForm : Form
         general.Controls.Add(keysCard);
 
         // --- start ---
-        general.Controls.Add(Section("Start"));
+        general.Controls.Add(Section("Start", subtitle: "Ob WhisperShortcut mit Windows startet."));
         _autoStart = new ToggleSwitch { Checked = AutoStart.IsEnabled, AccessibleName = "Mit Windows starten" };
         var startCard = new Card();
         startCard.AddRow(SettingRow("Mit Windows starten", "Dann ist WhisperShortcut nach jedem Neustart gleich unten rechts im Infobereich da.",
@@ -202,7 +202,7 @@ internal sealed partial class SettingsForm : Form
         general.Controls.Add(startCard);
 
         // --- microphone (Windows only: choice and level test) ---
-        general.Controls.Add(Section("Mikrofon"));
+        general.Controls.Add(Section("Mikrofon", subtitle: "Welches Mikrofon aufnimmt. Gibt es nur unter Windows."));
         _mic = new FluentCombo { Dock = DockStyle.Fill, AccessibleName = Core.UserCopy.MicAccessibleName };
         FillMicrophones(settings.Microphone);
         _micTest = new FluentButton("Testen") { MinimumSize = new Size(100, 32), AccessibleName = Core.UserCopy.MicTestAccessibleName };
@@ -223,7 +223,7 @@ internal sealed partial class SettingsForm : Form
         _meterTimer.Tick += (_, _) => _micMeter.Value = _probe?.Level ?? 0;
 
         // --- clipboard (Mac: Auto-paste, After auto-paste) ---
-        general.Controls.Add(Section("Zwischenablage"));
+        general.Controls.Add(Section("Zwischenablage", subtitle: "Was mit dem Text nach der Aufnahme passiert. Er liegt immer auch in der Zwischenablage."));
         _autoPaste = new ToggleSwitch { Checked = settings.AutoPaste, AccessibleName = "Automatisch einfügen" };
         _restoreClipboard = new ToggleSwitch { Checked = settings.RestoreClipboard, AccessibleName = "Zwischenablage wiederherstellen" };
         var pasteCard = new Card();
@@ -236,22 +236,18 @@ internal sealed partial class SettingsForm : Form
         _autoPaste.CheckedChanged += (_, _) => _restoreClipboard.Enabled = _autoPaste.Checked;
         _restoreClipboard.Enabled = _autoPaste.Checked;
 
-        // --- sounds (Windows only; off for new installs like the Mac, which has none) ---
-        general.Controls.Add(Section("Töne"));
+        // --- Erweitert (Mac: General → Advanced at the end): sounds (Windows only, off like the Mac) and the recording keys ---
         _sounds = new ToggleSwitch { Checked = settings.Sounds, AccessibleName = "Signaltöne" };
         var soundCard = new Card();
         soundCard.AddRow(SettingRow("Signaltöne", "Ein kurzer Ton beim Start und Ende einer Aufnahme und bei Fehlern. "
             + "Aus: Nur das Symbol und die Anzeige am Bildschirm zeigen, was gerade passiert.", _sounds, ToggleWidth, out _));
-        general.Controls.Add(soundCard);
-
-        // --- keys during a recording ---
-        general.Controls.Add(Section("Während einer Aufnahme"));
         var fixedCard = new Card();
         fixedCard.AddRow(SettingRow("Aufnahme verwerfen oder Verarbeitung abbrechen", null, KeyCap("Esc"), ButtonWidth + 40, out _));
         fixedCard.AddRow(SettingRow("Schnellanweisung anwenden (nur bei Dictate Prompt)", null, KeyCap("Strg+1 bis Strg+5"), ButtonWidth + 40, out _));
-        general.Controls.Add(fixedCard);
-        general.Controls.Add(Wrap("Diese Tasten sind nur belegt, solange die Anzeige unten zu sehen ist. Sonst gehören sie wie gewohnt "
-            + "den anderen Programmen.", 0));
+        AddAdvanced(general,
+            Section("Töne", first: true), soundCard,
+            Section("Während einer Aufnahme", subtitle: "Diese Tasten sind nur belegt, solange die Anzeige unten zu sehen ist. "
+                + "Sonst gehören sie wie gewohnt den anderen Programmen."), fixedCard);
 
         // ================= page: Konten (Mac Accounts: one section per provider key) =================
         _geminiKey = new KeyField(settings.ApiKey ?? "", (k, ct) => _gemini.CheckKeyAsync(k, ct), result => result switch
@@ -279,7 +275,7 @@ internal sealed partial class SettingsForm : Form
 
         // ================= page: Diktieren =================
         // --- transcription model: provider per step (Mac: one model picker that includes the offline models) ---
-        dictate.Controls.Add(Section("Transkriptionsmodell"));
+        dictate.Controls.Add(Section("Transkriptionsmodell", subtitle: "Welches Modell deine Aufnahme in Text verwandelt."));
         _speechEngine = EngineChoice(settings.SpeechEngine, "Spracherkennung", "Auf diesem PC (Parakeet)");
         var speechEngineCard = new Card();
         speechEngineCard.AddRow(SettingRow("Anbieter", "Wer die Aufnahme in Text verwandelt, auch die gesprochene Anweisung bei Dictate Prompt.",
@@ -307,7 +303,7 @@ internal sealed partial class SettingsForm : Form
         dictate.Controls.Add(speechCard);
 
         // Offline only (port of the Mac's Dictate → Punctuation): Gemini and OpenAI punctuate by themselves.
-        var punctuationSection = Section("Satzzeichen");
+        var punctuationSection = Section("Satzzeichen", subtitle: "Wie Satzzeichen ins Diktat kommen.");
         dictate.Controls.Add(punctuationSection);
         _punctuation = new FluentCombo { Width = ComboWidth, AccessibleName = "Satzzeichen" };
         _punctuation.Items.Add(new PunctuationItem(Core.PunctuationMode.Automatic, "Automatisch"));
@@ -356,7 +352,7 @@ internal sealed partial class SettingsForm : Form
         dictate.Controls.Add(PromptCard(_dictatePrompt, _dictateHistory));
 
         // ================= page: Dictate Prompt =================
-        prompt.Controls.Add(Section("Modell"));
+        prompt.Controls.Add(Section("Modell", subtitle: "Das Modell, das deine gesprochene Anweisung hört und auf den markierten Text anwendet."));
         _textEngine = EngineChoice(settings.TextEngine, "Texte bearbeiten", "Auf diesem PC (Sprachmodell)");
         var textEngineCard = new Card();
         textEngineCard.AddRow(SettingRow("Anbieter", "Wer die Anweisung auf den markierten Text anwendet, neue Texte schreibt und die "
@@ -395,7 +391,7 @@ internal sealed partial class SettingsForm : Form
         FormClosed += (_, _) => _offline.DownloadChanged -= UpdateModelRows;
 
         // --- screen content (Mac: Include screenshot) ---
-        prompt.Controls.Add(Section("Bildschirminhalt"));
+        prompt.Controls.Add(Section("Bildschirminhalt", subtitle: "Schickt bei Dictate Prompt ein Bildschirmfoto mit, damit das Modell sieht, was du siehst."));
         _sendScreenshots = new ToggleSwitch { Checked = settings.SendScreenshots, AccessibleName = "Bildschirmfoto mitschicken" };
         var shotCard = new Card();
         shotCard.AddRow(SettingRow("Bildschirmfoto mitschicken", "Ein Bildschirmfoto (Kürzel unter Allgemein) geht einmal mit der nächsten "
@@ -577,7 +573,7 @@ internal sealed partial class SettingsForm : Form
         _speechEngine.SelectedIndexChanged += (_, _) => UpdateMode();
         _textEngine.SelectedIndexChanged += (_, _) => UpdateMode();
 
-        privacy.Controls.Add(Section("Berechtigungen"));
+        privacy.Controls.Add(Section("Berechtigungen", subtitle: "Worauf WhisperShortcut auf diesem PC zugreift."));
         var micPrivacy = new FluentButton("Windows-Einstellungen öffnen") { MinimumSize = new Size(ButtonWidth + 100, 32), AccessibleName = "Mikrofon-Datenschutz in Windows öffnen" };
         micPrivacy.Click += (_, _) => OpenLocal("ms-settings:privacy-microphone");
         var permissionsCard = new Card();
@@ -803,7 +799,7 @@ internal sealed partial class SettingsForm : Form
             + "dabei nur github.com nach der neuesten Versionsnummer, ohne Aufnahmen, Texte oder Einstellungen.", _autoUpdate, ToggleWidth, out _));
         info.Controls.Add(headCard);
 
-        info.Controls.Add(Section("Einführung"));
+        info.Controls.Add(Section("Einführung", subtitle: "Die geführte Tour durch die Funktionen von WhisperShortcut noch einmal ansehen."));
         var tour = new FluentButton("Zeigen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Einführung zeigen" };
         tour.Click += (_, _) =>
         {
@@ -1127,11 +1123,65 @@ internal sealed partial class SettingsForm : Form
         Text = text, AutoSize = true, Font = Theme.Title, Margin = new Padding(0, 0, 0, 10), UseMnemonic = false,
     };
 
-    /// <summary>Group heading above a card.</summary>
-    private static Label Section(string text, bool first = false) => new ThemedLabel
+    // Mac SectionHeader: an accent symbol before each heading. Segoe Fluent Icons / MDL2 glyphs, by heading text.
+    private static readonly Dictionary<string, string> SectionIcons = new()
     {
-        Text = text, AutoSize = true, Font = Theme.Section, Margin = new Padding(0, first ? 6 : 22, 0, 8), UseMnemonic = false,
+        ["Tastenkürzel"] = "\uE765", ["Start"] = "\uE7E8", ["Mikrofon"] = "\uE720", ["Zwischenablage"] = "\uE77F",
+        ["Töne"] = "\uE767", ["Während einer Aufnahme"] = "\uE916", ["Transkriptionsmodell"] = "\uE8D6",
+        ["Offline-Modell"] = "\uE896", ["Offline-Sprachmodell"] = "\uE896", ["Satzzeichen"] = "\uE8D2", ["Glossar"] = "\uE82D",
+        ["Anweisungen"] = "\uE8BD", ["Modell"] = "\uE950", ["Bildschirminhalt"] = "\uE7F4", ["Schnellanweisungen"] = "\uE945",
+        ["Vorlage für neue Texte"] = "\uE8A5", ["Meine Vorlagen"] = "\uE8A5", ["So geht's"] = "\uE897", ["Offline-Modus"] = "\uE839",
+        ["Berechtigungen"] = "\uEA18", ["Einführung"] = "\uE734", ["Daten und Zurücksetzen"] = "\uE7B8",
+        ["Hilfe und Entwickler"] = "\uE897", ["Lizenz"] = "\uE8A5", ["Verbindung"] = "\uE71B", ["Was KI-Apps dürfen"] = "\uE72E",
+        ["Mit Claude verbinden"] = "\uE8F2", ["Änderungen durch KI-Apps"] = "\uE81C",
+        ["Google-API-Schlüssel"] = "\uE8D7", ["OpenAI-API-Schlüssel"] = "\uE8D7",
     };
+
+    /// <summary>
+    /// Section heading like the Mac's SectionHeader: accent symbol, heading and, when given, one sentence of subtitle.
+    /// </summary>
+    private Control Section(string text, bool first = false, string? subtitle = null)
+    {
+        var head = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), Padding = new Padding(0) };
+        if (SectionIcons.TryGetValue(text, out var glyph))
+            head.Controls.Add(new ThemedLabel { Text = glyph, Font = Theme.SectionIcon, Tone = Tone.Accent, AutoSize = true, Margin = new Padding(0, 3, 8, 0), UseMnemonic = false });
+        head.Controls.Add(new ThemedLabel { Text = text, AutoSize = true, Font = Theme.Section, Margin = new Padding(0), UseMnemonic = false });
+        var box = new TableLayoutPanel
+        {
+            ColumnCount = 1, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Dock = DockStyle.Top,
+            Margin = new Padding(0, first ? 6 : 26, 0, 8), Padding = new Padding(0),
+        };
+        box.Controls.Add(head);
+        if (subtitle != null)
+        {
+            var sub = Wrap(subtitle, 0);
+            sub.Margin = new Padding(0, 4, 0, 0);
+            box.Controls.Add(sub);
+        }
+        return box;
+    }
+
+    /// <summary>
+    /// Mac AdvancedSettingsGroup: rarely needed settings at the end of a page, folded in until „Erweitert“ is clicked.
+    /// </summary>
+    private void AddAdvanced(TableLayoutPanel page, params Control[] items)
+    {
+        var toggle = new LinkLabel { Text = "▸ Erweitert", AutoSize = true, Margin = new Padding(0, 26, 0, 4), AccessibleName = "Erweiterte Einstellungen zeigen" };
+        page.Controls.Add(toggle);
+        foreach (var item in items)
+        {
+            item.Visible = false;
+            page.Controls.Add(item);
+        }
+        toggle.LinkClicked += (_, _) =>
+        {
+            bool open = !items[0].Visible;
+            foreach (var item in items) item.Visible = open;
+            toggle.Text = open ? "▾ Erweitert" : "▸ Erweitert";
+            toggle.AccessibleName = open ? "Erweiterte Einstellungen verbergen" : "Erweiterte Einstellungen zeigen";
+            FitHints();
+        };
+    }
 
     /// <summary>Wrapping secondary text; <paramref name="inset"/> = how much narrower than the page (96 dpi).</summary>
     private Label Wrap(string text, int inset, bool small = false)
