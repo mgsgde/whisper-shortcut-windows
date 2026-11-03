@@ -143,7 +143,12 @@ public static class TextCleanup
 
         var folded = new HashSet<string>(glossaryTerms.SelectMany(EchoWords), StringComparer.Ordinal);
         var words = EchoWords(trimmed).ToList();
-        if (words.Count == 0 || !words.All(folded.Contains)) return text;
+        // Mac 63ded84b (#261): connectors ("und", "and", ...) are neutral, but at least one real term must remain.
+        if (words.Count == 0 || !words.All(w => folded.Contains(w) || EchoConnectors.Contains(w))
+            || !words.Any(folded.Contains)) return text;
+        // Stricter than Mac: with a connector inside, "Ramipril und Goedde" (two terms) is ordinary speech;
+        // only a list of 3+ distinct terms counts as an echo.
+        if (words.Any(EchoConnectors.Contains) && DistinctTermCount(words, glossaryTerms) < MinTermsWithConnectors) return text;
 
         Log.Error($"Discarding glossary-echo transcript ({trimmed.Length} chars from {audioSeconds:F1}s audio, min plausible {minPlausible:F0}, all words are glossary terms)");
         return "";
@@ -152,7 +157,8 @@ public static class TextCleanup
     /// <summary>
     /// True when every word of the text belongs to a glossary term and at least two different terms
     /// appear, in any order. One spoken term ("Ramipril.") or any other word ("Ramipril und Goedde")
-    /// makes it speech.
+    /// makes it speech. Connector words ("und", "and", "mit", ...) between terms are neutral (Mac 63ded84b,
+    /// #261: "Claude Code, MCP und Bachata." is an echo); a text of connectors only is not a list.
     /// </summary>
     public static bool IsPureGlossaryList(string text, IReadOnlyList<string> glossaryTerms)
     {
@@ -163,10 +169,23 @@ public static class TextCleanup
         var distinct = new HashSet<int>();
         foreach (var w in EchoWords(text))
         {
-            if (!termIndexByWord.TryGetValue(w, out var idx)) return false;
-            distinct.Add(idx);
+            if (termIndexByWord.TryGetValue(w, out var idx)) { distinct.Add(idx); continue; }
+            if (EchoConnectors.Contains(w)) continue;
+            return false;
         }
-        return distinct.Count >= 2;
+        // Stricter than Mac: a connector in the text raises the bar to 3 distinct terms ("Ramipril und Goedde" is speech).
+        var hasConnector = EchoWords(text).Any(EchoConnectors.Contains);
+        return distinct.Count >= (hasConnector ? MinTermsWithConnectors : 2);
+    }
+
+    private const int MinTermsWithConnectors = 3;
+
+    private static int DistinctTermCount(IEnumerable<string> words, IReadOnlyList<string> glossaryTerms)
+    {
+        var termIndexByWord = new Dictionary<string, int>(StringComparer.Ordinal);
+        for (var t = 0; t < glossaryTerms.Count; t++)
+            foreach (var w in EchoWords(glossaryTerms[t])) termIndexByWord.TryAdd(w, t);
+        return words.Where(termIndexByWord.ContainsKey).Select(w => termIndexByWord[w]).Distinct().Count();
     }
 
     /// <summary>
@@ -216,11 +235,27 @@ public static class TextCleanup
             last = idx;
             distinct.Add(idx);
         }
-        if (distinct.Count < 2) return text;
+        if (distinct.Count < 2)
+        {
+            // Mac 34bb2ce4: a lone term goes only when the tail is exactly that one term (a multi-word term
+            // counts as one) and the head has 5+ words; short replies and sign-offs stay.
+            if (distinct.Count == 0) return text;
+            var termWordCount = EchoWords(glossaryTerms[distinct.First()]).Count();
+            if (EchoWords(tail).Count() != termWordCount || EchoWords(head).Count() < MinHeadWordsForSingleTermEcho)
+                return text;
+        }
 
         Log.Warn($"Stripped trailing glossary echo ({tail.Trim().Length} chars, {distinct.Count} distinct terms)");
         return head.TrimEnd();
     }
+
+    // Mac 34bb2ce4: minimum head words before a lone trailing glossary term is stripped.
+    private const int MinHeadWordsForSingleTermEcho = 5;
+
+    // Mac 63ded84b (#261): filler glued between echoed terms; already folded like GlossaryPrompt.Fold.
+    private static readonly HashSet<string> EchoConnectors = new(
+        new[] { "und", "and", "mit", "with", "oder", "or", "sowie", "plus", "y", "et" }
+            .Select(GlossaryPrompt.Fold), StringComparer.Ordinal);
 
     private static readonly string[] RefusalPhrases =
     {
