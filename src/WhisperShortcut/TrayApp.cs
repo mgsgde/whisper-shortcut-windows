@@ -1134,12 +1134,12 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     /// <summary>Speech recognition with the chosen engine: Parakeet on this PC, or Gemini / OpenAI.</summary>
-    private Task<string> TranscribeAsync(byte[] wav, CancellationToken ct) =>
+    private Task<string> TranscribeAsync(byte[] wav, CancellationToken ct, bool meetingChunk = false) =>
         _settings.EffectiveSpeechEngine switch
         {
             Core.Engine.Local => TranscribeOfflineAsync(wav, ct),
-            Core.Engine.OpenAI => TranscribeOnlineAsync(_openAi, wav, ct),
-            _ => TranscribeOnlineAsync(_gemini, wav, ct),
+            Core.Engine.OpenAI => TranscribeOnlineAsync(_openAi, wav, ct, meetingChunk),
+            _ => TranscribeOnlineAsync(_gemini, wav, ct, meetingChunk),
         };
 
     /// <summary>
@@ -1183,7 +1183,7 @@ internal sealed class TrayApp : ApplicationContext
     /// and take as long as all of it. A piece that comes back as nothing but glossary words (the
     /// model filled a quiet stretch with vocabulary) is asked again once without the glossary, like the Mac.
     /// </summary>
-    private Task<string> TranscribeOnlineAsync(Core.ISpeechProvider speech, byte[] wav, CancellationToken ct)
+    private Task<string> TranscribeOnlineAsync(Core.ISpeechProvider speech, byte[] wav, CancellationToken ct, bool meetingChunk = false)
     {
         var glossary = _settings.Glossary.ToList();
         var echoTerms = Core.GlossaryPrompt.EchoTerms(glossary);
@@ -1193,7 +1193,10 @@ internal sealed class TrayApp : ApplicationContext
             {
                 // Nothing but room noise: Gemini would answer with the glossary. Also saves the request.
                 if (!HasSpeech(chunk)) return "";
-                var text = await speech.TranscribeAsync(chunk, glossary, c);
+                // Live-meeting chunks carry loud system audio that gpt-transcribe answers with the keywords themselves.
+                var text = speech is Core.OpenAiClient oa
+                    ? await oa.TranscribeAsync(chunk, glossary, sendKeywords: !meetingChunk, c)
+                    : await speech.TranscribeAsync(chunk, glossary, c);
                 if (text.Trim().Length == 0
                     || Core.TextCleanup.DiscardGlossaryEcho(text, Core.Wav.DurationSeconds(chunk), echoTerms).Length > 0)
                     return text;
@@ -1255,7 +1258,7 @@ internal sealed class TrayApp : ApplicationContext
     private async Task<string> TranscribeMeetingChunkAsync(byte[] wav, CancellationToken ct)
     {
         if (_fakeGemini) return "Das ist ein Testabschnitt aus dem Meeting.";
-        string raw = GlossaryBackstops(await TranscribeAsync(wav, ct));
+        string raw = GlossaryBackstops(await TranscribeAsync(wav, ct, meetingChunk: true));
         string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), Core.Wav.DurationSeconds(wav));
         return Core.TextCleanup.LooksLikeRefusal(text) ? "" : text;
     }

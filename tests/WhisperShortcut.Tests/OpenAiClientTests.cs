@@ -41,6 +41,56 @@ public class OpenAiClientTests
         Assert.Contains("Kubernetes, Müller", body);
     }
 
+    private static (OpenAiClient, FakeHandler) MakeModel(string model)
+    {
+        var h = new FakeHandler();
+        var c = new OpenAiClient(() => "sk-test", () => model, () => "gpt-6-sol", new HttpClient(h))
+        { RetryDelay = TimeSpan.Zero };
+        return (c, h);
+    }
+
+    private static int Count(string body, string needle) =>
+        (body.Length - body.Replace(needle, "").Length) / needle.Length;
+
+    [Fact]
+    public async Task Transcribe_GptTranscribe_SendsKeywordsOnly()
+    {
+        var (c, h) = MakeModel("gpt-transcribe");
+        h.Responses.Enqueue((HttpStatusCode.OK, Transcript));
+        await c.TranscribeAsync(Wav, new[] { "Kubernetes", "Claude CLI (not \"Cloud CLI\")" });
+        var body = h.Calls[0].Body;
+        Assert.Equal(2, Count(body, "name=keywords"));
+        Assert.Contains("Kubernetes", body);
+        Assert.Contains("Claude CLI", body);
+        Assert.DoesNotContain("Cloud CLI", body);
+        Assert.DoesNotContain("name=prompt", body);
+        Assert.DoesNotContain("name=temperature", body);
+    }
+
+    [Fact]
+    public async Task Transcribe_GptTranscribe_SendKeywordsFalse_SendsNothing()
+    {
+        var (c, h) = MakeModel("gpt-transcribe");
+        h.Responses.Enqueue((HttpStatusCode.OK, Transcript));
+        await c.TranscribeAsync(Wav, new[] { "Kubernetes" }, sendKeywords: false);
+        var body = h.Calls[0].Body;
+        Assert.DoesNotContain("name=keywords", body);
+        Assert.DoesNotContain("name=prompt", body);
+        Assert.DoesNotContain("name=temperature", body);
+    }
+
+    [Fact]
+    public async Task Transcribe_Gpt4o_KeepsPromptAndTemperature()
+    {
+        var (c, h) = MakeModel("gpt-4o-mini-transcribe");
+        h.Responses.Enqueue((HttpStatusCode.OK, Transcript));
+        await c.TranscribeAsync(Wav, new[] { "Kubernetes" }, sendKeywords: true);
+        var body = h.Calls[0].Body;
+        Assert.Contains("name=prompt", body);
+        Assert.Contains("name=temperature", body);
+        Assert.DoesNotContain("name=keywords", body);
+    }
+
     [Fact]
     public async Task Transcribe_NoGlossary_SendsNoPrompt_MissingTextIsEmpty()
     {

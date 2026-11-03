@@ -48,10 +48,25 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     /// <param name="wav">WAV bytes.</param>
     /// <param name="glossary">Spelling reference terms; empty list sends no prompt.</param>
     /// <param name="ct">Cancellation.</param>
-    public async Task<string> TranscribeAsync(byte[] wav, IReadOnlyList<string> glossary, CancellationToken ct = default)
+    public Task<string> TranscribeAsync(byte[] wav, IReadOnlyList<string> glossary, CancellationToken ct = default) =>
+        TranscribeAsync(wav, glossary, sendKeywords: true, ct);
+
+    /// <summary>
+    /// Like the overload above. <c>gpt-transcribe</c> gets the glossary as repeated <c>keywords</c> fields
+    /// (none when <paramref name="sendKeywords"/> is false, as for live-meeting chunks), no prompt and no
+    /// temperature; the other models keep the instruction prompt.
+    /// </summary>
+    /// <param name="wav">WAV bytes.</param>
+    /// <param name="glossary">Glossary lines.</param>
+    /// <param name="sendKeywords">False sends no glossary to gpt-transcribe.</param>
+    /// <param name="ct">Cancellation.</param>
+    public async Task<string> TranscribeAsync(byte[] wav, IReadOnlyList<string> glossary, bool sendKeywords, CancellationToken ct = default)
     {
         var model = _transcriptionModel();
-        var hint = GlossaryPrompt.Hint(glossary);
+        var keywordStyle = OpenAiModels.TakesKeywords(model);
+        var keywords = keywordStyle && sendKeywords ? GlossaryPrompt.Keywords(glossary) : Array.Empty<string>();
+        var hint = keywordStyle ? "" : GlossaryPrompt.Hint(glossary);
+        if (keywordStyle) Log.Info($"OpenAI transcription: {keywords.Count} keyword(s){(sendKeywords ? "" : " (keywords off)")}");
         HttpContent Build()
         {
             var form = new MultipartFormDataContent();
@@ -59,8 +74,9 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
             file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
             form.Add(file, "file", "audio.wav");
             form.Add(new StringContent(model), "model");
-            form.Add(new StringContent("0"), "temperature");
+            if (!keywordStyle) form.Add(new StringContent("0"), "temperature");
             form.Add(new StringContent("json"), "response_format");
+            foreach (var k in keywords) form.Add(new StringContent(k, Encoding.UTF8), "keywords");
             if (hint.Length > 0) form.Add(new StringContent(hint, Encoding.UTF8), "prompt");
             return form;
         }
