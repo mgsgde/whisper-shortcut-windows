@@ -1413,7 +1413,7 @@ internal sealed class TrayApp : ApplicationContext
             Notify("Nichts zum Anwenden", "Erst Text markieren oder etwas diktieren, dann Strg+1 bis Strg+5 drücken.", ToolTipIcon.Info);
             return "";
         }
-        var (target, instruction) = request.Value;
+        var (target, instruction, fromDictation) = request.Value;
         SetBusy(Core.UserCopy.QuickActionBusy(quick));
 
         string raw;
@@ -1425,12 +1425,13 @@ internal sealed class TrayApp : ApplicationContext
         }
         else
         {
-            raw = await PromptTextAsync(target, instruction, systemPrompt, ct);
+            raw = await PromptTextAsync(target, instruction, systemPrompt, ct, compose: fromDictation);
         }
         string text = Reply(raw, new[] { transcript, selection, quick, systemPrompt });
         Core.Log.Info($"Prompt quick action: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
         text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
-        RememberPrompt(target, instruction, text);
+        // A dictated target is a compose turn: remembered without a selection, like the Mac.
+        RememberPrompt(fromDictation ? null : target, instruction, text);
         return text;
     }
 
@@ -1479,8 +1480,10 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     /// <summary>A text-only Dictate Prompt call with the chosen text engine.</summary>
-    private Task<string> PromptTextAsync(string? selection, string instruction, string systemPrompt, CancellationToken ct)
+    private Task<string> PromptTextAsync(string? selection, string instruction, string systemPrompt, CancellationToken ct, bool compose = false)
     {
+        // compose: the target is the fresh transcript, not a selection, so no earlier turns go along.
+        var history = compose ? null : HistoryFor(selection);
         switch (_settings.EffectiveTextEngine)
         {
             case Core.Engine.Local:
@@ -1488,9 +1491,9 @@ internal sealed class TrayApp : ApplicationContext
                     SetBusy(Core.UserCopy.LoadingLlm);
                 return _offline.PromptAsync(selection, instruction, systemPrompt, ct);
             case Core.Engine.OpenAI:
-                return _openAi.PromptTextAsync(selection, instruction, systemPrompt, ct, HistoryFor(selection), _runShot);
+                return _openAi.PromptTextAsync(selection, instruction, systemPrompt, ct, history, _runShot);
             default:
-                return _gemini.PromptTextAsync(selection, instruction, systemPrompt, ct, HistoryFor(selection), _runShot);
+                return _gemini.PromptTextAsync(selection, instruction, systemPrompt, ct, history, _runShot);
         }
     }
 

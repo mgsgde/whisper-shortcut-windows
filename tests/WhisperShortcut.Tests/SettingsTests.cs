@@ -524,17 +524,33 @@ public class QuickActionRequestTests
 {
     [Fact]
     public void SelectionAndBlankTranscript_UsesActionAlone() =>
-        Assert.Equal(("Text", "Kürzer fassen"), QuickActionRequest.Build("Kürzer fassen", "Text", "  ")!.Value);
+        Assert.Equal(("Text", "Kürzer fassen", false), QuickActionRequest.Build("Kürzer fassen", "Text", "  ")!.Value);
 
     [Fact]
     public void SelectionAndTranscript_AppendsWhatWasSaid() =>
-        Assert.Equal(("Text", "Kürzer fassen\n\nZusätzlich gesagt: bitte knapp"),
+        Assert.Equal(("Text", "Kürzer fassen\n\nZusätzlich gesagt: bitte knapp", false),
             QuickActionRequest.Build("Kürzer fassen", "Text", " bitte knapp ")!.Value);
 
     [Fact]
     public void NoSelection_DictationBecomesTheText() =>
-        Assert.Equal(("Patient klagt", "Kürzer fassen"),
+        Assert.Equal(("Patient klagt", "Kürzer fassen", true),
             QuickActionRequest.Build("Kürzer fassen", null, " Patient klagt ")!.Value);
+
+    [Fact]
+    public void NoSelection_IsComposeTurn_NoHistoryGoesAlong()
+    {
+        var r = QuickActionRequest.Build("Kürzer fassen", null, " Patient klagt ")!.Value;
+        Assert.True(r.FromDictation);
+        Assert.Equal("Patient klagt", r.Selection);
+        Assert.False(PromptConversationMemory.Includes(isCompose: r.FromDictation, offline: false));
+    }
+
+    [Fact]
+    public void WithSelection_IsNotFromDictation()
+    {
+        Assert.False(QuickActionRequest.Build("Kürzer fassen", "Text", "")!.Value.FromDictation);
+        Assert.False(QuickActionRequest.Build("Kürzer fassen", "Text", "bitte knapp")!.Value.FromDictation);
+    }
 
     [Fact]
     public void NothingToApplyTo_IsNull()
