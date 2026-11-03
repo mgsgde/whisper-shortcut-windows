@@ -9,7 +9,8 @@ public class UserCopyTests
     {
         var text = UserCopy.Welcome("Strg+Umschalt+D");
         Assert.Contains("Willkommen", text);
-        Assert.Contains("Speichern", text);
+        Assert.Contains("Konten", text);
+        Assert.DoesNotContain("Speichern", text); // edits apply by themselves, like the Mac
         Assert.Contains("Strg+Umschalt+D", text);
         Assert.Contains("Infobereich", text);
         Assert.Contains("^", text);

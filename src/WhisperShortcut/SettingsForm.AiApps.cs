@@ -5,7 +5,7 @@ namespace WhisperShortcut;
 /// <summary>
 /// Page „Claude &amp; KI-Apps“: the local MCP server that lets Claude set WhisperShortcut up. Kept in its own
 /// file so the main settings file only gets the page hook. Everything here takes effect at once (like the
-/// tray's offline switch); none of it goes through „Speichern“.
+/// tray's offline switch); none of it goes through the window's own apply.
 /// </summary>
 internal sealed partial class SettingsForm
 {
@@ -24,7 +24,7 @@ internal sealed partial class SettingsForm
     private readonly List<Label> _changeWraps = new();
     private readonly System.Windows.Forms.Timer _mcpClock = new() { Interval = 30_000 };
 
-    /// <summary>True when the window holds edits that „Speichern“ has not written yet.</summary>
+    /// <summary>True for the moment between an edit and its automatic apply.</summary>
     public bool HasUnsavedChanges => _snapshot.Length > 0 && Snapshot() != _snapshot;
 
     /// <summary>The page in front, to reopen the window on it.</summary>

@@ -7,8 +7,8 @@ steht dort in Abschnitt 8 und bleibt. Ein Schritt ist je ein Commit, den Magnus 
 | # | Schritt | Mac-Vorlage | Status |
 |---|---|---|---|
 | 1 | Einstellungen: Seiten und Reihenfolge wie auf dem Mac (Allgemein mit allen Kürzeln und rechter Strg, Konten, Diktieren mit Glossar und Offline-Modell, Dictate Prompt mit Sprachmodell, Vorlagen, Bildschirmfoto, Claude & KI-Apps, Datenschutz & Berechtigungen, Über) | `Settings/Tabs/*` | erledigt |
-| 2 | Einstellungen wirken sofort, kein „Speichern“ (Schlüssel 500 ms nach dem Tippen) | `SettingsWindowController`, Tabs | offen |
-| 3 | Abschnitte wie auf dem Mac: Symbol, Überschrift, ein Satz Untertitel; Selten Gebrauchtes in „Erweitert“; „Version X“ unten rechts | `SectionHeader`, `AdvancedSettingsGroup` | offen |
+| 2 | Einstellungen wirken sofort, kein „Speichern“ (0,5 s nach der letzten Eingabe); Kürzelprobleme unten im Fenster statt Meldung | `SettingsWindowController`, Tabs | erledigt |
+| 3 | Abschnitte wie auf dem Mac: Symbol, Überschrift, ein Satz Untertitel; Selten Gebrauchtes in „Erweitert“ („Version X“ unten rechts: erledigt) | `SectionHeader`, `AdvancedSettingsGroup` | offen |
 | 4 | Modellwahl als Kacheln (Empfohlen, Am schnellsten, Offline) mit „Weitere Modelle“, Offline-Modus als Schalter | `ModelPickerCuration`, `PrivacyPermissionsTab` | offen |
 | 5 | Zwischenablage nach dem Einfügen: „Diktat stehen lassen“ (Standard) / „Vorherigen Inhalt zurücklegen“ / „Leeren“; Automatisch einfügen wie Mac-Standard | `GeneralSettingsTab` | offen, Standardwerte mit Magnus klären |
 | 6 | Meldungen wie die Mac-Popups (unten Mitte, Erfolg 3 s, Fehler mit Knopf), Wortlaut der Mac-Meldungen | `PopupNotificationWindow`, `SpeechErrorFormatter` | offen |

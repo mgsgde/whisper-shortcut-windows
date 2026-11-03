@@ -11,15 +11,14 @@ public static class UserCopy
         "Willkommen – so geht’s:\n"
         + "1. Unter „Konten“ einen Schlüssel von Google (Gemini) oder OpenAI eintragen, oder unter „Datenschutz & "
         + "Berechtigungen“ offline arbeiten; die Modelle dafür werden unter „Diktieren“ einmal geladen.\n"
-        + "2. Unten auf „Speichern“ klicken. Das Fenster bleibt offen.\n"
-        + $"3. In einem beliebigen Programm {dictateHotkeyDisplay} drücken, sprechen, noch einmal drücken.\n\n"
+        + $"2. In einem beliebigen Programm {dictateHotkeyDisplay} drücken, sprechen, noch einmal drücken.\n\n"
         + "WhisperShortcut bleibt danach als Symbol unten rechts im Infobereich (oft hinter dem Pfeil ^). "
         + "Ein Klick auf das X beendet die App nicht. Mit Strg+Tab lassen sich die Seiten wechseln.";
 
     public const string WelcomeAccessibleName = "Einführung";
 
     public const string WelcomeTourHint =
-        "Die Schritte vom ersten Start: Schlüssel eintragen oder offline arbeiten, speichern, Kürzel drücken. Erklärt auch, wo das Symbol zu finden ist.";
+        "Die Schritte vom ersten Start: Schlüssel eintragen oder offline arbeiten, Kürzel drücken. Erklärt auch, wo das Symbol zu finden ist.";
 
     public const string MicTestHint =
         "„Testen“ zeigt den Pegel beim Sprechen. Es wird nichts abgespielt.";
@@ -28,12 +27,8 @@ public static class UserCopy
     public const string MicTestAccessibleName = "Mikrofon testen";
     public const string MicTestStopAccessibleName = "Mikrofontest beenden";
 
-    public const string SaveAccessibleName = "Einstellungen speichern";
-    public const string CloseAccessibleName = "Einstellungen schließen";
-    public const string CancelAccessibleName = "Änderungen verwerfen";
-
     public const string SettingsAccessibleDescription =
-        "Mit Strg+Tab die Seiten wechseln. Speichern hält das Fenster offen.";
+        "Mit Strg+Tab die Seiten wechseln. Jede Änderung gilt sofort.";
 
     public const string OverlayAccessibleName = "WhisperShortcut-Anzeige";
 

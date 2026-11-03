@@ -1963,15 +1963,18 @@ internal sealed class TrayApp : ApplicationContext
         _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.
         _settingsForm.Deactivate += (_, _) => { if (_settingsForm == form) _ui.Post(_ => SyncGlobalHotkeys(), null); };
-        // Save keeps the window open: apply right away, check the hotkeys once the window leaves the front.
+        // Edits apply by themselves (shortly after each one): apply right away, check the hotkeys once the window leaves the front.
+        var glossary = string.Join("\n", _settings.Glossary);
         _settingsForm.Saved += () =>
         {
+            // Only a changed glossary reloads the offline recognizer (a few seconds); most applies are other edits.
+            var nowGlossary = string.Join("\n", _settings.Glossary);
+            if (nowGlossary != glossary) { glossary = nowGlossary; _offline.GlossaryChanged(); }
             Sounds.Enabled = _settings.Sounds;
             _hotkeyCheckPending = true;
             if (_settings.OfflineMode) _promptMemory.Clear();
             SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
             _offline.Prewarm(); // offline mode may just have been switched on
-            _offline.GlossaryChanged(); // the Glossary may have been edited
             DropScreenshotIfNotAllowed();
             _mcp.SyncOfflineMode();
         };

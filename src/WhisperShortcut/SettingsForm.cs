@@ -6,7 +6,7 @@ namespace WhisperShortcut;
 /// <summary>
 /// Settings window in the style of the Windows 11 settings, pages and order as in the macOS app (SettingsTab):
 /// Allgemein, Konten, Diktieren, Dictate Prompt, Vorlagen, Bildschirmfoto, Claude & KI-Apps, Datenschutz & Berechtigungen, Über; the page on the right as
-/// rounded cards, Speichern/Abbrechen below. Light or dark follows Windows. German UI.
+/// rounded cards; every edit applies by itself (no Speichern, like the Mac). Light or dark follows Windows. German UI.
 /// </summary>
 internal sealed partial class SettingsForm : Form
 {
@@ -86,9 +86,17 @@ internal sealed partial class SettingsForm : Form
     private LevelProbe? _probe;
     private string _snapshot = "";
     private bool _loadedOffline;
-    private readonly FluentButton _close;
-    // "✓ Gespeichert" stays next to the buttons until then (Environment.TickCount64).
+    // "✓ Gespeichert" stays in the status line until then (Environment.TickCount64).
     private long _savedHintUntil;
+    // Mac: every edit applies on its own. A changed state is written once it held still this long (keys: 500 ms).
+    private const int ApplyDelayMs = 500;
+    private string _pendingSnapshot = "";
+    private long _pendingSince;
+    // Why the shortcuts were not taken over (invalid or taken twice); the rest of the edits still apply.
+    private string? _keyProblem;
+    private string? _lastSaveError;
+    // The prompt texts when the window opened: replaced versions go into „Frühere Fassungen“ once, on close.
+    private (string Dictate, string PromptMode, string Template) _openedPrompts;
 
     /// <summary>Raised after the settings were written; the window stays open.</summary>
     public event Action? Saved;
@@ -610,23 +618,14 @@ internal sealed partial class SettingsForm : Form
         _pageHost = new Panel { Dock = DockStyle.Fill };
         foreach (var page in _pages.Values) _pageHost.Controls.Add(page);
 
-        var save = new FluentButton("Speichern", accent: true) { MinimumSize = new Size(120, 32), TabIndex = 0, AccessibleName = Core.UserCopy.SaveAccessibleName };
-        var cancel = _close = new FluentButton("Schließen") { MinimumSize = new Size(120, 32), TabIndex = 1, AccessibleName = Core.UserCopy.CloseAccessibleName };
-        // WHY Save keeps the window open: a window that vanished on Save looked like a crash to testers.
-        save.Click += (_, _) => TrySave();
-        // "Abbrechen" (with changes) means discard: only the title bar's X and Esc ask whether to save.
-        cancel.Click += (_, _) => { _discard = true; Close(); };
-        _dirty = new ThemedLabel { Text = "Nicht gespeicherte Änderungen", Tone = Tone.Secondary, AutoSize = true, Visible = false, Margin = new Padding(0, 8, 12, 0) };
-        var buttons = new FlowLayoutPanel
-        {
-            FlowDirection = FlowDirection.RightToLeft, Dock = DockStyle.Bottom, AutoSize = true,
-            Padding = new Padding(28, 12, 28, 16),
-        };
-        buttons.Controls.Add(cancel);
-        buttons.Controls.Add(save);
-        buttons.Controls.Add(_dirty);
-        // No CancelButton: Esc closes through ProcessCmdKey, which asks about unsaved changes.
-        AcceptButton = save; // Enter in the key field saves; the multi-line boxes keep their Enter
+        // No Speichern (Mac): edits apply by themselves. The line below says when a shortcut could not be taken over.
+        _dirty = new ThemedLabel { Text = "", Tone = Tone.Secondary, AutoSize = true, Visible = false, Anchor = AnchorStyles.Left, Margin = new Padding(0) };
+        var version = new ThemedLabel { Text = $"Version {AppVersion}", Tone = Tone.Secondary, Font = Theme.Small, AutoSize = true, Anchor = AnchorStyles.Right, Margin = new Padding(12, 0, 0, 0) };
+        var buttons = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Bottom, AutoSize = true, Padding = new Padding(28, 6, 20, 8) };
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        buttons.Controls.Add(_dirty, 0, 0);
+        buttons.Controls.Add(version, 1, 0);
 
         var content = new Panel { Dock = DockStyle.Fill };
         // Docking runs in reverse order of adding: buttons take the bottom, the page the rest.
@@ -655,6 +654,7 @@ internal sealed partial class SettingsForm : Form
             FitHints();
             _snapshot = Snapshot();
             _loadedOffline = _settings.OfflineMode;
+            _openedPrompts = (_settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.DictatePromptTemplate);
         };
         UpdateMode();
         UpdateModelRows();
@@ -662,17 +662,23 @@ internal sealed partial class SettingsForm : Form
         Shown += (_, _) =>
         {
             var emptyKey = new[] { _geminiKey, _openAiKey }.FirstOrDefault(k => k.Card.Visible && k.Value.Length == 0);
-            (emptyKey != null && _onlineMode.Checked ? (Control)emptyKey.Box : save).Focus();
+            (emptyKey != null && _onlineMode.Checked ? (Control)emptyKey.Box : _nav[0]).Focus();
             if (_onlineMode.Checked) CheckVisibleKeys();
         };
 
-        // Any edit: show the "not saved" hint next to the buttons.
-        var dirtyTimer = new System.Windows.Forms.Timer { Interval = 400 };
-        // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would flicker the hint.
-        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice };
+        // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
+        var dirtyTimer = new System.Windows.Forms.Timer { Interval = 150 };
+        // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
+        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation };
         dirtyTimer.Tick += (_, _) =>
         {
-            if (combos.Any(c => c.DroppedDown)) return;
+            if (_snapshot.Length == 0 || combos.Any(c => c.DroppedDown)) return;
+            var now = Snapshot();
+            if (now != _snapshot)
+            {
+                if (now != _pendingSnapshot) (_pendingSnapshot, _pendingSince) = (now, Environment.TickCount64);
+                else if (Environment.TickCount64 - _pendingSince >= ApplyDelayMs) TrySave();
+            }
             UpdateSaveState();
         };
         dirtyTimer.Start();
@@ -684,6 +690,7 @@ internal sealed partial class SettingsForm : Form
         Microsoft.Win32.SystemEvents.UserPreferenceChanged += OnUserPreferenceChanged;
         FormClosed += (_, _) =>
         {
+            if (!_discard) RecordPromptHistory(_openedPrompts.Dictate, _openedPrompts.PromptMode, _openedPrompts.Template);
             Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             dirtyTimer.Dispose();
             _geminiKey.Dispose();
@@ -1097,7 +1104,7 @@ internal sealed partial class SettingsForm : Form
                 _menu.Items.Add(item);
             }
             _menu.Items.Add(new ToolStripSeparator());
-            _menu.Items.Add(new ToolStripMenuItem("Einsetzen ändert nur das Feld. Erst „Speichern“ übernimmt es.") { Enabled = false });
+            _menu.Items.Add(new ToolStripMenuItem("Einsetzen ersetzt den Text im Feld; er gilt sofort.") { Enabled = false });
         }
 
         /// <summary>"bis 28.10., 14:32 · first line …": until when the text was the saved one.</summary>
@@ -1240,8 +1247,7 @@ internal sealed partial class SettingsForm : Form
     }
 
     /// <summary>
-    /// A key the check confirmed is saved right away, on its own: pasting it is the whole job, nobody
-    /// expects a Speichern after a green tick. Other edits in the window stay unsaved. True when newly saved.
+    /// A key the check confirmed is saved right away, without waiting for the automatic apply. True when newly saved.
     /// </summary>
     private bool SaveCheckedKey(string key, bool gemini)
     {
@@ -1292,7 +1298,7 @@ internal sealed partial class SettingsForm : Form
             _message = message;
             _commit = commit;
             Box = new TextBox { UseSystemPasswordChar = true, Text = value };
-            // Pasting a key is the moment to know whether it works, not after Speichern.
+            // Pasting a key is the moment to know whether it works.
             Box.TextChanged += (_, _) =>
             {
                 SetStatus("", Tone.Secondary);
@@ -1771,63 +1777,59 @@ internal sealed partial class SettingsForm : Form
 
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
-        if (_discard || e.CloseReason != CloseReason.UserClosing || Snapshot() == _snapshot) return;
-        switch (ChoiceDialog.Ask(this, "Änderungen speichern?", "Die Änderungen in den Einstellungen sind noch nicht gespeichert.",
-                    new[] { "Speichern", "Verwerfen", "Zurück" }))
-        {
-            case 0: if (!TrySave()) e.Cancel = true; break;
-            case 1: _discard = true; break;
-            default: e.Cancel = true; break;
-        }
+        if (_discard || _snapshot.Length == 0) return;
+        if (Snapshot() != _snapshot) TrySave();
+        if (_keyProblem == null || e.CloseReason != CloseReason.UserClosing) return;
+        if (ChoiceDialog.Ask(this, "Kürzel nicht übernommen", _keyProblem + " Es gelten weiter die bisherigen Kürzel.",
+                new[] { "Trotzdem schließen", "Zurück" }) != 0)
+            e.Cancel = true;
     }
 
-    /// <summary>Hint next to the buttons and the close button's word: unsaved changes, just saved, or nothing.</summary>
+    /// <summary>Status line at the bottom: a shortcut that was not taken over, just saved, or nothing.</summary>
     private void UpdateSaveState()
     {
-        bool dirty = _snapshot.Length > 0 && Snapshot() != _snapshot;
-        _close.Text = dirty ? "Abbrechen" : "Schließen";
-        _close.AccessibleName = dirty ? Core.UserCopy.CancelAccessibleName : Core.UserCopy.CloseAccessibleName;
-        if (dirty)
-            (_dirty.Text, _dirty.Tone, _dirty.Visible) = ("Nicht gespeicherte Änderungen", Tone.Secondary, true);
-        else
-            (_dirty.Text, _dirty.Tone, _dirty.Visible) = ("✓ Gespeichert", Tone.Good, Environment.TickCount64 < _savedHintUntil);
+        var (text, tone, visible) = _keyProblem != null ? ("⚠ " + _keyProblem, Tone.Bad, true)
+            : _lastSaveError != null ? ("⚠ " + _lastSaveError, Tone.Bad, true)
+            : ("✓ Gespeichert", Tone.Good, Environment.TickCount64 < _savedHintUntil);
+        if (_dirty.Text != text) _dirty.Text = text;
+        _dirty.Tone = tone;
+        _dirty.Visible = visible;
     }
 
-    private bool TrySave()
+    /// <summary>Why the shortcuts cannot be taken over as they are, or null. <paramref name="parsed"/>: Diktieren, Dictate Prompt, Ins Glossar.</summary>
+    private string? KeyProblem(out Hotkey?[] parsed)
     {
-        // Diktieren and Text bearbeiten need a key; Glossar may be empty (= off).
-        var keys = new[] { (Box: _dictateKey, Page: General), (Box: _promptKey, Page: General), (Box: _glossaryKey, Page: General) };
-        var parsed = new Hotkey?[keys.Length];
+        // Diktieren and Dictate Prompt need a key; Ins Glossar may be empty (= off).
+        var keys = new[] { _dictateKey, _promptKey, _glossaryKey };
+        parsed = new Hotkey?[keys.Length];
         for (int i = 0; i < keys.Length; i++)
         {
-            if (keys[i].Box == _glossaryKey && _glossaryKey.Value.Length == 0) continue;
-            if (!Hotkey.TryParse(keys[i].Box.Value, out var key) || !IsSafe(key))
-            {
-                ShowPage(keys[i].Page);
-                Warn("Bitte für Diktieren und Dictate Prompt ein Tastenkürzel festlegen, z. B. Alt+1 oder Strg+Umschalt+D. Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.");
-                return false;
-            }
+            if (keys[i] == _glossaryKey && _glossaryKey.Value.Length == 0) continue;
+            if (!Hotkey.TryParse(keys[i].Value, out var key) || !IsSafe(key))
+                return "Bitte für Diktieren und Dictate Prompt ein Tastenkürzel festlegen, z. B. Alt+1 oder Strg+Umschalt+D. "
+                    + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
             parsed[i] = key;
         }
         bool hasSettingsKey = Hotkey.TryParse(_settingsKey.Value, out var settingsKey);
         if (_settingsKey.Value.Length > 0 && (!hasSettingsKey || !IsSafe(settingsKey)))
-        {
-            ShowPage(General);
-            Warn("Kürzel für Einstellungen öffnen: bitte z. B. Alt+0 oder Strg+Umschalt+E festlegen, oder es mit Entf entfernen.");
-            return false;
-        }
+            return "Kürzel für Einstellungen öffnen: bitte z. B. Alt+0 oder Strg+Umschalt+E festlegen, oder es mit Entf entfernen.";
         for (int i = 0; i < keys.Length; i++)
         {
             if (parsed[i] is not { } key) continue;
             if (parsed.Take(i).Contains(key) || (hasSettingsKey && key == settingsKey))
-            {
-                ShowPage(keys[i].Page);
-                Warn("Die Tastenkürzel müssen verschieden sein. Diktieren, Dictate Prompt, Ins Glossar und Einstellungen öffnen brauchen je ein eigenes.");
-                return false;
-            }
+                return "Die Tastenkürzel müssen verschieden sein. Diktieren, Dictate Prompt, Ins Glossar und Einstellungen öffnen brauchen je ein eigenes.";
         }
-        if (!CheckTemplateKeys(parsed)) return false;
+        return TemplateKeyProblem(parsed);
+    }
 
+    /// <summary>
+    /// Writes the window's state to the settings (called shortly after each edit, and on close). Shortcuts that are
+    /// invalid or taken twice are not taken over (<see cref="_keyProblem"/>); everything else is.
+    /// </summary>
+    private bool TrySave()
+    {
+        _keyProblem = KeyProblem(out var parsed);
+        bool keysOk = _keyProblem == null;
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
             _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
@@ -1846,9 +1848,21 @@ internal sealed partial class SettingsForm : Form
         _settings.OpenAiTranscriptionModel = SelectedModel(_dictateModelOpenAi);
         _settings.OpenAiPromptModel = SelectedModel(_promptModelOpenAi);
         _settings.Microphone = SelectedMicrophone;
-        _settings.DictateHotkey = parsed[0]!.Value.ToString();
-        _settings.PromptHotkey = parsed[1]!.Value.ToString();
-        (_settings.GlossaryHotkey, _settings.GlossaryHotkeyEnabled) = StoredKey(_glossaryKey.Value, _settings.GlossaryHotkey);
+        if (keysOk)
+        {
+            _settings.DictateHotkey = parsed[0]!.Value.ToString();
+            _settings.PromptHotkey = parsed[1]!.Value.ToString();
+            (_settings.GlossaryHotkey, _settings.GlossaryHotkeyEnabled) = StoredKey(_glossaryKey.Value, _settings.GlossaryHotkey);
+            (_settings.ScreenshotHotkey, _settings.ScreenshotHotkeyEnabled) = StoredKey(_screenshotKey.Value, _settings.ScreenshotHotkey);
+            (_settings.LiveDictateHotkey, _settings.LiveDictateHotkeyEnabled) = StoredKey(_liveKey.Value, _settings.LiveDictateHotkey);
+            (_settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled) = StoredKey(_settingsKey.Value, _settings.OpenSettingsHotkey);
+            _settings.Templates = _templates.Select(t => new Core.DictationTemplate
+            {
+                Id = t.Id, Name = t.Name.Trim(), Instructions = t.Instructions.ReplaceLineEndings("\n").Trim(),
+                Hotkey = Hotkey.TryParse(t.Hotkey, out var own) ? own.ToString() : "",
+            }).ToList();
+            _settings.TemplateHotkey = Hotkey.TryParse(_templateKey.Value, out var picker) ? picker.ToString() : "";
+        }
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
         _settings.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
         _settings.DictatePromptTemplate = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
@@ -1862,16 +1876,7 @@ internal sealed partial class SettingsForm : Form
         _settings.Sounds = _sounds.Checked;
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
         _settings.SendScreenshots = _sendScreenshots.Checked;
-        (_settings.ScreenshotHotkey, _settings.ScreenshotHotkeyEnabled) = StoredKey(_screenshotKey.Value, _settings.ScreenshotHotkey);
-        (_settings.LiveDictateHotkey, _settings.LiveDictateHotkeyEnabled) = StoredKey(_liveKey.Value, _settings.LiveDictateHotkey);
-        (_settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled) = StoredKey(_settingsKey.Value, _settings.OpenSettingsHotkey);
         _settings.RightCtrlDictation = _rightCtrl.Checked;
-        _settings.Templates = _templates.Select(t => new Core.DictationTemplate
-        {
-            Id = t.Id, Name = t.Name.Trim(), Instructions = t.Instructions.ReplaceLineEndings("\n").Trim(),
-            Hotkey = Hotkey.TryParse(t.Hotkey, out var own) ? own.ToString() : "",
-        }).ToList();
-        _settings.TemplateHotkey = Hotkey.TryParse(_templateKey.Value, out var picker) ? picker.ToString() : "";
         try
         {
             _settings.Save();
@@ -1888,25 +1893,31 @@ internal sealed partial class SettingsForm : Form
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
             _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
             _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation) = before;
-            Warn(Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message));
+            // Said once, then in the status line: this runs after every edit.
+            var error = Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message);
+            if (error != _lastSaveError) Warn(error);
+            _lastSaveError = error;
+            _snapshot = Snapshot();
+            UpdateSaveState();
             return false;
         }
+        _lastSaveError = null;
         if (_autoStart.Checked != AutoStart.IsEnabled)
         {
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
         Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode})");
-        RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.DictatePromptTemplate);
+        // Also with a key problem: the same state is not written again until the user edits something.
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;
-        _savedHintUntil = Environment.TickCount64 + 3000;
+        if (keysOk) _savedHintUntil = Environment.TickCount64 + 2000;
         UpdateSaveState();
         Saved?.Invoke();
         return true;
     }
 
-    /// <summary>After a save: the prompt texts that were replaced go into "Frühere Fassungen".</summary>
+    /// <summary>On close: the prompt texts that were replaced go into "Frühere Fassungen".</summary>
     private void RecordPromptHistory(string dictate, string promptMode, string template)
     {
         var now = DateTime.UtcNow;
@@ -2009,7 +2020,7 @@ internal sealed partial class SettingsForm : Form
     private void RemoveTemplate()
     {
         if (CurrentTemplate is not { } t) return;
-        if (ChoiceDialog.Ask(this, "Vorlage löschen?", $"„{t.DisplayName}“ wird gelöscht, sobald die Einstellungen gespeichert werden.",
+        if (ChoiceDialog.Ask(this, "Vorlage löschen?", $"„{t.DisplayName}“ wird gelöscht.",
                 new[] { "Löschen", "Abbrechen" }, danger: true) != 0) return;
         int index = _templateChoice.SelectedIndex;
         _templates.RemoveAt(index);
@@ -2030,8 +2041,8 @@ internal sealed partial class SettingsForm : Form
     /// The Vorlagen key and each template's own key: valid, and not taken by Diktieren, Text bearbeiten, Glossar,
     /// the Vorlagen key or an earlier template. Same rules and the same kind of warning as the other hotkeys.
     /// </summary>
-    /// <param name="app">The parsed app hotkeys in the order Diktieren, Text bearbeiten, Glossar (null = off).</param>
-    private bool CheckTemplateKeys(Hotkey?[] app)
+    /// <param name="app">The parsed app hotkeys in the order Diktieren, Dictate Prompt, Ins Glossar (null = off).</param>
+    private string? TemplateKeyProblem(Hotkey?[] app)
     {
         var taken = new List<(string Owner, Hotkey Key)>();
         foreach (var (owner, key) in new[] { "Diktieren", "Dictate Prompt", "Ins Glossar" }.Zip(app))
@@ -2044,49 +2055,25 @@ internal sealed partial class SettingsForm : Form
         if (_liveKey.Value.Length > 0)
         {
             if (!Hotkey.TryParse(_liveKey.Value, out var live) || !IsSafe(live))
-            {
-                ShowPage(General);
-                Warn("Kürzel für Live diktieren: " + Rule);
-                return false;
-            }
+            return "Kürzel für Live diktieren: " + Rule;
             if (taken.FirstOrDefault(k => k.Key == live) is { Owner: { } owner })
-            {
-                ShowPage(General);
-                Warn($"{live.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Live diktieren ein anderes Kürzel wählen.");
-                return false;
-            }
+            return $"{live.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Live diktieren ein anderes Kürzel wählen.";
             taken.Add(("Live diktieren", live));
         }
         if (_screenshotKey.Value.Length > 0)
         {
             if (!Hotkey.TryParse(_screenshotKey.Value, out var shot) || !IsSafe(shot))
-            {
-                ShowPage(General);
-                Warn("Kürzel für Bildschirmfoto: " + Rule);
-                return false;
-            }
+            return "Kürzel für Bildschirmfoto: " + Rule;
             if (taken.FirstOrDefault(k => k.Key == shot) is { Owner: { } owner })
-            {
-                ShowPage(General);
-                Warn($"{shot.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für das Bildschirmfoto ein anderes Kürzel wählen.");
-                return false;
-            }
+            return $"{shot.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für das Bildschirmfoto ein anderes Kürzel wählen.";
             taken.Add(("Bildschirmfoto", shot));
         }
         if (_templateKey.Value.Length > 0)
         {
             if (!Hotkey.TryParse(_templateKey.Value, out var picker) || !IsSafe(picker))
-            {
-                ShowPage(TemplatesPage);
-                Warn("Kürzel für Vorlagen: " + Rule);
-                return false;
-            }
+            return "Kürzel für Vorlagen: " + Rule;
             if (taken.FirstOrDefault(k => k.Key == picker) is { Owner: { } owner })
-            {
-                ShowPage(TemplatesPage);
-                Warn($"{picker.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Vorlagen ein anderes Kürzel wählen.");
-                return false;
-            }
+            return $"{picker.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Vorlagen ein anderes Kürzel wählen.";
             taken.Add(("Vorlagen (zuletzt benutzte)", picker));
         }
         for (int i = 0; i < _templates.Count; i++)
@@ -2094,20 +2081,12 @@ internal sealed partial class SettingsForm : Form
             var t = _templates[i];
             if (t.Hotkey.Length == 0) continue;
             if (!Hotkey.TryParse(t.Hotkey, out var key) || !IsSafe(key))
-            {
-                ShowTemplate(i);
-                Warn($"Vorlage „{t.DisplayName}“: " + Rule);
-                return false;
-            }
+            return $"Vorlage „{t.DisplayName}“: " + Rule;
             if (taken.FirstOrDefault(k => k.Key == key) is { Owner: { } owner })
-            {
-                ShowTemplate(i);
-                Warn($"{key.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für die Vorlage „{t.DisplayName}“ ein anderes Kürzel wählen.");
-                return false;
-            }
+            return $"{key.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für die Vorlage „{t.DisplayName}“ ein anderes Kürzel wählen.";
             taken.Add(($"Vorlage „{t.DisplayName}“", key));
         }
-        return true;
+        return null;
     }
 
     /// <summary>
@@ -2124,7 +2103,7 @@ internal sealed partial class SettingsForm : Form
         _templateOwnKey.Focus();
     }
 
-    /// <summary>The glossary hotkey added a term while this window is open: show it, so Save keeps it.</summary>
+    /// <summary>The glossary hotkey added a term while this window is open: show it, so the next apply keeps it.</summary>
     public void AppendGlossaryTerm(string term)
     {
         var lines = _glossary.Lines.ToList();
