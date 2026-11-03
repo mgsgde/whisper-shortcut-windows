@@ -175,7 +175,7 @@ public class TranscriptionPipelineTests
     public void QuickAction_NothingToApply_IsNull()
     {
         Assert.Null(QuickActionRequest.Build("Kürzer fassen", null, "  "));
-        Assert.Equal(("Patient klagt", "Kürzer fassen"),
+        Assert.Equal(("Patient klagt", "Kürzer fassen", true),
             QuickActionRequest.Build("Kürzer fassen", null, " Patient klagt ")!.Value);
     }
 

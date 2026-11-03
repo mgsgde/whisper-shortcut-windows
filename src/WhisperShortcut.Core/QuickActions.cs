@@ -58,16 +58,18 @@ public static class QuickActionRequest
     /// <summary>
     /// A quick instruction picked while recording applies to the marked text or, with nothing marked,
     /// to what was just dictated ("Befund diktieren, Strg+1" = structured finding in one step).
-    /// Returns null when there is nothing to apply it to.
+    /// Returns null when there is nothing to apply it to. <c>FromDictation</c> is true when nothing was
+    /// selected and the target is the fresh transcript: that is a compose turn (no earlier turns go
+    /// along, so a previous patient's text never reaches the model), like the Mac.
     /// </summary>
-    public static (string? Selection, string Instruction)? Build(string quickAction, string? selection, string transcript)
+    public static (string? Selection, string Instruction, bool FromDictation)? Build(string quickAction, string? selection, string transcript)
     {
         var said = transcript?.Trim() ?? "";
         if (!string.IsNullOrEmpty(selection))
             return said.Length == 0
-                ? (selection, quickAction)
-                : (selection, quickAction + "\n\nZusätzlich gesagt: " + said);
-        if (said.Length > 0) return (said, quickAction);
+                ? (selection, quickAction, false)
+                : (selection, quickAction + "\n\nZusätzlich gesagt: " + said, false);
+        if (said.Length > 0) return (said, quickAction, true);
         return null;
     }
 }
