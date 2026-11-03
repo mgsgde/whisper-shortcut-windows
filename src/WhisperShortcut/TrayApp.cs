@@ -548,16 +548,8 @@ internal sealed class TrayApp : ApplicationContext
             return;
         }
         if (_state != State.Idle) return;
-        if (!Core.ScreenshotPolicy.Allowed(_settings))
-        {
-            Sounds.Error();
-            Notify("Screenshots sind aus",
-                _settings.OfflineMode || _settings.EffectiveTextEngine == Core.Engine.Local
-                    ? "Offline geht kein Bild an ein Sprachmodell: Das lokale Modell kann keine Bilder lesen, und nichts soll den PC verlassen."
-                    : "Hier klicken und unter „Text bearbeiten“ → „Screenshots mitsenden“ einschalten.",
-                ToolTipIcon.Info, ShowSettings);
-            return;
-        }
+        // Like the Mac the screenshot always lands on the clipboard; only sending it with the next instruction
+        // depends on „Screenshots mitsenden“ (and never offline).
         _ = CaptureScreenshotAsync();
     }
 
@@ -568,10 +560,15 @@ internal sealed class TrayApp : ApplicationContext
         {
             var image = await ScreenshotCapture.CaptureAsync(_paster, cts.Token);
             if (image == null) return; // cancelled in the snip UI or timed out; the log says which
+            if (!Core.ScreenshotPolicy.Allowed(_settings))
+            {
+                ShowDoneIfFree("Bildschirmfoto in der Zwischenablage");
+                return;
+            }
             _heldShot.Hold(image);
             _shotExpiry.Start();
             Core.Log.Info($"Screenshot held for the next turn ({image.Data.Length / 1024} KB)");
-            ShowDoneIfFree("Bildschirmfoto für die nächste Anweisung gemerkt");
+            ShowDoneIfFree("Bildschirmfoto in der Zwischenablage und für die nächste Anweisung gemerkt");
         }
         catch (OperationCanceledException) { Core.Log.Info("Snip: waiting stopped by the hotkey"); }
         catch (Exception e)

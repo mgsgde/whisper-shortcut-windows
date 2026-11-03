@@ -477,9 +477,9 @@ internal sealed class ClipboardPaster
     /// <summary>
     /// Screenshot hotkey: <paramref name="launch"/> opens the Windows snip UI, which delivers its image through the
     /// clipboard. Waits for it (see <see cref="Core.SnipWatch"/>) and returns the raw image: the "PNG" format if
-    /// offered, else CF_DIB (<c>IsPng</c> false). Null on cancel or timeout. After a capture the user's clipboard
-    /// is put back at once (empty again when it was empty): the screen shot is patient data, not clipboard content.
-    /// A cancel leaves the clipboard alone, since a change then was the user's own copy.
+    /// offered, else CF_DIB (<c>IsPng</c> false). Null on cancel or timeout. After a capture the image stays on the
+    /// clipboard, so Ctrl+V pastes it anywhere (Mac: the screenshot goes to the pasteboard). Cancelling with the
+    /// hotkey just as it arrives puts the user's clipboard back; a cancel in the snip UI leaves the clipboard alone.
     /// </summary>
     public async Task<(byte[] Data, bool IsPng)?> CaptureSnipAsync(Func<bool> launch, Func<bool> snipUiRunning, CancellationToken ct)
     {
@@ -517,9 +517,8 @@ internal sealed class ClipboardPaster
                     // The snip writes its formats one after another: let it finish (no cancel here, the clipboard must be cleaned up).
                     await Task.Delay(250, CancellationToken.None);
                     var image = TryReadImage(png);
-                    bool restored = previous != null ? Restore(previous) : Clear();
                     Core.Log.Info($"Snip: {(image == null ? "image unreadable" : $"{(image.Value.IsPng ? "PNG" : "DIB")} {image.Value.Data.Length / 1024} KB")}, "
-                        + $"clipboard {(restored ? "restored" : "not restored")}");
+                        + "left on the clipboard");
                     return image;
                 default:
                     Core.Log.Info($"Snip: no image ({step}), clipboard left alone");
