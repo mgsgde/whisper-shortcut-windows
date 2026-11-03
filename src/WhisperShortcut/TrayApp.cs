@@ -1155,7 +1155,15 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error($"{_mode}: Gemini {e.Kind}");
             Sounds.Error();
-            if (e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey)
+            if (e.Kind == Core.GeminiErrorKind.Billing)
+            {
+                // Retrying cannot fill an empty account, but the audio stays for "Letzte Aufnahme erneut verarbeiten" after topping up.
+                _lastFailed = Failed();
+                var url = e.BillingUrl;
+                Notify($"{e.Provider}: Guthaben", e.Message + " Hier klicken, um es aufzuladen.", ToolTipIcon.Error,
+                    url == null ? ShowSettings : () => OpenBillingUrl(url));
+            }
+            else if (e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey)
                 Notify($"{e.Provider}-Fehler", e.Message, ToolTipIcon.Error, ShowSettings);
             else if (e.Kind is Core.GeminiErrorKind.Network or Core.GeminiErrorKind.Timeout or Core.GeminiErrorKind.Quota or Core.GeminiErrorKind.Server)
                 NotifyRetryable($"{e.Provider}-Fehler", e.Message, Failed());
@@ -1186,6 +1194,14 @@ internal sealed class TrayApp : ApplicationContext
             if (!done) _overlay.HideOverlay();
             SetState(State.Idle);
         }
+    }
+
+    /// <summary>Opens the provider's billing page from the "Guthaben" balloon.</summary>
+    private static void OpenBillingUrl(string url)
+    {
+        if (!Core.NetworkPolicy.IsAllowedBrowserUrl(url)) return;
+        try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception e) { Core.Log.Error($"Opening the billing page failed: {e.GetType().Name}"); }
     }
 
     /// <summary>
