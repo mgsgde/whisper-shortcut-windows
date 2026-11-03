@@ -23,6 +23,8 @@ public enum GeminiErrorKind
     Server,
     /// <summary>The reply hit the output-token limit and is cut off (finishReason MAX_TOKENS).</summary>
     Truncated,
+    /// <summary>The provider account has no credit / billing set up; retrying cannot help. See <see cref="GeminiException.BillingUrl"/>.</summary>
+    Billing,
 }
 
 /// <summary>Gemini (or OpenAI) call failed. <see cref="Exception.Message"/> is a German text fit for the user.</summary>
@@ -35,6 +37,13 @@ public sealed class GeminiException : Exception
     /// <summary>Creates the exception for the named provider ("OpenAI").</summary>
     public GeminiException(string provider, GeminiErrorKind kind, string userMessage, Exception? inner = null)
         : base(userMessage, inner) => (Provider, Kind) = (provider, kind);
+
+    /// <summary>Creates a <see cref="GeminiErrorKind.Billing"/> exception that carries the page where the user can fix it.</summary>
+    public GeminiException(string provider, GeminiErrorKind kind, string userMessage, string? billingUrl, Exception? inner = null)
+        : this(provider, kind, userMessage, inner) => BillingUrl = billingUrl;
+
+    /// <summary>Where to top up / enable billing (only for <see cref="GeminiErrorKind.Billing"/>), else null.</summary>
+    public string? BillingUrl { get; }
 
     /// <summary>The error category.</summary>
     public GeminiErrorKind Kind { get; }
@@ -586,12 +595,41 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         return null;
     }
 
+    /// <summary>
+    /// A 400 body with status FAILED_PRECONDITION, or a message naming billing / free tier / payment (as on the Mac).
+    /// Not "User location is not supported", which is also FAILED_PRECONDITION but no billing problem.
+    /// </summary>
+    private static bool IsBillingProblem(string body)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(body);
+            if (!doc.RootElement.TryGetProperty("error", out var e) || e.ValueKind != JsonValueKind.Object) return false;
+            if (e.TryGetProperty("message", out var lm) && lm.ValueKind == JsonValueKind.String
+                && (lm.GetString() ?? "").Contains("location", StringComparison.OrdinalIgnoreCase)) return false;
+            if (e.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String
+                && st.GetString() == "FAILED_PRECONDITION") return true;
+            if (e.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
+            {
+                var msg = m.GetString() ?? "";
+                return msg.Contains("billing", StringComparison.OrdinalIgnoreCase)
+                    || msg.Contains("free tier", StringComparison.OrdinalIgnoreCase)
+                    || msg.Contains("payment", StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        catch (JsonException) { }
+        return false;
+    }
+
     private static GeminiException MapStatus(HttpStatusCode status, string body)
     {
         var code = (int)status;
         if (body.Contains("SERVICE_DISABLED") || body.Contains("has not been used in project"))
             return new GeminiException(GeminiErrorKind.InvalidKey,
                 "Die Gemini-API ist im Google-Projekt dieses Schlüssels nicht aktiviert (Generative Language API).");
+        if (code == 400 && IsBillingProblem(body))
+            return new GeminiException("Gemini", GeminiErrorKind.Billing,
+                "Für diesen Gemini-Schlüssel ist keine Abrechnung eingerichtet.", "https://aistudio.google.com/app/apikey");
         if (body.Contains("BILLING", StringComparison.Ordinal))
             return new GeminiException(GeminiErrorKind.InvalidKey,
                 "Für das Google-Projekt dieses Schlüssels ist keine Abrechnung eingerichtet.");
