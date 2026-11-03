@@ -108,7 +108,7 @@ public sealed class McpSetting
 public static class McpSettingsCatalog
 {
     /// <summary>How a shortcut value is written; sent to the AI app.</summary>
-    public const string ShortcutFormatHint = "A string like \"Ctrl+Shift+D\": two of Ctrl/Alt/Shift (one of them Ctrl or Alt; Ctrl+Alt alone is AltGr on German keyboards and not allowed) plus a letter, digit or F1-F12. The object form {\"key\": \"d\", \"modifiers\": [\"control\", \"shift\"]} is accepted too.";
+    public const string ShortcutFormatHint = "A string like \"Alt+1\" or \"Ctrl+Shift+D\": Alt plus a digit 0-9, or two of Ctrl/Alt/Shift (one of them Ctrl or Alt; Ctrl+Alt alone is AltGr on German keyboards and not allowed) plus a letter, digit or F1-F12. \"RightCtrl\" is the right Ctrl key alone (the Mac's rightControl). The object form {\"key\": \"1\", \"modifiers\": [\"alt\"]} is accepted too.";
 
     private const string NoSpeechModel = "The offline speech model is not downloaded. The user downloads it in WhisperShortcut Settings → Offline.";
     private const string NoLlm = "The offline language model is not downloaded. The user downloads it in WhisperShortcut Settings → Offline.";

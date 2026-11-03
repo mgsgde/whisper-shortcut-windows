@@ -100,16 +100,10 @@ internal sealed class MeetingHotkeyDialog : Form
     }
 
     /// <summary>
-    /// Two of Ctrl/Alt/Shift, one of them Ctrl or Alt, and not Ctrl+Alt alone (AltGr on German
-    /// keyboards). Same rule as the settings window's hotkey fields.
+    /// Two of Ctrl/Alt/Shift, one of them Ctrl or Alt, or Alt+digit; not Ctrl+Alt alone (AltGr on German
+    /// keyboards). Same rule as the settings window's hotkey fields (<see cref="Core.HotkeyText.IsSafe"/>).
     /// </summary>
-    private static bool IsSafe(Hotkey hotkey)
-    {
-        uint m = hotkey.Modifiers;
-        int count = ((m & MOD_CONTROL) != 0 ? 1 : 0) + ((m & MOD_ALT) != 0 ? 1 : 0) + ((m & MOD_SHIFT) != 0 ? 1 : 0);
-        if ((m & (MOD_CONTROL | MOD_ALT)) == (MOD_CONTROL | MOD_ALT) && (m & MOD_SHIFT) == 0) return false;
-        return count >= 2 && (m & (MOD_CONTROL | MOD_ALT)) != 0;
-    }
+    private static bool IsSafe(Hotkey hotkey) => hotkey.IsSafe;
 
     /// <summary>Text box that records a key combination instead of text (like the settings window's).</summary>
     private sealed class KeyBox : TextBox

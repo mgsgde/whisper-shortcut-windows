@@ -29,13 +29,19 @@ public static class HotkeyRules
     }
 
     /// <summary>
-    /// "Ctrl+Shift+D", "strg+umschalt+d", "Ctrl+Alt+Shift+F5" give the normalized form (order Ctrl, Alt, Shift, Win; key an
-    /// upper-case letter, digit 0-9 or F1..F12). At least one modifier is required. Anything else returns false.
+    /// "Ctrl+Shift+D", "strg+umschalt+d", "Ctrl+Alt+Shift+F5", "alt+1" give the normalized form (order Ctrl, Alt, Shift, Win;
+    /// key an upper-case letter, digit 0-9 or F1..F12). At least one modifier is required, except for the right Ctrl key
+    /// alone ("RightCtrl", "rightControl", "rechte Strg"), which normalizes to "RightCtrl". Anything else returns false.
     /// </summary>
     public static bool TryNormalize(string? text, out string normalized)
     {
         normalized = "";
         if (string.IsNullOrWhiteSpace(text)) return false;
+        if (HotkeyText.IsRightCtrl(text))
+        {
+            normalized = HotkeyText.RightCtrl;
+            return true;
+        }
         var parts = text.Split('+').Select(p => p.Trim()).ToArray();
         if (parts.Length < 2 || parts.Any(p => p.Length == 0)) return false;
         var mods = new HashSet<string>();
@@ -51,22 +57,14 @@ public static class HotkeyRules
     }
 
     /// <summary>
-    /// Same rule as SettingsForm.IsSafe: at least two of Ctrl/Alt/Shift, one of them Ctrl or Alt; Ctrl+Alt without Shift is
-    /// refused (AltGr on German keyboards). Win may be added. Input is a normalized string.
+    /// Same rule as the settings window (<see cref="HotkeyText.IsSafe"/>): Alt+digit, the right Ctrl key alone, or at least
+    /// two of Ctrl/Alt/Shift with one of them Ctrl or Alt; Ctrl+Alt without Shift is refused (AltGr on German keyboards).
+    /// Win may be added. Input is a normalized string.
     /// </summary>
-    public static bool IsSafe(string normalized)
-    {
-        if (!TryNormalize(normalized, out var n)) return false;
-        var parts = n.Split('+');
-        var ctrl = parts.Contains("Ctrl");
-        var alt = parts.Contains("Alt");
-        var shift = parts.Contains("Shift");
-        var count = (ctrl ? 1 : 0) + (alt ? 1 : 0) + (shift ? 1 : 0);
-        if (count < 2 || !(ctrl || alt)) return false;
-        return !(ctrl && alt && !shift);
-    }
+    public static bool IsSafe(string normalized) =>
+        TryNormalize(normalized, out var n) && HotkeyText.TryParse(n, out var mods, out var key) && HotkeyText.IsSafe(mods, key);
 
-    /// <summary>German display: "Strg+Umschalt+D".</summary>
+    /// <summary>German display: "Strg+Umschalt+D", "Alt+1", "rechte Strg".</summary>
     public static string Display(string normalized) =>
-        string.Join("+", normalized.Split('+').Select(p => p switch { "Ctrl" => "Strg", "Shift" => "Umschalt", _ => p }));
+        HotkeyText.TryParse(normalized, out var mods, out var key) ? HotkeyText.Format(mods, key, german: true) : normalized;
 }

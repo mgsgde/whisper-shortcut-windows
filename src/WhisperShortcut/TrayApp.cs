@@ -153,8 +153,9 @@ internal sealed class TrayApp : ApplicationContext
         var quitItem = new ToolStripMenuItem("Beenden", null, (_, _) => Quit());
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         _meeting = new MeetingController(_settings, _ui, TranscribeMeetingChunkAsync, SummarizeMeetingAsync, MeetingUnavailable,
-            Notify, TrySave, () => new[] { _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey,
-                    _settings.ScreenshotHotkey, _settings.TemplateHotkey, _settings.LiveDictateHotkey }
+            Notify, TrySave, () => new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveGlossaryHotkey,
+                    _settings.ActiveScreenshotHotkey, _settings.TemplateHotkey, _settings.ActiveLiveDictateHotkey,
+                    _settings.ActiveOpenSettingsHotkey }
                 .Concat(_settings.Templates.Select(t => t.Hotkey)).Where(k => k.Length > 0).ToArray(),
             suspend => { if (suspend) { _hotkeys.UnregisterAll(); _globalHotkeysOn = false; } else SyncGlobalHotkeys(notify: true); },
             fakeAudio: testWav != null || fakeGemini);
@@ -253,34 +254,38 @@ internal sealed class TrayApp : ApplicationContext
         _globalHotkeysOn = true;
         _hotkeys.UnregisterAll();
         var failed = new List<string>();
+        // Active* is "" when a shortcut is switched off (Mac isEnabled) or unassigned; those are not registered.
         var keys = new List<(string, Action)>
         {
-            (_settings.DictateHotkey, () => OnHotkey(Mode.Dictate)),
-            (_settings.PromptHotkey, () => OnHotkey(Mode.Prompt)),
-            (_settings.GlossaryHotkey, () => _ = AddSelectionToGlossaryAsync()),
+            (_settings.ActiveDictateHotkey, () => OnHotkey(Mode.Dictate)),
+            (_settings.ActivePromptHotkey, () => OnHotkey(Mode.Prompt)),
+            (_settings.ActiveGlossaryHotkey, () => _ = AddSelectionToGlossaryAsync()),
+            // No meeting hotkey by default: the tray menu starts a meeting.
+            (_settings.MeetingHotkey, _meeting.Toggle),
+            // Live diktieren ships switched off (Mac: disabled).
+            (_settings.ActiveLiveDictateHotkey, OnLiveHotkey),
+            (_settings.ActiveScreenshotHotkey, OnScreenshotHotkey),
+            (_settings.ActiveOpenSettingsHotkey, ShowSettings),
         };
-        // No meeting hotkey by default: the tray menu starts a meeting.
-        if (!string.IsNullOrWhiteSpace(_settings.MeetingHotkey)) keys.Add((_settings.MeetingHotkey, _meeting.Toggle));
-        // Live diktieren ships without a key (Mac: disabled), so nothing can collide by default.
-        if (!string.IsNullOrWhiteSpace(_settings.LiveDictateHotkey)) keys.Add((_settings.LiveDictateHotkey, OnLiveHotkey));
         foreach (var (stored, action) in keys)
         {
-            if (!Hotkey.TryParse(stored, out var key) || !_hotkeys.Register(key, action))
+            if (string.IsNullOrWhiteSpace(stored)) continue;
+            // RightCtrl alone needs the keyboard hook, which RegisterHotKey is not: report it instead of registering
+            // a bare VK_RCONTROL.
+            if (!Hotkey.TryParse(stored, out var key) || key.IsRightCtrl || !_hotkeys.Register(key, action))
                 failed.Add(Hotkey.Display(stored));
         }
-        if (_settings.ScreenshotHotkey.Length > 0
-            && (!Hotkey.TryParse(_settings.ScreenshotHotkey, out var shotKey) || !_hotkeys.Register(shotKey, OnScreenshotHotkey)))
-            failed.Add(Hotkey.Display(_settings.ScreenshotHotkey));
 
         // Template keys come after the app's own, which win on a clash (see TemplateHotkeys).
         var appHotkeys = new (string Name, string Hotkey)[]
         {
-            ("Diktieren", _settings.DictateHotkey),
-            ("Text bearbeiten", _settings.PromptHotkey),
-            ("Glossar", _settings.GlossaryHotkey),
-            ("Screenshot", _settings.ScreenshotHotkey),
+            ("Diktieren", _settings.ActiveDictateHotkey),
+            ("Text bearbeiten", _settings.ActivePromptHotkey),
+            ("Glossar", _settings.ActiveGlossaryHotkey),
+            ("Screenshot", _settings.ActiveScreenshotHotkey),
             ("Live Meeting", _settings.MeetingHotkey),
-            ("Live diktieren", _settings.LiveDictateHotkey),
+            ("Live diktieren", _settings.ActiveLiveDictateHotkey),
+            ("Einstellungen", _settings.ActiveOpenSettingsHotkey),
         };
         var templates = _settings.Templates;
         var pickerActive = Core.TemplateHotkeys.PickerIsActive(_settings.TemplateHotkey, templates, appHotkeys, CanonicalHotkey);
@@ -305,10 +310,11 @@ internal sealed class TrayApp : ApplicationContext
             Core.Log.Info($"Template hotkeys: {skipped.Count} skipped, key already owned (template position {string.Join(", ", skipped)})");
         SyncSessionHotkeys();
         _dictateInfo.Text = $"Diktieren: {Hotkey.Display(_settings.DictateHotkey)}";
-        _liveInfo.Text = $"Live diktieren: {Hotkey.Display(_settings.LiveDictateHotkey)}";
-        _liveInfo.Visible = !string.IsNullOrWhiteSpace(_settings.LiveDictateHotkey);
+        _liveInfo.Text = $"Live diktieren: {Hotkey.Display(_settings.ActiveLiveDictateHotkey)}";
+        _liveInfo.Visible = !string.IsNullOrWhiteSpace(_settings.ActiveLiveDictateHotkey);
         _promptInfo.Text = $"Text bearbeiten oder schreiben lassen: {Hotkey.Display(_settings.PromptHotkey)}";
-        _glossaryInfo.Text = $"Markierung ins Glossar: {Hotkey.Display(_settings.GlossaryHotkey)}";
+        _glossaryInfo.Text = $"Markierung ins Glossar: {Hotkey.Display(_settings.ActiveGlossaryHotkey)}";
+        _glossaryInfo.Visible = !string.IsNullOrWhiteSpace(_settings.ActiveGlossaryHotkey);
         _templateInfo.Text = $"Vorlage anwenden: {Hotkey.Display(_settings.TemplateHotkey)}";
         _templateInfo.Visible = pickerActive;
         // WHY remembered: the settings window closing re-registers with notify, which would repeat the same warning.
