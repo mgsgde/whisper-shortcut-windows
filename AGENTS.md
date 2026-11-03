@@ -3,8 +3,20 @@
 Guidance for AI coding agents (Claude Code, Cursor, …) in this repo. `CLAUDE.md` is a symlink to it.
 
 WhisperShortcut for Windows: C# / .NET 10, WinForms, tray app. `src/WhisperShortcut` (app),
-`src/WhisperShortcut.Core` (logic), `tests/WhisperShortcut.Tests`. Feature parity with the macOS app:
-`docs/macos-paritaet.md`. User-facing text is German.
+`src/WhisperShortcut.Core` (logic), `tests/WhisperShortcut.Tests`. User-facing text is German.
+
+## The macOS app is the reference
+
+Windows rebuilds the macOS app, so know the original before building „wie auf dem Mac“:
+
+- **How the Mac app is built and behaves** (menu, shortcuts, flows, messages, every settings tab, with
+  screenshots): `docs/macos-referenz.md`. **What Windows still lacks:** `docs/macos-paritaet.md`.
+- **The Mac source is the truth**, not the docs: `~/whisper-shortcut-private/whisper-shortcut/WhisperShortcut/`
+  (public: github.com/mgsgde/whisper-shortcut). Before porting a feature, read the Swift file the reference
+  names and match its behaviour, defaults and wording (German strings: `Localizable.xcstrings`). Never
+  change the Mac repo from here.
+- Deliberate Windows differences (German UI, Strg/Alt keys, tray, the places Windows is better) are listed
+  in `docs/macos-referenz.md` §8; keep them.
 
 ## Build and test (on the Mac)
 
