@@ -267,8 +267,26 @@ public sealed class Settings
     /// <summary>Look for a new version at start and once a day; only shows a notice, installs nothing by itself.</summary>
     public bool AutoUpdateCheck { get; set; } = true;
 
-    /// <summary>Put the previous clipboard text back after pasting (ignored when <see cref="AutoPaste"/> is off).</summary>
-    public bool RestoreClipboard { get; set; } = true;
+    /// <summary>
+    /// What happens to the clipboard after auto-paste (ignored when <see cref="AutoPaste"/> is off). New installs leave
+    /// the dictation there like the Mac; older files map their "restoreClipboard" switch (see <see cref="ClipboardAfterPasteModes.FromFile"/>).
+    /// </summary>
+    public ClipboardAfterPaste ClipboardAfterPaste { get; set; } = ClipboardAfterPaste.KeepDictation;
+
+    /// <summary>
+    /// The old switch, kept as a view of <see cref="ClipboardAfterPaste"/>: true = restore the previous clipboard.
+    /// Setting it false turns "restore" into "keep" and leaves "clear" alone. Still written to the file for older versions.
+    /// </summary>
+    [JsonIgnore]
+    public bool RestoreClipboard
+    {
+        get => ClipboardAfterPaste == ClipboardAfterPaste.RestorePrevious;
+        set
+        {
+            if (value) ClipboardAfterPaste = ClipboardAfterPaste.RestorePrevious;
+            else if (ClipboardAfterPaste == ClipboardAfterPaste.RestorePrevious) ClipboardAfterPaste = ClipboardAfterPaste.KeepDictation;
+        }
+    }
 
     /// <summary>
     /// "" when <paramref name="text"/> is blank or equals <paramref name="defaultText"/> (ignoring line endings and
@@ -357,7 +375,7 @@ public sealed class Settings
             s.AutoPaste = dto.AutoPaste ?? true;
             s.Sounds = dto.Sounds ?? true;
             s.AutoUpdateCheck = dto.AutoUpdateCheck ?? true;
-            s.RestoreClipboard = dto.RestoreClipboard ?? true;
+            s.ClipboardAfterPaste = ClipboardAfterPasteModes.FromFile(dto.ClipboardAfterPaste, dto.RestoreClipboard);
             // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
@@ -514,6 +532,7 @@ public sealed class Settings
             Sounds = Sounds,
             AutoUpdateCheck = AutoUpdateCheck,
             RestoreClipboard = RestoreClipboard,
+            ClipboardAfterPaste = ClipboardAfterPasteModes.Name(ClipboardAfterPaste),
         };
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
@@ -583,5 +602,6 @@ public sealed class Settings
         [JsonPropertyName("sounds")] public bool? Sounds { get; set; }
         [JsonPropertyName("autoUpdateCheck")] public bool? AutoUpdateCheck { get; set; }
         [JsonPropertyName("restoreClipboard")] public bool? RestoreClipboard { get; set; }
+        [JsonPropertyName("clipboardAfterPaste")] public string? ClipboardAfterPaste { get; set; }
     }
 }

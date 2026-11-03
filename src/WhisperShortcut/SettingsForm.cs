@@ -45,7 +45,7 @@ internal sealed partial class SettingsForm : Form
     private readonly PromptEditor _promptPrompt;
     private readonly ToggleSwitch _autoStart;
     private readonly ToggleSwitch _autoPaste;
-    private readonly ToggleSwitch _restoreClipboard;
+    private readonly FluentCombo _afterPaste;
     private readonly ToggleSwitch _sounds;
     private readonly Banner _welcome;
     private ThemedLabel _updateStatus = null!;
@@ -225,16 +225,21 @@ internal sealed partial class SettingsForm : Form
         // --- clipboard (Mac: Auto-paste, After auto-paste) ---
         general.Controls.Add(Section("Zwischenablage", subtitle: "Was mit dem Text nach der Aufnahme passiert. Er liegt immer auch in der Zwischenablage."));
         _autoPaste = new ToggleSwitch { Checked = settings.AutoPaste, AccessibleName = "Automatisch einfügen" };
-        _restoreClipboard = new ToggleSwitch { Checked = settings.RestoreClipboard, AccessibleName = "Zwischenablage wiederherstellen" };
+        _afterPaste = new FluentCombo { Width = ComboWidth, AccessibleName = "Zwischenablage nach dem Einfügen" };
+        foreach (var mode in Core.ClipboardAfterPasteModes.All) _afterPaste.Items.Add(new AfterPasteItem(mode));
+        _afterPaste.SelectedItem = _afterPaste.Items.Cast<AfterPasteItem>().First(i => i.Mode == settings.ClipboardAfterPaste);
         var pasteCard = new Card();
         pasteCard.AddRow(SettingRow("Automatisch einfügen", "Der Text erscheint dort, wo der Cursor steht. Aus: Er liegt nur in der "
             + "Zwischenablage und wird mit Strg+V selbst eingefügt.", _autoPaste, ToggleWidth, out _));
-        pasteCard.AddRow(SettingRow("Zwischenablage wiederherstellen", "Nach dem Einfügen kommt zurück, was vorher in der Zwischenablage war.",
-            _restoreClipboard, ToggleWidth, out _));
+        // Mac "After auto-paste": the explanation line follows the chosen option.
+        pasteCard.AddRow(SettingRow("Nach dem Einfügen", "", _afterPaste, ComboWidth, out var afterPasteText));
+        void DescribeAfterPaste() => afterPasteText.Text = Core.ClipboardAfterPasteModes.Explanation(SelectedAfterPaste);
+        _afterPaste.SelectedIndexChanged += (_, _) => DescribeAfterPaste();
+        DescribeAfterPaste();
         general.Controls.Add(pasteCard);
-        // Without pasting nothing is restored: the text itself stays in the clipboard.
-        _autoPaste.CheckedChanged += (_, _) => _restoreClipboard.Enabled = _autoPaste.Checked;
-        _restoreClipboard.Enabled = _autoPaste.Checked;
+        // Without pasting there is nothing to settle afterwards: the text itself stays in the clipboard (Mac: disabled).
+        _autoPaste.CheckedChanged += (_, _) => _afterPaste.Enabled = _autoPaste.Checked;
+        _afterPaste.Enabled = _autoPaste.Checked;
 
         // --- Erweitert (Mac: General → Advanced at the end): sounds (Windows only, off like the Mac) and the recording keys ---
         _sounds = new ToggleSwitch { Checked = settings.Sounds, AccessibleName = "Signaltöne" };
@@ -680,7 +685,7 @@ internal sealed partial class SettingsForm : Form
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
         var dirtyTimer = new System.Windows.Forms.Timer { Interval = 150 };
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
-        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation };
+        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation, _afterPaste };
         dirtyTimer.Tick += (_, _) =>
         {
             if (_snapshot.Length == 0 || combos.Any(c => c.DroppedDown)) return;
@@ -1472,6 +1477,13 @@ internal sealed partial class SettingsForm : Form
         public override string ToString() => Label;
     }
 
+    private sealed record AfterPasteItem(Core.ClipboardAfterPaste Mode)
+    {
+        public override string ToString() => Core.ClipboardAfterPasteModes.Label(Mode);
+    }
+
+    private Core.ClipboardAfterPaste SelectedAfterPaste => ((AfterPasteItem)_afterPaste.SelectedItem!).Mode;
+
     private Core.PunctuationMode SelectedPunctuation => ((PunctuationItem)_punctuation.SelectedItem!).Mode;
 
     // ---------------- microphone ----------------
@@ -1764,7 +1776,7 @@ internal sealed partial class SettingsForm : Form
         SelectedModel(_dictateModelOpenAi), SelectedModel(_promptModelOpenAi),
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
-        _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
+        _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), SelectedAfterPaste.ToString(), _sounds.Checked.ToString(),
         _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value, _liveKey.Value,
         SelectedPunctuation.ToString(), _settingsKey.Value, _rightCtrl.Checked.ToString(),
     }.Concat(_quick.Select(q => q.Text))
@@ -1910,7 +1922,7 @@ internal sealed partial class SettingsForm : Form
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
             _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
-            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
+            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
@@ -1948,7 +1960,7 @@ internal sealed partial class SettingsForm : Form
         _settings.DictateSystemPrompt = _dictatePrompt.Value;
         _settings.PromptModeSystemPrompt = _promptPrompt.Value;
         _settings.AutoPaste = _autoPaste.Checked;
-        _settings.RestoreClipboard = _restoreClipboard.Checked;
+        _settings.ClipboardAfterPaste = SelectedAfterPaste;
         _settings.PunctuationMode = SelectedPunctuation;
         _settings.Sounds = _sounds.Checked;
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
@@ -1964,7 +1976,7 @@ internal sealed partial class SettingsForm : Form
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
                 _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
                 _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
-                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
+                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
@@ -1984,7 +1996,7 @@ internal sealed partial class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode})");
         // Also with a key problem: the same state is not written again until the user edits something.
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;

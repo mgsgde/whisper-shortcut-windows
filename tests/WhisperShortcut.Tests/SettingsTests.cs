@@ -577,25 +577,73 @@ public class QuickActionRequestTests
     }
 
     [Fact]
-    public void PasteOptions_DefaultOn_RoundTrip_AndOldFileLoadsAsOn()
+    public void PasteOptions_Defaults_RoundTrip_AndOldFileLoadsAsRestore()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
         Assert.True(s.AutoPaste);
-        Assert.True(s.RestoreClipboard);
+        // New installs leave the dictation on the clipboard, like the Mac.
+        Assert.Equal(ClipboardAfterPaste.KeepDictation, s.ClipboardAfterPaste);
+        Assert.False(s.RestoreClipboard);
 
         s.AutoPaste = false;
-        s.RestoreClipboard = false;
+        s.ClipboardAfterPaste = ClipboardAfterPaste.Clear;
         s.Save();
+        Assert.Contains("\"clipboardAfterPaste\": \"clear\"", File.ReadAllText(path));
+        Assert.Contains("\"restoreClipboard\": false", File.ReadAllText(path)); // still written for older versions
         var t = Settings.Load(path, new PlainSecretProtector());
         Assert.False(t.AutoPaste);
-        Assert.False(t.RestoreClipboard);
+        Assert.Equal(ClipboardAfterPaste.Clear, t.ClipboardAfterPaste);
 
-        File.WriteAllText(path, "{\"glossary\":[\"a\"]}"); // old file without the fields
+        t.ClipboardAfterPaste = ClipboardAfterPaste.RestorePrevious;
+        t.Save();
+        Assert.Contains("\"restoreClipboard\": true", File.ReadAllText(path));
+        Assert.Equal(ClipboardAfterPaste.RestorePrevious, Settings.Load(path, new PlainSecretProtector()).ClipboardAfterPaste);
+
+        File.WriteAllText(path, "{\"glossary\":[\"a\"]}"); // old file without the fields: restore was the old default
         var u = Settings.Load(path, new PlainSecretProtector());
         Assert.True(u.AutoPaste);
-        Assert.True(u.RestoreClipboard);
+        Assert.Equal(ClipboardAfterPaste.RestorePrevious, u.ClipboardAfterPaste);
+
+        File.WriteAllText(path, "{\"restoreClipboard\":false}"); // old file with the switch off
+        Assert.Equal(ClipboardAfterPaste.KeepDictation, Settings.Load(path, new PlainSecretProtector()).ClipboardAfterPaste);
+        File.WriteAllText(path, "{\"restoreClipboard\":true}");
+        Assert.Equal(ClipboardAfterPaste.RestorePrevious, Settings.Load(path, new PlainSecretProtector()).ClipboardAfterPaste);
+        // The new field wins over the old switch; an unknown value falls back to the switch.
+        File.WriteAllText(path, "{\"restoreClipboard\":true,\"clipboardAfterPaste\":\"keep\"}");
+        Assert.Equal(ClipboardAfterPaste.KeepDictation, Settings.Load(path, new PlainSecretProtector()).ClipboardAfterPaste);
+        File.WriteAllText(path, "{\"restoreClipboard\":false,\"clipboardAfterPaste\":\"later\"}");
+        Assert.Equal(ClipboardAfterPaste.KeepDictation, Settings.Load(path, new PlainSecretProtector()).ClipboardAfterPaste);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void RestoreClipboard_IsAViewOfTheMode()
+    {
+        var s = Settings.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json"), new PlainSecretProtector());
+        s.RestoreClipboard = true;
+        Assert.Equal(ClipboardAfterPaste.RestorePrevious, s.ClipboardAfterPaste);
+        s.RestoreClipboard = false;
+        Assert.Equal(ClipboardAfterPaste.KeepDictation, s.ClipboardAfterPaste);
+        s.ClipboardAfterPaste = ClipboardAfterPaste.Clear;
+        s.RestoreClipboard = false; // "off" leaves "clear" alone
+        Assert.Equal(ClipboardAfterPaste.Clear, s.ClipboardAfterPaste);
+        Assert.False(s.RestoreClipboard);
+    }
+
+    [Fact]
+    public void ClipboardAfterPasteModes_NamesLabelsAndExplanations()
+    {
+        Assert.Equal(new[] { "keep", "restore", "clear" }, ClipboardAfterPasteModes.All.Select(ClipboardAfterPasteModes.Name));
+        foreach (var m in ClipboardAfterPasteModes.All)
+        {
+            Assert.Equal(m, ClipboardAfterPasteModes.Parse(ClipboardAfterPasteModes.Name(m)));
+            Assert.False(string.IsNullOrWhiteSpace(ClipboardAfterPasteModes.Label(m)));
+            Assert.DoesNotContain("Sie ", ClipboardAfterPasteModes.Explanation(m)); // du-form
+        }
+        Assert.Equal("Diktat stehen lassen", ClipboardAfterPasteModes.Label(ClipboardAfterPaste.KeepDictation));
+        Assert.Null(ClipboardAfterPasteModes.Parse(null));
+        Assert.Null(ClipboardAfterPasteModes.Parse("x"));
     }
 
     [Fact]

@@ -247,7 +247,17 @@ public static class McpSettingsCatalog
             HotkeySetting("shortcuts.dictate_prompt", "Tastenkürzel Text bearbeiten", () => settings.PromptHotkey, v => settings.PromptHotkey = v),
             HotkeySetting("shortcuts.add_to_glossary", "Tastenkürzel Glossar", () => settings.GlossaryHotkey, v => settings.GlossaryHotkey = v),
             BoolSetting("clipboard.auto_paste", "Automatisch einfügen", "clipboard", () => settings.AutoPaste, v => settings.AutoPaste = v),
-            BoolSetting("clipboard.restore_after_paste", "Zwischenablage wiederherstellen", "clipboard", () => settings.RestoreClipboard, v => settings.RestoreClipboard = v),
+            new()
+            {
+                Id = "clipboard.after_paste", Title = "Zwischenablage nach dem Einfügen", Category = "clipboard", Type = McpSettingType.Enum,
+                Description = "What happens to the clipboard after auto-paste (no effect while clipboard.auto_paste is off). keep: the dictated text stays (default). restore: the previous clipboard comes back 3 s after pasting. clear: the clipboard is emptied 3 s after pasting, if it still holds the dictation.",
+                Read = () => JsonValue.Create(ClipboardAfterPasteModes.Name(settings.ClipboardAfterPaste)),
+                Options = () => ClipboardAfterPasteModes.All
+                    .Select(m => new McpSettingOption(ClipboardAfterPasteModes.Name(m), ClipboardAfterPasteModes.Label(m), true, null)).ToList(),
+                Write = v => settings.ClipboardAfterPaste = ClipboardAfterPasteModes.Parse(Text(v))
+                    ?? throw new McpConfigException("Use keep, restore or clear."),
+            },
+            BoolSetting("clipboard.restore_after_paste", "Zwischenablage wiederherstellen (alt, siehe clipboard.after_paste)", "clipboard", () => settings.RestoreClipboard, v => settings.RestoreClipboard = v),
             BoolSetting("general.sounds", "Signaltöne", "general", () => settings.Sounds, v => settings.Sounds = v),
             BoolSetting("general.auto_update_check", "Automatisch nach Updates suchen", "general", () => settings.AutoUpdateCheck, v => settings.AutoUpdateCheck = v),
             new()

@@ -540,8 +540,7 @@ internal sealed class TrayApp : ApplicationContext
         if (_live != null)
         {
             // Text already inserted stays: it is in another window.
-            // HOOK(clear clipboard, macOS): Windows has no „Zwischenablage nach dem Einfügen leeren“ setting yet; pass it here when it exists.
-            _paster.EndLive(Core.LiveDictation.ClipboardAtEnd(_settings.RestoreClipboard, false, null, false), null);
+            _paster.EndLive(LiveClipboardAtEnd(null, false), null);
             DiscardLive();
         }
         CancelSelectionCopy(); // no Ctrl+C into the user's window after the cancel
@@ -550,6 +549,11 @@ internal sealed class TrayApp : ApplicationContext
         _overlay.HideOverlay();
         SetState(State.Idle);
     }
+
+    // Live diktieren ends: the clipboard setting decides between restore, keep and clear (Mac "After auto-paste").
+    private Core.LiveClipboardEnd LiveClipboardAtEnd(Core.LiveDictationOutcome? outcome, bool fallbackHasText) =>
+        Core.LiveDictation.ClipboardAtEnd(_settings.RestoreClipboard,
+            clearAfterPaste: _settings.ClipboardAfterPaste == Core.ClipboardAfterPaste.Clear, outcome, fallbackHasText);
 
     private void CancelSelectionCopy()
     {
@@ -873,7 +877,7 @@ internal sealed class TrayApp : ApplicationContext
         byte[]? wav = null;
         double seconds = 0;
         FailedRun? Failed() => wav == null ? null : new FailedRun(wav, Mode.Dictate, seconds, null, null, _liveTarget, StopKey: _stopKey, ClipboardOnly: true);
-        var cancelledAction = Core.LiveDictation.ClipboardAtEnd(_settings.RestoreClipboard, false, null, false);
+        var cancelledAction = LiveClipboardAtEnd(null, false);
 
         try
         {
@@ -921,8 +925,7 @@ internal sealed class TrayApp : ApplicationContext
                 }
             }
 
-            // HOOK(clear clipboard, macOS): Windows has no „Zwischenablage nach dem Einfügen leeren“ setting yet; pass it here when it exists.
-            var action = Core.LiveDictation.ClipboardAtEnd(_settings.RestoreClipboard, clearAfterPaste: false, outcome, fallback.Length > 0);
+            var action = LiveClipboardAtEnd(outcome, fallback.Length > 0);
             _paster.EndLive(action, action switch
             {
                 Core.LiveClipboardEnd.KeepHeld => outcome.HeldText,
@@ -1142,8 +1145,8 @@ internal sealed class TrayApp : ApplicationContext
             var keepOnly = !Core.ClipboardPasteGuard.MayAutoPaste(_settings.AutoPaste, clipboardOnlyRun: retry != null);
             var outcome = keepOnly
                 ? (_paster.KeepOnClipboard(text) ? PasteOutcome.ClipboardOnlyByChoice : PasteOutcome.Failed)
-                : await _paster.PasteAsync(text, _pasteTarget, _settings.RestoreClipboard, ct);
-            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, restore {(_settings.RestoreClipboard ? "on" : "off")}");
+                : await _paster.PasteAsync(text, _pasteTarget, _settings.ClipboardAfterPaste, ct);
+            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, after paste {Core.ClipboardAfterPasteModes.Name(_settings.ClipboardAfterPaste)}");
             switch (outcome)
             {
                 case PasteOutcome.ClipboardOnlyByChoice when _unsupported.Count > 0:
