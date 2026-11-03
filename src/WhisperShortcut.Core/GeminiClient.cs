@@ -621,7 +621,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         return false;
     }
 
-    private static GeminiException MapStatus(HttpStatusCode status, string body)
+    internal static GeminiException MapStatus(HttpStatusCode status, string body)
     {
         var code = (int)status;
         if (body.Contains("SERVICE_DISABLED") || body.Contains("has not been used in project"))

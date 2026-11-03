@@ -15,7 +15,7 @@ public class McpSettingsTests
         using var s = new McpStack();
         var o = s.ToolJson("get_settings", new JsonObject(), McpAccess.Read);
         var list = o["settings"]!.AsArray();
-        Assert.Equal(16, list.Count);
+        Assert.Equal(22, list.Count);
         var engine = list.First(x => x!["id"]!.GetValue<string>() == "dictation.engine")!;
         Assert.Equal("enum", engine["type"]!.GetValue<string>());
         Assert.Equal(3, engine["options"]!.AsArray().Count);
@@ -28,7 +28,7 @@ public class McpSettingsTests
         Assert.True(list.First(x => x!["id"]!.GetValue<string>() == "general.launch_at_login")!["requires_approval"]!.GetValue<bool>());
 
         var models = s.ToolJson("get_settings", A("{\"category\":\"models\"}"), McpAccess.Read)["settings"]!.AsArray();
-        Assert.Equal(8, models.Count);
+        Assert.Equal(9, models.Count);
     }
 
     [Fact]
@@ -180,5 +180,72 @@ public class McpSettingsTests
         var ex = Assert.Throws<McpConfigException>(() => s.Proposals.Accept(o["id"]!.GetValue<string>()));
         Assert.Equal("Der automatische Start konnte nicht geändert werden.", ex.Message);
         Assert.Empty(s.Changes.Changes);
+    }
+    [Fact]
+    public void ReadAloud_SettingsAreListed()
+    {
+        using var s = new McpStack();
+        var ra = s.ToolJson("get_settings", A("{\"category\":\"read_aloud\"}"), McpAccess.Read)["settings"]!.AsArray();
+        Assert.Equal(new[] { "read_aloud.smart_rewrite", "read_aloud.speed", "read_aloud.voice.gemini", "read_aloud.voice.openai" },
+            ra.Select(x => x!["id"]!.GetValue<string>()).OrderBy(x => x).ToArray());
+        var speed = ra.First(x => x!["id"]!.GetValue<string>() == "read_aloud.speed")!;
+        Assert.Equal("1.0", speed["value"]!.GetValue<string>());
+        Assert.Equal(new[] { "0.75", "1.0", "1.25", "1.5", "1.75", "2.0" },
+            speed["options"]!.AsArray().Select(o => o!["value"]!.GetValue<string>()).ToArray());
+        Assert.Equal("1,5\u00D7", speed["options"]![3]!["label"]!.GetValue<string>());
+
+        var all = s.ToolJson("get_settings", new JsonObject(), McpAccess.Read)["settings"]!.AsArray();
+        var hot = all.First(x => x!["id"]!.GetValue<string>() == "shortcuts.read_aloud")!;
+        Assert.Equal("shortcut", hot["type"]!.GetValue<string>());
+        var model = all.First(x => x!["id"]!.GetValue<string>() == "read_aloud.model")!;
+        Assert.Equal("models", model["category"]!.GetValue<string>());
+        Assert.Equal(3, model["options"]!.AsArray().Count);
+    }
+
+    [Fact]
+    public void ReadAloud_SpeedWrites_AndUnknownVoiceIsRefused()
+    {
+        using var s = new McpStack();
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"read_aloud.speed\":\"1.5\"}},{R}}}"))["status"]!.GetValue<string>());
+        Assert.Equal(1.5, s.ReloadSettings().ReadAloudSpeed);
+
+        Assert.True(s.Tool("update_settings", A($"{{\"changes\":{{\"read_aloud.speed\":\"3\"}},{R}}}")).IsError);
+        Assert.Equal(1.5, s.ReloadSettings().ReadAloudSpeed);
+
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"read_aloud.voice.gemini\":\"Kore\"}},{R}}}"))["status"]!.GetValue<string>());
+        Assert.Equal("Kore", s.ReloadSettings().ReadAloudVoiceGemini);
+        var bad = s.Tool("update_settings", A($"{{\"changes\":{{\"read_aloud.voice.gemini\":\"Nobody\"}},{R}}}"));
+        Assert.True(bad.IsError);
+        Assert.Equal("Kore", s.ReloadSettings().ReadAloudVoiceGemini);
+
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"read_aloud.smart_rewrite\":false}},{R}}}"))["status"]!.GetValue<string>());
+        Assert.False(s.ReloadSettings().ReadAloudSmartRewrite);
+    }
+
+    [Fact]
+    public void ReadAloud_OpenAiModelNeedsAnOpenAiKey()
+    {
+        using var s = new McpStack();
+        var refused = s.Tool("update_settings", A($"{{\"changes\":{{\"read_aloud.model\":\"gpt-4o-mini-tts\"}},{R}}}"));
+        Assert.True(refused.IsError);
+        Assert.Contains("No OpenAI API key", refused.Text);
+
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"read_aloud.model\":\"gemini-3.8-flash-tts\"}},{R}}}"))["status"]!.GetValue<string>());
+        Assert.Equal("gemini-3.8-flash-tts", s.ReloadSettings().ReadAloudModel);
+
+        s.Settings.OpenAiKey = "sk-test";
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"read_aloud.model\":\"gpt-4o-mini-tts\"}},{R}}}"))["status"]!.GetValue<string>());
+        Assert.Equal("gpt-4o-mini-tts", s.ReloadSettings().ReadAloudModel);
+    }
+
+    [Fact]
+    public void ReadAloudHotkey_MustDifferFromTheOthers()
+    {
+        using var s = new McpStack();
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.read_aloud\":\"Alt+4\"}},{R}}}"))["status"]!.GetValue<string>());
+        Assert.Equal("Alt+4", s.ReloadSettings().ReadAloudHotkey);
+        var clash = s.Tool("update_settings", A($"{{\"changes\":{{\"shortcuts.dictate\":\"Alt+4\"}},{R}}}"));
+        Assert.True(clash.IsError);
+        Assert.Contains("Tastenkürzel Vorlesen", clash.Text);
     }
 }

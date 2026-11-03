@@ -118,7 +118,7 @@ public sealed class Settings
     public string Microphone { get; set; } = "";
 
     // Shortcut defaults follow the Mac (ShortcutConfig.default): the same digit for the same function, with Alt as the
-    // Windows modifier (Ctrl+Alt is AltGr on German keyboards). Alt+4 stays free for Read Aloud, which Windows lacks.
+    // Windows modifier (Ctrl+Alt is AltGr on German keyboards). Alt+4 is Read Aloud (Vorlesen).
     // Installs that ran before keep LegacyShortcuts: see the pin in Load.
 
     /// <summary>New-install hotkey for plain dictation (Mac ⌃⌥1).</summary>
@@ -129,6 +129,9 @@ public sealed class Settings
 
     /// <summary>New-install hotkey for Screenshot (Mac ⌃⌥3).</summary>
     public const string DefaultScreenshotHotkey = "Alt+3";
+
+    /// <summary>New-install hotkey for Read Aloud (Mac ⌃⌥4).</summary>
+    public const string DefaultReadAloudHotkey = "Alt+4";
 
     /// <summary>Suggested key for Live diktieren (Mac ⌃⌥5); ships disabled.</summary>
     public const string DefaultLiveDictateHotkey = "Alt+5";
@@ -159,6 +162,9 @@ public sealed class Settings
 
         /// <summary>Open settings did not exist: unassigned.</summary>
         public const string OpenSettings = "";
+
+        /// <summary>Read Aloud did not exist: unassigned.</summary>
+        public const string ReadAloud = "";
     }
 
     /// <summary>Hotkey for plain dictation.</summary>
@@ -184,6 +190,37 @@ public sealed class Settings
 
     /// <summary>Open-settings hotkey on. Use <see cref="ActiveOpenSettingsHotkey"/> to register.</summary>
     public bool OpenSettingsHotkeyEnabled { get; set; } = true;
+
+    /// <summary>Hotkey that reads the selected text aloud; "" = unassigned.</summary>
+    public string ReadAloudHotkey { get; set; } = DefaultReadAloudHotkey;
+
+    /// <summary>Read Aloud hotkey on. Use <see cref="ActiveReadAloudHotkey"/> to register.</summary>
+    public bool ReadAloudHotkeyEnabled { get; set; } = true;
+
+    /// <summary>Read Aloud model id (see <see cref="Core.ReadAloud.Models"/>); unknown ids fall back to the default on load.</summary>
+    public string ReadAloudModel { get; set; } = ReadAloud.DefaultModel;
+
+    /// <summary>Chosen Gemini voice for Read Aloud (a <see cref="Core.ReadAloud.Voices"/> id).</summary>
+    public string ReadAloudVoiceGemini { get; set; } = ReadAloud.DefaultVoice(TtsProvider.Gemini);
+
+    /// <summary>Chosen OpenAI voice for Read Aloud (a <see cref="Core.ReadAloud.Voices"/> id).</summary>
+    public string ReadAloudVoiceOpenAi { get; set; } = ReadAloud.DefaultVoice(TtsProvider.OpenAI);
+
+    /// <summary>Read Aloud playback speed, one of <see cref="Core.ReadAloud.Speeds"/>.</summary>
+    public double ReadAloudSpeed { get; set; } = ReadAloud.DefaultSpeed;
+
+    /// <summary>Let the model rewrite code, logs and Markdown into something speakable before reading (Mac: Smart Rewrite).</summary>
+    public bool ReadAloudSmartRewrite { get; set; } = true;
+
+    /// <summary>The selected Read Aloud model.</summary>
+    [JsonIgnore]
+    public TtsModel ReadAloudTtsModel => ReadAloud.ModelById(ReadAloudModel);
+
+    /// <summary>The chosen Read Aloud voice of <paramref name="provider"/>.</summary>
+    public string ReadAloudVoiceFor(TtsProvider provider) =>
+        provider == TtsProvider.Gemini
+            ? ReadAloud.NormalizeVoice(provider, ReadAloudVoiceGemini)
+            : ReadAloud.NormalizeVoice(provider, ReadAloudVoiceOpenAi);
 
     /// <summary>
     /// The right Ctrl key alone toggles dictation, the Windows stand-in for the Mac's Fn key. On by default like the Mac.
@@ -211,6 +248,9 @@ public sealed class Settings
 
     /// <summary>Open-settings hotkey to register, "" when off or unassigned.</summary>
     public string ActiveOpenSettingsHotkey => Active(OpenSettingsHotkey, OpenSettingsHotkeyEnabled);
+
+    /// <summary>Read Aloud hotkey to register, "" when off or unassigned.</summary>
+    public string ActiveReadAloudHotkey => Active(ReadAloudHotkey, ReadAloudHotkeyEnabled);
 
     /// <summary>Dictation templates ("Vorlagen"), in the order the user arranged them.</summary>
     public List<DictationTemplate> Templates { get; set; } = new();
@@ -341,6 +381,13 @@ public sealed class Settings
             s.ScreenshotHotkeyEnabled = dto.ScreenshotHotkeyEnabled ?? s.ScreenshotHotkeyEnabled;
             s.LiveDictateHotkeyEnabled = dto.LiveDictateHotkeyEnabled ?? s.LiveDictateHotkeyEnabled;
             s.OpenSettingsHotkeyEnabled = dto.OpenSettingsHotkeyEnabled ?? s.OpenSettingsHotkeyEnabled;
+            if (dto.ReadAloudHotkey != null) s.ReadAloudHotkey = dto.ReadAloudHotkey;
+            s.ReadAloudHotkeyEnabled = dto.ReadAloudHotkeyEnabled ?? s.ReadAloudHotkeyEnabled;
+            s.ReadAloudModel = ReadAloud.NormalizeModel(dto.ReadAloudModel);
+            s.ReadAloudVoiceGemini = ReadAloud.NormalizeVoice(TtsProvider.Gemini, dto.ReadAloudVoiceGemini);
+            s.ReadAloudVoiceOpenAi = ReadAloud.NormalizeVoice(TtsProvider.OpenAI, dto.ReadAloudVoiceOpenAi);
+            s.ReadAloudSpeed = ReadAloud.NormalizeSpeed(dto.ReadAloudSpeed ?? ReadAloud.DefaultSpeed);
+            s.ReadAloudSmartRewrite = dto.ReadAloudSmartRewrite ?? true;
             s.RightCtrlDictation = dto.RightCtrlDictation ?? true;
             s.Templates = LoadTemplates(dto.Templates);
             s.TemplateHotkey = dto.TemplateHotkey ?? "";
@@ -362,6 +409,9 @@ public sealed class Settings
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
                 : QuickActionList.Clean(dto.QuickActions);
+            // An update adds the Read Aloud key to a file that never had it. It must not take a key the user already uses.
+            if (dto.ReadAloudHotkey == null && s.ReadAloudHotkeyEnabled && s.ReadAloudKeyClashes())
+                s.ReadAloudHotkeyEnabled = false;
             // A leftover plaintext key field is imported above and must leave the file on the next write.
             if (rewrite)
             {
@@ -385,8 +435,24 @@ public sealed class Settings
         ScreenshotHotkey = LegacyShortcuts.Screenshot;
         LiveDictateHotkey = LegacyShortcuts.LiveDictate;
         OpenSettingsHotkey = LegacyShortcuts.OpenSettings;
+        ReadAloudHotkey = LegacyShortcuts.ReadAloud;
         DictateHotkeyEnabled = PromptHotkeyEnabled = GlossaryHotkeyEnabled = true;
         ScreenshotHotkeyEnabled = LiveDictateHotkeyEnabled = OpenSettingsHotkeyEnabled = true;
+        ReadAloudHotkeyEnabled = true;
+    }
+
+    // True when the Read Aloud key equals any other stored key (app keys and template keys); empty keys never clash.
+    private bool ReadAloudKeyClashes()
+    {
+        if (string.IsNullOrWhiteSpace(ReadAloudHotkey)) return false;
+        var others = new List<string>
+        {
+            DictateHotkey, PromptHotkey, GlossaryHotkey, ScreenshotHotkey, LiveDictateHotkey, OpenSettingsHotkey,
+            MeetingHotkey, TemplateHotkey,
+        };
+        others.AddRange(Templates.Select(t => t.Hotkey));
+        return others.Any(k => !string.IsNullOrWhiteSpace(k)
+            && string.Equals(k.Trim(), ReadAloudHotkey.Trim(), StringComparison.OrdinalIgnoreCase));
     }
 
     /// <summary>The new-install shortcuts (same values as the property initializers).</summary>
@@ -399,12 +465,14 @@ public sealed class Settings
         ScreenshotHotkey = d.ScreenshotHotkey;
         LiveDictateHotkey = d.LiveDictateHotkey;
         OpenSettingsHotkey = d.OpenSettingsHotkey;
+        ReadAloudHotkey = d.ReadAloudHotkey;
         DictateHotkeyEnabled = d.DictateHotkeyEnabled;
         PromptHotkeyEnabled = d.PromptHotkeyEnabled;
         GlossaryHotkeyEnabled = d.GlossaryHotkeyEnabled;
         ScreenshotHotkeyEnabled = d.ScreenshotHotkeyEnabled;
         LiveDictateHotkeyEnabled = d.LiveDictateHotkeyEnabled;
         OpenSettingsHotkeyEnabled = d.OpenSettingsHotkeyEnabled;
+        ReadAloudHotkeyEnabled = d.ReadAloudHotkeyEnabled;
     }
 
     // Missing list = old file: no templates. Null entries are skipped; a blank id gets a fresh one.
@@ -491,6 +559,13 @@ public sealed class Settings
             ScreenshotHotkeyEnabled = ScreenshotHotkeyEnabled,
             LiveDictateHotkeyEnabled = LiveDictateHotkeyEnabled,
             OpenSettingsHotkeyEnabled = OpenSettingsHotkeyEnabled,
+            ReadAloudHotkey = ReadAloudHotkey,
+            ReadAloudHotkeyEnabled = ReadAloudHotkeyEnabled,
+            ReadAloudModel = ReadAloudModel,
+            ReadAloudVoiceGemini = ReadAloudVoiceGemini,
+            ReadAloudVoiceOpenAi = ReadAloudVoiceOpenAi,
+            ReadAloudSpeed = ReadAloudSpeed,
+            ReadAloudSmartRewrite = ReadAloudSmartRewrite,
             RightCtrlDictation = RightCtrlDictation,
             // Every value above is written out, so from now on a missing field means the new default.
             ShortcutDefaultsAltV1 = true,
@@ -563,6 +638,13 @@ public sealed class Settings
         [JsonPropertyName("screenshotHotkeyEnabled")] public bool? ScreenshotHotkeyEnabled { get; set; }
         [JsonPropertyName("liveDictateHotkeyEnabled")] public bool? LiveDictateHotkeyEnabled { get; set; }
         [JsonPropertyName("openSettingsHotkeyEnabled")] public bool? OpenSettingsHotkeyEnabled { get; set; }
+        [JsonPropertyName("readAloudHotkey")] public string? ReadAloudHotkey { get; set; }
+        [JsonPropertyName("readAloudHotkeyEnabled")] public bool? ReadAloudHotkeyEnabled { get; set; }
+        [JsonPropertyName("readAloudModel")] public string? ReadAloudModel { get; set; }
+        [JsonPropertyName("readAloudVoiceGemini")] public string? ReadAloudVoiceGemini { get; set; }
+        [JsonPropertyName("readAloudVoiceOpenAi")] public string? ReadAloudVoiceOpenAi { get; set; }
+        [JsonPropertyName("readAloudSpeed")] public double? ReadAloudSpeed { get; set; }
+        [JsonPropertyName("readAloudSmartRewrite")] public bool? ReadAloudSmartRewrite { get; set; }
         [JsonPropertyName("rightCtrlDictation")] public bool? RightCtrlDictation { get; set; }
         // One-time pin (Mac: shortcut_defaults_ctrl_option_v1). Missing in a file = written before the Alt+digit defaults.
         [JsonPropertyName("shortcutDefaultsAltV1")] public bool? ShortcutDefaultsAltV1 { get; set; }

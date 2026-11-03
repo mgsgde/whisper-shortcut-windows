@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 
 namespace WhisperShortcut.Core.Mcp;
@@ -29,7 +30,7 @@ public sealed class McpSetting
     /// <summary>German title, shown to the user in the approval dialog and change log.</summary>
     public required string Title { get; init; }
 
-    /// <summary>Category for filtering (models, shortcuts, clipboard, general).</summary>
+    /// <summary>Category for filtering (models, shortcuts, read_aloud, clipboard, general).</summary>
     public required string Category { get; init; }
 
     /// <summary>Value kind.</summary>
@@ -114,6 +115,18 @@ public static class McpSettingsCatalog
     private const string NoLlm = "The offline language model is not downloaded. The user downloads it in WhisperShortcut Settings → Diktieren (speech) or Dictate Prompt (language model).";
     private const string NoGeminiKey = "No Gemini API key in WhisperShortcut. The user enters it in Settings → Allgemein; AI apps cannot set keys.";
     private const string NoOpenAiKey = "No OpenAI API key in WhisperShortcut. The user enters it in Settings → Allgemein; AI apps cannot set keys.";
+
+    private static string SpeedToken(double speed) =>
+        ReadAloud.NormalizeSpeed(speed).ToString("0.0#", CultureInfo.InvariantCulture);
+
+    private static McpSetting VoiceSetting(string id, string title, TtsProvider provider, Func<string> get, Action<string> set) => new()
+    {
+        Id = id, Title = title, Category = "read_aloud", Type = McpSettingType.Enum,
+        Description = $"The {(provider == TtsProvider.Gemini ? "Gemini" : "OpenAI")} voice Read Aloud speaks with. Only used when a model of that provider is selected.",
+        Read = () => JsonValue.Create(get()),
+        Options = () => ReadAloud.Voices(provider).Select(v => new McpSettingOption(v.Id, v.DisplayName, true, null)).ToList(),
+        Write = v => set(ReadAloud.NormalizeVoice(provider, Text(v))),
+    };
 
     /// <summary>String or macOS object form {key, modifiers} to the normalized hotkey string.</summary>
     internal static bool TryHotkey(JsonNode? value, out string normalized)
@@ -246,6 +259,34 @@ public static class McpSettingsCatalog
             HotkeySetting("shortcuts.dictate", "Tastenkürzel Diktieren", () => settings.DictateHotkey, v => settings.DictateHotkey = v),
             HotkeySetting("shortcuts.dictate_prompt", "Tastenkürzel Text bearbeiten", () => settings.PromptHotkey, v => settings.PromptHotkey = v),
             HotkeySetting("shortcuts.add_to_glossary", "Tastenkürzel Glossar", () => settings.GlossaryHotkey, v => settings.GlossaryHotkey = v),
+            HotkeySetting("shortcuts.read_aloud", "Tastenkürzel Vorlesen", () => settings.ReadAloudHotkey, v => settings.ReadAloudHotkey = v),
+            new()
+            {
+                Id = "read_aloud.model", Title = "Vorlesen: Modell", Category = "models", Type = McpSettingType.Enum,
+                Description = "The text-to-speech model Read Aloud uses. The selected text is sent to that provider.",
+                Read = () => JsonValue.Create(ReadAloud.NormalizeModel(settings.ReadAloudModel)),
+                Options = () => ReadAloud.Models.Select(m =>
+                {
+                    var needsKey = m.Provider == TtsProvider.OpenAI && string.IsNullOrWhiteSpace(settings.OpenAiKey);
+                    return new McpSettingOption(m.Id, m.Name, !needsKey, needsKey ? NoOpenAiKey : null);
+                }).ToList(),
+                Write = v => settings.ReadAloudModel = ReadAloud.NormalizeModel(Text(v)),
+            },
+            VoiceSetting("read_aloud.voice.gemini", "Vorlesen: Gemini-Stimme", TtsProvider.Gemini,
+                () => settings.ReadAloudVoiceFor(TtsProvider.Gemini), v => settings.ReadAloudVoiceGemini = v),
+            VoiceSetting("read_aloud.voice.openai", "Vorlesen: OpenAI-Stimme", TtsProvider.OpenAI,
+                () => settings.ReadAloudVoiceFor(TtsProvider.OpenAI), v => settings.ReadAloudVoiceOpenAi = v),
+            new()
+            {
+                Id = "read_aloud.speed", Title = "Vorlesen: Geschwindigkeit", Category = "read_aloud", Type = McpSettingType.Enum,
+                Description = "Playback speed of Read Aloud as a number string. The pitch of the voice stays the same.",
+                Read = () => JsonValue.Create(SpeedToken(settings.ReadAloudSpeed)),
+                Options = () => ReadAloud.Speeds.Select(x => new McpSettingOption(SpeedToken(x), ReadAloud.SpeedLabel(x), true, null)).ToList(),
+                Write = v => settings.ReadAloudSpeed = double.TryParse(Text(v), NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
+                    ? ReadAloud.NormalizeSpeed(x) : ReadAloud.DefaultSpeed,
+            },
+            BoolSetting("read_aloud.smart_rewrite", "Vorlesen: intelligentes Umschreiben", "read_aloud",
+                () => settings.ReadAloudSmartRewrite, v => settings.ReadAloudSmartRewrite = v),
             BoolSetting("clipboard.auto_paste", "Automatisch einfügen", "clipboard", () => settings.AutoPaste, v => settings.AutoPaste = v),
             BoolSetting("clipboard.restore_after_paste", "Zwischenablage wiederherstellen", "clipboard", () => settings.RestoreClipboard, v => settings.RestoreClipboard = v),
             BoolSetting("general.sounds", "Signaltöne", "general", () => settings.Sounds, v => settings.Sounds = v),
@@ -275,7 +316,7 @@ public static class McpSettingsCatalog
     /// <summary>Equal values (a hotkey in any accepted spelling equals its normalized form).</summary>
     public static bool SameValue(JsonNode? a, JsonNode? b) => JsonNode.DeepEquals(Canonical(a), Canonical(b));
 
-    /// <summary>Validates the state the whole batch would leave: the three hotkeys must stay distinct (also against the unchanged ones). Null = ok.</summary>
+    /// <summary>Validates the state the whole batch would leave: the hotkeys must stay distinct (also against the unchanged ones). Null = ok.</summary>
     public static string? ValidateBatch(IReadOnlyList<McpSetting> catalog, IReadOnlyList<(string Id, JsonNode? Value)> items)
     {
         var seen = new Dictionary<string, McpSetting>();
