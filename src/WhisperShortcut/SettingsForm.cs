@@ -78,6 +78,7 @@ internal sealed partial class SettingsForm : Form
     private readonly HistoryLink _dictateHistory, _promptHistory, _templateHistory;
     private readonly ThemedLabel _dirty;
     private readonly List<(Label Label, int Inset)> _wraps = new();
+    private readonly List<Control> _building = new();
     private readonly List<NavItem> _nav = new();
     private readonly Dictionary<string, Control> _pages = new();
     private readonly Panel _pageHost;
@@ -516,7 +517,7 @@ internal sealed partial class SettingsForm : Form
         llmCard.AddRow(llmBlock);
         llmCard.AddRow(_llmRow);
         offlinePage.Controls.Add(llmCard);
-        offlinePage.Controls.Add(Wrap(@"Das Laden läuft weiter, wenn das Fenster zu ist. Die Modelle liegen unter %LOCALAPPDATA%\WhisperShortcut\Offline.", 0));
+        offlinePage.Controls.Add(Wrap($"Das Laden läuft weiter, wenn das Fenster zu ist. Die Modelle liegen unter {Core.OfflineCatalog.Root}.", 0));
         _speechRow.Action.Click += (_, _) => ToggleDownload("speech", new[] { speech });
         _speechRow.Remove.LinkClicked += (_, _) => RemoveModel(speech, "die Offline-Spracherkennung");
         _llmRow.Action.Click += (_, _) => ToggleDownload("llm",
@@ -589,6 +590,8 @@ internal sealed partial class SettingsForm : Form
         content.Controls.Add(buttons);
         Controls.Add(content);
         Controls.Add(nav);
+        foreach (var page in _building) page.ResumeLayout(false);
+        _building.Clear();
         ResumeLayout(false);
         PerformLayout();
 
@@ -692,6 +695,9 @@ internal sealed partial class SettingsForm : Form
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         // Rows are added as controls come in; AutoSize rows keep the stack tight.
         root.ControlAdded += (_, _) => root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+        // WHY suspended: an auto-size page re-lays out on every added row; the constructor resumes it once at the end.
+        root.SuspendLayout();
+        _building.Add(root);
         root.Controls.Add(PageTitle(title));
         if (intro != null) root.Controls.Add(Wrap(intro, 0));
         scroll.Controls.Add(root);
@@ -1605,8 +1611,24 @@ internal sealed partial class SettingsForm : Form
         if (_pageHost is null) return;
         // Page padding (72 at 96 dpi) and a possible scroll bar.
         int width = _pageHost.ClientSize.Width - LogicalToDeviceUnits(72) - SystemInformation.VerticalScrollBarWidth;
-        foreach (var (label, inset) in _wraps)
-            label.MaximumSize = new Size(Math.Max(width - LogicalToDeviceUnits(inset), LogicalToDeviceUnits(200)), 0);
+        var changed = _wraps
+            .Select(w => (w.Label, Size: new Size(Math.Max(width - LogicalToDeviceUnits(w.Inset), LogicalToDeviceUnits(200)), 0)))
+            .Where(w => w.Label.MaximumSize != w.Size)
+            .ToList();
+        if (changed.Count == 0) return;
+        // WHY suspended: every new MaximumSize re-lays out the nested auto-size tables of all pages, about a
+        // hundred times on the first open (2 s). Suspended, each container lays out once, children first.
+        var containers = new List<Control>();
+        void Collect(Control c)
+        {
+            if (!c.HasChildren) return;
+            containers.Add(c);
+            foreach (Control child in c.Controls) Collect(child);
+        }
+        Collect(_pageHost);
+        foreach (var c in containers) c.SuspendLayout();
+        foreach (var (label, size) in changed) label.MaximumSize = size;
+        for (int i = containers.Count - 1; i >= 0; i--) containers[i].ResumeLayout(true);
     }
 
     // ---------------- save / close ----------------

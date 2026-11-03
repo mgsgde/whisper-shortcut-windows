@@ -649,7 +649,7 @@ internal sealed class NavItem : Button
             TextFormatFlags.VerticalCenter | TextFormatFlags.HorizontalCenter | TextFormatFlags.NoPadding);
         int textLeft = left + LogicalToDeviceUnits(32);
         TextRenderer.DrawText(g, Text, Font, new Rectangle(textLeft, 0, Width - textLeft - LogicalToDeviceUnits(4), Height),
-            fore, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis);
+            fore, TextFormatFlags.VerticalCenter | TextFormatFlags.Left | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix);
         if (Focused && ShowFocusCues)
         {
             using var ring = new Pen(Theme.Text, LogicalToDeviceUnits(2));
