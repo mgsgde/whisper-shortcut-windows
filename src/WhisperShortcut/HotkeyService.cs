@@ -2,51 +2,46 @@ using static WhisperShortcut.NativeMethods;
 
 namespace WhisperShortcut;
 
-/// <summary>A parsed hotkey like "Ctrl+Shift+D".</summary>
+/// <summary>
+/// A parsed hotkey like "Ctrl+Shift+D", "Alt+1", or "RightCtrl" (right Ctrl alone: no modifiers, key
+/// <see cref="Keys.RControlKey"/>). Text parsing and formatting live in <see cref="Core.HotkeyText"/>.
+/// </summary>
 internal readonly record struct Hotkey(uint Modifiers, Keys Key)
 {
+    /// <summary>The right Ctrl key alone, the Windows stand-in for the Mac's Fn key.</summary>
+    public static readonly Hotkey RightCtrl = new(0, Keys.RControlKey);
+
+    /// <summary>True for <see cref="RightCtrl"/>, which RegisterHotKey cannot serve (it needs the keyboard hook).</summary>
+    public bool IsRightCtrl => this == RightCtrl;
+
     public static bool TryParse(string? text, out Hotkey hotkey)
     {
         hotkey = default;
-        if (string.IsNullOrWhiteSpace(text)) return false;
-        uint mods = 0;
-        Keys key = Keys.None;
-        foreach (var raw in text.Split('+', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        if (!Core.HotkeyText.TryParse(text, out var mods, out var token)) return false;
+        if (token == Core.HotkeyText.RightCtrl)
         {
-            switch (raw.ToLowerInvariant())
-            {
-                case "ctrl": case "strg": case "control": mods |= MOD_CONTROL; break;
-                case "alt": mods |= MOD_ALT; break;
-                case "shift": case "umschalt": mods |= MOD_SHIFT; break;
-                case "win": mods |= MOD_WIN; break;
-                default:
-                    if (key != Keys.None) return false;
-                    if (raw.Length == 1 && char.IsDigit(raw[0])) key = Keys.D0 + (raw[0] - '0');
-                    else if (!Enum.TryParse(raw, ignoreCase: true, out key)) return false;
-                    break;
-            }
+            hotkey = RightCtrl;
+            return true;
         }
-        if (key == Keys.None || mods == 0) return false;
+        Keys key;
+        if (token.Length == 1 && char.IsDigit(token[0])) key = Keys.D0 + (token[0] - '0');
+        else if (!Enum.TryParse(token, ignoreCase: true, out key)) return false;
+        if (key == Keys.None) return false;
         hotkey = new Hotkey(mods, key);
         return true;
     }
 
-    /// <summary>Storage form, English modifier names ("Ctrl+Shift+D").</summary>
-    public override string ToString() => Format("Ctrl", "Alt", "Shift", "Win");
+    /// <summary>Storage form, English modifier names ("Ctrl+Shift+D", "Alt+1", "RightCtrl").</summary>
+    public override string ToString() => Core.HotkeyText.Format(Modifiers, KeyToken, german: false);
 
-    /// <summary>German form for the UI ("Strg+Umschalt+D").</summary>
-    public string ToDisplayString() => Format("Strg", "Alt", "Umschalt", "Win");
+    /// <summary>German form for the UI ("Strg+Umschalt+D", "Alt+1", "rechte Strg").</summary>
+    public string ToDisplayString() => Core.HotkeyText.Format(Modifiers, KeyToken, german: true);
 
-    private string Format(string ctrl, string alt, string shift, string win)
-    {
-        var parts = new List<string>();
-        if ((Modifiers & MOD_CONTROL) != 0) parts.Add(ctrl);
-        if ((Modifiers & MOD_ALT) != 0) parts.Add(alt);
-        if ((Modifiers & MOD_SHIFT) != 0) parts.Add(shift);
-        if ((Modifiers & MOD_WIN) != 0) parts.Add(win);
-        parts.Add(Key is >= Keys.D0 and <= Keys.D9 ? ((char)('0' + (Key - Keys.D0))).ToString() : Key.ToString());
-        return string.Join("+", parts);
-    }
+    /// <summary>Shared safety rule (<see cref="Core.HotkeyText.IsSafe"/>): Alt+digit, RightCtrl, or two of Ctrl/Alt/Shift without AltGr.</summary>
+    public bool IsSafe => Core.HotkeyText.IsSafe(Modifiers, KeyToken);
+
+    private string KeyToken => IsRightCtrl ? Core.HotkeyText.RightCtrl
+        : Key is >= Keys.D0 and <= Keys.D9 ? ((char)('0' + (Key - Keys.D0))).ToString() : Key.ToString();
 
     public static string Display(string stored) => TryParse(stored, out var h) ? h.ToDisplayString() : stored;
 }

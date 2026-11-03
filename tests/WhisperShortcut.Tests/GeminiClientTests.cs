@@ -348,6 +348,33 @@ public class GeminiClientTests
         Assert.Single(h.Calls);
     }
 
+    [Theory]
+    [InlineData("{\"error\":{\"code\":400,\"message\":\"Gemini API free tier is not available for this project. Please set up a paid plan.\",\"status\":\"FAILED_PRECONDITION\"}}")]
+    [InlineData("{\"error\":{\"code\":400,\"message\":\"Precondition check failed.\",\"status\":\"FAILED_PRECONDITION\"}}")]
+    [InlineData("{\"error\":{\"code\":400,\"message\":\"Please enable billing on your project.\",\"status\":\"INVALID_ARGUMENT\"}}")]
+    [InlineData("{\"error\":{\"code\":400,\"message\":\"The free tier is not available in your country.\",\"status\":\"INVALID_ARGUMENT\"}}")]
+    public async Task Status400_BillingProblem_IsBilling_NoRetry(string body)
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.BadRequest, body));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.Billing, ex.Kind);
+        Assert.Equal("Für diesen Gemini-Schlüssel ist keine Abrechnung eingerichtet.", ex.Message);
+        Assert.Equal("https://aistudio.google.com/app/apikey", ex.BillingUrl);
+        Assert.Single(h.Calls);
+    }
+
+    [Fact]
+    public async Task Status400_UnsupportedLocation_IsNotBilling()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.BadRequest,
+            "{\"error\":{\"code\":400,\"message\":\"User location is not supported for the API use.\",\"status\":\"FAILED_PRECONDITION\"}}"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.NotEqual(GeminiErrorKind.Billing, ex.Kind);
+        Assert.Null(ex.BillingUrl);
+    }
+
     [Fact]
     public async Task KeyIsReadAtCallTime()
     {

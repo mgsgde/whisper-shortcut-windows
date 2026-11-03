@@ -1,81 +1,134 @@
-# Windows vs. macOS: Funktionsabgleich (Stand 1.11.2026)
+# Windows vs. macOS: Funktionsabgleich (Stand 03.11.2026)
 
-Geprüft: Windows `main` 0.5.4 (`206a89b`) plus diese Branch gegen die macOS-App **v8.73**
-(`https://github.com/mgsgde/whisper-shortcut`, `dd51bb8`). Der vorherige Abgleich (27.10.2026,
-v8.63) ist überholt: das Paket „Verlässlich“ (A1–A9) und die Einstellungs-Seitenleiste sind in
-0.5.x angekommen.
+Geprüft: Windows `integrate/cloud-sessions` (`a17d964`, enthält #18–#27, #29, #30) plus die offenen PRs
+#31–#38, gegen die macOS-App **v8.75** (`mgsgde/whisper-shortcut`, `e06174f`, Quellcode gelesen, nicht nur
+das Änderungsprotokoll). Der vorige Stand (01.11., gegen v8.73) ist hier aufgegangen; die Nachträge weiter
+unten bleiben als Detail stehen.
 
-**Kurz:** Diktieren, Dictate Prompt, Glossar, Offline (Parakeet + lokales LLM), Schnellanweisungen,
-letzte Texte, Einfügeziel, Retries und Glossar-Echo sind auf Windows da. Die großen macOS-Blöcke
-(Chat, Vorlesen, Screenshot, Live-Meeting, MCP, Smart Improvement) fehlen weiter. Neu in diesem
-Abgleich: Gesprächsgedächtnis bei Online-Edits, OpenAI-Modell-Migration, 0,2 s Nachlauf nach Stopp,
-Log-Rotation, Stall-Timeouts, CC-BY-Hinweis für Parakeet.
+**Status:** **erledigt** · **PR #n** (offen, schließt die Lücke) · **offen** · **bewusst anders**.
+Die beiden Wortlaut-Tests gegen die Swift-Quellen (`SwiftSourceFact`) laufen gegen v8.75 grün.
 
-## A. Gleiche Funktion — erledigt seit 27.10. (nicht mehr Lücke)
+**Kurz:** Diktieren, Text bearbeiten, Vorlagen, Screenshot, Glossar, Offline, Live-Meeting und MCP sind da.
+Der Abgleich hat sechs Lücken gefunden, die Nutzer merken; sie stecken in fünf PRs (#34–#38):
+früherer Verlauf bei Schnellanweisungen, leere Antwort löscht die Aufnahme, Antworten werden beschnitten,
+Glossar-Echo-Regeln, GPT Transcribe ohne Glossar, Abrechnungs-Meldung. Offen bleiben vor allem UI-Themen,
+die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 
-| # | Damals | Jetzt (Windows 0.5.4+) |
-|---|---|---|
-| A1 | Temperatur 1.0 | `GeminiClient` / `OpenAiClient` senden Temperatur 0 |
-| A2 | 1 Retry, Audio weg | 5–6 Versuche mit Backoff, Netzfehler, WAV bleibt, Menü „Letzte Aufnahme erneut verarbeiten“ |
-| A3 | 429 immer „Kontingent“ | `RetryInfo` / `Retry-After`, Tageskontingent getrennt |
-| A4 | Einfügen ins vordere Fenster | Ziel beim Start gemerkt, zurückgeholt oder Zwischenablage (`ClipboardPaster` / `PasteOutcome.ClipboardOnlyTargetChanged`) |
-| A5 | Glossar roh | `GlossaryPrompt`: Notizen weg, falsche Schreibweisen gefiltert, Tie-Breaker, Nachkorrektur |
-| A6 | Kein Echo-Schutz | `DiscardGlossaryEcho`, Retry ohne Glossar, `StripTrailingGlossaryEcho`, `LooksLikeRefusal` |
-| A7 | Gemini-IDs nie migriert | `GeminiModels.Normalize*` (3.7/3.6/2.5/… → 3.8 bzw. 3.1 Flash-Lite) |
-| A8 | Nur Unicode-Text | alle Speicher-Formate, 64-MB-Deckel |
-| A9 | Strg+C nach 2 s tot | 3 s Late-Copy-Watch |
+## 1. Diktieren
 
-Einstellungen (Martins Liste): Seitenleiste, Modell und System-Prompt pro Modus, automatisch
-einfügen, Zwischenablage wiederherstellen, Info mit Version/Update/Tour/Zurücksetzen, Problem
-melden, Mit Windows starten — in `main`.
+| Funktion | Mac v8.75 | Windows | Status |
+|---|---|---|---|
+| Retries, Backoff, `Retry-After`, Tageskontingent | 5 Versuche, `retryAfter` | `HttpRetry` (5–6, max. 15 s, `RetryInfo`) | erledigt |
+| Letzte Aufnahme erneut verarbeiten | ja | Menü + Klick auf die Meldung (`TrayApp.RetryLast`) | erledigt |
+| Aufnahme nach Absturz / Schlaf / voller Platte | – | `RecordingCheckpoint`, Spill-Datei | erledigt (Windows weiter) |
+| 0,2 s Nachlauf nach Stopp | `audioTailCaptureDelay` | `MicAudioSource.TailCapture` | erledigt |
+| Einfügeziel vom Start gemerkt | `PasteTargetPolicy` (pro App) | `PasteTargetPolicy` (pro Fenster, strenger) | erledigt |
+| Sicheres Einfügen, Satzzeichen nur gesprochen (#321/#322) | 8.75 | – | **PR #32** |
+| Live diktieren (#324) | 8.75 | – | **PR #33** |
+| Lange Diktate: Stücke schon während der Aufnahme | `ChunkedDictateRecorder` | Stücke erst nach Stopp (ab 150 s) | offen (mittel) |
+| Ein fehlgeschlagenes Stück | Rest wird trotzdem eingefügt | ganzer Lauf scheitert, bleibt wiederholbar | bewusst anders (nichts fehlt still in der Mitte) |
+| Abgebrochene Aufnahme transkribieren | Menüeintrag, nur Diktat | Esc verwirft | offen (UI, braucht echtes Windows) |
+| Rückfrage bei langen Aufnahmen | Kostenhinweis ab 5 min, nur Cloud | 30 min Limit, verarbeitet automatisch | bewusst anders (kein Verlust, keine Kostenfrage) |
+| Upload-Format (#235) | FLAC | WAV | bewusst anders (gleiche Qualität, doppelte Größe) |
+| Timeout nach Länge (#285) | nur eigener Server | 60 s + Größe/40 KB, Gemini und OpenAI | erledigt |
+| Sprache wählbar | Auswahl, ab Werk Auto | keine Einstellung, immer Auto | offen (klein; Mac-Queue #64 zur Vorbelegung auch offen) |
+| Spill-Datei nach Mikrofonfehler / nicht wiederholbarem API-Fehler | – | bleibt liegen, kommt beim nächsten Start als „Aufnahme unterbrochen“ | offen (klein, Windows-eigen) |
+| Template-Aufnahme nach Absturz | – | kommt als Diktat zurück (`TrayApp` Recovery) | offen (klein, Windows-eigen) |
 
-## B. Noch offen, aber näher (dieser Branch schließt die markierten)
+## 2. Glossar und Modelle
 
-| # | Lücke | Windows | Mac | Dieser Branch |
-|---|---|---|---|---|
-| 1 | **Gesprächsgedächtnis** | jede Anfrage isoliert | 5 Runden / 5 min, nur Online-Edits, nicht Compose, nicht Offline (`PromptConversationHistory.swift`) | **ja:** `PromptConversationMemory`, an Gemini/OpenAI gehängt |
-| 2 | **OpenAI-Modell-IDs** | unbekannte IDs → Default ohne Nachfolger | `migrateLegacyPromptRawValue` (gpt-5 → GPT-6 …) | **ja:** `OpenAiModels.Renamed` |
-| 3 | **Letztes Wort abgeschnitten** | Stopp sofort | 0,2 s Nachlauf (`audioTailCaptureDelay`) | **ja:** `MicAudioSource.TailCapture` |
-| 4 | **Log wächst, kein Stack** | append only, Exception ohne Stack | – | **ja:** Rotation bei 2 MB, Stacktrace |
-| 5 | **Download/LLM hängt** | kein Stall-Timeout | Stream-Stall-Watchdogs | **ja:** 30 s Download, 90 s lokales LLM |
-| 6 | **CC-BY Parakeet** | nur AGPL auf der Info-Seite | Acknowledgements mit Links | **ja:** Info + README |
-| 7 | Lange Diktate erst nach Stopp | Stücke nach Stopp, ab 150 s | Stücke schon während des Sprechens (`ChunkedDictateRecorder`) | offen (mittel/groß) |
-| 8 | 5 statt 9 Schnellanweisungen | `QuickActionList.Max = 5` | bis 9, plus getipptes Feld in der Karte | offen (UI) |
-| 9 | Getippte Anweisung in der Overlay-Karte | nur Sprache / Strg+1–5 | Textfeld, Return | offen (UI, Fokus) |
-| 10 | Kürzel nicht abschaltbar | immer drei globale Hotkeys | jeder Shortcut änderbar, Glossar ohne Default | offen (klein) |
-| 11 | Temperatur / Thinking wählbar | fest 0 / low bzw. minimal | Settings → Dictate → Advanced | offen (UI) |
-| 12 | Abgebrochene Aufnahme transkribieren | weg | Menüeintrag | offen (klein) |
-| 13 | Bestätigung bei langen Aufnahmen | 30 min hartes Limit | Safeguard-Dialog | offen (UI) |
-| 14 | Benachrichtigungen / englische UI | fest Deutsch, Balloons immer | Sprache, Popup-Einstellungen | offen (groß) |
+| Funktion | Mac v8.75 | Windows | Status |
+|---|---|---|---|
+| Glossar-Prompt, Tie-Breaker, Nachkorrektur | `GlossaryDocument` | `GlossaryPrompt` | erledigt |
+| Echo verwerfen, ohne Glossar neu fragen (#259, beide Anbieter) | ja | `DiscardGlossaryEcho`, Retry ohne Glossar | erledigt |
+| Echo: Bindewörter neutral (#261, 63ded84b) | „Claude Code, MCP und Bachata.“ | wurde durchgelassen | **PR #35** (mit Bindewort mind. 3 Begriffe, strenger als Mac) |
+| Einzelnes Glossarwort am Ende (34bb2ce4) | ab 5 Wörtern davor | nur ab 2 Begriffen | **PR #35** |
+| Sprecher-Labels im Echo-Test (93458ddb) | Meeting | Windows-Meetings haben keine Labels | entfällt |
+| `gpt-transcribe`: Glossar als `keywords`, kein Prompt, keine Temperatur | `isContextFieldStyle` | Glossar als Anweisung, die es ignoriert | **PR #37** |
+| Meeting-Abschnitte ohne Glossar-Stichwörter (#261) | ja | gingen mit | **PR #37** |
+| OpenAI-Standard für Diktieren | `gpt-transcribe` (Audit 03.11.: 4o 9/9 Echos, Abschaltung 26.02.2027) | `gpt-4o-transcribe` | offen — **Entscheidung Magnus** (Standard + Migration) |
+| Gemini-IDs migrieren | `migrateLegacy*RawValue` | `GeminiModels.Renamed` | erledigt; `gemini-2.0-flash` → 3.1 Flash-Lite **PR #37** |
+| OpenAI-IDs migrieren | gpt-5 / 5.x → GPT-6 | `OpenAiModels.Renamed` | erledigt |
+| Temperatur / Thinking wählbar | Diktieren → Erweitert | fest 0 / low | offen (UI) |
 
-## C. Funktionen, die es auf Windows gar nicht gibt (Umfang)
+## 3. Text bearbeiten (Dictate Prompt), Schnellanweisungen, Vorlagen, Screenshot
 
-Chat-Fenster samt Google/Trello/IMAP/Ordner/Memory/Befehle, Vorlesen,
-Smart Improvement und Interaktionslog, Schreibstil pro App, weitere Anbieter (Grok,
-OpenRouter, Anthropic, eigener Server), Telemetrie, Welcome-Tour
-über den ersten Start hinaus, Fn-Taste.
+| Funktion | Mac v8.75 | Windows | Status |
+|---|---|---|---|
+| Gesprächsgedächtnis (5 Runden / 5 min, nicht Compose, nicht offline) | `PromptConversationHistory` | `PromptConversationMemory` | erledigt |
+| Schnellanweisung ohne Markierung = Compose, kein Verlauf | ja | schickte bis zu 5 frühere Runden mit (anderer Patient) | **PR #34** |
+| Antworten nicht mit Transkript-Heuristik beschneiden (R158, e1cd024f) | `PromptReplyCleanup.normalize` | `Normalize` mit Prompt-Prefix/-Suffix | **PR #36** |
+| Leere Antwort ist wiederholbar, Aufnahme bleibt | `emptyModelReply` | „Nichts erkannt“, Aufnahme gelöscht | **PR #36** |
+| Bare-Edit-Befehl ohne Markierung | `isBareEditCommand` | `BareEditCommand` | erledigt |
+| Eigene Schnellanweisungen ohne Markierung (R119) | wurden abgelehnt (Bug) | wirken auf das Diktierte | bewusst anders (Bug kann nicht auftreten) |
+| Anzahl Schnellanweisungen | bis 9 | 5 (Strg+1–5) | offen (UI) |
+| Getippte Anweisung in der Overlay-Karte | Textfeld, Return | nur Sprache / Strg+Zahl | offen (UI, Fokus, braucht echtes Windows) |
+| Gelernte Schnellanweisungen aus dem Nutzungslog | ja | kein Log | bewusst anders (keine Diktate gespeichert) |
+| Vorlagen als eigener Durchlauf (#275, #290) | ja | ja | erledigt |
+| Vorlage + Screenshot | nie | Schnipsel geht mit | bewusst anders (Nutzer hat ihn gezielt ausgewählt) |
+| Vorlage: Tab = einmal ohne Vorlage, „Erneut ohne Vorlage“ (10 min) | ja | – | offen (UI) |
+| Vorlage während der Aufnahme mit 1–9 wählen | ja | Kürzel nimmt die zuletzt benutzte | bewusst anders |
+| Screenshot | automatisch oder Auswahl | nur eigene Auswahl, einmalig, 5 min, ab Werk aus | bewusst anders (Patientendaten) |
+| Geleerter System-Prompt bleibt leer (#267) | Fix | kein Autosave, leer = Standard | erledigt |
+| Offline: Hinweis, dass lokale Modelle den Prompt ignorieren (#268) | ja | `SettingsForm` | erledigt |
 
-**Nachtrag 02.11.2026:** Live-Meeting ist da (Mikrofon + PC-Ton per WASAPI-Loopback, Modus Automatisch /
-Nur Mikrofon / Mikrofon + PC-Ton, Abschnitte bis 60 s mit Schnitt in Pausen wie auf dem Mac, Ton fehlgeschlagener
-Abschnitte bleibt und wird nachgetragen, Ordner pro Meeting mit `transcript.md`, `meeting.json`, `summary.md`).
-Lese-API für den MCP-Server: `MeetingStore` in Core. Ohne Chat-Fenster, Live-Notizen und Sprecher-Zuordnung.
+## 4. Fehler, Updates, Einstellungen, Sonstiges
 
-Parakeet: Windows lädt NVIDIA TDT 0.6B v3 (int8, sherpa-onnx). Der Mac empfiehlt Parakeet Ultra
-(Moondream-Retrain, FluidAudio). Gleiche Familie, nicht dasselbe Gewicht.
+| Funktion | Mac v8.75 | Windows | Status |
+|---|---|---|---|
+| Abrechnungs-Meldung mit „Aufladen“ (#283) | ja | „noch einmal versuchen“, Gemini-Billing als „Schlüssel ungültig“ | **PR #38** |
+| Überschrift doppelt (#287) | Fix | Titel und Text getrennt | erledigt |
+| Deutsche Fehlertexte (cc0bcd30) | ja | ja | erledigt |
+| Einstellungen: Schlüssel gültig, aber ohne Abrechnung | – | wird wie ungültig gezeigt (`KeyCheck`) | offen (klein) |
+| Update-Kanäle Stabil / Neueste (#278) | ja | nur `releases/latest` | offen (klein); oder bewusst anders, solange nur Tester |
+| Fenstergröße Einstellungen (#282) | Fix | fest 980×700, an Arbeitsfläche angepasst | erledigt |
+| Kürzel abschaltbar | jedes Kürzel, Glossar ab Werk aus | Diktat, Bearbeiten, Glossar immer belegt | offen (klein) |
+| Telemetrie (#288) | Zähler | keine | bewusst anders (Praxis, Patientendaten) |
+| Problem melden mit letztem Diktat (#240) | Text, Modell, Echo | Version, Modelle, Log, ohne Diktat | bewusst anders (Datenschutz); optional „Letzten Text beilegen“ |
+| Benachrichtigungen / englische UI | Sprache, Popup-Einstellungen | fest Deutsch | offen (groß) |
+| Welcome-Tour | mehrere Schritte | Banner beim ersten Start | offen (UI) |
 
-## D. Wo Windows besser ist oder anders bleibt (beibehalten)
+## 5. Live-Meeting und MCP
 
-Mikrofonwahl mit Pegeltest, Hinweis bei stummem/abgestecktem Mikro, Admin-Fenster und gehaltene
-Tasten, Diktate nicht im Win+V-Verlauf, Schlüssel im Header, SHA-256 der Modelle, „Nicht in
-deinem Diktat“, Schnellanweisung auf das gerade Diktierte, abgeschnittene Offline-Antwort wird
-nicht eingefügt, OpenAI und Gemini gemischt wählbar, Update mit ECDSA-Signatur.
+| Funktion | Mac v8.75 | Windows | Status |
+|---|---|---|---|
+| Mikrofon + PC-Ton, Modus Automatisch / Mit / Ohne (#258) | ja | WASAPI-Loopback, gleiche drei Modi | erledigt |
+| Echte Abtastrate (#262) | ja | `format.SampleRate` | erledigt |
+| Ausgabegerät wechselt während des Meetings (#260) | Tap neu aufbauen | bleibt am alten Gerät, nach Fehler nur noch Mikrofon | offen (mittel, braucht echtes Windows) |
+| Diktat während Meeting überschreibt nichts (R107–R109) | Fixes | getrennte Zustände | erledigt (by design) |
+| Meeting-Fehler mit Grund | – | „N noch nicht transkribiert“ ohne Ursache | offen (klein) |
+| MCP-Grundwerkzeuge, Stufen, Undo | ja | ja (Abschnitt E) | erledigt |
+| MCP-Meeting-Werkzeuge + Live-Transkript (a5de0e37) | ja | – | offen; danach Datenschutztext unter „Claude & KI-Apps“ anpassen |
+| MCP-Vorlagen-Werkzeug, `get_recent_interactions` | ja | – | offen / bewusst anders (keine Diktate gespeichert) |
 
-## Empfohlene Reihenfolge (was noch kommt)
+## 6. Umfang, den Windows nicht hat
 
-1. Stücke schon während der Aufnahme (B7) — größter spürbarer Gewinn bei langen Diktaten.
-2. Overlay: getippte Anweisung + 9 Schnellanweisungen (B8–B9).
-3. Kürzel abschaltbar, abgebrochene Aufnahme behalten (B10, B12).
-4. Danach Umfang: Vorlesen; Chat zuletzt (Screenshot, Live-Meeting und MCP sind nachgezogen, siehe unten).
+Chat-Fenster (Google/Trello/IMAP/Ordner/Memory/Befehle), Vorlesen (#281), Smart Improvement mit
+Interaktionslog, Schreibstil pro App, weitere Anbieter (Grok, OpenRouter, Anthropic), **eigener Server**
+(OpenAI-kompatible URL, #251/#285 inkl. LAN im Offline-Modus), Cloud-Modell-Angebot nach Schlüssel (#321,
+daher auch dessen Bug nicht), Fn-Taste. Parakeet: Windows TDT 0.6B v3 (sherpa-onnx), Mac empfiehlt Parakeet
+Ultra (FluidAudio).
+
+## 7. Wo Windows besser ist oder anders bleibt
+
+Mikrofonwahl mit Pegeltest, Hinweis bei stummem/abgestecktem Mikro, Admin-Fenster und gehaltene Tasten,
+Diktate nicht im Win+V-Verlauf, Schlüssel im Header, SHA-256 der Modelle, „Nicht in deinem Diktat“,
+Schnellanweisung auf das gerade Diktierte, abgeschnittene Offline-Antwort wird nicht eingefügt, OpenAI und
+Gemini gemischt wählbar, Update mit ECDSA-Signatur, Aufnahme übersteht Absturz und volle Platte.
+
+## Was als Nächstes kommt
+
+Nach #32–#38, nach Nutzerwirkung:
+
+1. **Entscheidung Magnus:** OpenAI-Standard auf `gpt-transcribe` umstellen, Bestandsnutzer vor dem
+   26.02.2027 migrieren. Code ist klein, sobald #37 drin ist.
+2. Stücke schon während der Aufnahme (lange Diktate).
+3. Kleine Core-Lücken ohne UI-Risiko: Spill-Datei nach nicht wiederholbarem Fehler aufräumen,
+   Kürzel abschaltbar, Meeting-Fehler mit Grund, „Schlüssel gültig, ohne Abrechnung“.
+4. **Brauchen echtes Windows (VM ist weg, #31)** — erst mit einem Windows-Rechner angehen:
+   getippte Anweisung im Overlay, 9 Schnellanweisungen, abgebrochene Aufnahme transkribieren,
+   Vorlage einmal ohne Vorlage, Gerätewechsel im Meeting, Temperatur/Thinking-Karte, Welcome-Tour.
+5. Umfang: MCP-Meeting-Werkzeuge, eigener Server, Vorlesen; Chat zuletzt.
 
 ## Nachtrag 02.11.2026: Diktiervorlagen (Mac v8.72)
 
@@ -96,6 +149,20 @@ Vorlage an Gemini bzw. OpenAI; nach 5 Minuten ungenutzt wird es verworfen. Ab We
 mitsenden“, Patientendaten), offline und mit dem lokalen Sprachmodell gesperrt. Anders als auf dem Mac: kein
 Bildschirmfoto ohne eigene Auswahl, das Kürzel wirkt nur, wenn keine Aufnahme läuft.
 
+## Nachtrag 03.11.2026: Pilot-Fixes aus Mac v8.75 (#321, #322)
+
+Nachgezogen: **Sicheres Einfügen** (`Core.ClipboardPasteGuard`): Strg+V nur, wenn die Zwischenablage noch genau
+unseren Text hat (`GetClipboardSequenceNumber` unverändert und Text gleich), sonst Hinweis „Nicht eingefügt“;
+Wiederherstellen nur, wenn die Sequenznummer sich nicht bewegt hat. Wartezeit vor Strg+V 150 ms, Wiederherstellen
+nach 3 s (vorher 50 ms / 2 s). „Letzte Aufnahme erneut verarbeiten“ (Tray-Menü, Klick auf die Meldung) und eine
+wiederhergestellte Aufnahme kopieren nur und fügen nie ein. **Satzzeichen** unter Diktieren (nur bei
+Spracherkennung auf diesem PC): „Automatisch“ (ab Werk) / „Nur wenn gesprochen“, gleiche Regeln wie
+`SpokenPunctuation.swift` (inkl. „Schrägstrich“ → „/“ nur in diesem Modus, kein Schlusspunkt); Meetings und
+gesprochene Anweisungen bleiben automatisch. MCP: `dictation.punctuation`.
+Nicht übernommen: Glossar-Ähnlichkeitsschwellen (Windows hat keinen CTC-Spotter wie FluidAudio, sondern
+sherpa-onnx-Hotwords beim Beam Search, Score 2,5), Cloud-Modell-Angebot nach dem Schlüssel (#321, gibt es auf
+Windows nicht), „Zwischenablage leeren“ (im Mac-Diff enthalten, aber nicht Teil der Pilot-Fixes).
+
 ## E. MCP-Server (Stand 02.11.2026)
 
 Da, unter Einstellungen → Claude & KI-Apps (`src/WhisperShortcut.Core/Mcp/`, `McpService.cs`). Gleiche Namen und
@@ -106,3 +173,11 @@ read/propose/apply mit Änderungsliste und Undo, zwei Schlüssel (lesen / änder
 `update_quick_instructions`, Anbieterwahl (`dictation.engine`, `dictate_prompt.engine`). Bewusst nicht: Schlüssel,
 Offline-Modus und Mikrofon über KI-Apps. Fehlt noch: Meeting-Werkzeuge (eigener Provider auf `MeetingStore`, der
 jetzt da ist), Vorlagen-Werkzeug (Vorlagen sind jetzt da), `get_recent_interactions` (Windows speichert keine Diktate), Codex.
+
+**Nachtrag 03.11.2026 — Live diktieren (macOS #324 „Dictate Live“):** eigenes Kürzel unter Diktieren (ohne
+Vorgabe, also aus, bis man eins wählt), nur mit Parakeet auf diesem PC und „Automatisch einfügen“ an. Schnitt in
+Pausen wie auf dem Mac (mind. 1,5 s, 0,6 s Stille; zusätzlich höchstens 30 s), 0,4 s Abstand zwischen den
+Stücken, eingefügt nur ins Fenster vom Start (wartet sonst und holt nach). Die Mac-Fn-Taste gibt es nicht; das
+Kürzel übernimmt ihre Rolle. Offen: Einstellung „Satzzeichen“ (#322, Hook in `LiveDictation.FinishPiece`) und
+„Zwischenablage nach dem Einfügen leeren“ (gibt es auf Windows nicht, Hook in `ClipboardAtEnd`), kein Schutz für
+Passwortfelder (Windows hat kein `IsSecureEventInputEnabled`).

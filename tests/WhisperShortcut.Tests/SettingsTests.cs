@@ -15,9 +15,9 @@ public class SettingsTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new Reverse());
-        Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
-        Assert.Equal("Ctrl+Shift+P", s.PromptHotkey);
-        Assert.Equal("Ctrl+Shift+K", s.GlossaryHotkey);
+        Assert.Equal("Alt+1", s.DictateHotkey);
+        Assert.Equal("Alt+2", s.PromptHotkey);
+        Assert.Equal("Alt+7", s.GlossaryHotkey);
         Assert.Equal("gemini-3.1-flash-lite", s.TranscriptionModel);
         Assert.Equal("gemini-3.8-flash", s.PromptModel);
 
@@ -76,6 +76,27 @@ public class SettingsTests
         Assert.Equal("", s.ApiKey);
         Assert.True(File.Exists(path + ".bak"));
         Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void PunctuationMode_DefaultsToAutomaticAndRoundTrips()
+    {
+        var path = Tmp();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{}");
+        var s = Settings.Load(path, new Reverse());
+        Assert.Equal(PunctuationMode.Automatic, s.PunctuationMode);
+
+        s.PunctuationMode = PunctuationMode.SpokenOnly;
+        s.Save();
+        Assert.Contains("\"punctuationMode\": \"spokenOnly\"", File.ReadAllText(path));
+        Assert.Equal(PunctuationMode.SpokenOnly, Settings.Load(path, new Reverse()).PunctuationMode);
+
+        File.WriteAllText(path, "{\"punctuationMode\": \"  SPOKENONLY \"}");
+        Assert.Equal(PunctuationMode.SpokenOnly, Settings.Load(path, new Reverse()).PunctuationMode);
+        File.WriteAllText(path, "{\"punctuationMode\": \"quatsch\"}");
+        Assert.Equal(PunctuationMode.Automatic, Settings.Load(path, new Reverse()).PunctuationMode);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
     private static string Tmp() => Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
@@ -264,7 +285,7 @@ public class SettingsTests
         var s = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal("", s.ApiKey);
         Assert.Equal("", s.OpenAiKey);
-        Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
+        Assert.Equal("Alt+1", s.DictateHotkey);
         Assert.Equal(Engine.Gemini, s.SpeechEngine);
         Assert.False(File.Exists(path));
     }
@@ -503,17 +524,33 @@ public class QuickActionRequestTests
 {
     [Fact]
     public void SelectionAndBlankTranscript_UsesActionAlone() =>
-        Assert.Equal(("Text", "Kürzer fassen"), QuickActionRequest.Build("Kürzer fassen", "Text", "  ")!.Value);
+        Assert.Equal(("Text", "Kürzer fassen", false), QuickActionRequest.Build("Kürzer fassen", "Text", "  ")!.Value);
 
     [Fact]
     public void SelectionAndTranscript_AppendsWhatWasSaid() =>
-        Assert.Equal(("Text", "Kürzer fassen\n\nZusätzlich gesagt: bitte knapp"),
+        Assert.Equal(("Text", "Kürzer fassen\n\nZusätzlich gesagt: bitte knapp", false),
             QuickActionRequest.Build("Kürzer fassen", "Text", " bitte knapp ")!.Value);
 
     [Fact]
     public void NoSelection_DictationBecomesTheText() =>
-        Assert.Equal(("Patient klagt", "Kürzer fassen"),
+        Assert.Equal(("Patient klagt", "Kürzer fassen", true),
             QuickActionRequest.Build("Kürzer fassen", null, " Patient klagt ")!.Value);
+
+    [Fact]
+    public void NoSelection_IsComposeTurn_NoHistoryGoesAlong()
+    {
+        var r = QuickActionRequest.Build("Kürzer fassen", null, " Patient klagt ")!.Value;
+        Assert.True(r.FromDictation);
+        Assert.Equal("Patient klagt", r.Selection);
+        Assert.False(PromptConversationMemory.Includes(isCompose: r.FromDictation, offline: false));
+    }
+
+    [Fact]
+    public void WithSelection_IsNotFromDictation()
+    {
+        Assert.False(QuickActionRequest.Build("Kürzer fassen", "Text", "")!.Value.FromDictation);
+        Assert.False(QuickActionRequest.Build("Kürzer fassen", "Text", "bitte knapp")!.Value.FromDictation);
+    }
 
     [Fact]
     public void NothingToApplyTo_IsNull()
@@ -697,6 +734,21 @@ public class QuickActionRequestTests
         var u = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal("auto", u.MeetingAudioMode);
         Assert.Equal("", u.MeetingHotkey);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void LiveDictateHotkey_defaults_to_suggestion_switched_off_and_round_trips()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Alt+5", s.LiveDictateHotkey);
+        Assert.Equal("", s.ActiveLiveDictateHotkey);
+
+        s.LiveDictateHotkey = "Ctrl+Alt+L";
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Ctrl+Alt+L", t.LiveDictateHotkey);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 }

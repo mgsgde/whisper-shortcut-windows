@@ -68,3 +68,43 @@ public class PasteTargetPolicyTests
     [InlineData("shell_traywnd")]
     public void OtherClass_False(string? name) => Assert.False(PasteTargetPolicy.IsShellWindowClass(name));
 }
+
+public class ClipboardPasteGuardTests
+{
+    [Fact]
+    public void UnchangedPastes() =>
+        Assert.True(ClipboardPasteGuard.PasteAllowed(7, 7, "neu", "neu"));
+
+    [Fact]
+    public void MovedSequenceBlocks() =>
+        Assert.False(ClipboardPasteGuard.PasteAllowed(7, 8, "neu", "neu"));
+
+    [Fact]
+    public void OtherTextBlocks()
+    {
+        Assert.False(ClipboardPasteGuard.PasteAllowed(7, 7, "neu", "alt"));
+        Assert.False(ClipboardPasteGuard.PasteAllowed(7, 7, "neu", null));
+    }
+
+    [Fact]
+    public void RestoreDecision()
+    {
+        Assert.True(ClipboardPasteGuard.RestoreAllowed(7, 7));
+        Assert.False(ClipboardPasteGuard.RestoreAllowed(7, 9));
+    }
+
+    [Theory]
+    [InlineData(true, false, true)]
+    [InlineData(true, true, false)]
+    [InlineData(false, false, false)]
+    [InlineData(false, true, false)]
+    public void MayAutoPaste(bool setting, bool clipboardOnlyRun, bool expected) =>
+        Assert.Equal(expected, ClipboardPasteGuard.MayAutoPaste(setting, clipboardOnlyRun));
+
+    [Fact]
+    public void Constants()
+    {
+        Assert.Equal(TimeSpan.FromMilliseconds(150), ClipboardPasteGuard.PrePasteDelay);
+        Assert.Equal(TimeSpan.FromSeconds(3), ClipboardPasteGuard.RestoreDelay);
+    }
+}

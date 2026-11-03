@@ -6,6 +6,15 @@ public static class OpenAiModels
     /// <summary>Default OpenAI transcription model.</summary>
     public const string DefaultTranscriptionModel = "gpt-4o-transcribe";
 
+    /// <summary>
+    /// Pure ASR model: takes the glossary as repeated <c>keywords</c> fields and is hurt by an instruction
+    /// <c>prompt</c> (Mac: isContextFieldStyle).
+    /// </summary>
+    public const string KeywordModel = "gpt-transcribe";
+
+    /// <summary>True when <paramref name="id"/> takes the glossary as <c>keywords</c> instead of a prompt.</summary>
+    public static bool TakesKeywords(string? id) => string.Equals(id, KeywordModel, StringComparison.Ordinal);
+
     /// <summary>Default OpenAI Dictate Prompt model.</summary>
     public const string DefaultPromptModel = "gpt-6-sol";
 
@@ -14,7 +23,7 @@ public static class OpenAiModels
     {
         new ModelInfo("gpt-4o-transcribe", "GPT-4o Transcribe", "Genau, beachtet das Glossar, empfohlen"),
         new ModelInfo("gpt-4o-mini-transcribe", "GPT-4o mini Transcribe", "Günstiger, etwas ungenauer"),
-        new ModelInfo("gpt-transcribe", "GPT Transcribe", "Neuestes Modell, ignoriert aber das Glossar"),
+        new ModelInfo("gpt-transcribe", "GPT Transcribe", "Neuestes Modell, Glossar als Stichwörter, ohne eigene Anweisungen"),
     };
 
     /// <summary>Models offered for Dictate Prompt, in display order.</summary>

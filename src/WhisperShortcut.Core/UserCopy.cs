@@ -46,6 +46,9 @@ public static class UserCopy
     public static string RecordingStatus(string stopKey) => $"Aufnahme läuft – {stopKey} beendet sie";
 
     public const string OverlayDictateTitle = "Diktat läuft";
+    public const string LiveTitle = "Live diktieren";
+    public const string LiveFinishing = "Rest wird eingefügt …";
+    public const string LiveInserted = "Am Cursor eingefügt";
     public const string OverlayPromptTitle = "Anweisung sprechen";
     public static string OverlayTemplateTitle(string templateName) => $"Vorlage „{templateName}“";
     public static string OverlayStopHint(string stopKey) => $"{stopKey} beendet · Esc bricht ab";

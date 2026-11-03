@@ -60,6 +60,12 @@ public sealed class Settings
     /// <summary>Where text processing (Dictate Prompt) runs. Use <see cref="EffectiveTextEngine"/> to decide.</summary>
     public Engine TextEngine { get; set; } = Engine.Gemini;
 
+    /// <summary>
+    /// "Only when spoken": offline dictation writes punctuation only where it is spoken ("Punkt", "Komma").
+    /// Use <see cref="PunctuationModes.Effective"/> to decide; cloud models and meetings ignore it.
+    /// </summary>
+    public PunctuationMode PunctuationMode { get; set; } = PunctuationMode.Automatic;
+
     /// <summary>OpenAI transcription model id.</summary>
     public string OpenAiTranscriptionModel { get; set; } = OpenAiModels.DefaultTranscriptionModel;
 
@@ -111,14 +117,100 @@ public sealed class Settings
     /// <summary>Product name of the microphone to record from; "" = the Windows default device.</summary>
     public string Microphone { get; set; } = "";
 
+    // Shortcut defaults follow the Mac (ShortcutConfig.default): the same digit for the same function, with Alt as the
+    // Windows modifier (Ctrl+Alt is AltGr on German keyboards). Alt+4 stays free for Read Aloud, which Windows lacks.
+    // Installs that ran before keep LegacyShortcuts: see the pin in Load.
+
+    /// <summary>New-install hotkey for plain dictation (Mac ⌃⌥1).</summary>
+    public const string DefaultDictateHotkey = "Alt+1";
+
+    /// <summary>New-install hotkey for Dictate Prompt (Mac ⌃⌥2).</summary>
+    public const string DefaultPromptHotkey = "Alt+2";
+
+    /// <summary>New-install hotkey for Screenshot (Mac ⌃⌥3).</summary>
+    public const string DefaultScreenshotHotkey = "Alt+3";
+
+    /// <summary>Suggested key for Live diktieren (Mac ⌃⌥5); ships disabled.</summary>
+    public const string DefaultLiveDictateHotkey = "Alt+5";
+
+    /// <summary>Suggested key for Markierung ins Glossar (Mac ⌃⌥7); ships disabled.</summary>
+    public const string DefaultGlossaryHotkey = "Alt+7";
+
+    /// <summary>New-install hotkey that opens the settings window (Mac ⌃⌥0).</summary>
+    public const string DefaultOpenSettingsHotkey = "Alt+0";
+
+    /// <summary>Hotkeys every install before the Mac-digit defaults was running on (Mac: legacyCommandDigit).</summary>
+    public static class LegacyShortcuts
+    {
+        /// <summary>Dictate before the switch.</summary>
+        public const string Dictate = "Ctrl+Shift+D";
+
+        /// <summary>Dictate Prompt before the switch.</summary>
+        public const string Prompt = "Ctrl+Shift+P";
+
+        /// <summary>Glossary before the switch (on).</summary>
+        public const string Glossary = "Ctrl+Shift+K";
+
+        /// <summary>Screenshot before the switch: unassigned.</summary>
+        public const string Screenshot = "";
+
+        /// <summary>Live diktieren before the switch: unassigned.</summary>
+        public const string LiveDictate = "";
+
+        /// <summary>Open settings did not exist: unassigned.</summary>
+        public const string OpenSettings = "";
+    }
+
     /// <summary>Hotkey for plain dictation.</summary>
-    public string DictateHotkey { get; set; } = "Ctrl+Shift+D";
+    public string DictateHotkey { get; set; } = DefaultDictateHotkey;
+
+    /// <summary>Dictate hotkey on (Mac isEnabled). Use <see cref="ActiveDictateHotkey"/> to register.</summary>
+    public bool DictateHotkeyEnabled { get; set; } = true;
 
     /// <summary>Hotkey for Dictate Prompt.</summary>
-    public string PromptHotkey { get; set; } = "Ctrl+Shift+P";
+    public string PromptHotkey { get; set; } = DefaultPromptHotkey;
 
-    /// <summary>Hotkey that appends the selected text to the Glossary.</summary>
-    public string GlossaryHotkey { get; set; } = "Ctrl+Shift+K";
+    /// <summary>Dictate Prompt hotkey on. Use <see cref="ActivePromptHotkey"/> to register.</summary>
+    public bool PromptHotkeyEnabled { get; set; } = true;
+
+    /// <summary>Hotkey that appends the selected text to the Glossary. With the flag off it is only the suggestion.</summary>
+    public string GlossaryHotkey { get; set; } = DefaultGlossaryHotkey;
+
+    /// <summary>Glossary hotkey on. Off for new installs, like the Mac. Use <see cref="ActiveGlossaryHotkey"/> to register.</summary>
+    public bool GlossaryHotkeyEnabled { get; set; }
+
+    /// <summary>Hotkey that opens the settings window; "" = unassigned.</summary>
+    public string OpenSettingsHotkey { get; set; } = DefaultOpenSettingsHotkey;
+
+    /// <summary>Open-settings hotkey on. Use <see cref="ActiveOpenSettingsHotkey"/> to register.</summary>
+    public bool OpenSettingsHotkeyEnabled { get; set; } = true;
+
+    /// <summary>
+    /// The right Ctrl key alone toggles dictation, the Windows stand-in for the Mac's Fn key. On by default like the Mac.
+    /// The keyboard hook that reads it comes separately.
+    /// </summary>
+    public bool RightCtrlDictation { get; set; } = true;
+
+    /// <summary>The stored key when its flag is on, otherwise "" (nothing to register).</summary>
+    public static string Active(string hotkey, bool enabled) => enabled ? hotkey : "";
+
+    /// <summary>Dictate hotkey to register, "" when off.</summary>
+    public string ActiveDictateHotkey => Active(DictateHotkey, DictateHotkeyEnabled);
+
+    /// <summary>Dictate Prompt hotkey to register, "" when off.</summary>
+    public string ActivePromptHotkey => Active(PromptHotkey, PromptHotkeyEnabled);
+
+    /// <summary>Glossary hotkey to register, "" when off.</summary>
+    public string ActiveGlossaryHotkey => Active(GlossaryHotkey, GlossaryHotkeyEnabled);
+
+    /// <summary>Screenshot hotkey to register, "" when off or unassigned.</summary>
+    public string ActiveScreenshotHotkey => Active(ScreenshotHotkey, ScreenshotHotkeyEnabled);
+
+    /// <summary>Live diktieren hotkey to register, "" when off or unassigned.</summary>
+    public string ActiveLiveDictateHotkey => Active(LiveDictateHotkey, LiveDictateHotkeyEnabled);
+
+    /// <summary>Open-settings hotkey to register, "" when off or unassigned.</summary>
+    public string ActiveOpenSettingsHotkey => Active(OpenSettingsHotkey, OpenSettingsHotkeyEnabled);
 
     /// <summary>Dictation templates ("Vorlagen"), in the order the user arranged them.</summary>
     public List<DictationTemplate> Templates { get; set; } = new();
@@ -133,13 +225,22 @@ public sealed class Settings
     public bool SendScreenshots { get; set; }
 
     /// <summary>Hotkey that opens the Windows snip UI; "" = unassigned.</summary>
-    public string ScreenshotHotkey { get; set; } = "";
+    public string ScreenshotHotkey { get; set; } = DefaultScreenshotHotkey;
+
+    /// <summary>Screenshot hotkey on. Use <see cref="ActiveScreenshotHotkey"/> to register.</summary>
+    public bool ScreenshotHotkeyEnabled { get; set; } = true;
 
     /// <summary>Id of the template the generic hotkey applied last; "" = none yet.</summary>
     public string LastTemplateId { get; set; } = "";
 
     /// <summary>Hotkey that starts/stops a Live Meeting. Empty = no hotkey (unassigned by default).</summary>
     public string MeetingHotkey { get; set; } = "";
+
+    /// <summary>Live diktieren (macOS Dictate Live). "" = unassigned. New installs get the suggestion Alt+5, switched off like the Mac.</summary>
+    public string LiveDictateHotkey { get; set; } = DefaultLiveDictateHotkey;
+
+    /// <summary>Live diktieren hotkey on. Off for new installs. Use <see cref="ActiveLiveDictateHotkey"/> to register.</summary>
+    public bool LiveDictateHotkeyEnabled { get; set; }
 
     /// <summary>Which audio a Live Meeting records: "auto", "mic" or "mix" (see <see cref="MeetingAudioRouting"/>).</summary>
     public string MeetingAudioMode { get; set; } = "auto";
@@ -185,11 +286,17 @@ public sealed class Settings
     public static Settings Load(string path, ISecretProtector protector)
     {
         var s = new Settings(path, protector);
+        // No file = fresh install: the Mac-digit defaults above. Save writes the pin flag with them.
         if (!File.Exists(path)) return s;
+        // A file = an install that ran before. Until its file carries the pin flag, missing shortcut values mean the
+        // old defaults, not the new ones (Mac: the pin in ShortcutConfigManager.loadConfiguration), so an update never
+        // moves the user's shortcuts. Also for an unreadable file: it existed, so this PC ran an earlier version.
+        s.PinLegacyShortcuts();
         try
         {
             var dto = JsonSerializer.Deserialize<Dto>(File.ReadAllText(path), Json);
             if (dto == null) return s;
+            if (dto.ShortcutDefaultsAltV1 == true) s.ResetShortcutsToDefaults();
             var rewrite = !string.IsNullOrEmpty(dto.ApiKeyPlain) || !string.IsNullOrEmpty(dto.OpenAiKeyPlain);
             if (!string.IsNullOrEmpty(dto.ApiKeyProtected))
             {
@@ -211,6 +318,7 @@ public sealed class Settings
             }
             s.SpeechEngine = ParseEngine(dto.SpeechEngine);
             s.TextEngine = ParseEngine(dto.TextEngine);
+            s.PunctuationMode = ParsePunctuationMode(dto.PunctuationMode);
             s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
             s.OpenAiPromptModel = OpenAiModels.NormalizePrompt(dto.OpenAiPromptModel);
             // JSON null entries (hand-edited or a half-written file) must not stay in the list:
@@ -224,13 +332,23 @@ public sealed class Settings
             if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
             if (!string.IsNullOrWhiteSpace(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey;
             if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
+            // "" is a stored choice (unassigned) for these; only a missing field falls back.
+            if (dto.OpenSettingsHotkey != null) s.OpenSettingsHotkey = dto.OpenSettingsHotkey;
+            s.DictateHotkeyEnabled = dto.DictateHotkeyEnabled ?? s.DictateHotkeyEnabled;
+            s.PromptHotkeyEnabled = dto.PromptHotkeyEnabled ?? s.PromptHotkeyEnabled;
+            s.GlossaryHotkeyEnabled = dto.GlossaryHotkeyEnabled ?? s.GlossaryHotkeyEnabled;
+            s.ScreenshotHotkeyEnabled = dto.ScreenshotHotkeyEnabled ?? s.ScreenshotHotkeyEnabled;
+            s.LiveDictateHotkeyEnabled = dto.LiveDictateHotkeyEnabled ?? s.LiveDictateHotkeyEnabled;
+            s.OpenSettingsHotkeyEnabled = dto.OpenSettingsHotkeyEnabled ?? s.OpenSettingsHotkeyEnabled;
+            s.RightCtrlDictation = dto.RightCtrlDictation ?? true;
             s.Templates = LoadTemplates(dto.Templates);
             s.TemplateHotkey = dto.TemplateHotkey ?? "";
             s.SendScreenshots = dto.SendScreenshots ?? false;
-            s.ScreenshotHotkey = dto.ScreenshotHotkey ?? "";
+            if (dto.ScreenshotHotkey != null) s.ScreenshotHotkey = dto.ScreenshotHotkey;
             s.LastTemplateId = dto.LastTemplateId ?? "";
             s.Microphone = dto.Microphone ?? "";
             s.MeetingHotkey = dto.MeetingHotkey ?? "";
+            if (dto.LiveDictateHotkey != null) s.LiveDictateHotkey = dto.LiveDictateHotkey;
             s.MeetingAudioMode = MeetingAudioRouting.Name(MeetingAudioRouting.Parse(dto.MeetingAudioMode));
             s.MeetingSummary = dto.MeetingSummary ?? true;
             s.OfflineMode = dto.OfflineMode ?? false;
@@ -255,6 +373,37 @@ public sealed class Settings
             try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
         }
         return s;
+    }
+
+    /// <summary>The shortcuts an install had before the Mac-digit defaults; every flag on, as it behaved then.</summary>
+    private void PinLegacyShortcuts()
+    {
+        DictateHotkey = LegacyShortcuts.Dictate;
+        PromptHotkey = LegacyShortcuts.Prompt;
+        GlossaryHotkey = LegacyShortcuts.Glossary;
+        ScreenshotHotkey = LegacyShortcuts.Screenshot;
+        LiveDictateHotkey = LegacyShortcuts.LiveDictate;
+        OpenSettingsHotkey = LegacyShortcuts.OpenSettings;
+        DictateHotkeyEnabled = PromptHotkeyEnabled = GlossaryHotkeyEnabled = true;
+        ScreenshotHotkeyEnabled = LiveDictateHotkeyEnabled = OpenSettingsHotkeyEnabled = true;
+    }
+
+    /// <summary>The new-install shortcuts (same values as the property initializers).</summary>
+    private void ResetShortcutsToDefaults()
+    {
+        var d = new Settings(_path, _protector);
+        DictateHotkey = d.DictateHotkey;
+        PromptHotkey = d.PromptHotkey;
+        GlossaryHotkey = d.GlossaryHotkey;
+        ScreenshotHotkey = d.ScreenshotHotkey;
+        LiveDictateHotkey = d.LiveDictateHotkey;
+        OpenSettingsHotkey = d.OpenSettingsHotkey;
+        DictateHotkeyEnabled = d.DictateHotkeyEnabled;
+        PromptHotkeyEnabled = d.PromptHotkeyEnabled;
+        GlossaryHotkeyEnabled = d.GlossaryHotkeyEnabled;
+        ScreenshotHotkeyEnabled = d.ScreenshotHotkeyEnabled;
+        LiveDictateHotkeyEnabled = d.LiveDictateHotkeyEnabled;
+        OpenSettingsHotkeyEnabled = d.OpenSettingsHotkeyEnabled;
     }
 
     // Missing list = old file: no templates. Null entries are skipped; a blank id gets a fresh one.
@@ -283,6 +432,13 @@ public sealed class Settings
         "openai" => Engine.OpenAI,
         _ => Engine.Gemini,
     };
+
+    // Unknown or missing = Automatic.
+    private static PunctuationMode ParsePunctuationMode(string? v) =>
+        v?.Trim().ToLowerInvariant() == "spokenonly" ? PunctuationMode.SpokenOnly : PunctuationMode.Automatic;
+
+    private static string PunctuationModeName(PunctuationMode m) =>
+        m == PunctuationMode.SpokenOnly ? "spokenOnly" : "automatic";
 
     private static string EngineName(Engine e) => e switch
     {
@@ -315,6 +471,7 @@ public sealed class Settings
             OpenAiKeyProtected = OpenAiKey.Length == 0 ? "" : _protector.Protect(OpenAiKey),
             SpeechEngine = EngineName(SpeechEngine),
             TextEngine = EngineName(TextEngine),
+            PunctuationMode = PunctuationModeName(PunctuationMode),
             OpenAiTranscriptionModel = OpenAiTranscriptionModel,
             OpenAiPromptModel = OpenAiPromptModel,
             Glossary = Glossary,
@@ -326,6 +483,16 @@ public sealed class Settings
             DictateHotkey = DictateHotkey,
             PromptHotkey = PromptHotkey,
             GlossaryHotkey = GlossaryHotkey,
+            OpenSettingsHotkey = OpenSettingsHotkey,
+            DictateHotkeyEnabled = DictateHotkeyEnabled,
+            PromptHotkeyEnabled = PromptHotkeyEnabled,
+            GlossaryHotkeyEnabled = GlossaryHotkeyEnabled,
+            ScreenshotHotkeyEnabled = ScreenshotHotkeyEnabled,
+            LiveDictateHotkeyEnabled = LiveDictateHotkeyEnabled,
+            OpenSettingsHotkeyEnabled = OpenSettingsHotkeyEnabled,
+            RightCtrlDictation = RightCtrlDictation,
+            // Every value above is written out, so from now on a missing field means the new default.
+            ShortcutDefaultsAltV1 = true,
             Templates = Templates.Select(t => (TemplateDto?)new TemplateDto
             {
                 Id = t.Id, Name = t.Name, Instructions = t.Instructions, Hotkey = t.Hotkey,
@@ -336,6 +503,7 @@ public sealed class Settings
             LastTemplateId = LastTemplateId,
             Microphone = Microphone,
             MeetingHotkey = MeetingHotkey,
+            LiveDictateHotkey = LiveDictateHotkey,
             MeetingAudioMode = MeetingAudioMode,
             MeetingSummary = MeetingSummary,
             OfflineMode = OfflineMode,
@@ -372,6 +540,7 @@ public sealed class Settings
         public string? OpenAiKeyPlain { get; set; }
         [JsonPropertyName("speechEngine")] public string? SpeechEngine { get; set; }
         [JsonPropertyName("textEngine")] public string? TextEngine { get; set; }
+        [JsonPropertyName("punctuationMode")] public string? PunctuationMode { get; set; }
         [JsonPropertyName("openAiTranscriptionModel")] public string? OpenAiTranscriptionModel { get; set; }
         [JsonPropertyName("openAiPromptModel")] public string? OpenAiPromptModel { get; set; }
         [JsonPropertyName("glossary")] public List<string>? Glossary { get; set; }
@@ -386,6 +555,16 @@ public sealed class Settings
         [JsonPropertyName("dictateHotkey")] public string? DictateHotkey { get; set; }
         [JsonPropertyName("promptHotkey")] public string? PromptHotkey { get; set; }
         [JsonPropertyName("glossaryHotkey")] public string? GlossaryHotkey { get; set; }
+        [JsonPropertyName("openSettingsHotkey")] public string? OpenSettingsHotkey { get; set; }
+        [JsonPropertyName("dictateHotkeyEnabled")] public bool? DictateHotkeyEnabled { get; set; }
+        [JsonPropertyName("promptHotkeyEnabled")] public bool? PromptHotkeyEnabled { get; set; }
+        [JsonPropertyName("glossaryHotkeyEnabled")] public bool? GlossaryHotkeyEnabled { get; set; }
+        [JsonPropertyName("screenshotHotkeyEnabled")] public bool? ScreenshotHotkeyEnabled { get; set; }
+        [JsonPropertyName("liveDictateHotkeyEnabled")] public bool? LiveDictateHotkeyEnabled { get; set; }
+        [JsonPropertyName("openSettingsHotkeyEnabled")] public bool? OpenSettingsHotkeyEnabled { get; set; }
+        [JsonPropertyName("rightCtrlDictation")] public bool? RightCtrlDictation { get; set; }
+        // One-time pin (Mac: shortcut_defaults_ctrl_option_v1). Missing in a file = written before the Alt+digit defaults.
+        [JsonPropertyName("shortcutDefaultsAltV1")] public bool? ShortcutDefaultsAltV1 { get; set; }
         [JsonPropertyName("templates")] public List<TemplateDto?>? Templates { get; set; }
         [JsonPropertyName("templateHotkey")] public string? TemplateHotkey { get; set; }
         [JsonPropertyName("sendScreenshots")] public bool? SendScreenshots { get; set; }
@@ -393,6 +572,7 @@ public sealed class Settings
         [JsonPropertyName("lastTemplateId")] public string? LastTemplateId { get; set; }
         [JsonPropertyName("microphone")] public string? Microphone { get; set; }
         [JsonPropertyName("meetingHotkey")] public string? MeetingHotkey { get; set; }
+        [JsonPropertyName("liveDictateHotkey")] public string? LiveDictateHotkey { get; set; }
         [JsonPropertyName("meetingAudioMode")] public string? MeetingAudioMode { get; set; }
         [JsonPropertyName("meetingSummary")] public bool? MeetingSummary { get; set; }
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }

@@ -1,0 +1,250 @@
+cab12406 2026-11-03 model-audit 2026-11-03: gpt-4o-transcribe dominated by gpt-transcribe (9/9 vs 0/9 leaks); OpenAI
+3894d771 2026-11-02 Dictate Live + Fn key on top of 8.75 (#324)
+5fbe2c70 2026-11-02 Update to version 8.75
+b768d08b 2026-11-02 Pilot feedback: safe auto-paste, glossary false inserts, spoken punctuation (#322)
+658ecf6d 2026-11-02 Update to version 8.74
+4fc75788 2026-11-02 Cloud model offer: only offer upgrades for the provider whose key was just saved (#321)
+fc363d7c 2026-11-02 Merge pull request #316 from mgsgde/dependabot/swift/github.com/fluidinference/fluidaudio-0.18.0
+c26a0c5d 2026-11-02 Merge branch 'main' into dependabot/swift/github.com/fluidinference/fluidaudio-0.18.0
+a7b87b88 2026-11-02 plans: live text while dictating (opt-in, offline Parakeet preview)
+54ea0822 2026-11-02 Queue: three findings from pilot user setup call (Fn conflict, language default, live text)
+98b5ec65 2026-11-02 Merge branch 'main' into dependabot/swift/github.com/fluidinference/fluidaudio-0.18.0
+d0a231bd 2026-11-02 Merge pull request #315 from mgsgde/dependabot/swift/github.com/sparkle-project/sparkle-2.10.1
+fa97a9ff 2026-11-02 Merge branch 'main' into dependabot/swift/github.com/sparkle-project/sparkle-2.10.1
+105d6f9e 2026-11-02 Merge pull request #314 from mgsgde/dependabot/swift/github.com/apple/swift-collections-1.7.5
+33943cf8 2026-11-02 chore(deps): Bump github.com/fluidinference/fluidaudio
+6925aa9d 2026-11-02 chore(deps): Bump github.com/sparkle-project/sparkle
+fb93a39f 2026-11-02 chore(deps): Bump github.com/apple/swift-collections from 1.7.4 to 1.7.5
+0648aa04 2026-11-02 Translate Dictate/Screenshot/Read Aloud labels in Settings shortcuts (#312)
+02be1bee 2026-11-02 Groom implementer queue: 1 filed, 0 released, 0 promoted
+141d8393 2026-11-02 usage-review 2026-11-02: I22 is still unbuilt and now fakes 302 of 308 restarts (98 %); new I23 l
+e3f65ca6 2026-11-02 chore(implementer): merge window for #22 stopped by the operator
+dd51bb8e 2026-11-01 Update to version 8.73
+cbf80752 2026-11-01 Templates run as their own turn, not a Dictate Prompt turn (#290)
+0eb8cd94 2026-11-01 Smart Improvement: grey out the tab while Offline Mode is on (#289)
+3a92fab0 2026-11-01 Telemetry: feature-level counters and setup flags (gap 14) (#288)
+c0e2164e 2026-11-01 Update to version 8.72
+6bede1c3 2026-11-01 Error popup: stop showing the heading twice (#287)
+d449f632 2026-11-01 Own server: endpoint URLs, 404 message, LAN hosts in Offline Mode, length-aware timeout (#285)
+f1ce4f4d 2026-11-01 Dictation templates: own shortcut, own Settings tab (#275)
+51198188 2026-11-01 Remove /x X-search handle limiting (#284)
+a8fea44e 2026-11-01 Billing popup: name OpenAI and add a Top up button for insufficient_quota (#283)
+931c7b7e 2026-10-31 Update to version 8.71
+07e6e385 2026-10-30 Settings window opens large instead of stuck at 800×632 (#282)
+3aca1f20 2026-10-30 Refactor ledger: run 16 (R157–R167) (#279)
+921284f8 2026-10-30 fix: Read Aloud speaks numbers as written; chat read tools never open credential folders (R166, R157) (#281)
+e1cd024f 2026-10-30 fix(dictate-prompt): stop transcript leak-cleanup from cutting Dictate Prompt replies (R158) (#280)
+deaa355c 2026-10-30 Stable and Latest update channels for the direct build (#278)
+fe576e26 2026-10-30 plans: queue Stable-channel follow-ups (rows 56–58, PR #278 review)
+faf6d51d 2026-10-30 feat(settings): Smart Improvement is one switch; scorecard, writing style and knobs fold into Details (#277)
+c9661557 2026-10-30 Refactor ledger: run 15 (R136–R156) (#269)
+d126ab44 2026-10-30 fix(shortcuts): App Store build no longer reserves hidden Read Aloud / Glossary shortcuts; offline chat names the right Settings tab (R152, R156) (#271)
+a067c1c0 2026-10-30 fix(chat): OpenAI-compatible streams surface failed/incomplete responses; cap structured output (R144, R147) (#272)
+66792dbb 2026-10-30 fix(meeting): interpolate upsampled call-mode system audio; no realloc per IO callback; anchor chunk after record() (R136, R137, R140) (#273)
+6a5be7b8 2026-10-30 Keep the Listening pill in front of meeting windows (#270)
+7c8c890f 2026-10-29 Update to version 8.70
+c358223d 2026-10-29 Say in the Dictate tab that every offline model ignores the system prompt (#268)
+250e37f7 2026-10-29 fix(settings): keep an emptied system prompt field empty while editing (#267)
+040cfba5 2026-10-29 Fn dictation on by default in the direct build when the 🌐 key is free (#265)
+b32a8c4b 2026-10-28 Update to version 8.69
+3f3798b3 2026-10-28 ci(release): tests and build in parallel, gate before publish; cache Swift packages (#263)
+c3c0d2bf 2026-10-28 Live Meeting: real sample rate in Bluetooth call mode; drop the input switch (#262)
+63ded84b 2026-10-28 fix(meeting): no glossary keywords for meeting chunks, echo gate ignores connectors (#261)
+ebcda02f 2026-10-28 Live Meeting: Mac mic instead of Bluetooth earbuds; rebuild tap on format change (#260)
+3518a46b 2026-10-28 Update to version 8.68
+fc94b33e 2026-10-28 Meeting audio menu: Automatisch / Mit Headset / Ohne Headset (#258)
+9498a223 2026-10-28 fix(transcription): glossary-echo gate on the OpenAI-compatible path (#259)
+290b1568 2026-10-28 Update to version 8.67
+4adb054c 2026-10-28 Merge pull request #257 from mgsgde/claude/meeting-auto-audio-route-9466ad
+c4f91cce 2026-10-28 Merge remote-tracking branch 'origin/main' into claude/meeting-auto-audio-route-9466ad
+45a88843 2026-10-28 Merge pull request #254 from mgsgde/fix/de-error-strings
+c904601e 2026-10-28 Merge pull request #250 from mgsgde/fix/de-missing-strings
+87001762 2026-10-28 Merge fix/de-missing-strings (Own server) into fix/de-error-strings
+12bc51cc 2026-10-28 Update to version 8.66
+f51cba61 2026-10-28 Merge pull request #256 from mgsgde/claude/busy-bun-899c32
+ce29851f 2026-10-28 README: Live Meeting records online meetings via headphones
+7399d7c5 2026-10-28 Meeting bar: show what the meeting records instead of an Online/In person switch
+336f9ec2 2026-10-28 Merge main into fix/de-missing-strings; German for Own server
+6eb5e57f 2026-10-28 Meeting: pick mic-only vs. Mac sound from the output device
+31327555 2026-10-28 Sidebar: keep every chat/meeting row to one line
+359265ca 2026-10-28 Merge pull request #255 from mgsgde/fix/sidebar-merge-date-groups
+2cd77b0a 2026-10-28 Sidebar: drop "Previous 7 Days", fold it into "Previous 30 Days"
+cc0bcd30 2026-10-28 fix: German for user-facing error messages
+613163df 2026-10-28 Merge pull request #253 from mgsgde/fix/meeting-glossary-echo
+bc1bb184 2026-10-28 Update to version 8.65
+93458ddb 2026-10-28 Meeting: glossary-echo gate ignores speaker labels
+69e9c087 2026-10-28 Merge pull request #252 from mgsgde/claude/meeting-system-audio
+6a9bcac7 2026-10-28 Update to version 8.64
+8ad8ea9e 2026-10-28 meeting: start the system audio tap off the main thread
+627c32ec 2026-10-28 Merge pull request #251 from mgsgde/claude/shared-custom-endpoint-f807e2
+59e74220 2026-10-28 meeting: Online meeting / In person switch and notices in the meeting bar
+332cee98 2026-10-28 meeting: record system audio in Online meeting mode
+28c5f6e3 2026-10-28 Merge remote-tracking branch 'origin/main' into claude/shared-custom-endpoint-f807e2
+61aa7f0b 2026-10-28 README: Own server for Dictate, Dictate Prompt and Chat
+ca22a175 2026-10-28 Own server: one settings section for Dictate, Dictate Prompt and Chat (UI)
+c7db0061 2026-10-28 meeting: system audio capture building blocks (process tap, buffer, mixer)
+e71e42ad 2026-10-28 Shared custom endpoint: one base URL for Dictate, Dictate Prompt and Chat (plumbing)
+7cb9b2d3 2026-10-28 Fix: German UI shows English texts; "Advanced" opens on a click on its label
+dec8eab5 2026-10-28 Merge pull request #249 from mgsgde/feat/settings-ux-cleanup
+c82fa2d3 2026-10-28 Settings: remove redundant labels and copy across model pickers and tabs
+c056116d 2026-10-27 Merge pull request #248 from mgsgde/fix/r123-ai-apps-consent-copy
+086025e6 2026-10-27 Merge pull request #247 from mgsgde/fix/r119-quick-prompt-not-edit
+e688b73c 2026-10-27 Merge pull request #246 from mgsgde/fix/r114-resend-clears-chat-approvals
+eef7686b 2026-10-27 Merge pull request #245 from mgsgde/fix/r113-chat-queue-stuck
+2f98f77e 2026-10-27 Merge pull request #244 from mgsgde/fix/r109-meeting-recorder-error
+c7bd66d6 2026-10-27 Merge pull request #243 from mgsgde/fix/r108-meeting-pending-segment-stop
+7bc88b99 2026-10-27 Merge pull request #242 from mgsgde/fix/r107-meeting-chunk-state
+9a1bb2e0 2026-10-27 Fix: your own quick prompts are no longer refused as edits without a selection (R119)
+5ca7b136 2026-10-27 Fix: a long dictation during a meeting no longer overwrites the meeting's state (R107)
+7f35a1ee 2026-10-27 Fix: Regenerate and Edit ask again before re-running tools that change data (R114)
+280a1ec1 2026-10-27 Fix: a recorder error during a meeting no longer overwrites the meeting's state (R109)
+2aa9db86 2026-10-27 Fix: a meeting dictation stopped before the mic started no longer ends the meeting's state (R108)
+1ac02853 2026-10-27 Fix: AI-apps privacy note says AI apps can change app settings (R123)
+38e5eedb 2026-10-27 Fix: a chat queue stalled by a failed key check drains again (R113)
+53f5b27b 2026-10-27 Merge pull request #241 from mgsgde/docs/refactor-ledger-run14
+863510dd 2026-10-27 queue: row 55 done by #240
+d80331b1 2026-10-27 Merge pull request #240 from mgsgde/feat/dictation-report
+cbe3bacd 2026-10-27 plans: refactor ledger run 14 — reconcile R72–R94, add R107–R135
+4daad91a 2026-10-27 docs(README): Report a Problem with Last Dictation
+9809a0c7 2026-10-27 feat: report a problem with the last dictation from the Send Feedback menu
+34bb2ce4 2026-10-27 fix(transcription): strip a lone trailing glossary term and full-list meeting echoes
+781cfa60 2026-10-27 queue: discard full glossary-list echo in meeting chunks
+44426127 2026-10-27 Update to version 8.63
+f3713021 2026-10-27 Merge pull request #237 from mgsgde/feat/mcp-settings
+80c25445 2026-10-27 Merge pull request #239 from mgsgde/feat/ai-apps-settings-tab
+7ef1206c 2026-10-27 MCP settings: build fix after #239 merge, German strings, undo points to Claude & AI Apps
+43030983 2026-10-27 Merge pull request #211 from mgsgde/feat/custom-quick-actions
+06f242ef 2026-10-27 Merge feat/ai-apps-settings-tab (#239) into feat/mcp-settings
+0a17da0e 2026-10-27 Merge pull request #122 from mgsgde/security/routine-tool-allowlist
+97a378c2 2026-10-27 Merge origin/main into feat/mcp-settings
+418ad692 2026-10-27 Claude & AI Apps: Connect off in test builds
+5b400fdc 2026-10-27 README: connection status on the Claude & AI Apps cards
+5f2058a3 2026-10-27 Claude & AI Apps: live connection status per client (folds in #232)
+803c7430 2026-10-27 Merge origin/main into feat/ai-apps-settings-tab
+569f7b51 2026-10-27 Connect: work before a client's folder exists, and while the server is down
+63936e39 2026-10-27 Merge pull request #235 from mgsgde/fix/flac-upload
+5f38ea21 2026-10-27 Merge branch 'main' into security/routine-tool-allowlist
+c305b8da 2026-10-27 Merge branch 'main' into feat/custom-quick-actions
+8f5304c1 2026-10-27 Merge branch 'main' into fix/flac-upload
+8b7b373d 2026-10-27 Update to version 8.62
+80df9be5 2026-10-27 Merge pull request #238 from mgsgde/feat/mcp-live-transcript-every-turn
+8aa5208a 2026-10-27 README: Claude & AI Apps tab and Connect button
+87fac6d3 2026-10-27 Settings: own Claude & AI Apps tab with one-click Connect
+2aa3615e 2026-10-27 Merge remote-tracking branch 'origin/main' into feat/mcp-live-transcript-every-turn
+4c6e7e78 2026-10-27 Update to version 8.61
+d8a15314 2026-10-27 Merge pull request #217 from mgsgde/refactor/r75-credentials-onboarding
+7d1c8ae1 2026-10-27 Merge pull request #218 from mgsgde/refactor/r77-learning-loops
+31d84a05 2026-10-27 Merge main into refactor/r75-credentials-onboarding (localization re-applied)
+212bbae8 2026-10-27 Merge main into refactor/r77-learning-loops (localized prompt-history source names)
+a5de0e37 2026-10-27 MCP: fetch the live transcript before every reply while a meeting runs
+142f999e 2026-10-27 Merge pull request #220 from mgsgde/fix/mcp-hardening
+29f77c16 2026-10-27 Merge pull request #219 from mgsgde/fix/chatgpt-plan-oauth-host-pkce
+e2495f88 2026-10-27 Merge branch 'main' into fix/mcp-hardening
+ed9ae6d8 2026-10-27 Merge pull request #216 from mgsgde/fix/mcp-main-timeout
+1ecc8c32 2026-10-27 Merge branch 'main' into fix/chatgpt-plan-oauth-host-pkce
+40871a11 2026-10-27 Merge branch 'main' into fix/mcp-main-timeout
+eb4c5a59 2026-10-27 MCP settings: fix review findings (atomic batches, no downloads, undo conflicts, shortcut format)
+7dd51871 2026-10-27 MCP settings: behaviour entries
+4ac6b285 2026-10-27 MCP settings: all shortcuts, proposal-only toggles
+d7ee325d 2026-10-27 Update to version 8.60
+280d1895 2026-10-27 Merge pull request #234 from mgsgde/feat/german-app-catalog
+8dbe7deb 2026-10-27 MCP settings: proposal window design, readable change titles
+a541ff7a 2026-10-27 Merge origin/main (queue row 54) into feat/german-app-catalog
+b826ced6 2026-10-27 MCP settings: model entries, provider ids, model parameters
+1a45b6a6 2026-10-27 Merge pull request #230 from mgsgde/docs/refactor-ledger-run13
+8da1b39b 2026-10-27 Merge origin/main into feat/german-app-catalog
+0e015966 2026-10-27 fix(audio): upload lossless FLAC instead of AAC 32 kbps
+5752ab18 2026-10-27 Merge main into docs/refactor-ledger-run13; queue row renumbered 46 → 54
+7528c82d 2026-10-27 Merge pull request #228 from mgsgde/refactor/r104-mail-providers
+e19fea2f 2026-10-27 Merge pull request #223 from mgsgde/ux/polish-run13
+6571192b 2026-10-27 Merge pull request #227 from mgsgde/refactor/r67-local-speech
+fc120332 2026-10-27 Merge pull request #225 from mgsgde/fix/meeting-integrity-r95
+7bd7b819 2026-10-27 Merge pull request #224 from mgsgde/fix/mail-decoding-r100
+8d6d5516 2026-10-27 queue: rows 49–53 (German app, A0–A4) built in PR #234
+9e131a66 2026-10-27 l10n(de): fixes from the German layout check
+122bd642 2026-10-27 rules: user-facing text is English source plus German (Sie) in the same change
+0fe00a56 2026-10-27 l10n(de): language section in General, strict coverage gate, German run option
+813037ef 2026-10-27 context: point at the renamed parent skill review-refactors-web
+01b66e50 2026-10-27 l10n(de): translate the rest of the catalog, plurals and Info.plist strings
+208cf04d 2026-10-27 Tests: get_settings in read tool list
+59a0ae06 2026-10-27 l10n(de): reuse PR #210 wording, translate A–D of the remaining strings
+6e05a545 2026-10-27 WIP: MCP settings catalog (agent hit rate limit, resuming)
+0ba0d725 2026-10-26 German: first 570 catalog entries translated (Sie, spec glossary)
+8fda25e3 2026-10-26 Localization plumbing: user-visible strings become String Catalog keys (A0b)
+695817b5 2026-10-26 Merge pull request #222 from mgsgde/docs/german-localization-spec
+8b07b0d1 2026-10-26 Logs: Error.logDescription replaces localizedDescription in all log calls
+7d756921 2026-10-26 Localization infrastructure: string catalogs, de region, sync script, English-pinned test plans, coverage report test
+46b8061d 2026-10-26 queue: row 46, late meeting chunks to backlog + per-run recorder delegate (ASK)
+ad11d64b 2026-10-26 ledger: refactor run 13 (R95–R106; R67, R71 applied)
+0edd901e 2026-10-26 fix(mail): own-domain picker lists only providers that host custom domains; drop unverified MX rules (R104 review)
+71773acf 2026-10-26 refactor(mail): one MailProvider table for detection, presets and notes (R104)
+487be125 2026-10-26 Merge pull request #226 from mgsgde/fix/writing-style-keep-sections
+08574a07 2026-10-26 fix(local-speech): join a same-model in-flight load instead of re-running it after it fails (R67 review)
+3eac149b 2026-10-26 fix(writing-style): keep hand-written profile sections without samples on re-derive
+4c241b1f 2026-10-26 refactor(local-speech): one engine state and one decode-deadline tail (R67)
+f408409a 2026-10-26 fix(updater): show the update held back during a meeting as soon as it ends (R105)
+c0706a96 2026-10-26 fix(mail): MIME edge cases: named HTML entities, lenient base64, adjacent encoded words joined before charset decode (R101)
+7b018384 2026-10-26 refactor(local-speech): remove unused LocalSpeechService.isReady() (R106)
+f597ce89 2026-10-26 fix(local-speech): a cancelled Whisper decode is no longer reported as a missing model (R98)
+c2b0645a 2026-10-26 plans: German localization uses Sie (Magnus, 2026-10-26)
+e0d1f4c2 2026-10-26 queue: rows 49-53, German localization slices A0-A4 (ASK, interactive)
+ec47530f 2026-10-26 plans: spec for German localization of the app (String Catalog, log safety, glossary, slices)
+f4ca78f9 2026-10-26 Merge pull request #221 from mgsgde/feat/mcp-meeting-titles
+2e16e9fb 2026-10-26 fix(updater): defer scheduled Sparkle update while this process records a meeting (R105)
+ef174e44 2026-10-26 fix(mail): multipart/mixed and related keep every text part, only alternative picks one (R100)
+d5c263f4 2026-10-26 fix(meeting): rotated-out recorder is never taken for the final chunk; final-chunk signal always fires (R96, R106)
+c0425edc 2026-10-26 fix(meeting): wrap-up writes the consolidated transcript only when every block survived (R95, R99)
+216814e0 2026-10-26 fix(mail): IMAP timeout is idle per transfer with an overall cap; skip LOGOUT on a dead connection (R103)
+2a3929af 2026-10-26 refactor(mail): drop no-op ternary in NWIMAPTransport.read (R106)
+e3e95ba1 2026-10-26 fix(mail): LIST with a literal folder name resolves to the name, not the delimiter (R102)
+fb2913d1 2026-10-26 Chat + Settings UX: meeting empty state, one copy control, sidebar reveals the open row
+442ecd69 2026-10-26 MCP list_meetings: show chat-session titles
+d6f8e8ac 2026-10-26 Spec: every setting configurable over MCP (slice 2)
+fa6b243f 2026-10-26 context: de-stale submodule skills and commands
+faab9c6a 2026-10-26 rules: model split names Opus 5.5 + Sonnet fallback; push policy and provider list match AGENTS.md
+c0f5b188 2026-10-26 fix(chatgpt-plan): checked PKCE randomness, exact openai.com host match
+03c83b61 2026-10-26 Make the MCP tool list stable per token, add annotations
+46900cdb 2026-10-22 Refactor: Smart Improvement uses generateStructured (R93)
+8ce5a409 2026-10-22 Refactor: interaction modes and history sources are enums (R78)
+c76f4765 2026-10-22 Refactor: one UserContext JSONL reader (R77)
+bf50185b 2026-10-22 Refactor: scorecard follow-ups use PromptFollowUp (R79)
+d7d087e5 2026-10-22 Refactor: one glossary parse (R80)
+f95e5dc3 2026-10-26 Make add_glossary_terms a proposal at the propose access level
+a87285a5 2026-10-22 Refactor: one card chrome, permission badge, step header and status label style (R94)
+fef04f1d 2026-10-22 Refactor: one ShortcutAction list for this build (R91)
+20f3ad01 2026-10-22 Refactor: model pickers notify through SettingsSlot (R86)
+5d29625c 2026-10-22 Refactor: dictation setup advances only when the selected model can run (R76)
+80e59461 2026-10-22 Refactor: one off-main API key save for Settings and onboarding (R88)
+c2e81ac0 2026-10-22 Refactor: one cloud transcription pick for onboarding (R87)
+44282694 2026-10-22 Refactor: Dictate Prompt selection permission follows the model (R90)
+cef90def 2026-10-22 Refactor: route missing-credential try-it errors to Accounts (R92)
+4567083c 2026-10-22 Refactor: one Offline Mode switch for flag, reconcile, and history (R89)
+6dd08899 2026-10-22 Refactor: one trimmed credential presence check (R75)
+bc56a478 2026-10-26 Fix live transcript cursor missing chunks spliced in before it
+91afedc1 2026-10-26 Never replace the MCP token on a transient Keychain failure
+da6b85ef 2026-10-26 Stop the MCP accept loop loudly instead of dying silently
+2c6fa358 2026-10-26 Add absolute deadline to the MCP request-read phase
+a6319785 2026-10-26 Cap concurrent MCP connections with a semaphore
+383a3370 2026-10-26 Bound MCP main-thread hops so an open dialog cannot hang requests
+7a57263f 2026-10-26 Merge pull request #215 from mgsgde/dependabot/swift/github.com/huggingface/swift-jinja-2.5.2
+59f586a1 2026-10-26 Merge branch 'main' into dependabot/swift/github.com/huggingface/swift-jinja-2.5.2
+bddfe7be 2026-10-26 Merge pull request #214 from mgsgde/dependabot/swift/github.com/apple/swift-collections-1.7.4
+f6cdd501 2026-10-26 Merge branch 'main' into dependabot/swift/github.com/apple/swift-collections-1.7.4
+92ee964f 2026-10-26 bench: Parakeet language hint and glossary, case-sensitive; queue #48 guard vocabulary boosting, hold #47
+5a61e2a0 2026-10-26 Bump github.com/huggingface/swift-jinja from 2.5.1 to 2.5.2
+330d806c 2026-10-26 Bump github.com/apple/swift-collections from 1.7.1 to 1.7.4
+8aec3962 2026-10-26 plans: queue #47 restore glossary casing after transcription (Parakeet pilot test)
+cd75a539 2026-10-26 Update to version 8.59
+57e04d79 2026-10-26 plans: report_problem merged, telemetry schema deployed
+256e3a30 2026-10-26 Merge pull request #213 from mgsgde/feat/mcp-report-problem
+3e188ad6 2026-10-26 fix(feedback): encode & + = in link values; cap issue body by encoded size
+caa29b16 2026-10-26 feat(mcp): problem report window, default_length, prompts focus
+090a0dbc 2026-10-26 feat: let an AI app report bugs no setting can fix
+636c6e53 2026-10-26 context: fix debugging-workflow frontmatter YAML, correct .claude symlink note
+dfc052f6 2026-10-26 plans: MCP report_problem — tell a config fix from an app bug
+5736adf3 2026-10-26 Update to version 8.58
+b68b17d1 2026-10-26 Merge pull request #212 from mgsgde/fix/glossary-tail-echo
+28b3290c 2026-10-26 fix(transcription): a colon is not a glossary-echo boundary
+ed0324c4 2026-10-26 fix: strip a trailing glossary echo from an otherwise correct dictation
+30d60fce 2026-10-26 Groom implementer queue: 1 filed, 0 released, 0 promoted
+dc27e6aa 2026-10-26 usage-review 2026-10-26: 87 of 95 "restarts" are phantoms — since 8.45 every paste is credited

@@ -62,6 +62,8 @@ public sealed class McpStack : IDisposable
     public McpStack(McpAccessLevel level = McpAccessLevel.Apply)
     {
         Directory.CreateDirectory(Dir);
+        // An install from before the Alt+digit defaults: pinned to Ctrl+Shift+D/P/K, the values these tests were written for.
+        File.WriteAllText(SettingsPath, "{}");
         Settings = Settings.Load(SettingsPath, new PlainSecretProtector());
         Config = McpConfig.Load(Path.Combine(Dir, "mcp.json"), new PlainSecretProtector());
         Config.AccessLevel = level;

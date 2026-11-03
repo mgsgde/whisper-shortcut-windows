@@ -143,6 +143,25 @@ public static class GlossaryPrompt
         return block;
     }
 
+    /// <summary>
+    /// The glossary as literal terms for <c>gpt-transcribe</c>'s repeated <c>keywords</c> field (the Mac's
+    /// <c>glossaryKeywords()</c>): the correct spelling of every tie-breaker first, then the sanitized
+    /// terms, de-duplicated by <see cref="Fold"/>. Rejected spellings are never included.
+    /// </summary>
+    public static IReadOnlyList<string> Keywords(IReadOnlyList<string> lines)
+    {
+        var parsed = Parse(lines);
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var keywords = new List<string>();
+        foreach (var term in parsed.Corrections.Select(c => c.Correct).Concat(parsed.Terms))
+        {
+            var folded = Fold(term);
+            if (folded.Length == 0 || !seen.Add(folded)) continue;
+            keywords.Add(term);
+        }
+        return keywords;
+    }
+
     /// <summary>The sanitized reference terms, as input for the transcript gates (echo discard / trailing strip).</summary>
     public static IReadOnlyList<string> EchoTerms(IReadOnlyList<string> lines) => Parse(lines).Terms;
 

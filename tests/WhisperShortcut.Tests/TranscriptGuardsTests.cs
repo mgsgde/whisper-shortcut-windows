@@ -84,6 +84,54 @@ public class TranscriptGuardsTests
     public void TrailingEchoNonMatchesStay(string text) =>
         Assert.Equal(text, TextCleanup.StripTrailingGlossaryEcho(text, TrailingGlossary));
 
+    private static readonly string[] ConnectorGlossary = { "Claude Code", "MCP", "Bachata" };
+
+    // Mac 63ded84b (#261): connectors between glossary terms are neutral.
+    [Fact]
+    public void ConnectorsBetweenTermsStillFormAGlossaryList()
+    {
+        const string text = "Claude Code, MCP und Bachata.";
+        Assert.True(TextCleanup.IsPureGlossaryList(text, ConnectorGlossary));
+        Assert.Equal("", TextCleanup.DiscardGlossaryEcho(text, 20.0, ConnectorGlossary));
+    }
+
+    [Fact]
+    public void ConnectorsAloneAreNoGlossaryList()
+    {
+        Assert.False(TextCleanup.IsPureGlossaryList("und oder mit", ConnectorGlossary));
+        Assert.Equal("und oder mit", TextCleanup.DiscardGlossaryEcho("und oder mit", 20.0, ConnectorGlossary));
+    }
+
+    [Fact]
+    public void ShortTextRuleIgnoresConnectors() =>
+        Assert.Equal("", TextCleanup.DiscardGlossaryEcho("Claude Code und MCP und Bachata", 20.0, ConnectorGlossary));
+
+    [Fact]
+    public void ConnectorWithNonGlossaryWordIsSpeech()
+    {
+        const string text = "MCP und Bachata morgen";
+        Assert.False(TextCleanup.IsPureGlossaryList(text, ConnectorGlossary));
+    }
+
+    // Mac 34bb2ce4: a lone trailing term goes after a head of 5+ words, and only as exactly that term.
+    [Fact]
+    public void LoneTrailingTermIsStrippedAfterLongHead() =>
+        Assert.Equal("Das ist ein 14 Zoll Notebook.",
+            TextCleanup.StripTrailingGlossaryEcho("Das ist ein 14 Zoll Notebook. Joschka.", TrailingGlossary));
+
+    [Fact]
+    public void LoneMultiWordTermIsStrippedWhole() =>
+        Assert.Equal("Das ist ein 14 Zoll Notebook.",
+            TextCleanup.StripTrailingGlossaryEcho("Das ist ein 14 Zoll Notebook. Claude Code.", ConnectorGlossary));
+
+    [Theory]
+    [InlineData("Das war es. Joschka.")]                                   // head under 5 words
+    [InlineData("Das ist ein 14 Zoll Notebook. Viele Grüße Joschka.")]     // extra words beyond the term
+    [InlineData("Das ist ein 14 Zoll Notebook. Joschka Joschka.")]         // same term repeated
+    [InlineData("Das ist ein 14 Zoll Notebook. Code.")]                    // part of a two-word term only
+    public void LoneTrailingTermNonMatchesStay(string text) =>
+        Assert.Equal(text, TextCleanup.StripTrailingGlossaryEcho(text, TrailingGlossary.Concat(ConnectorGlossary).ToArray()));
+
     [Fact]
     public void DottedTokenIsNoBoundary()
     {
