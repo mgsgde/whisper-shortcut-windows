@@ -89,6 +89,7 @@ internal sealed class TrayApp : ApplicationContext
     private string _busyStatus = Core.UserCopy.Processing;
     private readonly Core.PromptConversationMemory _promptMemory = new();
     private readonly Core.HotkeyPressGate _pressGate = new();
+    private readonly Core.RightCtrlDictationToggle _rightCtrl;
     private readonly System.Windows.Forms.Timer _keyUpTimer = new() { Interval = 30 };
     private Keys _armedKey;
     private long _armedKeyDeadline;
@@ -129,6 +130,7 @@ internal sealed class TrayApp : ApplicationContext
         _offline.Prewarm();
 
         _hotkeys = new HotkeyService();
+        _rightCtrl = new Core.RightCtrlDictationToggle(new RightCtrlBridge(this), () => Environment.TickCount64);
         _paster = new ClipboardPaster(_hotkeys.Handle);
 
         _statusItem = new ToolStripMenuItem("Bereit") { Enabled = false };
@@ -275,6 +277,9 @@ internal sealed class TrayApp : ApplicationContext
             if (!Hotkey.TryParse(stored, out var key) || key.IsRightCtrl || !_hotkeys.Register(key, action))
                 failed.Add(Hotkey.Display(stored));
         }
+        // Right Ctrl alone = the Mac's Fn key (on by default, Mac fnKeyDictation).
+        if (_settings.RightCtrlDictation && !_hotkeys.RegisterRightCtrl(_rightCtrl))
+            failed.Add(Core.HotkeyText.RightCtrlDisplay);
 
         // Template keys come after the app's own, which win on a clash (see TemplateHotkeys).
         var appHotkeys = new (string Name, string Hotkey)[]
@@ -334,6 +339,37 @@ internal sealed class TrayApp : ApplicationContext
     {
         var stored = mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey;
         HandleHotkeyPress(mode, stored, canStopOrCancel: true, () => StartRecording(mode, stored));
+    }
+
+    /// <summary>
+    /// What the right Ctrl toggle drives (Mac: MenuBarController as FnDictationToggleDelegate). Only a plain Diktat
+    /// started this way is its own: a Prompt, template or Live recording is never stopped by right Ctrl.
+    /// </summary>
+    private sealed class RightCtrlBridge(TrayApp app) : Core.IRightCtrlDictationDelegate
+    {
+        public bool Start()
+        {
+            if (app._state != State.Idle) return false;
+            Core.Log.Info("Hotkey RightCtrl in state Idle");
+            app.StartRecording(Mode.Dictate, Core.HotkeyText.RightCtrl);
+            return IsRecording();
+        }
+
+        public void Stop()
+        {
+            if (IsRecording()) _ = app.StopAndProcessAsync();
+        }
+
+        public void Discard()
+        {
+            if (IsRecording()) app.OnEscape();
+        }
+
+        public bool IsRecording() => app._state == State.Recording && app._mode == Mode.Dictate && app._live == null;
+
+        public bool IsProcessing() => app._state == State.Processing && app._mode == Mode.Dictate;
+
+        public void CancelProcessing() => app._cts?.Cancel();
     }
 
     private void OnLiveHotkey()
