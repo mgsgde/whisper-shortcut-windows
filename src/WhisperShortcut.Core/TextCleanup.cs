@@ -40,6 +40,24 @@ public static class TextCleanup
     /// </summary>
     public static string Normalize(string? text)
     {
+        var normalized = NormalizeWhitespace(text);
+        return normalized.Length == 0 ? "" : CleanRemnants(normalized);
+    }
+
+    /// <summary>
+    /// Cleanup for Dictate Prompt, quick action and template replies: the same whitespace steps as
+    /// <see cref="Normalize"/> plus the anchored "here is the transcription:" preamble strip, but none of
+    /// the transcript leak heuristics (literal prompt prefixes and suffixes), which would cut real answers.
+    /// Port of the Mac's PromptReplyCleanup.normalize.
+    /// </summary>
+    public static string NormalizeReply(string? text)
+    {
+        var normalized = NormalizeWhitespace(text);
+        return normalized.Length == 0 ? "" : StripPreamble(normalized).Trim();
+    }
+
+    private static string NormalizeWhitespace(string? text)
+    {
         if (string.IsNullOrEmpty(text)) return "";
         var trimmed = text.Trim();
         var collapsed = ManyNewlines.Replace(trimmed, "\n\n");
@@ -54,7 +72,7 @@ public static class TextCleanup
             if (first < 0) return noTrail;
             return noTrail[..first] + SpacesAndTabs.Replace(noTrail[first..], " ");
         });
-        return CleanRemnants(string.Join("\n", lines));
+        return string.Join("\n", lines);
     }
 
     /// <summary>
