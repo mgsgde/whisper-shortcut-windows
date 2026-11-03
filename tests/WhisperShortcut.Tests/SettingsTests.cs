@@ -15,9 +15,9 @@ public class SettingsTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new Reverse());
-        Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
-        Assert.Equal("Ctrl+Shift+P", s.PromptHotkey);
-        Assert.Equal("Ctrl+Shift+K", s.GlossaryHotkey);
+        Assert.Equal("Alt+1", s.DictateHotkey);
+        Assert.Equal("Alt+2", s.PromptHotkey);
+        Assert.Equal("Alt+7", s.GlossaryHotkey);
         Assert.Equal("gemini-3.1-flash-lite", s.TranscriptionModel);
         Assert.Equal("gemini-3.8-flash", s.PromptModel);
 
@@ -285,7 +285,7 @@ public class SettingsTests
         var s = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal("", s.ApiKey);
         Assert.Equal("", s.OpenAiKey);
-        Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
+        Assert.Equal("Alt+1", s.DictateHotkey);
         Assert.Equal(Engine.Gemini, s.SpeechEngine);
         Assert.False(File.Exists(path));
     }
@@ -738,11 +738,12 @@ public class QuickActionRequestTests
     }
 
     [Fact]
-    public void LiveDictateHotkey_defaults_to_empty_and_round_trips()
+    public void LiveDictateHotkey_defaults_to_suggestion_switched_off_and_round_trips()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal("", s.LiveDictateHotkey);
+        Assert.Equal("Alt+5", s.LiveDictateHotkey);
+        Assert.Equal("", s.ActiveLiveDictateHotkey);
 
         s.LiveDictateHotkey = "Ctrl+Alt+L";
         s.Save();

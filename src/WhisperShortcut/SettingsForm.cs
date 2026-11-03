@@ -274,7 +274,7 @@ internal sealed partial class SettingsForm : Form
             + "Solange dieses Fenster im Vordergrund ist, sind die Kürzel aus."));
         // Live diktieren (macOS Dictate Live): no default key, so it is off until the user picks one (Mac: shortcut ships disabled).
         dictate.Controls.Add(Section("Live diktieren"));
-        _liveKey = new HotkeyBox(settings.LiveDictateHotkey ?? "", allowEmpty: true) { AccessibleName = "Tastenkürzel Live diktieren" };
+        _liveKey = new HotkeyBox(settings.ActiveLiveDictateHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Live diktieren" };
         var liveCard = new Card();
         liveCard.AddRow(SettingRow("Tastenkürzel Live diktieren", "Der Text erscheint schon beim Sprechen: nach jeder kurzen Pause "
             + "das fertige Stück an der Cursorstelle. Nur mit der Spracherkennung auf diesem PC (Parakeet). Ohne Kürzel ist es aus; "
@@ -396,7 +396,7 @@ internal sealed partial class SettingsForm : Form
         // --- screenshot: an image as context for the next instruction or template (off by default: patient data) ---
         prompt.Controls.Add(Section("Screenshot"));
         _sendScreenshots = new ToggleSwitch { Checked = settings.SendScreenshots, AccessibleName = "Screenshots mitsenden" };
-        _screenshotKey = new HotkeyBox(settings.ScreenshotHotkey ?? "", allowEmpty: true) { AccessibleName = "Tastenkürzel Screenshot" };
+        _screenshotKey = new HotkeyBox(settings.ActiveScreenshotHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Screenshot" };
         var shotCard = new Card();
         shotCard.AddRow(SettingRow("Screenshots mitsenden", "Achtung: Auf dem Bildschirm der Praxissoftware stehen meist Patientendaten, "
             + "und das Bild geht an das Sprachmodell in der Cloud (Gemini oder OpenAI).", _sendScreenshots, ToggleWidth, out _));
@@ -473,7 +473,8 @@ internal sealed partial class SettingsForm : Form
         FillTemplateChoice(Math.Max(0, _templates.FindIndex(t => t.Id == settings.LastTemplateId)));
 
         // ================= page: Glossar =================
-        _glossaryKey = new HotkeyBox(settings.GlossaryHotkey) { AccessibleName = "Tastenkürzel Glossar" };
+        // Empty = off (Mac: Add to Glossary ships disabled); the stored key stays as the suggestion.
+        _glossaryKey = new HotkeyBox(settings.ActiveGlossaryHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Glossar" };
         _glossary = new TextBox
         {
             Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, AccessibleName = "Glossar",
@@ -483,7 +484,8 @@ internal sealed partial class SettingsForm : Form
         _glossary.TextChanged += (_, _) => UpdateGlossaryCount();
         UpdateGlossaryCount();
         NewFillPage(GlossaryPage,
-            KeyCard(_glossaryKey, "Das richtig geschriebene Wort irgendwo markieren und das Kürzel drücken: Es steht dann in der Liste unten."),
+            KeyCard(_glossaryKey, "Das richtig geschriebene Wort irgendwo markieren und das Kürzel drücken: Es steht dann in der Liste unten. "
+                + "Ohne Kürzel ist es aus; Entf entfernt das Kürzel."),
             Wrap("Ein Begriff pro Zeile: Namen, Medikamente, Fachwörter, die richtig geschrieben werden sollen. "
                 + "Gilt auch offline; dort braucht die Spracherkennung nach einer Änderung einige Sekunden.", 0),
             new FieldFrame(_glossary, multiline: true) { Dock = DockStyle.Fill, Margin = new Padding(0, 8, 0, 0) },
@@ -1715,23 +1717,29 @@ internal sealed partial class SettingsForm : Form
 
     private bool TrySave()
     {
+        // Diktieren and Text bearbeiten need a key; Glossar may be empty (= off).
         var keys = new[] { (Box: _dictateKey, Page: DictatePage), (Box: _promptKey, Page: PromptPage), (Box: _glossaryKey, Page: GlossaryPage) };
-        var parsed = new Hotkey[keys.Length];
+        var parsed = new Hotkey?[keys.Length];
         for (int i = 0; i < keys.Length; i++)
         {
-            if (!Hotkey.TryParse(keys[i].Box.Value, out parsed[i]) || !IsSafe(parsed[i]))
+            if (keys[i].Box == _glossaryKey && _glossaryKey.Value.Length == 0) continue;
+            if (!Hotkey.TryParse(keys[i].Box.Value, out var key) || !IsSafe(key))
             {
                 ShowPage(keys[i].Page);
-                Warn("Bitte für jede Funktion ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+D. Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.");
+                Warn("Bitte für jede Funktion ein Tastenkürzel festlegen, z. B. Alt+1 oder Strg+Umschalt+D. Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.");
                 return false;
             }
+            parsed[i] = key;
         }
-        for (int i = 1; i < keys.Length; i++)
+        // Einstellungen öffnen has no field here yet, but its key is just as taken.
+        Hotkey.TryParse(_settings.ActiveOpenSettingsHotkey, out var settingsKey);
+        for (int i = 0; i < keys.Length; i++)
         {
-            if (parsed.Take(i).Contains(parsed[i]))
+            if (parsed[i] is not { } key) continue;
+            if (parsed.Take(i).Contains(key) || (_settings.ActiveOpenSettingsHotkey.Length > 0 && key == settingsKey))
             {
                 ShowPage(keys[i].Page);
-                Warn("Die Tastenkürzel müssen verschieden sein. Diktieren, Text bearbeiten und Glossar brauchen je ein eigenes.");
+                Warn("Die Tastenkürzel müssen verschieden sein. Diktieren, Text bearbeiten, Glossar und Einstellungen öffnen brauchen je ein eigenes.");
                 return false;
             }
         }
@@ -1743,7 +1751,8 @@ internal sealed partial class SettingsForm : Form
             _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode);
+            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
+            _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _geminiKey.Value;
@@ -1753,9 +1762,9 @@ internal sealed partial class SettingsForm : Form
         _settings.OpenAiTranscriptionModel = SelectedModel(_dictateModelOpenAi);
         _settings.OpenAiPromptModel = SelectedModel(_promptModelOpenAi);
         _settings.Microphone = SelectedMicrophone;
-        _settings.DictateHotkey = parsed[0].ToString();
-        _settings.PromptHotkey = parsed[1].ToString();
-        _settings.GlossaryHotkey = parsed[2].ToString();
+        _settings.DictateHotkey = parsed[0]!.Value.ToString();
+        _settings.PromptHotkey = parsed[1]!.Value.ToString();
+        (_settings.GlossaryHotkey, _settings.GlossaryHotkeyEnabled) = StoredKey(_glossaryKey.Value, _settings.GlossaryHotkey);
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
         _settings.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
         _settings.DictatePromptTemplate = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
@@ -1769,8 +1778,8 @@ internal sealed partial class SettingsForm : Form
         _settings.Sounds = _sounds.Checked;
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
         _settings.SendScreenshots = _sendScreenshots.Checked;
-        _settings.ScreenshotHotkey = Hotkey.TryParse(_screenshotKey.Value, out var shotKey) ? shotKey.ToString() : "";
-        _settings.LiveDictateHotkey = Hotkey.TryParse(_liveKey.Value, out var liveKey) ? liveKey.ToString() : "";
+        (_settings.ScreenshotHotkey, _settings.ScreenshotHotkeyEnabled) = StoredKey(_screenshotKey.Value, _settings.ScreenshotHotkey);
+        (_settings.LiveDictateHotkey, _settings.LiveDictateHotkeyEnabled) = StoredKey(_liveKey.Value, _settings.LiveDictateHotkey);
         _settings.Templates = _templates.Select(t => new Core.DictationTemplate
         {
             Id = t.Id, Name = t.Name.Trim(), Instructions = t.Instructions.ReplaceLineEndings("\n").Trim(),
@@ -1790,7 +1799,8 @@ internal sealed partial class SettingsForm : Form
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode) = before;
+            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
+            _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled) = before;
             Warn(Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message));
             return false;
         }
@@ -1933,10 +1943,13 @@ internal sealed partial class SettingsForm : Form
     /// The Vorlagen key and each template's own key: valid, and not taken by Diktieren, Text bearbeiten, Glossar,
     /// the Vorlagen key or an earlier template. Same rules and the same kind of warning as the other hotkeys.
     /// </summary>
-    /// <param name="app">The parsed app hotkeys in the order Diktieren, Text bearbeiten, Glossar.</param>
-    private bool CheckTemplateKeys(Hotkey[] app)
+    /// <param name="app">The parsed app hotkeys in the order Diktieren, Text bearbeiten, Glossar (null = off).</param>
+    private bool CheckTemplateKeys(Hotkey?[] app)
     {
-        var taken = new List<(string Owner, Hotkey Key)> { ("Diktieren", app[0]), ("Text bearbeiten", app[1]), ("Glossar", app[2]) };
+        var taken = new List<(string Owner, Hotkey Key)>();
+        foreach (var (owner, key) in new[] { "Diktieren", "Text bearbeiten", "Glossar" }.Zip(app))
+            if (key is { } k) taken.Add((owner, k));
+        if (Hotkey.TryParse(_settings.ActiveOpenSettingsHotkey, out var settingsKey)) taken.Add(("Einstellungen öffnen", settingsKey));
         // The Live Meeting key is set from the tray menu, not here, but it is just as taken.
         if (Hotkey.TryParse(_settings.MeetingHotkey, out var meetingKey)) taken.Add(("Live Meeting", meetingKey));
         const string Rule = "Bitte ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+V, oder es mit Entf entfernen. "
@@ -2010,6 +2023,13 @@ internal sealed partial class SettingsForm : Form
         return true;
     }
 
+    /// <summary>
+    /// A field that may be empty, to the stored key and its on flag (Mac isEnabled): a combination switches it on; empty
+    /// switches it off and keeps the previous key as the suggestion.
+    /// </summary>
+    private static (string Hotkey, bool Enabled) StoredKey(string boxValue, string current) =>
+        Hotkey.TryParse(boxValue, out var key) ? (key.ToString(), true) : (current, false);
+
     private void ShowTemplate(int index)
     {
         ShowPage(TemplatesPage);
@@ -2028,17 +2048,11 @@ internal sealed partial class SettingsForm : Form
     }
 
     /// <summary>
-    /// Two of Ctrl/Alt/Shift, one of them Ctrl or Alt. Ctrl+V or Alt+F as a global hotkey would take
-    /// that key away from every program. Ctrl+Alt without Shift is AltGr on German keyboards
-    /// (Ctrl+Alt+Q would swallow every @).
+    /// Two of Ctrl/Alt/Shift, one of them Ctrl or Alt, or Alt+digit (Mac digits). Ctrl+V or Alt+F as a
+    /// global hotkey would take that key away from every program. Ctrl+Alt without Shift is AltGr on
+    /// German keyboards (Ctrl+Alt+Q would swallow every @). Rule: <see cref="Core.HotkeyText.IsSafe"/>.
     /// </summary>
-    private static bool IsSafe(Hotkey hotkey)
-    {
-        uint m = hotkey.Modifiers;
-        int count = ((m & MOD_CONTROL) != 0 ? 1 : 0) + ((m & MOD_ALT) != 0 ? 1 : 0) + ((m & MOD_SHIFT) != 0 ? 1 : 0);
-        if ((m & (MOD_CONTROL | MOD_ALT)) == (MOD_CONTROL | MOD_ALT) && (m & MOD_SHIFT) == 0) return false;
-        return count >= 2 && (m & (MOD_CONTROL | MOD_ALT)) != 0;
-    }
+    private static bool IsSafe(Hotkey hotkey) => hotkey.IsSafe;
 
     private void Warn(string text) =>
         MessageBox.Show(this, text, "WhisperShortcut", MessageBoxButtons.OK, MessageBoxIcon.Warning);
