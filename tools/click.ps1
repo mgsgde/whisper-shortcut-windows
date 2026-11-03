@@ -1,4 +1,4 @@
-# Left click at screen pixel (x, y) in the VM: tools/vm.sh copies this into the share.
+# Left click at screen pixel (x, y): powershell -File tools/click.ps1 -X <x> -Y <y>
 param([int]$X, [int]$Y)
 Add-Type @"
 using System.Runtime.InteropServices;

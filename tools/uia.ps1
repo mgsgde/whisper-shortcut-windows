@@ -1,4 +1,4 @@
-﻿# Drive the settings window from the Mac without clicks: tools/vm.sh uia <action> [name] [index]
+﻿# Drive the settings window without clicks: powershell -File tools/uia.ps1 <action> [name] [index]
 #   select <radio name> | invoke <button name> [index] | focus <field name> [index] | list
 param([string]$Action, [string]$Name, [int]$Index = 0)
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
