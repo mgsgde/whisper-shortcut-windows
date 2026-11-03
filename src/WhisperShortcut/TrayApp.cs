@@ -42,6 +42,7 @@ internal sealed class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _dictateItem;
     private readonly ToolStripMenuItem _promptItem;
     private readonly ToolStripMenuItem _screenshotItem;
+    private readonly ToolStripMenuItem _readAloudItem;
     private readonly ToolStripMenuItem _glossaryItem;
     private readonly ToolStripMenuItem _liveItem;
     private readonly ToolStripMenuItem _settingsItem;
@@ -106,6 +107,7 @@ internal sealed class TrayApp : ApplicationContext
     private CancellationTokenSource? _snipCts;
     private readonly MeetingController _meeting;
     private readonly McpService _mcp;
+    private readonly ReadAloudController _readAloud;
 
     public TrayApp(string? testWav, bool fakeGemini)
     {
@@ -145,13 +147,14 @@ internal sealed class TrayApp : ApplicationContext
         _dictateItem = new ToolStripMenuItem("Diktieren", null, (_, _) => OnHotkey(Mode.Dictate));
         _promptItem = new ToolStripMenuItem("Dictate Prompt", null, (_, _) => OnHotkey(Mode.Prompt));
         _screenshotItem = new ToolStripMenuItem("Bildschirmfoto", null, (_, _) => OnScreenshotHotkey());
+        _readAloudItem = new ToolStripMenuItem("Vorlesen", null, (_, _) => OnReadAloudHotkey());
         _glossaryItem = new ToolStripMenuItem("Auswahl zum Glossar hinzufügen", null, (_, _) => _ = AddSelectionToGlossaryAsync());
         _liveItem = new ToolStripMenuItem("Live diktieren", null, (_, _) => OnLiveHotkey());
         _copyLast = new ToolStripMenuItem("Letzte Transkription kopieren", null, (_, _) => CopyRecent(_recent.Latest));
         _recentMenu = new ToolStripMenuItem("Letzte Transkriptionen");
         _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Visible = false };
         // An update restarts the app: not in the middle of a dictation or a meeting.
-        _updates = new UpdateService(_settings, () => _state == State.Idle && _meeting?.IsActive != true, Quit);
+        _updates = new UpdateService(_settings, () => _state == State.Idle && _meeting?.IsActive != true && _readAloud?.IsActive != true, Quit);
         _updateItem = new ToolStripMenuItem("Update installieren …", null, (_, _) => _updates.ShowDialog())
         {
             Visible = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold),
@@ -167,7 +170,7 @@ internal sealed class TrayApp : ApplicationContext
         _meeting = new MeetingController(_settings, _ui, TranscribeMeetingChunkAsync, SummarizeMeetingAsync, MeetingUnavailable,
             Notify, TrySave, () => new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveGlossaryHotkey,
                     _settings.ActiveScreenshotHotkey, _settings.TemplateHotkey, _settings.ActiveLiveDictateHotkey,
-                    _settings.ActiveOpenSettingsHotkey }
+                    _settings.ActiveOpenSettingsHotkey, _settings.ActiveReadAloudHotkey }
                 .Concat(_settings.Templates.Select(t => t.Hotkey)).Where(k => k.Length > 0).ToArray(),
             suspend => { if (suspend) { _hotkeys.UnregisterAll(); _globalHotkeysOn = false; } else SyncGlobalHotkeys(notify: true); },
             fakeAudio: testWav != null || fakeGemini);
@@ -176,7 +179,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             _statusItem, _updateItem, new ToolStripSeparator(),
             _proposalsItem, _stopItem, _stopSeparator,
-            _dictateItem, _promptItem, _screenshotItem, _glossaryItem, _liveItem, new ToolStripSeparator(),
+            _dictateItem, _promptItem, _screenshotItem, _readAloudItem, _glossaryItem, _liveItem, new ToolStripSeparator(),
             _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
             // Mac: the meeting starts from the Chat window, which Windows does not have; its row sits where Chat is.
             _meeting.MenuItem, new ToolStripSeparator(),
@@ -194,6 +197,12 @@ internal sealed class TrayApp : ApplicationContext
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
         _mcp = new McpService(_settings, _ui, () => _state != State.Idle, () => _settingsForm?.HasUnsavedChanges == true, AfterMcpApply);
         _mcp.StartIfEnabled();
+        _readAloud = new ReadAloudController(_settings, _paster, _gemini, _openAi, Notify, () => ShowSettings(), TrySave, _ui);
+        _readAloud.StateChanged += () =>
+        {
+            if (_state == State.Idle) SetState(State.Idle);
+            UpdateMenuRows();
+        };
 
         _keyUpTimer.Tick += (_, _) => PollArmedKey();
         // Windows equivalent of the Mac's didActivateApplication retry: the dictated-into window is in front again.
@@ -279,6 +288,7 @@ internal sealed class TrayApp : ApplicationContext
             // Live diktieren ships switched off (Mac: disabled).
             (_settings.ActiveLiveDictateHotkey, OnLiveHotkey),
             (_settings.ActiveScreenshotHotkey, OnScreenshotHotkey),
+            (_settings.ActiveReadAloudHotkey, OnReadAloudHotkey),
             (_settings.ActiveOpenSettingsHotkey, ToggleSettings),
         };
         foreach (var (stored, action) in keys)
@@ -300,6 +310,7 @@ internal sealed class TrayApp : ApplicationContext
             ("Text bearbeiten", _settings.ActivePromptHotkey),
             ("Glossar", _settings.ActiveGlossaryHotkey),
             ("Screenshot", _settings.ActiveScreenshotHotkey),
+            ("Vorlesen", _settings.ActiveReadAloudHotkey),
             ("Live Meeting", _settings.MeetingHotkey),
             ("Live diktieren", _settings.ActiveLiveDictateHotkey),
             ("Einstellungen", _settings.ActiveOpenSettingsHotkey),
@@ -349,7 +360,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         static string Key(string active) => active.Length > 0 ? Hotkey.Display(active) : "";
         bool idle = _state == State.Idle;
-        _stopItem.Visible = _stopSeparator.Visible = !idle;
+        _stopItem.Visible = _stopSeparator.Visible = !idle || _readAloud?.IsActive == true;
         _proposalsItem.Visible = _mcp != null && _mcp.Proposals.Pending.Count > 0;
         bool recording = _state == State.Recording;
         _dictateItem.Text = recording && _mode == Mode.Dictate && _live == null ? "Diktat beenden" : "Diktieren";
@@ -357,6 +368,8 @@ internal sealed class TrayApp : ApplicationContext
         _promptItem.Text = recording && _mode == Mode.Prompt ? "Prompt-Diktat beenden" : "Dictate Prompt";
         _promptItem.ShortcutKeyDisplayString = Key(_settings.ActivePromptHotkey);
         _screenshotItem.ShortcutKeyDisplayString = Key(_settings.ActiveScreenshotHotkey);
+        _readAloudItem.Text = _readAloud?.IsActive == true ? "Vorlesen beenden" : "Vorlesen";
+        _readAloudItem.ShortcutKeyDisplayString = Key(_settings.ActiveReadAloudHotkey);
         _glossaryItem.ShortcutKeyDisplayString = Key(_settings.ActiveGlossaryHotkey);
         _liveItem.ShortcutKeyDisplayString = Key(_settings.ActiveLiveDictateHotkey);
         _settingsItem.ShortcutKeyDisplayString = Key(_settings.ActiveOpenSettingsHotkey);
@@ -372,6 +385,7 @@ internal sealed class TrayApp : ApplicationContext
         Core.Log.Info($"Menu Stopp in state {_state}");
         if (_state == State.Recording) _ = StopAndProcessAsync();
         else if (_state == State.Processing) _cts?.Cancel();
+        else if (_readAloud.IsActive) _readAloud.Stop();
     }
 
     private void OnHotkey(Mode mode)
@@ -570,6 +584,28 @@ internal sealed class TrayApp : ApplicationContext
         Core.Log.Info($"Quick action {index + 1}");
         _quickAction = _settings.QuickActions[index];
         _ = StopAndProcessAsync();
+    }
+
+    // ---------------- read aloud ----------------
+
+    /// <summary>
+    /// Vorlesen hotkey and menu row (Mac triggerReadSelectedTextAloud): a second press stops it. Ignored while a recording
+    /// or its processing runs and during a meeting, like the Mac; speaking itself does not block a new dictation.
+    /// </summary>
+    private void OnReadAloudHotkey()
+    {
+        Core.Log.Info($"Hotkey ReadAloud in state {_state}, reading {_readAloud.IsActive}");
+        if (_readAloud.IsActive)
+        {
+            _readAloud.Toggle();
+            return;
+        }
+        if (_state != State.Idle || _glossaryBusy || _selection != null || _meeting.IsActive)
+        {
+            Sounds.Error();
+            return;
+        }
+        _readAloud.Toggle();
     }
 
     // ---------------- screenshot ----------------
@@ -1811,6 +1847,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             State.Recording => (Core.UserCopy.RecordingStatus(key), TrayIcons.Recording),
             State.Processing => (_busyStatus, TrayIcons.Processing),
+            _ when _readAloud?.IsActive == true => (_readAloud.StatusText, _readAloud.IsSpeaking ? TrayIcons.Ready : TrayIcons.Processing),
             _ when MissingKey => ("Kein API-Schlüssel eingetragen", TrayIcons.Ready),
             _ when !OfflineModelsReady(Mode.Dictate) => ("Spracherkennung noch nicht geladen", TrayIcons.Ready),
             _ when _settings.OfflineMode => ("Bereit (offline, nichts verlässt diesen PC)", TrayIcons.Ready),
@@ -2055,6 +2092,7 @@ internal sealed class TrayApp : ApplicationContext
         _shotExpiry.Dispose();
         _updateNoticeTimer.Dispose();
         _updates.Dispose();
+        _readAloud.Dispose();
         _overlay.Dispose();
         _toast.Dispose();
         _meeting.Dispose();
