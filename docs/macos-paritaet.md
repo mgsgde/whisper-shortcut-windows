@@ -96,6 +96,20 @@ Vorlage an Gemini bzw. OpenAI; nach 5 Minuten ungenutzt wird es verworfen. Ab We
 mitsenden“, Patientendaten), offline und mit dem lokalen Sprachmodell gesperrt. Anders als auf dem Mac: kein
 Bildschirmfoto ohne eigene Auswahl, das Kürzel wirkt nur, wenn keine Aufnahme läuft.
 
+## Nachtrag 03.11.2026: Pilot-Fixes aus Mac v8.75 (#321, #322)
+
+Nachgezogen: **Sicheres Einfügen** (`Core.ClipboardPasteGuard`): Strg+V nur, wenn die Zwischenablage noch genau
+unseren Text hat (`GetClipboardSequenceNumber` unverändert und Text gleich), sonst Hinweis „Nicht eingefügt“;
+Wiederherstellen nur, wenn die Sequenznummer sich nicht bewegt hat. Wartezeit vor Strg+V 150 ms, Wiederherstellen
+nach 3 s (vorher 50 ms / 2 s). „Letzte Aufnahme erneut verarbeiten“ (Tray-Menü, Klick auf die Meldung) und eine
+wiederhergestellte Aufnahme kopieren nur und fügen nie ein. **Satzzeichen** unter Diktieren (nur bei
+Spracherkennung auf diesem PC): „Automatisch“ (ab Werk) / „Nur wenn gesprochen“, gleiche Regeln wie
+`SpokenPunctuation.swift` (inkl. „Schrägstrich“ → „/“ nur in diesem Modus, kein Schlusspunkt); Meetings und
+gesprochene Anweisungen bleiben automatisch. MCP: `dictation.punctuation`.
+Nicht übernommen: Glossar-Ähnlichkeitsschwellen (Windows hat keinen CTC-Spotter wie FluidAudio, sondern
+sherpa-onnx-Hotwords beim Beam Search, Score 2,5), Cloud-Modell-Angebot nach dem Schlüssel (#321, gibt es auf
+Windows nicht), „Zwischenablage leeren“ (im Mac-Diff enthalten, aber nicht Teil der Pilot-Fixes).
+
 ## E. MCP-Server (Stand 02.11.2026)
 
 Da, unter Einstellungen → Claude & KI-Apps (`src/WhisperShortcut.Core/Mcp/`, `McpService.cs`). Gleiche Namen und

@@ -78,6 +78,27 @@ public class SettingsTests
         Directory.Delete(dir, true);
     }
 
+    [Fact]
+    public void PunctuationMode_DefaultsToAutomaticAndRoundTrips()
+    {
+        var path = Tmp();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{}");
+        var s = Settings.Load(path, new Reverse());
+        Assert.Equal(PunctuationMode.Automatic, s.PunctuationMode);
+
+        s.PunctuationMode = PunctuationMode.SpokenOnly;
+        s.Save();
+        Assert.Contains("\"punctuationMode\": \"spokenOnly\"", File.ReadAllText(path));
+        Assert.Equal(PunctuationMode.SpokenOnly, Settings.Load(path, new Reverse()).PunctuationMode);
+
+        File.WriteAllText(path, "{\"punctuationMode\": \"  SPOKENONLY \"}");
+        Assert.Equal(PunctuationMode.SpokenOnly, Settings.Load(path, new Reverse()).PunctuationMode);
+        File.WriteAllText(path, "{\"punctuationMode\": \"quatsch\"}");
+        Assert.Equal(PunctuationMode.Automatic, Settings.Load(path, new Reverse()).PunctuationMode);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
     private static string Tmp() => Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
 
     [Fact]

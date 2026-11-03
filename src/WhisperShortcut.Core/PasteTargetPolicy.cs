@@ -49,3 +49,30 @@ public static class PasteTargetPolicy
         "Shell_TrayWnd" or "Shell_SecondaryTrayWnd" or "NotifyIconOverflowWindow"
         or "TopLevelWindowForOverflowXamlIsland" or "Progman" or "WorkerW";
 }
+
+/// <summary>
+/// Whether the clipboard still holds exactly what auto-paste put there. The synthetic Ctrl+V is read by
+/// the receiving app some time later (lazily in browsers, Citrix, RDP), so a clipboard that changed in
+/// between would paste the previous clipboard instead. Pure functions so they are testable without a clipboard.
+/// </summary>
+public static class ClipboardPasteGuard
+{
+    /// <summary>Pause between writing our text and Ctrl+V.</summary>
+    public static readonly TimeSpan PrePasteDelay = TimeSpan.FromMilliseconds(150);
+
+    /// <summary>Slow receivers (browser, Citrix, RDP) read the clipboard lazily; restoring earlier makes them paste the old content.</summary>
+    public static readonly TimeSpan RestoreDelay = TimeSpan.FromSeconds(3.0);
+
+    /// <summary>Ctrl+V may be sent only while the clipboard is the one we wrote.</summary>
+    public static bool PasteAllowed(uint sequenceAtWrite, uint currentSequence, string? expectedText, string? currentText) =>
+        sequenceAtWrite == currentSequence && string.Equals(currentText, expectedText, StringComparison.Ordinal);
+
+    /// <summary>The old clipboard may be put back only if nothing wrote since our write.</summary>
+    public static bool RestoreAllowed(uint sequenceAtWrite, uint currentSequence) => sequenceAtWrite == currentSequence;
+
+    /// <summary>
+    /// A run started from idle (retry from the tray menu or balloon, a recovered recording) has no recording
+    /// start, so its result is copied only, never pasted into whatever window is in front.
+    /// </summary>
+    public static bool MayAutoPaste(bool autoPasteSetting, bool clipboardOnlyRun) => autoPasteSetting && !clipboardOnlyRun;
+}

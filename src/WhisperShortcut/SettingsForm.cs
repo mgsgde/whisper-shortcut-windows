@@ -30,6 +30,9 @@ internal sealed partial class SettingsForm : Form
     private readonly FluentCombo _promptModelOpenAi;
     private readonly Control[] _engineOnly;
     private readonly Card _dictateGeminiCard, _dictateOpenAiCard, _promptGeminiCard, _promptOpenAiCard;
+    private readonly FluentCombo _punctuation;
+    /// <summary>Diktieren → Satzzeichen: only offline speech recognition writes spoken marks out as words.</summary>
+    private readonly Control[] _punctuationOnly;
     private readonly FluentCombo _mic;
     private readonly FluentButton _micTest;
     private readonly Bar _micMeter;
@@ -275,6 +278,27 @@ internal sealed partial class SettingsForm : Form
         _dictateModelOpenAi = ModelChoice(Core.OpenAiModels.Transcription, settings.OpenAiTranscriptionModel);
         dictate.Controls.Add(_dictateOpenAiCard = ModelCard(_dictateModelOpenAi, "OpenAI-Modell", "Gilt, wenn die Spracherkennung über OpenAI läuft. "
             + "Das Glossar geht als Hinweis mit; die Anweisungen unten gelten nur für Gemini."));
+        // Offline only (port of the Mac's Dictate → Punctuation): Gemini and OpenAI punctuate by themselves.
+        var punctuationSection = Section("Satzzeichen");
+        dictate.Controls.Add(punctuationSection);
+        _punctuation = new FluentCombo { Width = ComboWidth, AccessibleName = "Satzzeichen" };
+        _punctuation.Items.Add(new PunctuationItem(Core.PunctuationMode.Automatic, "Automatisch"));
+        _punctuation.Items.Add(new PunctuationItem(Core.PunctuationMode.SpokenOnly, "Nur wenn gesprochen"));
+        _punctuation.SelectedItem = _punctuation.Items.Cast<PunctuationItem>().First(i => i.Mode == settings.PunctuationMode);
+        var punctuationCard = new Card();
+        punctuationCard.AddRow(SettingRow("Satzzeichen", "", _punctuation, ComboWidth, out var punctuationText));
+        void DescribePunctuation() => punctuationText.Text = SelectedPunctuation == Core.PunctuationMode.SpokenOnly
+            ? "Nur gesagte Zeichen werden geschrieben: „Punkt“, „Komma“, „Fragezeichen“, „Ausrufezeichen“, „Doppelpunkt“ "
+              + "und „Schrägstrich“. Am Ende kommt kein Punkt dazu."
+            : "Parakeet setzt Punkt und Komma selbst.";
+        _punctuation.SelectedIndexChanged += (_, _) => DescribePunctuation();
+        DescribePunctuation();
+        var punctuationNote = Block();
+        punctuationNote.Controls.Add(Wrap("Gilt für die Spracherkennung auf diesem PC, auf Deutsch. Meetings und gesprochene Anweisungen "
+            + "behalten die automatischen Satzzeichen.", 2 * RowPadding, small: true));
+        punctuationCard.AddRow(punctuationNote);
+        dictate.Controls.Add(punctuationCard);
+        _punctuationOnly = new Control[] { punctuationSection, punctuationCard };
         dictate.Controls.Add(Section("Anweisungen"));
         dictate.Controls.Add(Wrap("So soll Gemini transkribieren (gilt nur für Gemini): Füllwörter, Satzzeichen, Formatierung. Namen und Fachwörter gehören "
             + "ins Glossar, nicht hierher. Der Standardtext ist englisch; geschrieben wird trotzdem in der gesprochenen Sprache.", 0));
@@ -1295,6 +1319,13 @@ internal sealed partial class SettingsForm : Form
 
     private static Core.Engine SelectedEngine(FluentCombo combo) => ((EngineItem)combo.SelectedItem!).Engine;
 
+    private sealed record PunctuationItem(Core.PunctuationMode Mode, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private Core.PunctuationMode SelectedPunctuation => ((PunctuationItem)_punctuation.SelectedItem!).Mode;
+
     // ---------------- microphone ----------------
 
     private sealed record MicItem(string Value, string Label)
@@ -1399,6 +1430,8 @@ internal sealed partial class SettingsForm : Form
         _geminiKey.Section.Visible = _geminiKey.Card.Visible = engines.Contains(Core.Engine.Gemini);
         _openAiKey.Section.Visible = _openAiKey.Card.Visible = engines.Contains(Core.Engine.OpenAI);
         foreach (var c in _offlineOnly) c.Visible = engines.Contains(Core.Engine.Local);
+        bool offlineSpeech = !online || SelectedEngine(_speechEngine) == Core.Engine.Local;
+        foreach (var c in _punctuationOnly) c.Visible = offlineSpeech;
         bool openAiSpeech = online && SelectedEngine(_speechEngine) == Core.Engine.OpenAI;
         bool openAiText = online && SelectedEngine(_textEngine) == Core.Engine.OpenAI;
         (_dictateGeminiCard.Visible, _dictateOpenAiCard.Visible) = (!openAiSpeech, openAiSpeech);
@@ -1573,6 +1606,7 @@ internal sealed partial class SettingsForm : Form
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
         _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value,
+        SelectedPunctuation.ToString(),
     }.Concat(_quick.Select(q => q.Text))
      .Concat(_templates.Select(t => string.Join("\u0002", t.Id, t.Name, t.Instructions, t.Hotkey))));
 
@@ -1699,7 +1733,7 @@ internal sealed partial class SettingsForm : Form
             _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.ScreenshotHotkey);
+            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.PunctuationMode);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _geminiKey.Value;
@@ -1721,6 +1755,7 @@ internal sealed partial class SettingsForm : Form
         _settings.PromptModeSystemPrompt = _promptPrompt.Value;
         _settings.AutoPaste = _autoPaste.Checked;
         _settings.RestoreClipboard = _restoreClipboard.Checked;
+        _settings.PunctuationMode = SelectedPunctuation;
         _settings.Sounds = _sounds.Checked;
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
         _settings.SendScreenshots = _sendScreenshots.Checked;
@@ -1744,7 +1779,7 @@ internal sealed partial class SettingsForm : Form
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.ScreenshotHotkey) = before;
+            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.PunctuationMode) = before;
             Warn(Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message));
             return false;
         }
@@ -1753,7 +1788,7 @@ internal sealed partial class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode})");
         RecordPromptHistory(before.DictateSystemPrompt, before.PromptModeSystemPrompt, before.DictatePromptTemplate);
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;

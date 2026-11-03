@@ -59,17 +59,18 @@ public static class TextCleanup
 
     /// <summary>
     /// Dictation result: <see cref="Normalize"/>, then first letter capitalised and a final "."
-    /// unless the text already ends in one of . ! ? : ; (ClipboardManager.formatTranscription).
+    /// unless the text already ends in one of . ! ? : ; (ClipboardManager.formatTranscription). With
+    /// <paramref name="addTrailingPeriod"/> off (spoken-only punctuation) no period is added.
     /// Never use this for Dictate Prompt answers.
     /// </summary>
-    public static string ForDictation(string? text)
+    public static string ForDictation(string? text, bool addTrailingPeriod = true)
     {
         var formatted = Normalize(text).Trim();
         if (formatted.Length == 0) return "";
         var first = formatted.EnumerateRunes().First();
         var upper = first.ToString().ToUpperInvariant();
         formatted = upper + formatted[first.Utf16SequenceLength..];
-        if (FinalPunctuation.IndexOf(formatted[^1]) < 0) formatted += ".";
+        if (addTrailingPeriod && FinalPunctuation.IndexOf(formatted[^1]) < 0) formatted += ".";
         return formatted;
     }
 

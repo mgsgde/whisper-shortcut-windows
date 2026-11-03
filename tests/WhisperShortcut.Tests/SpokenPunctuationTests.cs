@@ -97,4 +97,150 @@ public class SpokenPunctuationTests
         var inflected = "Die Doppelpunkten und des Doppelpunktes";
         Assert.Equal(inflected, A(inflected));
     }
+
+    private const PunctuationMode Spoken = PunctuationMode.SpokenOnly;
+    private static string S(string s) => SpokenPunctuation.Apply(s, Spoken);
+    private static string Strip(string s) => SpokenPunctuation.StripModelPunctuation(s);
+
+    // ---- Schrägstrich ----
+
+    [Fact]
+    public void Slash()
+    {
+        Assert.Equal("ich/sage", S("ich Schrägstrich sage"));
+        Assert.Equal("ich/sage", S("ich, Schrägstrich. sage"));
+        Assert.Equal("Hals/Nacken", S("Hals Schraegstrich Nacken"));
+        // Automatic mode and Dictate Prompt instructions: an ordinary noun.
+        var text = "ersetze jeden Schrägstrich durch ein Komma, getrennt mit einem Schrägstrich";
+        Assert.Equal(text, A(text));
+        Assert.Equal("ich Schrägstrich sage", A("ich Schrägstrich sage"));
+    }
+
+    [Fact]
+    public void SlashGluedAndPlural()
+    {
+        Assert.Equal("Hals/nacken", S("Hals Schrägstrichnacken"));
+        Assert.Equal("zwei Schrägstriche im Text", S("zwei Schrägstriche im Text"));
+    }
+
+    [Fact]
+    public void SlashKeepsAbbreviationPeriod() =>
+        Assert.Equal("usw./b", S(Strip("usw. Schrägstrich b")));
+
+    [Fact]
+    public void DecimalComma()
+    {
+        Assert.Equal("3,5 cm", S("3 Komma 5 cm"));
+        Assert.Equal("Hallo, 5 Stück", S("Hallo Komma 5 Stück"));
+        Assert.Equal("drei, fünf", S("drei Komma fünf"));
+    }
+
+    [Fact]
+    public void CapitalisationAfterBreak()
+    {
+        Assert.Equal("Ende.\nWeiter", S("Ende Punkt neue Zeile weiter"));
+        Assert.Equal("Gut?\n\nJa", S("Gut Fragezeichen neuer Absatz ja"));
+    }
+
+    [Fact]
+    public void EffectiveMode()
+    {
+        Assert.Equal(PunctuationMode.Automatic, PunctuationModes.Effective(Spoken, isOffline: true, duringMeeting: true));
+        Assert.Equal(PunctuationMode.Automatic, PunctuationModes.Effective(Spoken, isOffline: false, duringMeeting: false));
+        Assert.Equal(Spoken, PunctuationModes.Effective(Spoken, isOffline: true, duringMeeting: false));
+        Assert.Equal(PunctuationMode.Automatic, PunctuationModes.Effective(PunctuationMode.Automatic, isOffline: true, duringMeeting: false));
+    }
+
+    // ---- Only when spoken ----
+
+    [Fact]
+    public void StripsModelPunctuation()
+    {
+        Assert.Equal("Hallo Welt Wie geht's Gut", Strip("Hallo, Welt. Wie geht's? Gut!"));
+        Assert.Equal("Ende", Strip("Ende..."));
+    }
+
+    [Fact]
+    public void StripKeepsNumbers()
+    {
+        Assert.Equal("Wert 3.5 und 1,2 mg ok", Strip("Wert 3.5 und 1,2 mg, ok."));
+        Assert.Equal("a.b", Strip("a.b"));
+    }
+
+    [Fact]
+    public void StripKeepsOrdinalsAndAbbreviations()
+    {
+        var spoken = "Am 3. November untersuchte Dr. Müller z. B. Nr. 5 Punkt";
+        Assert.Equal("Am 3. November untersuchte Dr. Müller z. B. Nr. 5.", S(Strip(spoken)));
+        Assert.Equal("Der Befund ist unauffällig Weiter ok", Strip("Der Befund ist unauffällig. Weiter, ok."));
+        Assert.Equal("bis 5", Strip("bis 5."));
+        Assert.Equal("5. Lendenwirbel", Strip("5. Lendenwirbel"));
+    }
+
+    [Theory]
+    [InlineData("Dr. med. Müller")]
+    [InlineData("d. h. die")]
+    [InlineData("Az. 12 SB 345/24")]
+    [InlineData("i. d. R. stabil")]
+    [InlineData("Hauptstr. 5")]
+    [InlineData("geb. 12. 3. 1961")]
+    public void StripKeepsMoreAbbreviations(string text)
+    {
+        Assert.Equal(text, Strip(text));
+        Assert.Equal("Er ging nach Hause Dann kam sie", Strip("Er ging nach Hause. Dann kam sie."));
+    }
+
+    [Fact]
+    public void KeptPeriodThenComma() =>
+        Assert.Equal("z. B. Kopfschmerzen", Strip("z. B., Kopfschmerzen"));
+
+    [Fact]
+    public void PunktNoun()
+    {
+        Assert.Equal("Zu Punkt 3 der Beweisfragen", S("Zu Punkt 3 der Beweisfragen"));
+        Assert.Equal("Siehe Punkt 2.1", S("Siehe Punkt 2.1"));
+        Assert.Equal("Er kam um 9 Uhr.\nDie", S("Er kam um 9 Uhr Punkt neue Zeile die"));
+    }
+
+    [Fact]
+    public void AbbreviationThenKomma() =>
+        Assert.Equal("usw., die", S(Strip("usw. Komma die")));
+
+    [Fact]
+    public void DecimalOnlySinglePair()
+    {
+        Assert.Equal("3,5 cm", S("3 Komma 5 cm"));
+        Assert.Equal("3, 5, 4", S("3 Komma 5 Komma 4"));
+    }
+
+    [Theory]
+    [InlineData(PunctuationMode.Automatic)]
+    [InlineData(PunctuationMode.SpokenOnly)]
+    public void CapitalAfterBreakWithModelPeriod(PunctuationMode mode)
+    {
+        Assert.Equal("Anamnese.\n\nDie Klägerin", SpokenPunctuation.Apply("Anamnese. Neuer Absatz, die Klägerin", mode));
+        Assert.Equal("Ist sie arbeitsfähig?\nNein.", SpokenPunctuation.Apply("Ist sie arbeitsfähig? Neue Zeile, nein.", mode));
+    }
+
+    [Fact]
+    public void SpokenOnlyMarks()
+    {
+        Assert.Equal("Hallo, wie geht es?", S("Hallo Komma wie geht es Fragezeichen"));
+        Assert.Equal("Gut! Danke", S("Gut Ausrufezeichen danke"));
+        Assert.Equal("Das ist alles. Weiter", S("Das ist alles Punkt Weiter"));
+        Assert.Equal("Ende.", S("Ende Punkt"));
+    }
+
+    [Fact]
+    public void SpokenOnlyKeepsLayout() =>
+        Assert.Equal("Befund: Druck.\n\nTherapie", S("Befund Doppelpunkt Druck Punkt neuer Absatz Therapie"));
+
+    [Fact]
+    public void AutomaticLeavesWordsAlone()
+    {
+        var text = "der wichtigste Punkt und ein Komma im Text";
+        Assert.Equal(text, A(text));
+        Assert.Equal(text, SpokenPunctuation.Apply(text, PunctuationMode.Automatic));
+        Assert.Equal("Doppelpunkte und Kommas", S("Doppelpunkte und Kommas"));
+    }
 }

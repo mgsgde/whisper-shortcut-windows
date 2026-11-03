@@ -6,7 +6,7 @@ namespace WhisperShortcut;
 
 internal enum PasteOutcome
 {
-    /// <summary>Ctrl+V was sent; the old clipboard comes back after 2000 ms.</summary>
+    /// <summary>Ctrl+V was sent; the old clipboard comes back after 3 s.</summary>
     Pasted,
     /// <summary>The target runs as administrator (UIPI would drop our keystrokes): text stays on the clipboard.</summary>
     ClipboardOnlyElevatedTarget,
@@ -20,6 +20,8 @@ internal enum PasteOutcome
     ClipboardOnlyTargetGone,
     /// <summary>The window in front is one of our own (settings, a message box): Ctrl+V would vanish there. Text stays on the clipboard.</summary>
     ClipboardOnlyOwnWindow,
+    /// <summary>Something else wrote the clipboard between our write and Ctrl+V: nothing pasted, the clipboard is left as it is.</summary>
+    ClipboardOnlyClipboardChanged,
     /// <summary>Could not write the clipboard at all.</summary>
     Failed,
 }
@@ -37,8 +39,6 @@ internal sealed class SelectionUnreadableException : Exception
 /// </summary>
 internal sealed class ClipboardPaster
 {
-    /// <summary>Word and Outlook read the clipboard later than Mac apps do (Mac: 400 ms).</summary>
-    private static readonly TimeSpan RestoreDelay = TimeSpan.FromMilliseconds(2000);
     // 500 ms (the plan's first number) was too short: a hand holding the hotkey 600 ms made Ctrl+V arrive
     // as Ctrl+Alt+V (= AltGr+V, typed "√" in Notepad). Found in the VM with `vm.sh hold 600`.
     private static readonly TimeSpan ModifierWait = TimeSpan.FromSeconds(3);
@@ -53,7 +53,7 @@ internal sealed class ClipboardPaster
     private readonly IntPtr _owner;
 
     // The restore that is still waiting: the user's original clipboard, the sequence number our text got,
-    // and the token that cancels it. A second paste inside the 2 s must not take our own text for
+    // and the token that cancels it. A second paste inside the 3 s must not take our own text for
     // the user's clipboard, so it reuses this original and replaces the older restore.
     private ClipboardSnapshot? _pendingOriginal;
     private uint _pendingSequence;
@@ -125,7 +125,7 @@ internal sealed class ClipboardPaster
 
     /// <summary>
     /// Puts <paramref name="text"/> at the cursor: save the clipboard, set ours, Ctrl+V, and after
-    /// 2000 ms put the old clipboard back (unless <paramref name="restoreClipboard"/> is off), but only when nobody else wrote it in between.
+    /// 3 s put the old clipboard back (unless <paramref name="restoreClipboard"/> is off), but only when nobody else wrote it in between.
     /// Pastes only into <paramref name="target"/> (the window in front when the recording began). It is brought
     /// back only when nothing, our own window or the taskbar is in front; with another window in front or the
     /// target closed the text stays on the clipboard. <c>IntPtr.Zero</c> means: no target to check.
@@ -200,7 +200,17 @@ internal sealed class ClipboardPaster
         _pendingOriginal = original;
         _pendingSequence = ourSequence;
 
-        await Task.Delay(50, ct);
+        await Task.Delay(Core.ClipboardPasteGuard.PrePasteDelay, ct);
+        // Something else may have written the clipboard meanwhile: Ctrl+V would paste that instead of our text.
+        uint currentSequence = GetClipboardSequenceNumber();
+        TryReadText(out var current);
+        if (!Core.ClipboardPasteGuard.PasteAllowed(ourSequence, currentSequence, text, current))
+        {
+            Core.Log.Info("Paste: clipboard changed before Ctrl+V, not pasting");
+            if (_pendingRestore == restore) { _pendingRestore = null; _pendingOriginal = null; }
+            restore.Dispose();
+            return PasteOutcome.ClipboardOnlyClipboardChanged;
+        }
         SendChord(0x56); // V
         Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars), restore {(restoreClipboard ? "on" : "off")}");
 
@@ -226,10 +236,10 @@ internal sealed class ClipboardPaster
     {
         try
         {
-            try { await Task.Delay(RestoreDelay, self.Token); }
+            try { await Task.Delay(Core.ClipboardPasteGuard.RestoreDelay, self.Token); }
             catch (OperationCanceledException) { return; } // a newer paste took over
             if (previous == null) return; // the clipboard was empty before; nothing of the user's to bring back
-            if (GetClipboardSequenceNumber() != ourSequence)
+            if (!Core.ClipboardPasteGuard.RestoreAllowed(ourSequence, GetClipboardSequenceNumber()))
             {
                 Core.Log.Info("Paste: clipboard changed by someone else, not restoring");
                 return;

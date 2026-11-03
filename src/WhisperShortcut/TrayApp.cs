@@ -663,8 +663,9 @@ internal sealed class TrayApp : ApplicationContext
     private Task StopAndProcessAsync() => ProcessAsync(_audio!, null);
 
     /// <summary>
-    /// Tray menu or balloon click: run the last failed recording again. Like the Mac it pastes into the
-    /// window the recording was made for; after the click the taskbar is in front, never the user's field.
+    /// Tray menu or balloon click: run the last failed recording again. Like the Mac since 8.75 it only
+    /// copies the result; it never pastes into the window the recording was made for (the window in front
+    /// is whatever the user did since).
     /// </summary>
     private void RetryLast()
     {
@@ -775,8 +776,9 @@ internal sealed class TrayApp : ApplicationContext
                 return;
             }
 
-            // A recovered crash has no original window; keep the text on the clipboard.
-            var keepOnly = retry is { ClipboardOnly: true } || !_settings.AutoPaste;
+            // Like the Mac since 8.75: a retry runs from idle (tray menu or balloon click, recovered recording);
+            // the window in front then is whatever the user did since, so copy only.
+            var keepOnly = !Core.ClipboardPasteGuard.MayAutoPaste(_settings.AutoPaste, clipboardOnlyRun: retry != null);
             var outcome = keepOnly
                 ? (_paster.KeepOnClipboard(text) ? PasteOutcome.ClipboardOnlyByChoice : PasteOutcome.Failed)
                 : await _paster.PasteAsync(text, _pasteTarget, _settings.RestoreClipboard, ct);
@@ -800,7 +802,8 @@ internal sealed class TrayApp : ApplicationContext
                     done = true;
                     break;
                 case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld or PasteOutcome.ClipboardOnlyTargetChanged
-                    or PasteOutcome.ClipboardOnlyOwnWindow or PasteOutcome.ClipboardOnlyTargetGone when _unsupported.Count > 0:
+                    or PasteOutcome.ClipboardOnlyOwnWindow or PasteOutcome.ClipboardOnlyTargetGone
+                    or PasteOutcome.ClipboardOnlyClipboardChanged when _unsupported.Count > 0:
                     // The balloon would bury the warning; the card says both.
                     _overlay.ShowWarning(_unsupported, pasted: false);
                     done = true;
@@ -823,6 +826,11 @@ internal sealed class TrayApp : ApplicationContext
                 case PasteOutcome.ClipboardOnlyTargetGone:
                     Notify("Bitte selbst einfügen",
                         "Das Fenster, in dem die Aufnahme begann, ist geschlossen. Der Text liegt in der Zwischenablage: Strg+V drücken.",
+                        ToolTipIcon.Info);
+                    break;
+                case PasteOutcome.ClipboardOnlyClipboardChanged:
+                    Notify("Nicht eingefügt",
+                        "Die Zwischenablage hat sich kurz vor dem Einfügen geändert. Den Text gibt es im Menü am Symbol unter „Letzte Texte“.",
                         ToolTipIcon.Info);
                     break;
                 case PasteOutcome.ClipboardOnlyOwnWindow:
@@ -913,14 +921,17 @@ internal sealed class TrayApp : ApplicationContext
 
     private async Task<string> DictateAsync(byte[] wav, double seconds, CancellationToken ct)
     {
+        var punctuation = Core.PunctuationModes.Effective(_settings.PunctuationMode,
+            isOffline: _settings.EffectiveSpeechEngine == Core.Engine.Local, duringMeeting: false);
         string raw = _fakeGemini
             ? "das ist ein test diktat aus der virtuellen maschine"
-            : await TranscribeAsync(wav, ct);
+            : await TranscribeAsync(wav, ct, punctuation);
         raw = GlossaryBackstops(raw);
-        string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), seconds);
+        string text = Core.TextCleanup.DiscardImplausible(
+            Core.TextCleanup.ForDictation(raw, addTrailingPeriod: punctuation == Core.PunctuationMode.Automatic), seconds);
         // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
         if (Core.TextCleanup.LooksLikeRefusal(text)) text = "";
-        Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup");
+        Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup, punctuation {punctuation}");
         if (text.Length == 0) Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
         return text;
     }
@@ -1134,10 +1145,10 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     /// <summary>Speech recognition with the chosen engine: Parakeet on this PC, or Gemini / OpenAI.</summary>
-    private Task<string> TranscribeAsync(byte[] wav, CancellationToken ct) =>
+    private Task<string> TranscribeAsync(byte[] wav, CancellationToken ct, Core.PunctuationMode punctuation = Core.PunctuationMode.Automatic) =>
         _settings.EffectiveSpeechEngine switch
         {
-            Core.Engine.Local => TranscribeOfflineAsync(wav, ct),
+            Core.Engine.Local => TranscribeOfflineAsync(wav, ct, punctuation),
             Core.Engine.OpenAI => TranscribeOnlineAsync(_openAi, wav, ct),
             _ => TranscribeOnlineAsync(_gemini, wav, ct),
         };
@@ -1228,9 +1239,16 @@ internal sealed class TrayApp : ApplicationContext
     /// Parakeet, in 30-second pieces above 40 s, one at a time (the recognizer is serialized anyway).
     /// Spoken "Doppelpunkt" / "neuer Absatz" become punctuation; Gemini does that itself.
     /// </summary>
-    private async Task<string> TranscribeOfflineAsync(byte[] wav, CancellationToken ct) =>
-        Core.SpokenPunctuation.Apply(await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
-            (chunk, c) => _offline.TranscribeAsync(chunk, c), maxParallel: 1, ct));
+    private async Task<string> TranscribeOfflineAsync(byte[] wav, CancellationToken ct,
+        Core.PunctuationMode punctuation = Core.PunctuationMode.Automatic)
+    {
+        var joined = await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
+            (chunk, c) => _offline.TranscribeAsync(chunk, c), maxParallel: 1, ct);
+        var source = punctuation == Core.PunctuationMode.SpokenOnly
+            ? Core.SpokenPunctuation.StripModelPunctuation(joined)
+            : joined;
+        return Core.SpokenPunctuation.Apply(source, punctuation);
+    }
 
     // ---------------- live meeting ----------------
 

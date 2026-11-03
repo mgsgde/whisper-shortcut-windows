@@ -95,4 +95,11 @@ public class StripMarkdownTests
         var expected = "Anamnese:\n- Nackenschmerzen seit 5 Tagen\n\nBefund:\n- C5/C6 links eingeschränkt\n\nTherapie:\n- (nicht diktiert)";
         Assert.Equal(expected, TextCleanup.StripMarkdown(input));
     }
+
+    [Fact]
+    public void FormattingWithoutPeriod()
+    {
+        Assert.Equal("Hallo welt", TextCleanup.ForDictation("hallo welt", addTrailingPeriod: false));
+        Assert.Equal("Hallo welt.", TextCleanup.ForDictation("hallo welt"));
+    }
 }

@@ -60,6 +60,12 @@ public sealed class Settings
     /// <summary>Where text processing (Dictate Prompt) runs. Use <see cref="EffectiveTextEngine"/> to decide.</summary>
     public Engine TextEngine { get; set; } = Engine.Gemini;
 
+    /// <summary>
+    /// "Only when spoken": offline dictation writes punctuation only where it is spoken ("Punkt", "Komma").
+    /// Use <see cref="PunctuationModes.Effective"/> to decide; cloud models and meetings ignore it.
+    /// </summary>
+    public PunctuationMode PunctuationMode { get; set; } = PunctuationMode.Automatic;
+
     /// <summary>OpenAI transcription model id.</summary>
     public string OpenAiTranscriptionModel { get; set; } = OpenAiModels.DefaultTranscriptionModel;
 
@@ -211,6 +217,7 @@ public sealed class Settings
             }
             s.SpeechEngine = ParseEngine(dto.SpeechEngine);
             s.TextEngine = ParseEngine(dto.TextEngine);
+            s.PunctuationMode = ParsePunctuationMode(dto.PunctuationMode);
             s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
             s.OpenAiPromptModel = OpenAiModels.NormalizePrompt(dto.OpenAiPromptModel);
             // JSON null entries (hand-edited or a half-written file) must not stay in the list:
@@ -284,6 +291,13 @@ public sealed class Settings
         _ => Engine.Gemini,
     };
 
+    // Unknown or missing = Automatic.
+    private static PunctuationMode ParsePunctuationMode(string? v) =>
+        v?.Trim().ToLowerInvariant() == "spokenonly" ? PunctuationMode.SpokenOnly : PunctuationMode.Automatic;
+
+    private static string PunctuationModeName(PunctuationMode m) =>
+        m == PunctuationMode.SpokenOnly ? "spokenOnly" : "automatic";
+
     private static string EngineName(Engine e) => e switch
     {
         Engine.Local => "local",
@@ -315,6 +329,7 @@ public sealed class Settings
             OpenAiKeyProtected = OpenAiKey.Length == 0 ? "" : _protector.Protect(OpenAiKey),
             SpeechEngine = EngineName(SpeechEngine),
             TextEngine = EngineName(TextEngine),
+            PunctuationMode = PunctuationModeName(PunctuationMode),
             OpenAiTranscriptionModel = OpenAiTranscriptionModel,
             OpenAiPromptModel = OpenAiPromptModel,
             Glossary = Glossary,
@@ -372,6 +387,7 @@ public sealed class Settings
         public string? OpenAiKeyPlain { get; set; }
         [JsonPropertyName("speechEngine")] public string? SpeechEngine { get; set; }
         [JsonPropertyName("textEngine")] public string? TextEngine { get; set; }
+        [JsonPropertyName("punctuationMode")] public string? PunctuationMode { get; set; }
         [JsonPropertyName("openAiTranscriptionModel")] public string? OpenAiTranscriptionModel { get; set; }
         [JsonPropertyName("openAiPromptModel")] public string? OpenAiPromptModel { get; set; }
         [JsonPropertyName("glossary")] public List<string>? Glossary { get; set; }
