@@ -156,4 +156,18 @@ public class TermSpellingTests
         Assert.Equal("", GlossaryPrompt.ApplyTermSpellings("", new[] { "goedde" }));
         Assert.Equal("Gödde", GlossaryPrompt.ApplyTermSpellings("Gödde", Array.Empty<string>()));
     }
+
+    [Fact]
+    public void Keywords_CorrectionsFirst_RejectedAbsent_FoldDeduped_NotesStripped()
+    {
+        var kw = GlossaryPrompt.Keywords(new[]
+        {
+            "Terms: Müller, Kubernetes",
+            "Claude CLI (not \"Cloud CLI\")",
+            "muller",
+            "Kubernetes",
+        });
+        Assert.Equal(new[] { "Claude CLI", "Müller", "Kubernetes" }, kw);
+        Assert.DoesNotContain(kw, k => k.Contains("Cloud") || k.Contains("not"));
+    }
 }
