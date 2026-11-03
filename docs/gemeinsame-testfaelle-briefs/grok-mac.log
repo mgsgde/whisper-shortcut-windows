@@ -1,0 +1,52 @@
+Shared JSON cases for `DictationFidelityCheck.unsupportedWords` are in place and the hermetic run passed. The hermetic plan already runs the whole `WhisperShortcutTests` target except three unrelated suites, so it did not need a change.
+
+**Files**
+- `WhisperShortcutTests/SharedCases/fidelity.unsupportedWords.json` (14 cases, one per `unsupportedWords` call; the inflection test is two cases)
+- `WhisperShortcutTests/SharedCasesTests.swift`
+
+**Commit:** `58891ab810cc6b0a9417f9283b88c25cd3feb39e` on `test/shared-cases`
+
+Both suites passed: `Dictation fidelity check` (0.012 s) and `Shared cases` (14 parameterized cases plus the unique-id test). Exit code of `bash scripts/run-tests.sh --hermetic` was 0.
+
+```
+✔ Suite "Workspace write tools" passed after 0.037 seconds.
+✔ Test "Never offered with enough samples is due" passed after 0.001 seconds.
+✔ Test "Dismissed with fewer than 20 new samples is not due" passed after 0.001 seconds.
+✔ Test "Dismissed with 20 new samples is due again" passed after 0.001 seconds.
+✔ Test "German reply header and quoted text are cut" passed after 0.002 seconds.
+✔ Test "English reply header wrapped over two lines is cut" passed after 0.001 seconds.
+✔ Test "Signature delimiter, device footer and quote lines are dropped" passed after 0.001 seconds.
+✔ Test "A sentence of the user's that starts with Am/On and has a digit is not a reply header" passed after 0.001 seconds.
+✔ Test "Outlook header needs a second header field; separator line is cut" passed after 0.001 seconds.
+✔ Test "Numeric and named HTML entities are decoded" passed after 0.001 seconds.
+✔ Test "Drafts are neither samples nor the incoming message" passed after 0.001 seconds.
+✔ Test "Repeated corporate signature is cut, the sign-off above it stays" passed after 0.001 seconds.
+✔ Test "Too short and forwards are rejected" passed after 0.001 seconds.
+✔ Test "HTML body becomes plain text" passed after 0.001 seconds.
+✔ Test "Recipient is the first address, lowercased" passed after 0.001 seconds.
+✔ Test "Thread import pairs each sent message with the incoming one before it" passed after 0.001 seconds.
+✔ Test "Bundle ids map to writing contexts" passed after 0.001 seconds.
+✔ Test "Profile sections are parsed by header" passed after 0.001 seconds.
+✔ Test "Re-derive keeps hand-written sections of contexts without samples" passed after 0.001 seconds.
+✔ Test "Re-derive without samples and without an existing section stays empty" passed after 0.001 seconds.
+✔ Test "Duplicates by id and by text are skipped" passed after 0.003 seconds.
+✔ Test "No block when disabled or nothing learned" passed after 0.001 seconds.
+✔ Test "Unlearned context falls back to the default context" passed after 0.001 seconds.
+✔ Test "Budget drops examples before the profile" passed after 0.001 seconds.
+✔ Test "Reply length follows the incoming text, clamped around the median" passed after 0.001 seconds.
+✔ Test "Counter counts only samples actually added; reset and clearAll zero it" passed after 0.006 seconds.
+✔ Test "Dictated sample: too short is nil, normal is trimmed with source dictated" passed after 0.001 seconds.
+✔ Suite "Writing Style" passed after 0.030 seconds.
+✔ Test "Every YouTube URL shape the user can paste is detected" passed after 0.001 seconds.
+✔ Test "Text without a YouTube link produces nothing" passed after 0.001 seconds.
+✔ Test "Timestamps parse in every format YouTube emits" passed after 0.001 seconds.
+✔ Test "The linked moment becomes the clip window; without one the video stays unclipped" passed after 0.001 seconds.
+✔ Test "A repeated video is attached once, in order of first appearance" passed after 0.001 seconds.
+✔ Test "The 400 fallback clips only unclipped YouTube parts" passed after 0.001 seconds.
+✔ Test "The 403 fallback drops the video part together with its context note" passed after 0.001 seconds.
+✔ Test "Stripping never leaves a content without parts" passed after 0.001 seconds.
+✔ Test "Timestamps are formatted the way YouTube shows them" passed after 0.001 seconds.
+✔ Suite "YouTube video links" passed after 0.002 seconds.
+✔ Test run with 1220 tests in 154 suites passed after 27.549 seconds.
+✅ All tests passed.
+```
