@@ -710,3 +710,69 @@ internal sealed class Bar : Control
         g.FillPath(brush, fillPath);
     }
 }
+
+/// <summary>
+/// One tile of a model picker (Mac ModelTile): the model's name and, below it, why it is featured or what it still
+/// needs. The chosen tile is filled with the accent color.
+/// </summary>
+internal sealed class ModelTile : Button
+{
+    private bool _selected, _hover;
+    private readonly string _badges;
+
+    public ModelTile(string name, string badges)
+    {
+        Text = name;
+        _badges = badges;
+        AccessibleName = badges.Length > 0 ? $"{name}, {badges}" : name;
+        AccessibleRole = AccessibleRole.RadioButton;
+        FlatStyle = FlatStyle.Flat;
+        FlatAppearance.BorderSize = 0;
+        Font = Theme.Strong;
+        TabStop = true;
+        SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+    }
+
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public bool Selected
+    {
+        get => _selected;
+        set { _selected = value; AccessibleDescription = value ? "ausgewählt" : null; Invalidate(); }
+    }
+
+    protected override void OnMouseEnter(EventArgs e) { _hover = true; Invalidate(); base.OnMouseEnter(e); }
+    protected override void OnMouseLeave(EventArgs e) { _hover = false; Invalidate(); base.OnMouseLeave(e); }
+    protected override void OnEnabledChanged(EventArgs e) { Invalidate(); base.OnEnabledChanged(e); }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        var g = e.Graphics;
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.Clear(Theme.Card);
+        var r = new RectangleF(0.5f, 0.5f, Width - 1, Height - 1);
+        float radius = LogicalToDeviceUnits(6);
+        bool on = _selected && Enabled;
+        using (var fill = new SolidBrush(on ? Theme.Accent : _hover && Enabled ? Theme.ButtonHover : Theme.Button))
+        using (var path = Theme.Rounded(r, radius))
+        {
+            g.FillPath(fill, path);
+            using var border = new Pen(on ? Theme.Accent : Theme.ButtonBorder);
+            g.DrawPath(border, path);
+        }
+        Color fore = !Enabled ? Theme.Disabled : on ? Theme.AccentText : Theme.Text;
+        Color sub = !Enabled ? Theme.Disabled : on ? Theme.AccentText : Theme.Secondary;
+        int pad = LogicalToDeviceUnits(8), half = Height / 2;
+        var flags = TextFormatFlags.HorizontalCenter | TextFormatFlags.EndEllipsis | TextFormatFlags.NoPrefix | TextFormatFlags.SingleLine;
+        TextRenderer.DrawText(g, Text, Font, new Rectangle(pad, 0, Width - 2 * pad, _badges.Length > 0 ? half + LogicalToDeviceUnits(2) : Height),
+            fore, flags | (_badges.Length > 0 ? TextFormatFlags.Bottom : TextFormatFlags.VerticalCenter));
+        if (_badges.Length > 0)
+            TextRenderer.DrawText(g, _badges, Theme.Small, new Rectangle(pad, half + LogicalToDeviceUnits(2), Width - 2 * pad, half - LogicalToDeviceUnits(2)),
+                sub, flags | TextFormatFlags.Top);
+        if (Focused && ShowFocusCues)
+        {
+            using var ring = new Pen(Theme.Text, LogicalToDeviceUnits(2));
+            using var path = Theme.Rounded(RectangleF.Inflate(r, -2, -2), radius);
+            g.DrawPath(ring, path);
+        }
+    }
+}

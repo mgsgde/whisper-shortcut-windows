@@ -284,18 +284,22 @@ internal sealed partial class SettingsForm : Form
         engineNote.Controls.Add(Wrap($"Gemischt geht auch: Die Spracherkennung auf diesem PC braucht nur {FormatBytes(ComponentSize(Core.OfflineCatalog.Parakeet))} "
             + "und ist sehr schnell, die Texte gehen online. Das große Sprachmodell muss dafür nicht geladen werden.", 2 * RowPadding, small: true));
         speechEngineCard.AddRow(engineNote);
-        dictate.Controls.Add(speechEngineCard);
         _dictateModel = ModelChoice(Core.GeminiModels.Transcription, settings.TranscriptionModel);
-        dictate.Controls.Add(_dictateGeminiCard = ModelCard(_dictateModel, "Gemini-Modell", "Gilt, wenn die Spracherkennung über Gemini läuft. "
-            + "Auf diesem PC erkennt Parakeet die Sprache, ohne Modellwahl und ohne eigene Anweisungen."));
+        _dictateGeminiCard = ModelCard(_dictateModel, "Gemini-Modell", "Gilt, wenn die Spracherkennung über Gemini läuft. "
+            + "Auf diesem PC erkennt Parakeet die Sprache, ohne Modellwahl und ohne eigene Anweisungen.");
         _dictateModelOpenAi = ModelChoice(Core.OpenAiModels.Transcription, settings.OpenAiTranscriptionModel);
-        dictate.Controls.Add(_dictateOpenAiCard = ModelCard(_dictateModelOpenAi, "OpenAI-Modell", "Gilt, wenn die Spracherkennung über OpenAI läuft. "
-            + "Das Glossar geht als Hinweis mit; die Anweisungen unten gelten nur für Gemini."));
+        _dictateOpenAiCard = ModelCard(_dictateModelOpenAi, "OpenAI-Modell", "Gilt, wenn die Spracherkennung über OpenAI läuft. "
+            + "Das Glossar geht als Hinweis mit; die Anweisungen unten gelten nur für Gemini.");
+        // The provider and model combos stay the stored state; the tiles (Mac model picker) set them.
+        dictate.Controls.Add(Hidden(speechEngineCard, _dictateGeminiCard, _dictateOpenAiCard));
+        dictate.Controls.Add(ModelPicker("Transkriptionsmodell", () => Core.ModelPickers.Transcription("Parakeet"),
+            models => Core.ModelPickers.Recommended(models, Core.Settings.DefaultTranscriptionModel, Core.OpenAiModels.DefaultTranscriptionModel),
+            _speechEngine, _dictateModel, _dictateModelOpenAi, () => OfflineEngine.SpeechInstalled));
 
         // --- offline speech model (Mac: Offline Models in this tab) ---
         dictate.Controls.Add(Section("Offline-Modell"));
         dictate.Controls.Add(Wrap("Läuft auf diesem PC, ohne Installation. Das Modell wird einmal geladen und bleibt gespeichert. "
-            + $"Das Laden läuft weiter, wenn das Fenster zu ist. Ablage: {Core.OfflineCatalog.Root}", 0));
+            + $"Gemischt geht auch: Parakeet erkennt die Sprache, die Texte gehen online. Ablage: {Core.OfflineCatalog.Root}", 0));
         var speech = Core.OfflineCatalog.Parakeet;
         _speechRow = new ModelRow("Parakeet", "Für Diktieren und für gesprochene Anweisungen. Versteht Deutsch, Englisch und weitere Sprachen.", this);
         var speechCard = new Card();
@@ -357,13 +361,16 @@ internal sealed partial class SettingsForm : Form
         var textEngineCard = new Card();
         textEngineCard.AddRow(SettingRow("Anbieter", "Wer die Anweisung auf den markierten Text anwendet, neue Texte schreibt und die "
             + "Schnellanweisungen ausführt.", _textEngine, ComboWidth, out _));
-        prompt.Controls.Add(textEngineCard);
         _engineOnly = new Control[] { speechEngineCard, textEngineCard };
         _promptModel = ModelChoice(Core.GeminiModels.Prompt, settings.PromptModel);
-        prompt.Controls.Add(_promptGeminiCard = ModelCard(_promptModel, "Gemini-Modell", "Gilt, wenn Texte über Gemini bearbeitet werden. "
-            + "Auf diesem PC arbeitet das Sprachmodell darunter."));
+        _promptGeminiCard = ModelCard(_promptModel, "Gemini-Modell", "Gilt, wenn Texte über Gemini bearbeitet werden. "
+            + "Auf diesem PC arbeitet das Sprachmodell darunter.");
         _promptModelOpenAi = ModelChoice(Core.OpenAiModels.Prompt, settings.OpenAiPromptModel);
-        prompt.Controls.Add(_promptOpenAiCard = ModelCard(_promptModelOpenAi, "OpenAI-Modell", "Gilt, wenn Texte über OpenAI bearbeitet werden."));
+        _promptOpenAiCard = ModelCard(_promptModelOpenAi, "OpenAI-Modell", "Gilt, wenn Texte über OpenAI bearbeitet werden.");
+        prompt.Controls.Add(Hidden(textEngineCard, _promptGeminiCard, _promptOpenAiCard));
+        prompt.Controls.Add(ModelPicker("Modell für Dictate Prompt", () => Core.ModelPickers.Prompt(LocalLlmName),
+            models => Core.ModelPickers.Recommended(models, Core.Settings.DefaultPromptModel, Core.OpenAiModels.DefaultPromptModel),
+            _textEngine, _promptModel, _promptModelOpenAi, () => _llmChoice != null && OfflineEngine.LlmInstalled(SelectedLlmChoice)));
 
         // --- offline language model (Mac: the local models in the Dictate Prompt picker) ---
         prompt.Controls.Add(Section("Offline-Sprachmodell"));
@@ -386,7 +393,7 @@ internal sealed partial class SettingsForm : Form
         _llmRow.Action.Click += (_, _) => ToggleDownload("llm",
             new[] { Core.OfflineCatalog.LlamaServer(OfflineEngine.Arch), SelectedLlmChoice.Component });
         _llmRow.Remove.LinkClicked += (_, _) => RemoveModel(SelectedLlmChoice.Component, SelectedLlmChoice.DisplayName);
-        _llmChoice.SelectedIndexChanged += (_, _) => UpdateModelRows();
+        _llmChoice.SelectedIndexChanged += (_, _) => { UpdateModelRows(); RefreshPickers(); };
         _offline.DownloadChanged += UpdateModelRows;
         FormClosed += (_, _) => _offline.DownloadChanged -= UpdateModelRows;
 
@@ -555,11 +562,15 @@ internal sealed partial class SettingsForm : Form
         // Each option sits in its own card row, so the automatic radio grouping (same parent) does not apply.
         _onlineMode.CheckedChanged += (_, _) => { if (_onlineMode.Checked) _offlineMode.Checked = false; };
         _offlineMode.CheckedChanged += (_, _) => { if (_offlineMode.Checked) _onlineMode.Checked = false; };
+        // Mac: one switch. The two option buttons stay the stored state (Snapshot, SyncOfflineFromTray) without being shown.
+        var offlineSwitch = new ToggleSwitch { Checked = settings.OfflineMode, AccessibleName = "Offline-Modus" };
+        offlineSwitch.CheckedChanged += (_, _) => (offlineSwitch.Checked ? _offlineMode : _onlineMode).Checked = true;
+        _offlineMode.CheckedChanged += (_, _) => offlineSwitch.Checked = _offlineMode.Checked;
         var modeCard = new Card();
-        modeCard.AddRow(OptionRow(_onlineMode, "Beste Qualität und am schnellsten. Braucht Internet und einen API-Schlüssel (Konten); "
-            + "Aufnahme und markierter Text gehen an den gewählten Anbieter. Einzelne Schritte können auch auf diesem PC laufen."));
-        modeCard.AddRow(OptionRow(_offlineMode, "Alles läuft auf diesem PC: Aufnahmen und Texte verlassen den Rechner nie, egal was sonst "
-            + "eingestellt ist. Richtig für Patientendaten. Die Modelle werden einmal geladen (Diktieren, Dictate Prompt)."));
+        modeCard.AddRow(SettingRow("Offline-Modus", "Alles läuft auf diesem PC: Diktat und Dictate Prompt nutzen die Modelle auf "
+            + "diesem PC, keine Anfrage verlässt den Rechner, egal was sonst eingestellt ist. Gebaut für Diktate mit Patientendaten, bei "
+            + "denen „die Aufnahme verlässt dieses Gerät nie“ gelten muss. Die Modelle werden einmal geladen (Diktieren, Dictate Prompt).",
+            offlineSwitch, ToggleWidth, out _));
         privacy.Controls.Add(modeCard);
         _offlineState = new ThemedLabel { AutoSize = true, Tone = Tone.Secondary, Margin = new Padding(0, 4, 0, 4) };
         Fit(_offlineState, 0);
@@ -567,11 +578,15 @@ internal sealed partial class SettingsForm : Form
         _onlineMode.CheckedChanged += (_, _) =>
         {
             UpdateMode();
+            RefreshPickers();
             // Switching to online: say right away whether the stored keys work.
             if (_onlineMode.Checked && IsHandleCreated) CheckVisibleKeys();
         };
         _speechEngine.SelectedIndexChanged += (_, _) => UpdateMode();
         _textEngine.SelectedIndexChanged += (_, _) => UpdateMode();
+        // „Schlüssel nötig“ on the tiles follows the key fields on Konten.
+        _geminiKey.Box.TextChanged += (_, _) => RefreshPickers();
+        _openAiKey.Box.TextChanged += (_, _) => RefreshPickers();
 
         privacy.Controls.Add(Section("Berechtigungen", subtitle: "Worauf WhisperShortcut auf diesem PC zugreift."));
         var micPrivacy = new FluentButton("Windows-Einstellungen öffnen") { MinimumSize = new Size(ButtonWidth + 100, 32), AccessibleName = "Mikrofon-Datenschutz in Windows öffnen" };
@@ -638,7 +653,7 @@ internal sealed partial class SettingsForm : Form
         WheelToPage.Attach(this);
 
         // Hints wrap at the visible page width, never wider.
-        _pageHost.ClientSizeChanged += (_, _) => FitHints();
+        _pageHost.ClientSizeChanged += (_, _) => { FitHints(); foreach (var p in _pickers) p.Tiles.Parent?.PerformLayout(); };
 
         Load += (_, _) =>
         {
@@ -973,6 +988,17 @@ internal sealed partial class SettingsForm : Form
         card.AddRow(SettingRow("Tastenkürzel", description, new FieldFrame(box) { Width = KeyWidth, Dock = DockStyle.None }, KeyWidth, out _));
         return card;
     }
+
+    /// <summary>Controls that hold state but are not shown (the provider and model combos behind the model tiles).</summary>
+    private static Panel Hidden(params Control[] controls)
+    {
+        var holder = new Panel { Visible = false, Size = Size.Empty, Margin = new Padding(0) };
+        holder.Controls.AddRange(controls);
+        return holder;
+    }
+
+    /// <summary>The offline language model's name for the Dictate Prompt tile.</summary>
+    private string LocalLlmName => _llmChoice?.SelectedItem is LlmItem item ? item.Llm.DisplayName : "Sprachmodell auf diesem PC";
 
     /// <summary>One row of the shortcut list: the function, an optional hint, the hotkey field on the right.</summary>
     private TableLayoutPanel KeyRow(string title, string? description, HotkeyBox box) =>
@@ -1601,6 +1627,7 @@ internal sealed partial class SettingsForm : Form
         bool speechReady = OfflineEngine.SpeechInstalled, llmReady = OfflineEngine.LlmInstalled(llm);
         UpdateRow(_speechRow, "speech", speechReady, ComponentSize(Core.OfflineCatalog.Parakeet), download);
         UpdateRow(_llmRow, "llm", llmReady, llmParts.Sum(ComponentSize), download);
+        RefreshPickers();
         _llmChoice.Enabled = download?.Id != "llm";
     }
 
