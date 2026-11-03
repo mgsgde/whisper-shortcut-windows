@@ -142,13 +142,14 @@ internal sealed class RecordingOverlay : Form
     /// <param name="templateName">A template recording: its name is the title, and no quick instructions are offered.</param>
     /// <param name="screenshot">A held screenshot is sent with this run: shown as its own line.</param>
     public void ShowRecording(Mode mode, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar,
-        IReadOnlyList<string>? quickActions = null, string? templateName = null, bool screenshot = false)
+        IReadOnlyList<string>? quickActions = null, string? templateName = null, bool screenshot = false, string? title = null)
     {
         _phase = Phase.Recording;
         _screenshot = screenshot && mode != Mode.Dictate;
         _template = templateName != null;
         _title = _template ? Core.UserCopy.OverlayTemplateTitle(templateName!)
             : mode == Mode.Dictate ? Core.UserCopy.OverlayDictateTitle : Core.UserCopy.OverlayPromptTitle;
+        if (title != null) _title = title;
         _stopKey = stopKey;
         _hint = Core.UserCopy.OverlayStopHint(stopKey);
         // Dictate Prompt and templates: the selection is known only after Ctrl+C (up to 0.5 s), see SetSelection.

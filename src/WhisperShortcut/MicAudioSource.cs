@@ -39,6 +39,12 @@ internal sealed class MicAudioSource : Core.IAudioSource
     /// <summary>Raised once when the crash-spill file can no longer be written (usually a full disk).</summary>
     public event Action? CheckpointFailed;
 
+    /// <summary>
+    /// Raised on the capture thread with (buffer, bytes) after the buffer was written to the WAV (not after the
+    /// limit was hit or after stop). Subscribers must copy what they keep: the buffer is reused.
+    /// </summary>
+    public event Action<byte[], int>? PcmAvailable;
+
     private readonly WaveFormat _format = new(16000, 16, 1);
     private readonly object _gate = new();
     private WaveInEvent? _waveIn;
@@ -152,6 +158,7 @@ internal sealed class MicAudioSource : Core.IAudioSource
                 limit = true;
             }
         }
+        PcmAvailable?.Invoke(e.Buffer, e.BytesRecorded); // outside _gate; only reached when the buffer was written
         if (checkpointFailed) CheckpointFailed?.Invoke();
         int bufferPeak = 0;
         int peak = _peak;

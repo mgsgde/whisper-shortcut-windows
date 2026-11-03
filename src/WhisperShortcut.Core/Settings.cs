@@ -147,6 +147,9 @@ public sealed class Settings
     /// <summary>Hotkey that starts/stops a Live Meeting. Empty = no hotkey (unassigned by default).</summary>
     public string MeetingHotkey { get; set; } = "";
 
+    /// <summary>Live diktieren (macOS Dictate Live). Empty = off, like the Mac where the shortcut ships disabled; no default that could collide.</summary>
+    public string LiveDictateHotkey { get; set; } = "";
+
     /// <summary>Which audio a Live Meeting records: "auto", "mic" or "mix" (see <see cref="MeetingAudioRouting"/>).</summary>
     public string MeetingAudioMode { get; set; } = "auto";
 
@@ -238,6 +241,7 @@ public sealed class Settings
             s.LastTemplateId = dto.LastTemplateId ?? "";
             s.Microphone = dto.Microphone ?? "";
             s.MeetingHotkey = dto.MeetingHotkey ?? "";
+            s.LiveDictateHotkey = dto.LiveDictateHotkey ?? "";
             s.MeetingAudioMode = MeetingAudioRouting.Name(MeetingAudioRouting.Parse(dto.MeetingAudioMode));
             s.MeetingSummary = dto.MeetingSummary ?? true;
             s.OfflineMode = dto.OfflineMode ?? false;
@@ -351,6 +355,7 @@ public sealed class Settings
             LastTemplateId = LastTemplateId,
             Microphone = Microphone,
             MeetingHotkey = MeetingHotkey,
+            LiveDictateHotkey = LiveDictateHotkey,
             MeetingAudioMode = MeetingAudioMode,
             MeetingSummary = MeetingSummary,
             OfflineMode = OfflineMode,
@@ -409,6 +414,7 @@ public sealed class Settings
         [JsonPropertyName("lastTemplateId")] public string? LastTemplateId { get; set; }
         [JsonPropertyName("microphone")] public string? Microphone { get; set; }
         [JsonPropertyName("meetingHotkey")] public string? MeetingHotkey { get; set; }
+        [JsonPropertyName("liveDictateHotkey")] public string? LiveDictateHotkey { get; set; }
         [JsonPropertyName("meetingAudioMode")] public string? MeetingAudioMode { get; set; }
         [JsonPropertyName("meetingSummary")] public bool? MeetingSummary { get; set; }
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
