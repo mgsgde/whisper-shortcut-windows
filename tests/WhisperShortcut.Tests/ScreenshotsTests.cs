@@ -214,9 +214,11 @@ public class ScreenshotsTests
     }
 
     [Fact]
-    public void Policy_OffByDefault()
+    public void Policy_OnForNewInstalls_OffWhenSwitchedOff()
     {
-        Assert.False(ScreenshotPolicy.Allowed(Make(_ => { })));
+        // New installs match the Mac, where the screenshot works out of the box.
+        Assert.True(ScreenshotPolicy.Allowed(Make(_ => { })));
+        Assert.False(ScreenshotPolicy.Allowed(Make(s => s.SendScreenshots = false)));
     }
 
     [Fact]

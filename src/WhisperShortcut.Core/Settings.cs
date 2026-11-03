@@ -220,9 +220,10 @@ public sealed class Settings
 
     /// <summary>
     /// Send a screenshot taken with the Screenshot hotkey along with the next Dictate Prompt or template request.
-    /// Off by default: screens of practice software show patient data.
+    /// On for new installs, like the Mac (screenshot works out of the box there). Installs from before the Mac
+    /// defaults keep it off when the field is missing: screens of practice software show patient data.
     /// </summary>
-    public bool SendScreenshots { get; set; }
+    public bool SendScreenshots { get; set; } = true;
 
     /// <summary>Hotkey that opens the Windows snip UI; "" = unassigned.</summary>
     public string ScreenshotHotkey { get; set; } = DefaultScreenshotHotkey;
@@ -260,8 +261,8 @@ public sealed class Settings
     /// <summary>Paste the result at the cursor with Ctrl+V. Off = the text only goes to the clipboard.</summary>
     public bool AutoPaste { get; set; } = true;
 
-    /// <summary>Play the short start/stop/error tones.</summary>
-    public bool Sounds { get; set; } = true;
+    /// <summary>Play the short start/stop/error tones. Off for new installs (the Mac has none); older files without the field keep them.</summary>
+    public bool Sounds { get; set; }
 
     /// <summary>Look for a new version at start and once a day; only shows a notice, installs nothing by itself.</summary>
     public bool AutoUpdateCheck { get; set; } = true;

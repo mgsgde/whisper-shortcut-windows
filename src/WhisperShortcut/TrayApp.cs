@@ -267,7 +267,7 @@ internal sealed class TrayApp : ApplicationContext
             // Live diktieren ships switched off (Mac: disabled).
             (_settings.ActiveLiveDictateHotkey, OnLiveHotkey),
             (_settings.ActiveScreenshotHotkey, OnScreenshotHotkey),
-            (_settings.ActiveOpenSettingsHotkey, ShowSettings),
+            (_settings.ActiveOpenSettingsHotkey, ToggleSettings),
         };
         foreach (var (stored, action) in keys)
         {
@@ -1888,6 +1888,21 @@ internal sealed class TrayApp : ApplicationContext
     public void OpenWelcome() => _ui.Post(_ => ShowSettings(welcome: true), null);
 
     private void ShowSettings() => ShowSettings(welcome: false);
+
+    /// <summary>
+    /// The open-settings hotkey (Mac SettingsManager.toggleSettings): closes the window when it is open, opens it otherwise.
+    /// While the window is in front the global hotkeys are off; SettingsForm closes itself on the same key then.
+    /// </summary>
+    private void ToggleSettings()
+    {
+        if (_settingsForm is { IsDisposed: false, Visible: true } form)
+        {
+            Core.Log.Info("Hotkey Settings: closing the window");
+            form.Close();
+            return;
+        }
+        ShowSettings();
+    }
 
     private void ShowSettings(bool welcome)
     {

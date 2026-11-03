@@ -422,11 +422,11 @@ public class LogAndAudioTests
     }
 
     [Fact]
-    public void Sounds_defaults_on_and_round_trips()
+    public void Sounds_off_for_new_installs_on_for_old_files_and_round_trips()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.True(s.Sounds);
+        Assert.False(s.Sounds);
 
         s.Sounds = false;
         s.Save();

@@ -1600,6 +1600,9 @@ internal sealed partial class SettingsForm : Form
 
     private void FitHints()
     {
+        // The AI-apps page refreshes while the constructor still builds the pages; the resize after the
+        // window is laid out fits the hints then.
+        if (_pageHost is null) return;
         // Page padding (72 at 96 dpi) and a possible scroll bar.
         int width = _pageHost.ClientSize.Width - LogicalToDeviceUnits(72) - SystemInformation.VerticalScrollBarWidth;
         foreach (var (label, inset) in _wraps)
@@ -1624,6 +1627,11 @@ internal sealed partial class SettingsForm : Form
 
     private static string SelectedModel(FluentCombo combo) => ((ModelItem)combo.SelectedItem!).Model.Id;
 
+    private static Keys ToKeys(Hotkey h) => h.Key
+        | ((h.Modifiers & NativeMethods.MOD_CONTROL) != 0 ? Keys.Control : 0)
+        | ((h.Modifiers & NativeMethods.MOD_ALT) != 0 ? Keys.Alt : 0)
+        | ((h.Modifiers & NativeMethods.MOD_SHIFT) != 0 ? Keys.Shift : 0);
+
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
     {
         if (IsPageShortcut(keyData, out int step))
@@ -1639,6 +1647,14 @@ internal sealed partial class SettingsForm : Form
         if (ActiveControl is NavItem && keyData is Keys.Up or Keys.Left)
         {
             ShowAdjacentPage(-1);
+            return true;
+        }
+        // The open-settings hotkey closes the window again (Mac toggleSettings). The global hotkeys are off while this
+        // window is in front, so the window handles the key itself; a hotkey field records it instead.
+        if (ActiveControl is not HotkeyBox && Hotkey.TryParse(_settings.ActiveOpenSettingsHotkey, out var toggle)
+            && keyData == ToKeys(toggle))
+        {
+            Close();
             return true;
         }
         // Esc out of habit must not throw away typed glossary terms: close the way the X does.
