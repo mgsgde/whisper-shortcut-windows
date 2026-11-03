@@ -5,7 +5,7 @@ namespace WhisperShortcut;
 
 /// <summary>
 /// "Version X ist da": the release notes, and the one button that downloads, checks the signature and
-/// swaps the exe. Opened from the tray notice, the tray menu or Einstellungen → Info.
+/// swaps the exe. Opened from the tray notice, the tray menu or Einstellungen → Über.
 /// </summary>
 internal sealed class UpdateDialog : Form
 {

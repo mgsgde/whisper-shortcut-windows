@@ -64,7 +64,7 @@ internal sealed class McpApprovalDialog : Form
                 var added = Added(proposal.PreviousContent, proposal.ProposedContent);
                 Add(new ThemedLabel { Text = added.Count == 1 ? "Neu im Glossar:" : $"Neu im Glossar ({added.Count} Begriffe):", Font = Theme.Strong, AutoSize = true, Margin = new Padding(0, 0, 0, 6) });
                 Add(Framed(Box(string.Join("\r\n", added), readOnly: true)), fill: true);
-                Add(Hint("Was schon im Glossar steht, bleibt. Einzelne Begriffe lassen sich nach dem Übernehmen unter Einstellungen → Glossar löschen."));
+                Add(Hint("Was schon im Glossar steht, bleibt. Einzelne Begriffe lassen sich nach dem Übernehmen unter Einstellungen → Diktieren → Glossar löschen."));
                 break;
 
             default:

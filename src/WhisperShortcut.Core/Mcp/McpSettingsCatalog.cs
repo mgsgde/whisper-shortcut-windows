@@ -110,8 +110,8 @@ public static class McpSettingsCatalog
     /// <summary>How a shortcut value is written; sent to the AI app.</summary>
     public const string ShortcutFormatHint = "A string like \"Alt+1\" or \"Ctrl+Shift+D\": Alt plus a digit 0-9, or two of Ctrl/Alt/Shift (one of them Ctrl or Alt; Ctrl+Alt alone is AltGr on German keyboards and not allowed) plus a letter, digit or F1-F12. \"RightCtrl\" is the right Ctrl key alone (the Mac's rightControl). The object form {\"key\": \"1\", \"modifiers\": [\"alt\"]} is accepted too.";
 
-    private const string NoSpeechModel = "The offline speech model is not downloaded. The user downloads it in WhisperShortcut Settings → Offline.";
-    private const string NoLlm = "The offline language model is not downloaded. The user downloads it in WhisperShortcut Settings → Offline.";
+    private const string NoSpeechModel = "The offline speech model is not downloaded. The user downloads it in WhisperShortcut Settings → Diktieren (speech) or Dictate Prompt (language model).";
+    private const string NoLlm = "The offline language model is not downloaded. The user downloads it in WhisperShortcut Settings → Diktieren (speech) or Dictate Prompt (language model).";
     private const string NoGeminiKey = "No Gemini API key in WhisperShortcut. The user enters it in Settings → Allgemein; AI apps cannot set keys.";
     private const string NoOpenAiKey = "No OpenAI API key in WhisperShortcut. The user enters it in Settings → Allgemein; AI apps cannot set keys.";
 
@@ -238,7 +238,7 @@ public static class McpSettingsCatalog
             new()
             {
                 Id = "offline.llm", Title = "Offline-Sprachmodell", Category = "models", Type = McpSettingType.Enum,
-                Description = "The language model used for Dictate Prompt on this PC. If it is not downloaded yet, the user downloads it in WhisperShortcut Settings → Offline.",
+                Description = "The language model used for Dictate Prompt on this PC. If it is not downloaded yet, the user downloads it in WhisperShortcut Settings → Dictate Prompt.",
                 Read = () => JsonValue.Create(OfflineCatalog.LlmById(settings.OfflineLlmId).Id),
                 Options = () => OfflineCatalog.Llms.Select(l => new McpSettingOption(l.Id, l.DisplayName, true, null)).ToList(),
                 Write = v => settings.OfflineLlmId = Text(v),
