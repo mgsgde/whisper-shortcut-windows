@@ -315,10 +315,12 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         if (code == 403)
             return new GeminiException("OpenAI", GeminiErrorKind.InvalidKey,
                 "Dieser OpenAI-Schlüssel darf das Modell nicht benutzen (Projekt- oder Organisationsrechte prüfen).");
+        if (code == 429 && errorCode == "insufficient_quota")
+            return new GeminiException("OpenAI", GeminiErrorKind.Billing, "Das OpenAI-Konto hat kein Guthaben mehr.",
+                "https://platform.openai.com/settings/organization/billing");
         if (code == 429)
-            return new GeminiException("OpenAI", GeminiErrorKind.Quota, errorCode == "insufficient_quota"
-                ? "OpenAI-Guthaben aufgebraucht. Bitte das Konto unter platform.openai.com prüfen."
-                : "OpenAI ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
+            return new GeminiException("OpenAI", GeminiErrorKind.Quota,
+                "OpenAI ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
         if (code == 404)
             return new GeminiException("OpenAI", GeminiErrorKind.Server, UserCopy.ModelGone("OpenAI"));
         return new GeminiException("OpenAI", GeminiErrorKind.Server, UserCopy.ServerBusy("OpenAI"));

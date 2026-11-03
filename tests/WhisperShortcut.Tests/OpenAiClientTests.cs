@@ -129,9 +129,21 @@ public class OpenAiClientTests
         var (c, h) = Make();
         h.Responses.Enqueue(((HttpStatusCode)429, body));
         var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
-        Assert.Contains("Guthaben aufgebraucht", ex.Message);
+        Assert.Equal(GeminiErrorKind.Billing, ex.Kind);
+        Assert.Equal("Das OpenAI-Konto hat kein Guthaben mehr.", ex.Message);
+        Assert.Equal("https://platform.openai.com/settings/organization/billing", ex.BillingUrl);
         Assert.Single(h.Calls);
+    }
+
+    [Fact]
+    public async Task Status429_RateLimit_IsQuotaNotBilling()
+    {
+        var (c, h) = Make();
+        c.RetryDelay = TimeSpan.Zero;
+        for (var i = 0; i < 10; i++) h.Responses.Enqueue(((HttpStatusCode)429, "{\"error\":{\"code\":\"rate_limit_exceeded\"}}"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Null(ex.BillingUrl);
     }
 
     [Fact]
