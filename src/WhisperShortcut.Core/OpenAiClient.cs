@@ -332,7 +332,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         }
     }
 
-    private static GeminiException MapStatus(int code, string errorCode)
+    internal static GeminiException MapStatus(int code, string errorCode)
     {
         if (code == 401)
             return new GeminiException("OpenAI", GeminiErrorKind.InvalidKey, "OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
@@ -351,7 +351,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     }
 
     /// <summary>error.code, else error.type, of an OpenAI error body ("insufficient_quota" wins if either has it); "" when absent. Never the message (it can quote content).</summary>
-    private static string ErrorCode(string body)
+    internal static string ErrorCode(string body)
     {
         try
         {

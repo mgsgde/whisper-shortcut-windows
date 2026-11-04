@@ -800,4 +800,204 @@ public class QuickActionRequestTests
         Assert.Equal("Ctrl+Alt+L", t.LiveDictateHotkey);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
+    [Fact]
+    public void ReadAloud_WindowsVoiceAndRewritePrompt_DefaultsAndRoundTrip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("", s.ReadAloudVoiceSystem);
+        Assert.Equal("", s.ReadAloudRewritePrompt);
+        Assert.Equal(ReadAloud.DefaultRewritePrompt, s.EffectiveReadAloudRewritePrompt);
+        Assert.Equal(ReadAloud.DefaultModel, s.EffectiveReadAloudModel.Id);
+        s.OfflineMode = true;
+        Assert.Equal(TtsProvider.System, s.EffectiveReadAloudModel.Provider);
+
+        s.ReadAloudVoiceSystem = "Microsoft Hedda Desktop";
+        s.ReadAloudRewritePrompt = "Lies es kurz vor.";
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Microsoft Hedda Desktop", t.ReadAloudVoiceFor(TtsProvider.System));
+        Assert.Equal("Lies es kurz vor.", t.EffectiveReadAloudRewritePrompt);
+
+        // Saving the default text stores "", so a later improvement of the default reaches the user.
+        t.ReadAloudRewritePrompt = ReadAloud.DefaultRewritePrompt;
+        t.Save();
+        Assert.Equal("", Settings.Load(path, new PlainSecretProtector()).ReadAloudRewritePrompt);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Meetings_NewInstall_MacDefaults()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.Gemini, s.MeetingSpeechEngine);
+        Assert.Equal(Settings.DefaultTranscriptionModel, s.MeetingTranscriptionModel);
+        Assert.Equal("gemini-3.5-flash-lite", s.MeetingSummaryModel);
+        Assert.Equal(60, s.MeetingChunkSeconds);
+        Assert.Equal(90, s.MeetingSafeguardMinutes);
+        s.OfflineMode = true;
+        Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
+        Assert.Equal(Engine.Local, s.EffectiveMeetingTextEngine);
+    }
+
+    [Fact]
+    public void Meetings_OlderFile_KeepsTheDictationProviders()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, """
+            { "speechEngine": "openai", "textEngine": "local", "openAiTranscriptionModel": "gpt-4o-mini-transcribe",
+              "transcriptionModel": "gemini-3.8-flash", "openAiPromptModel": "gpt-6-luna" }
+            """);
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.OpenAI, s.MeetingSpeechEngine);
+        Assert.Equal("gpt-4o-mini-transcribe", s.MeetingOpenAiTranscriptionModel);
+        Assert.Equal("gemini-3.8-flash", s.MeetingTranscriptionModel);
+        Assert.Equal(Engine.Local, s.MeetingTextEngine);
+        Assert.Equal("gpt-6-luna", s.MeetingOpenAiSummaryModel);
+        Assert.Equal("gemini-3.5-flash-lite", s.MeetingSummaryModel);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void Meetings_RoundTrip_AndUnknownValuesFallBack()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.MeetingSpeechEngine = Engine.Local;
+        s.MeetingTextEngine = Engine.OpenAI;
+        s.MeetingOpenAiSummaryModel = "gpt-5.4-mini";
+        s.MeetingChunkSeconds = 30;
+        s.MeetingSafeguardMinutes = 0;
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.Local, t.MeetingSpeechEngine);
+        Assert.Equal(Engine.OpenAI, t.MeetingTextEngine);
+        Assert.Equal("gpt-5.4-mini", t.MeetingOpenAiSummaryModel);
+        Assert.Equal(30, t.MeetingChunkSeconds);
+        Assert.Equal(0, t.MeetingSafeguardMinutes);
+
+        File.WriteAllText(path, File.ReadAllText(path).Replace("\"meetingChunkSeconds\": 30", "\"meetingChunkSeconds\": 25"));
+        Assert.Equal(60, Settings.Load(path, new PlainSecretProtector()).MeetingChunkSeconds);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Chat_NewInstall_MacDefaults_AndRoundTrip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Alt+6", s.ActiveChatHotkey);
+        Assert.Equal(Engine.Gemini, s.EffectiveChatEngine);
+        Assert.Equal("gemini-3.8-flash", s.EffectiveChatModel);
+        Assert.True(s.ChatWebSearch);
+        Assert.True(s.ChatCloseOnFocusLoss);
+        Assert.Equal("", s.ChatSystemPrompt);
+
+        s.ChatEngine = Engine.OpenAI;
+        s.ChatOpenAiModel = "gpt-6-luna";
+        s.ChatWebSearch = false;
+        s.ChatCloseOnFocusLoss = false;
+        s.ChatSystemPrompt = "Antworte knapp.";
+        s.ChatHotkeyEnabled = false;
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.OpenAI, t.ChatEngine);
+        Assert.Equal("gpt-6-luna", t.EffectiveChatModel);
+        Assert.False(t.ChatWebSearch);
+        Assert.False(t.ChatCloseOnFocusLoss);
+        Assert.Equal("Antworte knapp.", t.ChatSystemPrompt);
+        Assert.Equal("", t.ActiveChatHotkey);
+        t.OfflineMode = true;
+        Assert.Equal(Engine.Local, t.EffectiveChatEngine);
+        Assert.Equal(ModelPickers.LocalId, t.EffectiveChatModel);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Chat_OlderFile_FollowsDictatePrompt_AndKeyStaysOffWhenTaken()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, """
+            { "textEngine": "openai", "openAiPromptModel": "gpt-5.4-mini", "templateHotkey": "Alt+6" }
+            """);
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.OpenAI, s.ChatEngine);
+        Assert.Equal("gpt-5.4-mini", s.ChatOpenAiModel);
+        Assert.Equal("Alt+6", s.ChatHotkey);
+        Assert.False(s.ChatHotkeyEnabled); // Alt+6 already opens the template picker
+
+        File.WriteAllText(path, """{ "textEngine": "gemini" }""");
+        Assert.Equal("Alt+6", Settings.Load(path, new PlainSecretProtector()).ActiveChatHotkey);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void ReadAloud_Defaults()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(ReadAloud.DefaultModel, s.ReadAloudModel);
+        Assert.Equal("gemini-3.8-flash-lite-tts", s.ReadAloudTtsModel.Id);
+        Assert.Equal("Charon", s.ReadAloudVoiceGemini);
+        Assert.Equal("alloy", s.ReadAloudVoiceOpenAi);
+        Assert.Equal("Charon", s.ReadAloudVoiceFor(TtsProvider.Gemini));
+        Assert.Equal("alloy", s.ReadAloudVoiceFor(TtsProvider.OpenAI));
+        Assert.Equal(1.0, s.ReadAloudSpeed);
+        Assert.True(s.ReadAloudSmartRewrite);
+    }
+
+    [Fact]
+    public void ReadAloud_AllFieldsRoundTrip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.ReadAloudHotkey = "Alt+8";
+        s.ReadAloudHotkeyEnabled = false;
+        s.ReadAloudModel = "gpt-4o-mini-tts";
+        s.ReadAloudVoiceGemini = "Kore";
+        s.ReadAloudVoiceOpenAi = "marin";
+        s.ReadAloudSpeed = 1.5;
+        s.ReadAloudSmartRewrite = false;
+        s.Save();
+
+        var json = File.ReadAllText(path);
+        foreach (var name in new[] { "readAloudHotkey", "readAloudHotkeyEnabled", "readAloudModel", "readAloudVoiceGemini",
+                     "readAloudVoiceOpenAi", "readAloudSpeed", "readAloudSmartRewrite" })
+            Assert.Contains($"\"{name}\":", json);
+
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Alt+8", t.ReadAloudHotkey);
+        Assert.False(t.ReadAloudHotkeyEnabled);
+        Assert.Equal("gpt-4o-mini-tts", t.ReadAloudModel);
+        Assert.Equal(TtsProvider.OpenAI, t.ReadAloudTtsModel.Provider);
+        Assert.Equal("Kore", t.ReadAloudVoiceGemini);
+        Assert.Equal("marin", t.ReadAloudVoiceOpenAi);
+        Assert.Equal(1.5, t.ReadAloudSpeed);
+        Assert.False(t.ReadAloudSmartRewrite);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void ReadAloud_BadValuesFallBackToDefaults()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, "{\"readAloudModel\":\"nope\",\"readAloudVoiceGemini\":\"charon\",\"readAloudVoiceOpenAi\":\"Kore\","
+            + "\"readAloudSpeed\":3.3}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(ReadAloud.DefaultModel, s.ReadAloudModel);
+        Assert.Equal("Charon", s.ReadAloudVoiceGemini);   // ids are case-sensitive
+        Assert.Equal("alloy", s.ReadAloudVoiceOpenAi);
+        Assert.Equal(1.0, s.ReadAloudSpeed);
+
+        File.WriteAllText(path, "{\"readAloudModel\":\"gemini-3.1-flash-tts-preview\"}");
+        Assert.Equal(ReadAloud.DefaultModel, Settings.Load(path, new PlainSecretProtector()).ReadAloudModel);
+        Directory.Delete(dir, true);
+    }
 }

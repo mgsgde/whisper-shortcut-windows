@@ -103,7 +103,8 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 
 ## 6. Umfang, den Windows nicht hat
 
-Chat-Fenster (Google/Trello/IMAP/Ordner/Memory/Befehle), Vorlesen (#281), Smart Improvement mit
+Im Chat: Google/Trello/IMAP, Ordner, Memory, eigene Befehle, Bilder (Chat, Vorlesen und Meetings-Seite: Schritt 10
+in `plan-mac-angleich.md`), Smart Improvement mit
 Interaktionslog, Schreibstil pro App, weitere Anbieter (Grok, OpenRouter, Anthropic), **eigener Server**
 (OpenAI-kompatible URL, #251/#285 inkl. LAN im Offline-Modus), Cloud-Modell-Angebot nach Schlüssel (#321,
 daher auch dessen Bug nicht), Fn-Taste. Parakeet: Windows TDT 0.6B v3 (sherpa-onnx), Mac empfiehlt Parakeet
@@ -187,8 +188,8 @@ Alt statt `⌃⌥` (Strg+Alt ist AltGr): Alt+1 Diktieren, Alt+2 Dictate Prompt, 
 Zwischenablage), Alt+0 Einstellungen öffnen/schließen, Alt+5 Live diktieren und Alt+7 Glossar vorgeschlagen, aber
 aus. Rechte Strg statt Fn (`FnDictationToggle`, gleiches Verhalten). Bestehende Installationen behalten ihre
 alten Kürzel (wie der Mac `legacyCommandDigit`). Neue Installationen: keine Signaltöne, Screenshots an.
-Tray-Menü in der Reihenfolge und mit den Titeln von `MenuBarController.createMenu`. Abweichungen: kein
-Vorlesen (Alt+4) und kein Chat; an der Stelle von Chat steht „Live-Meeting“ (Mac startet es im Chat-Fenster);
+Tray-Menü in der Reihenfolge und mit den Titeln von `MenuBarController.createMenu`. Abweichungen:
+Chat liegt auf Alt+6 (Mac ⌥Leertaste); „Meeting“ steht zusätzlich als eigenes Untermenü neben „Chat“;
 „Letzte Aufnahme erneut verarbeiten“ statt „Abgebrochene Aufnahme transkribieren“; „Feedback senden“ enthält
 „Problem melden …“ und „Protokoll öffnen“ statt der Mac-Kanäle; kein „Einrichtung abschließen …“. Der
 Offline-Schalter im Menü entfällt (Mac hat keinen), offline bleibt in den Einstellungen.

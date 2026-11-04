@@ -36,6 +36,9 @@ internal sealed class MeetingController : IDisposable
     private Core.LiveMeetingSession? _session;
     private MeetingAudioCapture? _capture;
     private System.Windows.Forms.Timer? _fakeTimer;
+    // Mac safeguard: asks „Langes Meeting“ once, after the minutes set on the Meetings page.
+    private System.Windows.Forms.Timer? _safeguardTimer;
+    private bool _safeguardAsked;
     private DateTime _startedUtc;
     private bool _mixes;
     private bool _stopping;
@@ -146,7 +149,9 @@ internal sealed class MeetingController : IDisposable
         _mixes = Core.MeetingAudioRouting.MixesSystemAudio(preference, output.HasDevice, output.FormFactor);
         Core.Log.Info($"Meeting: start, preference {Core.MeetingAudioRouting.Name(preference)}, output form factor {output.FormFactor?.ToString() ?? "none"}, mix {_mixes}");
 
-        var session = new Core.LiveMeetingSession(_store, _transcribe, Core.MeetingAudioRouting.MetadataName(_mixes));
+        // Mac Chunk Interval (Meetings → Erweitert): the longest chunk; the pause rules stay the Mac's.
+        var session = new Core.LiveMeetingSession(_store, _transcribe, Core.MeetingAudioRouting.MetadataName(_mixes),
+            Core.MeetingOptions.Policy(_settings.MeetingChunkSeconds));
         // One more try after 5 s: GeminiClient already retries a chunk 5–6 times with backoff, and a longer wait
         // here would let the queue fall behind a one-minute chunk cadence during an outage (the audio is on disk anyway).
         session.RetryDelays = new[] { TimeSpan.FromSeconds(5) };
@@ -202,6 +207,7 @@ internal sealed class MeetingController : IDisposable
         session.Changed += () => _ui.Post(_ => UpdateStatus(), null);
         session.ChunkFailed += e => _ui.Post(_ => OnChunkFailed(e), null);
         _startedUtc = DateTime.UtcNow;
+        StartSafeguard();
         Sounds.Start();
         _overlay.ShowRecording(_startedUtc, level);
         UpdateStatus();
@@ -273,8 +279,45 @@ internal sealed class MeetingController : IDisposable
         return raw.Length == 0 ? "" : $"# Zusammenfassung\n\n{raw}\n";
     }
 
+    private void StartSafeguard()
+    {
+        _safeguardAsked = false;
+        _safeguardTimer?.Dispose();
+        _safeguardTimer = new System.Windows.Forms.Timer { Interval = 30_000 };
+        _safeguardTimer.Tick += (_, _) => AskLongMeetingIfDue();
+        _safeguardTimer.Start();
+    }
+
+    /// <summary>Mac showSafeguardAlert: „Langes Meeting“ with [Meeting beenden] [Weiter], once per meeting.</summary>
+    private void AskLongMeetingIfDue()
+    {
+        int minutes = _settings.MeetingSafeguardMinutes;
+        if (_session == null || _stopping
+            || !Core.MeetingOptions.ShouldAskLongMeeting(minutes, DateTime.UtcNow - _startedUtc, _safeguardAsked)) return;
+        _safeguardAsked = true;
+        _safeguardTimer?.Stop();
+        Core.Log.Info($"Meeting: safeguard question after {minutes} min");
+        var page = new TaskDialogPage
+        {
+            Caption = "WhisperShortcut", Heading = "Langes Meeting", Text = Core.MeetingOptions.LongMeetingText(minutes),
+            Icon = TaskDialogIcon.Information, AllowCancel = true,
+        };
+        var stop = new TaskDialogButton("Meeting beenden");
+        var keep = new TaskDialogButton("Weiter");
+        page.Buttons.Add(stop);
+        page.Buttons.Add(keep);
+        page.DefaultButton = keep;
+        if (TaskDialog.ShowDialog(page, TaskDialogStartupLocation.CenterScreen) == stop && _session != null)
+        {
+            Core.Log.Info("Meeting: stopped from the safeguard question");
+            _ = StopAsync();
+        }
+    }
+
     private void StopAudio()
     {
+        _safeguardTimer?.Dispose();
+        _safeguardTimer = null;
         _fakeTimer?.Dispose();
         _fakeTimer = null;
         var capture = _capture;
