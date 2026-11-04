@@ -91,6 +91,11 @@ internal sealed partial class SettingsForm : FastShowForm
     private readonly Dictionary<string, Control> _pages = new();
     private readonly Panel _pageHost;
     private readonly System.Windows.Forms.Timer _meterTimer = new() { Interval = 50 };
+    // Applies edits once they held still (see the constructor); runs only while the window is visible.
+    private readonly System.Windows.Forms.Timer _applyTimer = new() { Interval = 150 };
+
+    /// <summary>For the UI tests: whether the window does background work (edit check, AI-app clock).</summary>
+    internal bool TimersRunningForTests => _applyTimer.Enabled || _mcpClock.Enabled;
     private LevelProbe? _probe;
     private string _snapshot = "";
     private bool _loadedOffline;
@@ -742,7 +747,7 @@ internal sealed partial class SettingsForm : FastShowForm
         };
 
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
-        var dirtyTimer = new System.Windows.Forms.Timer { Interval = 150 };
+        var dirtyTimer = _applyTimer;
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
         var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation, _dictateMode, _afterPaste, _language, _temperature, _thinking };
         dirtyTimer.Tick += (_, _) =>
@@ -756,7 +761,9 @@ internal sealed partial class SettingsForm : FastShowForm
             }
             UpdateSaveState();
         };
-        dirtyTimer.Start();
+        // WHY only while visible: the window built in advance waits hidden for hours, and reading every field
+        // (prompts, glossary, templates) seven times a second there only costs CPU while the user dictates.
+        VisibleChanged += (_, _) => dirtyTimer.Enabled = Visible;
         FormClosing += OnClosing;
         Activated += (_, _) => { if (!IsDisposed && !_discard) SyncOfflineFromTray(); };
         // A running mic test keeps the microphone (and the Windows mic indicator) busy in the background.
