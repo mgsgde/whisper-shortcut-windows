@@ -29,7 +29,7 @@ public sealed class SettingsWindowTests : IDisposable
     [Fact]
     public void DownloadProgressTicks_DoNotRebuildTiles()
     {
-        OnSta(() =>
+        Sta.Run(() =>
         {
             using var form = OpenSettings();
             var tiles = form.PickerTilesForTests;
@@ -52,7 +52,7 @@ public sealed class SettingsWindowTests : IDisposable
     [Fact]
     public void SettingsWindow_OpensQuickly()
     {
-        OnSta(() =>
+        Sta.Run(() =>
         {
             // A first window takes the one-off JIT and font cost, which the user pays once per app start.
             using (OpenSettings()) { }
@@ -74,7 +74,7 @@ public sealed class SettingsWindowTests : IDisposable
     [Fact]
     public void PrewarmedWindow_ShowsInstantly()
     {
-        OnSta(() =>
+        Sta.Run(() =>
         {
             var settings = Core.Settings.Load(Path.Combine(_dir, "settings.json"), new Core.PlainSecretProtector());
             using var form = new SettingsForm(settings, new OfflineEngine(settings), new Core.GeminiClient(settings),
@@ -93,11 +93,32 @@ public sealed class SettingsWindowTests : IDisposable
         });
     }
 
+    /// <summary>The spare window waits hidden for hours; its 150 ms edit check and the AI-app clock must only run while it is visible.</summary>
+    [Fact]
+    public void PrewarmedWindow_DoesNoBackgroundWork()
+    {
+        Sta.Run(() =>
+        {
+            var settings = Core.Settings.Load(Path.Combine(_dir, "settings.json"), new Core.PlainSecretProtector());
+            using var form = new SettingsForm(settings, new OfflineEngine(settings), new Core.GeminiClient(settings),
+                new Core.OpenAiClient(settings), new UpdateService(settings, () => true, () => { })) { ShowInTaskbar = false };
+            form.Prewarm();
+            Assert.False(form.TimersRunningForTests);
+
+            form.StartPosition = FormStartPosition.Manual;
+            form.Load += (_, _) => form.Location = new System.Drawing.Point(-3000, -3000);
+            form.Location = new System.Drawing.Point(-3000, -3000);
+            form.Show();
+            Application.DoEvents();
+            Assert.True(form.TimersRunningForTests);
+        });
+    }
+
     /// <summary>Clicking through every page must not throw (all pages are built up front, shown on demand).</summary>
     [Fact]
     public void EveryPage_Opens()
     {
-        OnSta(() =>
+        Sta.Run(() =>
         {
             using var form = OpenSettings();
             foreach (var page in form.PageNamesForTests)
@@ -115,7 +136,7 @@ public sealed class SettingsWindowTests : IDisposable
     [Fact]
     public void DictateMode_LiveShowsCaptionOrWarning()
     {
-        OnSta(() =>
+        Sta.Run(() =>
         {
             using var form = OpenSettings();
             form.ShowPage("Diktieren");
@@ -141,21 +162,5 @@ public sealed class SettingsWindowTests : IDisposable
         form.Show();
         Application.DoEvents();
         return form;
-    }
-
-    /// <summary>WinForms needs an STA thread with a message loop context; xunit runs tests on MTA thread-pool threads.</summary>
-    private static void OnSta(Action body)
-    {
-        Exception? error = null;
-        var thread = new Thread(() =>
-        {
-            SynchronizationContext.SetSynchronizationContext(new WindowsFormsSynchronizationContext());
-            try { body(); }
-            catch (Exception e) { error = e; }
-        });
-        thread.SetApartmentState(ApartmentState.STA);
-        thread.Start();
-        if (!thread.Join(TimeSpan.FromSeconds(60))) throw new TimeoutException("UI test hung (window frozen?)");
-        if (error != null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(error).Throw();
     }
 }

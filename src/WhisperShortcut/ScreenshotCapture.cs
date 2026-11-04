@@ -21,13 +21,19 @@ internal static class ScreenshotCapture
         try
         {
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            var picked = await SnipOverlay.PickAsync(ct);
+            using var picked = await SnipOverlay.PickAsync(ct);
             if (picked == null) { Core.Log.Info("Snip: cancelled"); return null; }
-            using (var input = new MemoryStream(picked))
-            using (var image = new Bitmap(input))
-                if (!paster.PutImage(picked, image)) Core.Log.Warn("Snip: clipboard busy, image not left on the clipboard");
-            Core.Log.Info($"Snip: PNG {picked.Length / 1024} KB in {watch.ElapsedMilliseconds} ms, left on the clipboard");
-            return Core.ScreenshotImage.FromPng(picked);
+            long pickedAt = watch.ElapsedMilliseconds;
+            // Off the UI thread: the overlay is already gone, the hotkeys and the tray stay responsive meanwhile.
+            var encoded = await Task.Run(() =>
+            {
+                using var output = new MemoryStream();
+                picked.Save(output, ImageFormat.Png);
+                return output.ToArray();
+            });
+            if (!paster.PutImage(encoded, picked)) Core.Log.Warn("Snip: clipboard busy, image not left on the clipboard");
+            Core.Log.Info($"Snip: picked after {pickedAt} ms, PNG {encoded.Length / 1024} KB ready {watch.ElapsedMilliseconds - pickedAt} ms later, left on the clipboard");
+            return Core.ScreenshotImage.FromPng(encoded);
         }
         catch (OperationCanceledException) { throw; }
         catch (Exception e) when (e is ExternalException or ArgumentException or Win32Exception or InvalidOperationException)

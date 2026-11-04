@@ -46,6 +46,7 @@ internal sealed class RecordingOverlay : Form
     private const float RowH = 28;
     private const float TextX = 52;         // text column, right of the indicator
     private const float FadeIn = 0.16f, FadeOut = 0.2f;
+    private const float DonePop = 0.22f;   // the check mark's pop-in (DrawIndicator)
 
     private static readonly string BodyFace =
         FontFamily.Families.Any(f => f.Name == "Segoe UI Variable Text") ? "Segoe UI Variable Text" : "Segoe UI";
@@ -91,6 +92,12 @@ internal sealed class RecordingOverlay : Form
     private string _warningWords = "";
     private DateTime _warningUntil;
     private Point _basePos;
+    // The card's shadow, fill and border, which only change with its size: 16 anti-aliased shadow layers were
+    // repainted 30 times a second, during the processing too, while Parakeet needs the CPU.
+    private Bitmap? _cardCache;
+    private (Size Window, RectangleF Card, float Radius, bool Hc) _cardKey;
+    // The last frame drawn showed a phase at rest (warning, finished check mark): nothing moves until the fade.
+    private bool _settled;
 
     /// <summary>A quick instruction row was clicked (index into the list given to ShowRecording).</summary>
     public event Action<int>? QuickActionClicked;
@@ -343,10 +350,14 @@ internal sealed class RecordingOverlay : Form
             Show();
         }
         SetClickThrough(!(HasCancel || ShowsCard || _phase == Phase.Warning));
+        _settled = false;
         _timer.Start();
         Redraw();
         Core.Log.Info($"Overlay: {_phase} at {Bounds}, visible {Visible}");
     }
+
+    /// <summary>For the UI tests: one animation frame, as the 33 ms timer runs it.</summary>
+    internal void TickForTests() => OnTick();
 
     private void OnTick()
     {
@@ -366,6 +377,11 @@ internal sealed class RecordingOverlay : Form
             _levels[_levelHead] = _smoothed;
             _levelHead = (_levelHead + 1) % Bars;
         }
+        // Recording (bars, clock) and processing (spinner) move all the time; the warning stays 20 s without moving.
+        bool animating = _phase is Phase.Recording or Phase.Processing || _fadeStart != null
+            || (now - _appearStart).TotalSeconds < FadeIn || (_phase == Phase.Done && (now - _phaseStart).TotalSeconds < DonePop);
+        if (!animating && _settled) return;
+        _settled = !animating;
         Redraw();
     }
 
@@ -407,32 +423,7 @@ internal sealed class RecordingOverlay : Form
         float radius = IsPill ? card.Height / 2 : 24 * s;
         var now = DateTime.UtcNow;
 
-        if (!Hc) LayeredWindow.Shadow(g, card, radius, s);
-
-        using (var path = Rounded(card, radius))
-        {
-            if (Hc)
-            {
-                using var fill = new SolidBrush(SystemColors.Window);
-                g.FillPath(fill, path);
-                using var edge = new Pen(SystemColors.WindowFrame, 1.5f);
-                g.DrawPath(edge, path);
-            }
-            else
-            {
-                using var fill = new LinearGradientBrush(card, Color.FromArgb(255, 42, 42, 49), Color.FromArgb(255, 24, 24, 29), 90f);
-                g.FillPath(fill, path);
-            }
-        }
-        if (!Hc)
-        {
-            // Hairline border, a touch brighter along the top edge like light on glass.
-            var inner = RectangleF.Inflate(card, -0.5f, -0.5f);
-            using var path = Rounded(inner, radius - 0.5f);
-            using var edge = new LinearGradientBrush(card, Color.FromArgb(70, 255, 255, 255), Color.FromArgb(22, 255, 255, 255), 90f);
-            using var pen = new Pen(edge, 1f);
-            g.DrawPath(pen, path);
-        }
+        PaintBackground(g, card, radius, s);
 
         float x = card.X, y = card.Y, right = card.Right;
         float headerCy = y + (_phase == Phase.Done ? DoneH / 2 : HeaderH / 2) * s;
@@ -492,6 +483,52 @@ internal sealed class RecordingOverlay : Form
             yCursor += ContextH * s;
         }
         if (ShowsCard) DrawQuickActions(g, card, yCursor + 4 * s, s);
+    }
+
+    /// <summary>Shadow, fill and border of the card, drawn once per size into <see cref="_cardCache"/> and copied from there.</summary>
+    private void PaintBackground(Graphics g, RectangleF card, float radius, float s)
+    {
+        var key = (Size, card, radius, Hc);
+        if (_cardCache == null || _cardKey != key)
+        {
+            _cardCache?.Dispose();
+            _cardCache = LayeredWindow.NewBitmap(Width, Height);
+            _cardKey = key;
+            using var cg = Graphics.FromImage(_cardCache);
+            ConfigureText(cg);
+            if (!Hc) LayeredWindow.Shadow(cg, card, radius, s);
+            using (var path = Rounded(card, radius))
+            {
+                if (Hc)
+                {
+                    using var fill = new SolidBrush(SystemColors.Window);
+                    cg.FillPath(fill, path);
+                    using var edge = new Pen(SystemColors.WindowFrame, 1.5f);
+                    cg.DrawPath(edge, path);
+                }
+                else
+                {
+                    using var fill = new LinearGradientBrush(card, Color.FromArgb(255, 42, 42, 49), Color.FromArgb(255, 24, 24, 29), 90f);
+                    cg.FillPath(fill, path);
+                }
+            }
+            if (!Hc)
+            {
+                // Hairline border, a touch brighter along the top edge like light on glass.
+                var inner = RectangleF.Inflate(card, -0.5f, -0.5f);
+                using var path = Rounded(inner, radius - 0.5f);
+                using var edge = new LinearGradientBrush(card, Color.FromArgb(70, 255, 255, 255), Color.FromArgb(22, 255, 255, 255), 90f);
+                using var pen = new Pen(edge, 1f);
+                cg.DrawPath(pen, path);
+            }
+        }
+        // The frame is still empty: a plain 1:1 copy gives exactly what drawing it here would.
+        var (mode, interpolation, offset) = (g.CompositingMode, g.InterpolationMode, g.PixelOffsetMode);
+        g.CompositingMode = CompositingMode.SourceCopy;
+        g.InterpolationMode = InterpolationMode.NearestNeighbor;
+        g.PixelOffsetMode = PixelOffsetMode.Half;
+        g.DrawImage(_cardCache, new Rectangle(0, 0, _cardCache.Width, _cardCache.Height), 0, 0, _cardCache.Width, _cardCache.Height, GraphicsUnit.Pixel);
+        (g.CompositingMode, g.InterpolationMode, g.PixelOffsetMode) = (mode, interpolation, offset);
     }
 
     /// <summary>The line under the title: stop key and Esc as key caps while recording, plain text otherwise.</summary>
@@ -643,7 +680,7 @@ internal sealed class RecordingOverlay : Form
             case Phase.Done:
             {
                 // The disc pops in with a little overshoot, the mark follows.
-                float k = Math.Clamp(since / 0.22f, 0f, 1f);
+                float k = Math.Clamp(since / DonePop, 0f, 1f);
                 float pop = 1 + 0.18f * MathF.Sin(k * MathF.PI) * (1 - k);
                 float r = 10f * s * Ease(k * 1.4f) * pop;
                 Color tone = _doneNeutral ? CMuted : CGreen;
@@ -775,6 +812,7 @@ internal sealed class RecordingOverlay : Form
         if (disposing)
         {
             _timer.Dispose();
+            _cardCache?.Dispose();
             _titleFont?.Dispose();
             _bodyFont?.Dispose();
             _smallFont?.Dispose();

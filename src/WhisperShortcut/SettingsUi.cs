@@ -203,7 +203,13 @@ internal class ThemedLabel : Label
     public Tone Tone
     {
         get => _tone;
-        set { _tone = value; Invalidate(); }
+        set
+        {
+            // Status lines set their tone on every update and timer tick; an unchanged tone needs no repaint.
+            if (_tone == value) return;
+            _tone = value;
+            Invalidate();
+        }
     }
 
     [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]

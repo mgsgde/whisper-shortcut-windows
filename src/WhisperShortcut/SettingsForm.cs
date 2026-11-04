@@ -8,7 +8,7 @@ namespace WhisperShortcut;
 /// Allgemein, Konten, Diktieren, Dictate Prompt, Vorlagen, Bildschirmfoto, Claude & KI-Apps, Datenschutz & Berechtigungen, Über; the page on the right as
 /// rounded cards; every edit applies by itself (no Speichern, like the Mac). Light or dark follows Windows. German UI.
 /// </summary>
-internal sealed partial class SettingsForm : Form
+internal sealed partial class SettingsForm : FastShowForm
 {
     private readonly Core.Settings _settings;
     private readonly OfflineEngine _offline;
@@ -91,6 +91,11 @@ internal sealed partial class SettingsForm : Form
     private readonly Dictionary<string, Control> _pages = new();
     private readonly Panel _pageHost;
     private readonly System.Windows.Forms.Timer _meterTimer = new() { Interval = 50 };
+    // Applies edits once they held still (see the constructor); runs only while the window is visible.
+    private readonly System.Windows.Forms.Timer _applyTimer = new() { Interval = 150 };
+
+    /// <summary>For the UI tests: whether the window does background work (edit check, AI-app clock).</summary>
+    internal bool TimersRunningForTests => _applyTimer.Enabled || _mcpClock.Enabled;
     private LevelProbe? _probe;
     private string _snapshot = "";
     private bool _loadedOffline;
@@ -451,7 +456,7 @@ internal sealed partial class SettingsForm : Form
         _llmRow.Remove.LinkClicked += (_, _) => RemoveModel(SelectedLlmChoice.Component, SelectedLlmChoice.DisplayName);
         _llmChoice.SelectedIndexChanged += (_, _) => { UpdateModelRows(); RefreshPickers(); };
         _offline.DownloadChanged += UpdateModelRows;
-        FormClosed += (_, _) => _offline.DownloadChanged -= UpdateModelRows;
+        Disposed += (_, _) => _offline.DownloadChanged -= UpdateModelRows;
 
         // --- screen content (Mac: Include screenshot) ---
         prompt.Controls.Add(Section("Bildschirminhalt", subtitle: "Schickt bei Dictate Prompt ein Bildschirmfoto mit, damit das Modell sieht, was du siehst."));
@@ -742,7 +747,7 @@ internal sealed partial class SettingsForm : Form
         };
 
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
-        var dirtyTimer = new System.Windows.Forms.Timer { Interval = 150 };
+        var dirtyTimer = _applyTimer;
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
         var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation, _dictateMode, _afterPaste, _language, _temperature, _thinking };
         dirtyTimer.Tick += (_, _) =>
@@ -756,7 +761,9 @@ internal sealed partial class SettingsForm : Form
             }
             UpdateSaveState();
         };
-        dirtyTimer.Start();
+        // WHY only while visible: the window built in advance waits hidden for hours, and reading every field
+        // (prompts, glossary, templates) seven times a second there only costs CPU while the user dictates.
+        VisibleChanged += (_, _) => dirtyTimer.Enabled = Visible;
         FormClosing += OnClosing;
         Activated += (_, _) => { if (!IsDisposed && !_discard) SyncOfflineFromTray(); };
         // A running mic test keeps the microphone (and the Windows mic indicator) busy in the background.
@@ -766,6 +773,11 @@ internal sealed partial class SettingsForm : Form
         FormClosed += (_, _) =>
         {
             if (!_discard) RecordPromptHistory(_openedPrompts.Dictate, _openedPrompts.PromptMode, _openedPrompts.Template);
+        };
+        // WHY on Disposed and not on FormClosed: a window built in advance that went stale is disposed without ever
+        // being closed. Its subscriptions kept it alive and ran its handlers (download ticks, theme switches) forever.
+        Disposed += (_, _) =>
+        {
             Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             dirtyTimer.Dispose();
             _geminiKey.Dispose();
@@ -803,7 +815,7 @@ internal sealed partial class SettingsForm : Form
         Core.Log.Info($"Settings page {name}");
         if (page.Controls.Count > 0 && page.Controls[0] is TableLayoutPanel root && _building.Remove(root)) root.ResumeLayout(false);
         // Suspended: a page becoming visible otherwise lays itself out once per container (see SetVisibleCore).
-        WithLayoutSuspended(page, () => { foreach (var p in _pages.Values) p.Visible = p == page; });
+        LayoutBatch.Run(page, () => { foreach (var p in _pages.Values) p.Visible = p == page; });
         foreach (var n in _nav) n.Selected = n.Text == name;
         if (name != General) StopMicTest();
         FitHints();
@@ -1898,19 +1910,9 @@ internal sealed partial class SettingsForm : Form
             .Where(w => w.Label.MaximumSize != w.Size)
             .ToList();
         if (changed.Count == 0) return;
-        // WHY suspended: every new MaximumSize re-lays out the nested auto-size tables of all pages, about a
-        // hundred times on the first open (2 s). Suspended, each container lays out once, children first.
-        var containers = new List<Control>();
-        void Collect(Control c)
-        {
-            if (!c.HasChildren) return;
-            containers.Add(c);
-            foreach (Control child in c.Controls) Collect(child);
-        }
-        Collect(_pageHost);
-        foreach (var c in containers) c.SuspendLayout();
-        foreach (var (label, size) in changed) label.MaximumSize = size;
-        for (int i = containers.Count - 1; i >= 0; i--) containers[i].ResumeLayout(true);
+        // WHY batched: every new MaximumSize re-lays out the nested auto-size tables of all pages, about a
+        // hundred times on the first open (2 s). Batched, each container lays out once, children first.
+        LayoutBatch.Run(_pageHost, () => { foreach (var (label, size) in changed) label.MaximumSize = size; });
     }
 
     // ---------------- save / close ----------------

@@ -31,8 +31,11 @@ internal sealed class SnipOverlay : Form
         AccessibleName = "Bildschirmfoto: Bereich aufziehen, klicken für den ganzen Bildschirm, Esc bricht ab";
     }
 
-    /// <summary>Captures every screen, lets the user pick, and returns the picked area as PNG (null = cancelled).</summary>
-    public static async Task<byte[]?> PickAsync(CancellationToken ct)
+    /// <summary>
+    /// Captures every screen, lets the user pick, and returns the picked area (null = cancelled); the caller disposes it.
+    /// The overlays are gone and the user's window has the focus again when this returns.
+    /// </summary>
+    public static async Task<Bitmap?> PickAsync(CancellationToken ct)
     {
         var previous = NativeMethods.GetForegroundWindow();
         var result = new TaskCompletionSource<Bitmap?>();
@@ -50,11 +53,8 @@ internal sealed class SnipOverlay : Form
             var under = overlays.FirstOrDefault(o => o.Bounds.Contains(Cursor.Position)) ?? overlays[0];
             under.Activate();
             using var reg = ct.Register(() => result.TrySetCanceled());
-            using var picked = await result.Task;
-            if (picked == null) return null;
-            using var output = new MemoryStream();
-            picked.Save(output, ImageFormat.Png);
-            return output.ToArray();
+            // WHY no PNG here: encoding a whole screen took a noticeable moment, and the frozen picture stayed up meanwhile.
+            return await result.Task;
         }
         finally
         {
@@ -66,7 +66,8 @@ internal sealed class SnipOverlay : Form
 
     private static Bitmap Grab(Rectangle bounds)
     {
-        var bmp = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppArgb);
+        // Premultiplied: GDI+ draws it without converting each pixel, so dragging the frame stays smooth on a big screen.
+        var bmp = new Bitmap(bounds.Width, bounds.Height, PixelFormat.Format32bppPArgb);
         using var g = Graphics.FromImage(bmp);
         g.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
         return bmp;

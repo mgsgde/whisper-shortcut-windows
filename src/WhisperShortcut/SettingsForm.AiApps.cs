@@ -122,8 +122,14 @@ internal sealed partial class SettingsForm
         mcp.Changed += RefreshAiApps;
         // „vor 2 Min.“ keeps counting while the window is open.
         _mcpClock.Tick += (_, _) => RefreshConnectionStates();
-        _mcpClock.Start();
-        FormClosed += (_, _) =>
+        // Only while visible: the window built in advance would otherwise relay out its hidden pages every
+        // minute, and show the „vor … Min.“ of when it was built once it opens.
+        VisibleChanged += (_, _) =>
+        {
+            if (Visible) RefreshConnectionStates();
+            _mcpClock.Enabled = Visible;
+        };
+        Disposed += (_, _) =>
         {
             mcp.Changed -= RefreshAiApps;
             _mcpClock.Dispose();

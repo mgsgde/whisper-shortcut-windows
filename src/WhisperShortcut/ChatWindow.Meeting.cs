@@ -20,6 +20,8 @@ internal sealed partial class ChatWindow
         AccessibleName = "Befehle für dieses Meeting",
     };
     private readonly System.Windows.Forms.Timer _meetingPoll = new() { Interval = 3000 };
+    // One for all meeting buttons: a new ToolTip per button was never disposed when the buttons were rebuilt.
+    private readonly ToolTip _meetingTips = new();
 
     private void AddHeaderExtras(FlowLayoutPanel header)
     {
@@ -35,7 +37,7 @@ internal sealed partial class ChatWindow
         // A meeting started or stopped from the tray shows up here while the window is open.
         _meetingPoll.Tick += (_, _) => { if (Visible) UpdateMeetingUi(); };
         VisibleChanged += (_, _) => { if (Visible) _meetingPoll.Start(); else _meetingPoll.Stop(); };
-        Disposed += (_, _) => _meetingPoll.Dispose();
+        Disposed += (_, _) => { _meetingPoll.Dispose(); _meetingTips.Dispose(); };
     }
 
     private void UpdateHeaderExtras()
@@ -89,12 +91,13 @@ internal sealed partial class ChatWindow
         if (!shown.SequenceEqual(buttons.Select(b => b.Name)))
         {
             _meetingButtons.SuspendLayout();
+            _meetingTips.RemoveAll();
             foreach (Control c in _meetingButtons.Controls) c.Dispose();
             _meetingButtons.Controls.Clear();
             foreach (var command in buttons)
             {
                 var b = new FluentButton(command.Label) { AutoSize = true, Height = 30, Margin = new Padding(0, 0, 6, 4), Tag = command.Name, AccessibleName = command.Label };
-                new ToolTip().SetToolTip(b, command.Description.Length > 0 ? command.Description : command.Slash);
+                _meetingTips.SetToolTip(b, command.Description.Length > 0 ? command.Description : command.Slash);
                 var c = command;
                 b.Click += (_, _) => { if (_cts == null) RunUserCommand(c, ""); };
                 _meetingButtons.Controls.Add(b);
