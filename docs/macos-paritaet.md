@@ -103,8 +103,8 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 
 ## 6. Umfang, den Windows nicht hat
 
-Im Chat: Google/Trello/IMAP, Ordner, Memory, eigene Befehle, Bilder (Chat, Vorlesen und Meetings-Seite: Schritt 10
-in `plan-mac-angleich.md`), Smart Improvement mit
+Im Chat: Google/Trello/IMAP, Ordner, Memory (Bilder/Dateien, eigene Befehle, `/think`, `/feedback` und Meeting-Chat
+sind seit Schritt 11 da, siehe `plan-mac-angleich.md`), Smart Improvement mit
 Interaktionslog, Schreibstil pro App, weitere Anbieter (Grok, OpenRouter, Anthropic), **eigener Server**
 (OpenAI-kompatible URL, #251/#285 inkl. LAN im Offline-Modus), Cloud-Modell-Angebot nach Schlüssel (#321,
 daher auch dessen Bug nicht), Fn-Taste. Parakeet: Windows TDT 0.6B v3 (sherpa-onnx), Mac empfiehlt Parakeet
