@@ -186,7 +186,18 @@ internal sealed class ReadAloudController : IDisposable
         if (_player != null || _buffer != buffer) return;
         try
         {
+            int run = _run;
             _player = new TtsPlayer(buffer);
+            _player.Finished += error =>
+            {
+                if (run != _run) return;
+                if (error != null) Core.Log.Error("Read aloud: playback stopped", error);
+                else Core.Log.Info("Read aloud: finished");
+                Stop();
+            };
+            _player.Play();
+            _overlay.ShowSpeaking(buffer, () => _player?.IsPaused == true);
+            SetPhase(Phase.Speaking);
         }
         catch (Exception e)
         {
@@ -195,19 +206,7 @@ internal sealed class ReadAloudController : IDisposable
             Stop();
             Sounds.Error();
             _notify("Vorlesen fehlgeschlagen", "Kein Audioausgang gefunden. Bitte Lautsprecher oder Kopfhörer prüfen.", ToolTipIcon.Error, null);
-            return;
         }
-        int run = _run;
-        _player.Finished += error =>
-        {
-            if (run != _run) return;
-            if (error != null) Core.Log.Error("Read aloud: playback stopped", error);
-            else Core.Log.Info("Read aloud: finished");
-            Stop();
-        };
-        _player.Play();
-        _overlay.ShowSpeaking(buffer, () => _player?.IsPaused == true);
-        SetPhase(Phase.Speaking);
     }
 
     private void OnCommand(ReadAloudOverlay.Command command)
