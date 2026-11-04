@@ -2,14 +2,17 @@ namespace WhisperShortcut;
 
 /// <summary>
 /// The tray submenu „Feedback senden“ (Mac MenuBarController: „Problem mit letztem Diktat melden…“, then WhatsApp, Email,
-/// GitHub Issue via <c>FeedbackLinks</c>). Windows keeps its problem report (version, models, log, never the dictation)
-/// and adds „Protokoll öffnen“, which the report points to.
+/// GitHub Issue via <c>FeedbackLinks</c>). Windows keeps its problem report (version, models, log, never the dictation),
+/// adds „Meine Einstellungen senden …“ (Mac #344, in Settings → Support there) and „Protokoll öffnen“, which the report points to.
 /// </summary>
 internal sealed partial class TrayApp
 {
     private void AddFeedbackItems(ToolStripMenuItem feedback)
     {
         feedback.DropDownItems.Add(new ToolStripMenuItem("Problem melden …", null, (_, _) => ReportProblemFromTray()));
+        // Mac #344: the settings report for testers, right under the problem report.
+        feedback.DropDownItems.Add(new ToolStripMenuItem("Meine Einstellungen senden …", null, (_, _) => FeedbackReportDialog.Open(_settingsForm, _settings, _mcp))
+            { ToolTipText = "Version, Modelle und Tastenkürzel an den Entwickler, vorher ansehen und bearbeiten" });
         feedback.DropDownItems.Add(new ToolStripSeparator());
         feedback.DropDownItems.Add(new ToolStripMenuItem("WhatsApp", null, (_, _) => OpenFeedback(Core.FeedbackChannel.WhatsApp))
             { ToolTipText = "Dem Entwickler auf WhatsApp schreiben" });

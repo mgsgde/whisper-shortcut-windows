@@ -113,6 +113,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly System.Windows.Forms.Timer _replayExpiry = new() { Interval = 15_000 };
     private readonly ToolStripMenuItem _cancelledItem, _withoutTemplateItem;
     private readonly ToolStripMenuItem _welcomeItem;
+    private readonly ToolStripMenuItem _checkUpdatesItem;
     private Core.ScreenshotImage? _runShot;
     private CancellationTokenSource? _snipCts;
     private readonly MeetingController _meeting;
@@ -173,6 +174,8 @@ internal sealed partial class TrayApp : ApplicationContext
         };
         _settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings());
         _welcomeItem = new ToolStripMenuItem("Einführung …", null, (_, _) => OpenWelcome());
+        // Mac #346: „Nach Updates suchen …“ in the status menu (the app menu of a menu bar app); the switch stays in Allgemein → Updates.
+        _checkUpdatesItem = new ToolStripMenuItem("Nach Updates suchen …", null, (_, _) => _ = CheckForUpdatesFromTrayAsync());
         _finishSetupItem = new ToolStripMenuItem("Einrichtung abschließen …", null, (_, _) => OpenWelcome()) { Visible = false };
         // Mac: „Feedback senden“ with the problem report first. Windows adds the log, which the report points to.
         var feedbackItem = new ToolStripMenuItem("Feedback senden");
@@ -198,7 +201,7 @@ internal sealed partial class TrayApp : ApplicationContext
             _copyLast, _recentMenu, _cancelledItem, _withoutTemplateItem, _retryItem, new ToolStripSeparator(),
             // Mac: „Chat“ above Settings, and the meeting starts from the chat (/meeting); Windows keeps its Meeting row too.
             ChatMenuItem(), _meeting.MenuItem, new ToolStripSeparator(),
-            _settingsItem, _welcomeItem, feedbackItem, quitItem,
+            _settingsItem, _welcomeItem, _checkUpdatesItem, feedbackItem, quitItem,
         });
         menu.Opening += (_, _) =>
         {
@@ -1983,6 +1986,29 @@ internal sealed partial class TrayApp : ApplicationContext
         else _updateNoticePending = true;
     }
 
+    /// <summary>Tray „Nach Updates suchen …“ (Mac #346 „Check for Updates…“): a found version opens the update window right away.</summary>
+    private async Task CheckForUpdatesFromTrayAsync()
+    {
+        if (_updates.Available != null)
+        {
+            _updates.ShowDialog();
+            return;
+        }
+        _checkUpdatesItem.Enabled = false;
+        try
+        {
+            var latest = await _updates.CheckAsync(manual: true);
+            if (latest != null) _updates.ShowDialog();
+            else Notify("Kein Update", $"Version {UpdateService.CurrentVersion} ist die neueste.", ToolTipIcon.Info);
+        }
+        catch (Exception e) when (e is HttpRequestException or TaskCanceledException)
+        {
+            Core.Log.Error($"Update check failed: {e.GetType().Name}");
+            Notify("Keine Verbindung zu GitHub", "Später noch einmal versuchen.", ToolTipIcon.Warning);
+        }
+        finally { _checkUpdatesItem.Enabled = true; }
+    }
+
     private void ShowUpdateNotice()
     {
         var update = _updates.Available;
@@ -2070,8 +2096,8 @@ internal sealed partial class TrayApp : ApplicationContext
     public void OpenSettingsOnStart() => _ui.Post(_ => ShowSettings(), null);
 
     /// <summary>
-    /// The welcome tour (Mac WelcomeWindowController): at start until it is finished, from the tray menu, from
-    /// Einstellungen → Über, and <c>--welcome</c>. One window; a second call brings it to the front.
+    /// The welcome tour (Mac WelcomeWindowController): at start until it is finished, from the tray menu
+    /// („Einführung …“; Mac #346 took it off Über) and <c>--welcome</c>. One window; a second call brings it to the front.
     /// </summary>
     public void OpenWelcome() => _ui.Post(_ => ShowWelcome(), null);
 
@@ -2176,7 +2202,6 @@ internal sealed partial class TrayApp : ApplicationContext
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
         var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
-        form.WelcomeRequested += () => OpenWelcome();
         // Activation messages can still arrive after FormClosed: only the open window may re-evaluate.
         _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.

@@ -102,8 +102,6 @@ internal sealed partial class SettingsForm : Form
     /// <summary>Raised after the settings were written; the window stays open.</summary>
     public event Action? Saved;
 
-    /// <summary>Über → Einführung → „Zeigen“: open the welcome tour.</summary>
-    public event Action? WelcomeRequested;
     private bool _discard;
 
     public const string General = "Allgemein", AccountsPage = "Konten", DictatePage = "Diktieren", PromptPage = "Dictate Prompt",
@@ -195,6 +193,9 @@ internal sealed partial class SettingsForm : Form
             _autoStart, ToggleWidth, out _));
         general.Controls.Add(startCard);
 
+        // --- updates (Mac #346: General → Updates, right after Startup; Über holds information only) ---
+        AddUpdatesSection(general);
+
         // --- microphone (Windows only: choice and level test) ---
         general.Controls.Add(Section("Mikrofon", subtitle: "Welches Mikrofon aufnimmt. Gibt es nur unter Windows."));
         _mic = new FluentCombo { Dock = DockStyle.Fill, AccessibleName = Core.UserCopy.MicAccessibleName };
@@ -247,6 +248,9 @@ internal sealed partial class SettingsForm : Form
             Section("Töne", first: true), soundCard,
             Section("Während einer Aufnahme", subtitle: "Diese Tasten sind nur belegt, solange die Anzeige unten zu sehen ist. "
                 + "Sonst gehören sie wie gewohnt den anderen Programmen."), fixedCard);
+
+        // --- Daten & Zurücksetzen: last on the page, where the Mac (#346) puts destructive actions ---
+        AddDataSection(general);
 
         // ================= page: Konten (Mac Accounts: one section per provider key) =================
         _geminiKey = new KeyField(settings.ApiKey ?? "", (k, ct) => _gemini.CheckKeyAsync(k, ct), GeminiKeyMessage, k => SaveCheckedKey(k, gemini: true));
@@ -805,7 +809,8 @@ internal sealed partial class SettingsForm : Form
 
     private void BuildInfoPage()
     {
-        // Order as in the macOS app's About tab: version and updates, welcome tour, data and reset, support.
+        // Mac #346: Über holds information only (what it is, support, credits). Updates and Daten & Zurücksetzen
+        // live on Allgemein, the Einführung in the tray menu („Einführung …“).
         var info = NewPage(InfoPage, null);
         var head = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Padding = new Padding(RowPadding, 14, RowPadding, 14), Margin = new Padding(0) };
         head.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -821,30 +826,68 @@ internal sealed partial class SettingsForm : Form
         head.Controls.Add(names, 1, 0);
         var headCard = new Card();
         headCard.AddRow(head);
+        info.Controls.Add(headCard);
+
+        info.Controls.Add(Section("Hilfe und Entwickler"));
+        var links = new Card();
+        links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
+            LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
+        // Mac #344 „Meine Einstellungen senden“: sits with the contact ways because it is one.
+        var sendSettings = new FluentButton("Senden …") { MinimumSize = new Size(96, 32), AccessibleName = "Meine Einstellungen senden" };
+        sendSettings.Click += (_, _) => FeedbackReportDialog.Open(this, _settings, _mcp);
+        links.AddRow(SettingRow("Meine Einstellungen senden", "Teile deine Einstellungen mit dem Entwickler, wenn etwas nicht "
+            + "funktioniert hat: Version, Modelle, Tastenkürzel und welche Anweisungen geändert sind, nie ein Schlüssel. Du siehst "
+            + "vorher alles und kannst es bearbeiten.", sendSettings, 96, out _));
+        var report = new FluentButton("Melden …") { MinimumSize = new Size(96, 32), AccessibleName = "Problem melden" };
+        report.Click += (_, _) => ReportProblem();
+        var reportLog = new FluentButton("Protokoll") { MinimumSize = new Size(96, 32), AccessibleName = "Protokollordner zum Anhängen öffnen" };
+        reportLog.Click += (_, _) => OpenFolder(Core.AppData.LogFolder);
+        var reportButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
+        reportButtons.Controls.Add(report);
+        reportButtons.Controls.Add(reportLog);
+        links.AddRow(SettingRow("Problem melden", "Öffnet ein GitHub-Issue, schon ausgefüllt mit Version, Windows, Modellen und den "
+            + "letzten Protokollzeilen, ohne diktierte Texte und ohne Schlüssel. Oben eintragen, was passiert ist, und vor dem "
+            + "Absenden durchsehen. Klappt der Link nicht: die Protokolldatei aus dem Ordner anhängen.", reportButtons, 208, out _));
+        info.Controls.Add(links);
+
+        info.Controls.Add(Section("Lizenz"));
+        info.Controls.Add(Wrap("Freie Software unter der GNU AGPL-3.0. Die Windows-Version ist ein Ableger von WhisperShortcut für macOS.", 0));
+        info.Controls.Add(Wrap("Offline-Spracherkennung: NVIDIA Parakeet TDT 0.6B v3, lizenziert unter CC BY 4.0, "
+            + "als int8-Umrechnung von csukuangfj, ausgeführt mit sherpa-onnx (Apache 2.0). "
+            + "Offline-Sprachmodell: Qwen (Alibaba) über Unsloth-GGUF, ausgeführt mit llama.cpp (MIT).", 0));
+        var licenseLinks = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 8, 0, 0) };
+        licenseLinks.Controls.Add(LinkButton("NVIDIA Parakeet", "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3"));
+        licenseLinks.Controls.Add(LinkButton("CC BY 4.0", "https://creativecommons.org/licenses/by/4.0/"));
+        licenseLinks.Controls.Add(LinkButton("sherpa-onnx", "https://github.com/k2-fsa/sherpa-onnx"));
+        info.Controls.Add(licenseLinks);
+    }
+
+    /// <summary>Allgemein → Updates (Mac #346 moved it there from Über): manual check and the automatic-check switch.</summary>
+    private void AddUpdatesSection(TableLayoutPanel page)
+    {
+        page.Controls.Add(Section("Updates", subtitle: "Ob WhisperShortcut nach neuen Versionen sucht."));
+        var card = new Card();
         _updateButton = new FluentButton("Suchen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Nach Updates suchen" };
         _updateButton.Click += (_, _) =>
         {
             if (_updates.Available != null) _updates.ShowDialog();
             else _ = CheckUpdateAsync();
         };
-        headCard.AddRow(SettingRow("Nach Updates suchen", "", _updateButton, ButtonWidth, out _updateStatus));
+        card.AddRow(SettingRow("Nach Updates suchen", "", _updateButton, ButtonWidth, out _updateStatus));
         _updateStatus.Text = "Fragt GitHub nach der neuesten Version. Installiert wird erst nach deinem Klick.";
         if (_updates.Available != null) ShowUpdateFound(_updates.Available);
         _autoUpdate = new ToggleSwitch { Checked = _settings.AutoUpdateCheck, AccessibleName = "Automatisch nach Updates suchen" };
         // The practice runs in offline mode, which promises that nothing leaves the PC: say plainly what this one request sends.
-        headCard.AddRow(SettingRow("Automatisch nach Updates suchen", "Kurz nach dem Start und einmal am Tag. Eine neue Version meldet sich "
+        card.AddRow(SettingRow("Automatisch nach Updates suchen", "Kurz nach dem Start und einmal am Tag. Eine neue Version meldet sich "
             + "mit einem Hinweis; installiert wird erst, wenn du auf „Jetzt installieren“ klickst. Auch im Offline-Modus: Die App fragt "
             + "dabei nur github.com nach der neuesten Versionsnummer, ohne Aufnahmen, Texte oder Einstellungen.", _autoUpdate, ToggleWidth, out _));
-        info.Controls.Add(headCard);
+        page.Controls.Add(card);
+    }
 
-        info.Controls.Add(Section("Einführung", subtitle: "Die geführte Tour durch die Funktionen von WhisperShortcut noch einmal ansehen."));
-        var tour = new FluentButton("Tour anzeigen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Einführung zeigen" };
-        tour.Click += (_, _) => WelcomeRequested?.Invoke(); // the tour window (Mac: Settings → About → Welcome Tour)
-        var tourCard = new Card();
-        tourCard.AddRow(SettingRow("Einführung noch einmal zeigen", Core.UserCopy.WelcomeTourHint, tour, ButtonWidth, out _));
-        info.Controls.Add(tourCard);
-
-        info.Controls.Add(Section("Daten & Zurücksetzen"));
+    /// <summary>Allgemein → Daten & Zurücksetzen, last on the page (Mac #346 moved it there from Über).</summary>
+    private void AddDataSection(TableLayoutPanel page)
+    {
+        page.Controls.Add(Section("Daten & Zurücksetzen"));
         // Two folders on disk: %APPDATA% (settings, glossary, key) and %LOCALAPPDATA% (log and the Offline models).
         // Each row names what is really inside, so "Ordner öffnen" never surprises.
         var dataFolder = new FluentButton("Ordner öffnen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Ordner mit Einstellungen öffnen" };
@@ -869,34 +912,7 @@ internal sealed partial class SettingsForm : Form
             + "Das Protokoll hilft bei Fehlermeldungen und enthält keine diktierten Texte und keinen Schlüssel.", logButtons, ButtonWidth + 104, out _));
         dataCard.AddRow(SettingRow("App zurücksetzen", "Löscht alles, auch den API-Schlüssel, das Glossar und die Offline-Modelle. "
             + "Danach beendet sich WhisperShortcut und startet beim nächsten Mal wie neu installiert.", reset, ButtonWidth, out _));
-        info.Controls.Add(dataCard);
-
-        info.Controls.Add(Section("Hilfe und Entwickler"));
-        var links = new Card();
-        links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
-            LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
-        var report = new FluentButton("Melden …") { MinimumSize = new Size(96, 32), AccessibleName = "Problem melden" };
-        report.Click += (_, _) => ReportProblem();
-        var reportLog = new FluentButton("Protokoll") { MinimumSize = new Size(96, 32), AccessibleName = "Protokollordner zum Anhängen öffnen" };
-        reportLog.Click += (_, _) => OpenFolder(Core.AppData.LogFolder);
-        var reportButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
-        reportButtons.Controls.Add(report);
-        reportButtons.Controls.Add(reportLog);
-        links.AddRow(SettingRow("Problem melden", "Öffnet ein GitHub-Issue, schon ausgefüllt mit Version, Windows, Modellen und den "
-            + "letzten Protokollzeilen, ohne diktierte Texte und ohne Schlüssel. Oben eintragen, was passiert ist, und vor dem "
-            + "Absenden durchsehen. Klappt der Link nicht: die Protokolldatei aus dem Ordner anhängen.", reportButtons, 208, out _));
-        info.Controls.Add(links);
-
-        info.Controls.Add(Section("Lizenz"));
-        info.Controls.Add(Wrap("Freie Software unter der GNU AGPL-3.0. Die Windows-Version ist ein Ableger von WhisperShortcut für macOS.", 0));
-        info.Controls.Add(Wrap("Offline-Spracherkennung: NVIDIA Parakeet TDT 0.6B v3, lizenziert unter CC BY 4.0, "
-            + "als int8-Umrechnung von csukuangfj, ausgeführt mit sherpa-onnx (Apache 2.0). "
-            + "Offline-Sprachmodell: Qwen (Alibaba) über Unsloth-GGUF, ausgeführt mit llama.cpp (MIT).", 0));
-        var licenseLinks = new FlowLayoutPanel { AutoSize = true, WrapContents = true, Margin = new Padding(0, 8, 0, 0) };
-        licenseLinks.Controls.Add(LinkButton("NVIDIA Parakeet", "https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3"));
-        licenseLinks.Controls.Add(LinkButton("CC BY 4.0", "https://creativecommons.org/licenses/by/4.0/"));
-        licenseLinks.Controls.Add(LinkButton("sherpa-onnx", "https://github.com/k2-fsa/sherpa-onnx"));
-        info.Controls.Add(licenseLinks);
+        page.Controls.Add(dataCard);
     }
 
     private static string AppVersion => Application.ProductVersion.Split('+')[0];
