@@ -191,7 +191,32 @@ internal sealed class OfflineEngine : IDisposable
             }
         }, CancellationToken.None).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
-        return text;
+        // Parakeet sometimes glues a comma to the next word; the Mac spaces it in every output.
+        return Core.ParakeetPunctuationTiming.SpacingGluedCommas(text);
+    }
+
+    /// <summary>
+    /// Speech to text for "Only when spoken" punctuation: the text with the marks Parakeet guessed removed
+    /// by token timing. Timed is false when no usable timings came back; the caller then runs
+    /// <see cref="Core.SpokenPunctuation.StripModelPunctuation"/> without timedMarks.
+    /// </summary>
+    public async Task<(string Text, bool Timed)> TranscribeSpokenMarksAsync(byte[] wav, CancellationToken ct)
+    {
+        if (!SpeechInstalled) throw new OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
+        var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
+        var decode = await Task.Run(async () =>
+        {
+            try { return parakeet.TranscribeDetailed(wav); }
+            catch (ObjectDisposedException)
+            {
+                // A Glossary reload swapped the instance between fetching and calling: use the new one.
+                var current = await LoadParakeetAsync().ConfigureAwait(false);
+                return current.TranscribeDetailed(wav);
+            }
+        }, CancellationToken.None).ConfigureAwait(false);
+        ct.ThrowIfCancellationRequested();
+        var text = Core.ParakeetPunctuationTiming.KeepSpokenMarks(decode.Text, decode.Tokens, decode.AudioSeconds, out var timed);
+        return (text, timed);
     }
 
     /// <summary>Selection + spoken instruction (already transcribed) to the local language model.</summary>
