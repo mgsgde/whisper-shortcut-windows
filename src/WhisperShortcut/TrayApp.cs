@@ -841,6 +841,8 @@ internal sealed partial class TrayApp : ApplicationContext
             return;
         }
 
+        // How long the press waits for its feedback (Mac: the pill is there at once); the log line below says where it went.
+        var feedback = Stopwatch.StartNew();
         _mode = mode;
         _stopKey = stored;
         _quickAction = null;
@@ -885,6 +887,7 @@ internal sealed partial class TrayApp : ApplicationContext
             _audio = mic;
         }
 
+        long beforeMic = feedback.ElapsedMilliseconds;
         try
         {
             _audio.Start();
@@ -901,6 +904,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 ToolTipIcon.Error);
             return;
         }
+        long micMs = feedback.ElapsedMilliseconds - beforeMic;
         Sounds.Start();
         _recordingSerial++;
         SetState(State.Recording);
@@ -912,6 +916,7 @@ internal sealed partial class TrayApp : ApplicationContext
             mode == Mode.Prompt ? _settings.QuickActions : null,
             templateName: mode == Mode.Template ? _template!.DisplayName : null, screenshot: _runShot != null,
             title: _live != null ? Core.UserCopy.LiveTitle : null);
+        Core.Log.Info($"{mode}: overlay after {feedback.ElapsedMilliseconds} ms (setup {beforeMic} ms, microphone {micMs} ms)");
         if (mode == Mode.Dictate && _live == null && _welcomeForm is { TakesTryResult: true } tour && _pasteTarget == tour.Handle)
             tour.ShowTryListening();
         if (_selection != null)
