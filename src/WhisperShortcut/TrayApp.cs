@@ -176,8 +176,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _finishSetupItem = new ToolStripMenuItem("Einrichtung abschließen …", null, (_, _) => OpenWelcome()) { Visible = false };
         // Mac: „Feedback senden“ with the problem report first. Windows adds the log, which the report points to.
         var feedbackItem = new ToolStripMenuItem("Feedback senden");
-        feedbackItem.DropDownItems.Add(new ToolStripMenuItem("Problem melden …", null, (_, _) => ShowSettings()));
-        feedbackItem.DropDownItems.Add(new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog()));
+        AddFeedbackItems(feedbackItem); // TrayApp.Feedback.cs
         var quitItem = new ToolStripMenuItem("WhisperShortcut beenden", null, (_, _) => Quit());
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         // Popups sit above the recording pill while it is on screen (Mac centerBottomPillClearance).
