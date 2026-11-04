@@ -96,6 +96,7 @@ public sealed class McpSetting
                 return hit?.Label ?? text ?? "Unbekannt";
             }
             default:
+                if (value is JsonValue off && off.TryGetValue<string>(out var offText) && offText.Trim().Length == 0) return "Aus";
                 return McpSettingsCatalog.TryHotkey(value, out var n) ? HotkeyRules.Display(n)
                     : value is JsonValue v && v.TryGetValue<string>(out var raw) ? raw : "Unbekannt";
         }
@@ -184,14 +185,25 @@ public static class McpSettingsCatalog
         Write = v => set(v is JsonValue b && b.TryGetValue<bool>(out var on) && on),
     };
 
-    private static McpSetting HotkeySetting(string id, string title, Func<string> get, Action<string> set) => new()
+    // enabled/setEnabled: shortcuts with an on switch. Off reads as "" (the stored key is only a suggestion);
+    // Write("") switches off (needed by undo and the applier's rollback), a real key switches on.
+    private static McpSetting HotkeySetting(string id, string title, Func<string> get, Action<string> set,
+        Func<bool>? enabled = null, Action<bool>? setEnabled = null) => new()
     {
         Id = id, Title = title, Category = "shortcuts", Type = McpSettingType.Hotkey,
-        Read = () => JsonValue.Create(HotkeyRules.TryNormalize(get(), out var n) ? n : get()),
+        Read = () => enabled != null && !enabled()
+            ? JsonValue.Create("")
+            : JsonValue.Create(HotkeyRules.TryNormalize(get(), out var n) ? n : get()),
         Write = v =>
         {
+            if (setEnabled != null && v is JsonValue j && j.TryGetValue<string>(out var text) && text.Trim().Length == 0)
+            {
+                setEnabled(false);
+                return;
+            }
             if (!TryHotkey(v, out var n)) throw new McpConfigException("Not a valid shortcut.");
             set(n);
+            setEnabled?.Invoke(true);
         },
     };
 
@@ -284,8 +296,10 @@ public static class McpSettingsCatalog
             },
             HotkeySetting("shortcuts.dictate", "Tastenkürzel Diktieren", () => settings.DictateHotkey, v => settings.DictateHotkey = v),
             HotkeySetting("shortcuts.dictate_prompt", "Tastenkürzel Text bearbeiten", () => settings.PromptHotkey, v => settings.PromptHotkey = v),
-            HotkeySetting("shortcuts.add_to_glossary", "Tastenkürzel Glossar", () => settings.GlossaryHotkey, v => settings.GlossaryHotkey = v),
-            HotkeySetting("shortcuts.read_aloud", "Tastenkürzel Vorlesen", () => settings.ReadAloudHotkey, v => settings.ReadAloudHotkey = v),
+            HotkeySetting("shortcuts.add_to_glossary", "Tastenkürzel Glossar", () => settings.GlossaryHotkey, v => settings.GlossaryHotkey = v,
+                () => settings.GlossaryHotkeyEnabled, v => settings.GlossaryHotkeyEnabled = v),
+            HotkeySetting("shortcuts.read_aloud", "Tastenkürzel Vorlesen", () => settings.ReadAloudHotkey, v => settings.ReadAloudHotkey = v,
+                () => settings.ReadAloudHotkeyEnabled, v => settings.ReadAloudHotkeyEnabled = v),
             new()
             {
                 Id = "read_aloud.model", Title = "Vorlesen: Modell", Category = "models", Type = McpSettingType.Enum,
@@ -352,15 +366,39 @@ public static class McpSettingsCatalog
     /// <summary>Equal values (a hotkey in any accepted spelling equals its normalized form).</summary>
     public static bool SameValue(JsonNode? a, JsonNode? b) => JsonNode.DeepEquals(Canonical(a), Canonical(b));
 
-    /// <summary>Validates the state the whole batch would leave: the hotkeys must stay distinct (also against the unchanged ones). Null = ok.</summary>
-    public static string? ValidateBatch(IReadOnlyList<McpSetting> catalog, IReadOnlyList<(string Id, JsonNode? Value)> items)
+    /// <summary>The active keys of features AI apps cannot change (empty ones are skipped by the caller).</summary>
+    public static IReadOnlyList<(string Owner, string Key)> FixedHotkeys(Settings s)
     {
+        var list = new List<(string, string)>
+        {
+            ("Tastenkürzel Bildschirmfoto", s.ActiveScreenshotHotkey),
+            ("Tastenkürzel Live diktieren", s.ActiveLiveDictateHotkey),
+            ("Tastenkürzel Einstellungen öffnen", s.ActiveOpenSettingsHotkey),
+            ("Tastenkürzel Chat", s.ActiveChatHotkey),
+            ("Tastenkürzel Live Meeting", s.MeetingHotkey),
+            ("Tastenkürzel Vorlagen", s.TemplateHotkey),
+        };
+        // Like TemplateHotkeys.ActiveBindings: a template without instructions owns no key.
+        foreach (var t in s.Templates.Where(t => t.IsUsable)) list.Add(("Tastenkürzel einer Vorlage", t.Hotkey));
+        list.Add(("Rechte Strg-Taste (Diktieren)", s.RightCtrlDictation ? "RightCtrl" : ""));
+        return list;
+    }
+
+    /// <summary>Validates the state the whole batch would leave: the hotkeys must stay distinct (also against the unchanged ones). Null = ok.</summary>
+    public static string? ValidateBatch(IReadOnlyList<McpSetting> catalog, IReadOnlyList<(string Id, JsonNode? Value)> items,
+        IEnumerable<(string Owner, string Key)>? fixedKeys = null)
+    {
+        var fixedOwners = new Dictionary<string, string>();
+        foreach (var (owner, raw) in fixedKeys ?? Array.Empty<(string, string)>())
+            if (HotkeyRules.TryNormalize(raw, out var fk)) fixedOwners.TryAdd(fk, owner);
         var seen = new Dictionary<string, McpSetting>();
         foreach (var s in catalog.Where(c => c.Type == McpSettingType.Hotkey))
         {
             var value = items.Where(i => i.Id == s.Id).Select(i => i.Value).FirstOrDefault(_ => true);
             var overridden = items.Any(i => i.Id == s.Id);
             if (!TryHotkey(overridden ? value : s.Read(), out var key)) continue;
+            if (fixedOwners.TryGetValue(key, out var fixedOwner))
+                return $"{s.Title} would be {HotkeyRules.Display(key)}, which {fixedOwner} already uses. Each shortcut must be different.";
             if (seen.TryGetValue(key, out var other))
                 return $"{other.Title} and {s.Title} would both be {HotkeyRules.Display(key)}. Each shortcut must be different.";
             seen[key] = s;

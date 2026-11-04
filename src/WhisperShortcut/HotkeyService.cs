@@ -95,6 +95,11 @@ internal sealed class HotkeyService : NativeWindow, IDisposable
         if (hotkey.IsRightCtrl) return false; // see RegisterRightCtrl
         if (IsAltDigit(hotkey))
         {
+            if (_altDigits.ContainsKey(hotkey.Key))
+            {
+                Core.Log.Error($"Hotkey {hotkey} already registered by WhisperShortcut");
+                return false;
+            }
             if (_hook == IntPtr.Zero && !InstallHook()) return false;
             _altDigits[hotkey.Key] = onPressed;
             Core.Log.Info($"Hotkey registered: {hotkey} (keyboard hook)");

@@ -77,6 +77,19 @@ public class LiveMeetingSessionTests : IDisposable
     }
 
     [Fact]
+    public async Task StopAsync_returns_a_result_when_meeting_json_is_gone()
+    {
+        var texts = new List<string>();
+        using var s = NewSession(Counting(texts));
+        s.Start();
+        Feed(s, Synth.Speech(2.5));
+        File.Delete(Path.Combine(s.Meeting.Folder, "meeting.json"));
+        var result = await s.StopAsync(null, CancellationToken.None);
+        Assert.NotNull(result);
+        Assert.False(s.IsRunning);
+    }
+
+    [Fact]
     public void Meeting_throws_before_Start()
     {
         using var s = NewSession((_, _) => Task.FromResult("x"));

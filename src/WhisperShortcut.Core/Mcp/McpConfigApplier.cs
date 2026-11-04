@@ -34,6 +34,9 @@ public sealed class McpConfigApplier
 
     internal static string GlossaryTitle(int added) => $"Glossar: {added} Begriff{(added == 1 ? "" : "e")} hinzugefügt";
 
+    /// <summary>The live settings (the proposal check needs the keys AI apps cannot change).</summary>
+    public Settings Settings => _settings;
+
     /// <summary>The glossary as text, one term per line.</summary>
     public string CurrentGlossaryText() => string.Join("\n", _settings.Glossary);
 

@@ -206,7 +206,7 @@ internal sealed partial class SettingsForm
         SelectedReadAloudSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture), _readAloudRewrite.Checked.ToString(), _readAloudPrompt.Value);
 
     private sealed record ReadAloudState(string Hotkey, bool HotkeyEnabled, string Model, string VoiceGemini, string VoiceOpenAi,
-        string VoiceSystem, double Speed, bool Rewrite, string Prompt);
+        string VoiceSystem, double Speed, bool Rewrite, string Prompt, double SpeedShown);
 
     /// <summary>Writes the page into the settings (from TrySave); returns what was there, for <see cref="RestoreReadAloud"/>.</summary>
     /// <param name="keysOk">All shortcuts valid: only then the Vorlesen key is taken over, like the other keys.</param>
@@ -214,7 +214,7 @@ internal sealed partial class SettingsForm
     {
         var before = new ReadAloudState(_settings.ReadAloudHotkey, _settings.ReadAloudHotkeyEnabled, _settings.ReadAloudModel,
             _settings.ReadAloudVoiceGemini, _settings.ReadAloudVoiceOpenAi, _settings.ReadAloudVoiceSystem, _settings.ReadAloudSpeed,
-            _settings.ReadAloudSmartRewrite, _settings.ReadAloudRewritePrompt);
+            _settings.ReadAloudSmartRewrite, _settings.ReadAloudRewritePrompt, _readAloudSpeedShown);
         if (keysOk) (_settings.ReadAloudHotkey, _settings.ReadAloudHotkeyEnabled) = StoredKey(_readAloudKey.Value, _settings.ReadAloudHotkey);
         _settings.ReadAloudModel = SelectedModel(_readAloudModel);
         _settings.ReadAloudVoiceGemini = _readAloudVoiceGemini;
@@ -238,6 +238,7 @@ internal sealed partial class SettingsForm
         _settings.ReadAloudVoiceSystem = s.VoiceSystem;
         _settings.ReadAloudRewritePrompt = s.Prompt;
         _settings.ReadAloudSpeed = s.Speed;
+        _readAloudSpeedShown = s.SpeedShown;
         _settings.ReadAloudSmartRewrite = s.Rewrite;
     }
 

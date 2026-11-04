@@ -27,6 +27,8 @@ internal sealed class ReadAloudController : IDisposable
     private TtsPlayer? _player;
     // Counts runs so a late callback of a stopped run cannot touch the next one.
     private int _run;
+    // Provider of the model the running read-aloud captured at start.
+    private Core.TtsProvider _runningProvider;
 
     /// <summary>Raised on the UI thread when it starts, starts speaking or ends.</summary>
     public event Action? StateChanged;
@@ -72,6 +74,16 @@ internal sealed class ReadAloudController : IDisposable
         _ = StartAsync();
     }
 
+    /// <summary>Offline mode was just switched on: a running cloud voice must stop (the Windows voice may go on).</summary>
+    public void StopIfCloudWhileOffline()
+    {
+        if (IsActive && _settings.OfflineMode && _runningProvider != Core.TtsProvider.System)
+        {
+            Core.Log.Info("Read aloud: stopped, offline mode switched on");
+            Stop();
+        }
+    }
+
     /// <summary>Stops synthesis and playback, hides the card. Safe to call when idle.</summary>
     public void Stop()
     {
@@ -98,6 +110,7 @@ internal sealed class ReadAloudController : IDisposable
         }
 
         int run = ++_run;
+        _runningProvider = model.Provider;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         SetPhase(Phase.Preparing);
@@ -139,6 +152,16 @@ internal sealed class ReadAloudController : IDisposable
             if (model.Provider == Core.TtsProvider.System) await WindowsVoice.SynthesizeAsync(voice, plain, OnAudio, ct);
             else failed = await _tts.SynthesizeAsync(model, voice, plain, OnAudio, ct);
             buffer.MarkComplete();
+            _ui.Post(_ =>
+            {
+                if (run == _run && _player == null && buffer.BufferedSeconds <= 0)
+                {
+                    Core.Log.Error("Read aloud: no audio produced");
+                    Stop();
+                    Sounds.Error();
+                    _notify("Vorlesen fehlgeschlagen", "Der Text konnte nicht vorgelesen werden. Details stehen im Protokoll.", ToolTipIcon.Error, null);
+                }
+            }, null);
             if (failed > 0) Core.Log.Error($"Read aloud: {failed} chunk(s) failed, played with a gap");
         }
         catch (OperationCanceledException) when (run != _run || ct.IsCancellationRequested)
@@ -186,7 +209,18 @@ internal sealed class ReadAloudController : IDisposable
         if (_player != null || _buffer != buffer) return;
         try
         {
+            int run = _run;
             _player = new TtsPlayer(buffer);
+            _player.Finished += error =>
+            {
+                if (run != _run) return;
+                if (error != null) Core.Log.Error("Read aloud: playback stopped", error);
+                else Core.Log.Info("Read aloud: finished");
+                Stop();
+            };
+            _player.Play();
+            _overlay.ShowSpeaking(buffer, () => _player?.IsPaused == true);
+            SetPhase(Phase.Speaking);
         }
         catch (Exception e)
         {
@@ -195,19 +229,7 @@ internal sealed class ReadAloudController : IDisposable
             Stop();
             Sounds.Error();
             _notify("Vorlesen fehlgeschlagen", "Kein Audioausgang gefunden. Bitte Lautsprecher oder Kopfhörer prüfen.", ToolTipIcon.Error, null);
-            return;
         }
-        int run = _run;
-        _player.Finished += error =>
-        {
-            if (run != _run) return;
-            if (error != null) Core.Log.Error("Read aloud: playback stopped", error);
-            else Core.Log.Info("Read aloud: finished");
-            Stop();
-        };
-        _player.Play();
-        _overlay.ShowSpeaking(buffer, () => _player?.IsPaused == true);
-        SetPhase(Phase.Speaking);
     }
 
     private void OnCommand(ReadAloudOverlay.Command command)
@@ -305,6 +327,7 @@ internal sealed class ReadAloudController : IDisposable
 
     public void Dispose()
     {
+        StateChanged = null;
         Stop();
         _overlay.Dispose();
     }

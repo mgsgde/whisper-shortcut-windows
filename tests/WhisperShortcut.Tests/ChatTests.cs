@@ -104,7 +104,31 @@ public class ChatTests : IDisposable
         Assert.Equal("Hallo", ChatText.Flatten("", new[] { U("Hallo") }));
     }
 
+    [Fact]
+    public void Flatten_with_empty_system_prompt_has_no_blank_system_block()
+    {
+        var text = ChatText.Flatten("", new[] { U("Frage 1"), M("Antwort 1"), U("Frage 2") });
+        Assert.StartsWith("Bisheriger Verlauf:", text);
+    }
+
     // ---- window ----
+
+    [Fact]
+    public void Window_with_local_budget_keeps_last_user_message_and_fits()
+    {
+        var all = new List<ChatMessage>();
+        for (var i = 0; i < 10; i++)
+        {
+            all.Add(U(new string('u', 5_000)));
+            all.Add(M(new string('m', 5_000)));
+        }
+        all.Add(U("letzte Frage"));
+        var w = ChatText.Window(all, ChatText.LocalWindowChars);
+        Assert.Equal(all[^1], w[^1]);
+        Assert.Equal(ChatRole.User, w[0].Role);
+        Assert.True(w.Sum(m => m.Text.Length) <= ChatText.LocalWindowChars);
+        Assert.True(w.Count < all.Count);
+    }
 
     [Fact]
     public void Window_returns_everything_when_it_fits()

@@ -202,7 +202,20 @@ internal sealed class ClipboardPaster
         _pendingOriginal = original;
         _pendingSequence = ourSequence;
 
-        await Task.Delay(Core.ClipboardPasteGuard.PrePasteDelay, ct);
+        try { await Task.Delay(Core.ClipboardPasteGuard.PrePasteDelay, ct); }
+        catch (OperationCanceledException)
+        {
+            // Cancelled (Esc) right before Ctrl+V: nothing was pasted, so settle the clipboard now.
+            if (GetClipboardSequenceNumber() == ourSequence)
+            {
+                if (original != null) Restore(original);
+                else Clear();
+            }
+            restore.Cancel();
+            if (_pendingRestore == restore) { _pendingRestore = null; _pendingOriginal = null; }
+            restore.Dispose();
+            throw;
+        }
         // Something else may have written the clipboard meanwhile: Ctrl+V would paste that instead of our text.
         uint currentSequence = GetClipboardSequenceNumber();
         TryReadText(out var current);
@@ -244,12 +257,16 @@ internal sealed class ClipboardPaster
     // The user's clipboard from before a live dictation (only when "restore" is on); null = nothing to bring back.
     private ClipboardSnapshot? _liveOriginal;
 
+    // Bumped when a live dictation starts or ends: a piece still on its way must not write or paste after that.
+    private int _liveGeneration;
+
     /// <summary>
     /// A live dictation starts: remembers the user's clipboard (the saved one when our earlier text is still on it)
     /// and drops any restore still pending, which would put the old clipboard back mid-dictation.
     /// </summary>
     public void BeginLive(bool restoreClipboard)
     {
+        _liveGeneration++;
         CancelLateWatch();
         ClipboardSnapshot? original = _pendingRestore != null && GetClipboardSequenceNumber() == _pendingSequence
             ? _pendingOriginal
@@ -267,19 +284,25 @@ internal sealed class ClipboardPaster
     /// </summary>
     public async Task<bool> PasteLivePieceAsync(string text, IntPtr target, CancellationToken ct)
     {
+        int generation = _liveGeneration;
         if (target == IntPtr.Zero) return false;
         if (!await WaitForModifiersReleasedAsync(ct)) return false;
         ct.ThrowIfCancellationRequested();
         if (ForegroundRoot() != target) return false;
         if (ForegroundIsOwnWindow()) return false;
         if (ForegroundIsElevated()) return false;
+        // The dictation ended (Esc) while this piece waited for the modifiers: write and paste nothing.
+        if (generation != _liveGeneration) return false;
         CancelLateWatch(); // our own write below would look like a late copy
         if (!WriteText(text)) return false;
+        uint mine = GetClipboardSequenceNumber();
         await Task.Delay(Core.LiveDictation.PrePasteDelay, ct);
         // An Alt+Tab in those 50 ms must not send the piece elsewhere.
         if (ForegroundRoot() != target) return false;
-        // Someone replaced the clipboard in those 50 ms (the user's copy, or the end of an Esc restore): Ctrl+V would paste that.
-        if (GetClipboardSequenceNumber() != _lastOwnWriteSequence) return false;
+        // The end of the dictation restores the user's clipboard and counts as our own write: check the generation too.
+        if (generation != _liveGeneration) return false;
+        // Someone replaced the clipboard in those 50 ms (the user's copy): Ctrl+V would paste that.
+        if (GetClipboardSequenceNumber() != mine) return false;
         SendChord(0x56); // V
         Core.Log.Info($"LIVE-DICTATE: inserted {text.Length} chars");
         await Task.Delay(Core.LiveDictation.PieceGap, ct);
@@ -289,6 +312,7 @@ internal sealed class ClipboardPaster
     /// <summary>Ends a live dictation and settles the clipboard as <paramref name="action"/> says. Always forgets the saved original.</summary>
     public void EndLive(Core.LiveClipboardEnd action, string? text)
     {
+        _liveGeneration++;
         try
         {
             switch (action)
@@ -342,6 +366,8 @@ internal sealed class ClipboardPaster
             await Task.Delay(Core.ClipboardPasteGuard.RestoreDelay);
             if (GetClipboardSequenceNumber() != ours) return;
             if (Clear()) Core.Log.Info("LIVE-DICTATE: cleared clipboard after last piece");
+            // Our own clear is no late copy: move the watch's baseline along.
+            if (_lateWatch != null) _lateBaseline = GetClipboardSequenceNumber();
         }
         catch (Exception e)
         {
@@ -584,8 +610,12 @@ internal sealed class ClipboardPaster
     private bool Clear()
     {
         if (!Open()) return false;
-        try { return EmptyClipboard(); }
+        bool ok;
+        try { ok = EmptyClipboard(); }
         finally { CloseClipboard(); }
+        // Our own clear is no user copy: read after CloseClipboard so the number is the one our write ended on.
+        if (ok) _lastOwnWriteSequence = GetClipboardSequenceNumber();
+        return ok;
     }
 
     // ---- keyboard ----

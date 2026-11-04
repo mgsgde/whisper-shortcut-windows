@@ -48,6 +48,8 @@ internal sealed class ChatWindow : Form
 
     private Core.ChatSession _session = Core.ChatSession.New(DateTimeOffset.Now);
     private CancellationTokenSource? _cts;
+    // Engine of the running answer (null while idle).
+    private Core.Engine? _runningEngine;
     private bool _pinned;
     private bool _holdOpen; // a dialog of ours is in front: that is no "click outside"
     private string _defaultStatus = "";
@@ -198,6 +200,16 @@ internal sealed class ChatWindow : Form
         }
         _cts?.Cancel();
         base.OnFormClosing(e);
+    }
+
+    /// <summary>Offline mode was just switched on: a running cloud answer is cancelled like with Esc.</summary>
+    public void CancelIfCloudWhileOffline()
+    {
+        if (_cts != null && _settings.OfflineMode && _runningEngine != Core.Engine.Local)
+        {
+            Core.Log.Info("Chat: stopped, offline mode switched on");
+            _cts.Cancel();
+        }
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -419,9 +431,10 @@ internal sealed class ChatWindow : Form
         var model = _settings.EffectiveChatModel;
         var modelName = ModelName;
         var system = Core.ChatPrompts.Effective(_settings.ChatSystemPrompt, offline: engine == Core.Engine.Local);
-        var window = Core.ChatText.Window(session.Messages);
+        var window = Core.ChatText.Window(session.Messages, engine == Core.Engine.Local ? Core.ChatText.LocalWindowChars : 200_000);
 
         var cts = _cts = new CancellationTokenSource();
+        _runningEngine = engine;
         _send.Enabled = false;
         SetStatus("Denkt nach … (Esc bricht ab)", Tone.Secondary);
         Render();
@@ -434,7 +447,7 @@ internal sealed class ChatWindow : Form
             if (engine == Core.Engine.Local)
             {
                 // The local model answers in one piece (no stream); the Mac's offline chat behaves the same way.
-                var answer = await _offline.CompleteAsync(system, Core.ChatText.Flatten(system, window), 2048, cts.Token);
+                var answer = await _offline.CompleteAsync(system, Core.ChatText.Flatten("", window), 2048, cts.Token);
                 reply = new Core.ChatReply(answer.Trim(), Array.Empty<Core.ChatSource>());
             }
             else
@@ -447,6 +460,7 @@ internal sealed class ChatWindow : Form
                     if (partial.Length == piece.Length) SetStatus("Schreibt … (Esc bricht ab)", Tone.Secondary);
                 }), _settings.ChatWebSearch, cts.Token);
             }
+            if (IsDisposed) return;
             session.Add(new Core.ChatMessage(Core.ChatRole.Model, reply.Text.Trim(), DateTimeOffset.Now, reply.Sources, modelName));
             Persist(session);
             SetStatus("", Tone.Secondary);
@@ -454,6 +468,7 @@ internal sealed class ChatWindow : Form
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
             Core.Log.Info("Chat: stopped by the user");
+            if (IsDisposed) return;
             if (partial.Length > 0)
             {
                 session.Add(new Core.ChatMessage(Core.ChatRole.Model, partial.ToString().Trim() + " …", DateTimeOffset.Now, null, modelName));
@@ -464,24 +479,34 @@ internal sealed class ChatWindow : Form
         catch (Core.GeminiException e)
         {
             Core.Log.Error($"Chat: {e.Provider} {e.Kind}");
+            if (IsDisposed) return;
             SetStatus(e.Message, Tone.Bad);
         }
         catch (Exception e) when (e is OfflineNotReadyException or Core.LocalLlmException)
         {
+            if (IsDisposed) return;
             SetStatus(e.Message + " Unter Einstellungen → Dictate Prompt lässt es sich laden.", Tone.Bad);
         }
         catch (Exception e)
         {
             Core.Log.Error("Chat failed", e);
+            if (IsDisposed) return;
             SetStatus("Die Antwort konnte nicht geladen werden. Details stehen im Protokoll.", Tone.Bad);
         }
         finally
         {
-            if (_cts == cts) _cts = null;
+            if (_cts == cts) { _cts = null; _runningEngine = null; }
             cts.Dispose();
-            _send.Enabled = true;
-            if (_session == session) Render();
+            if (!IsDisposed) _send.Enabled = true;
+            if (!IsDisposed && _session == session) Render();
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        // Quitting while an answer streams: stop the request.
+        if (disposing) _cts?.Cancel();
+        base.Dispose(disposing);
     }
 
     // Stream pieces arrive on the HTTP thread; after the app quit there is no window to draw into.

@@ -505,6 +505,13 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         var label = mode.ToString();
         Core.Log.Info($"Hotkey {label} in state {_state}");
+        // Vorlesen copies the selection while preparing: a second copy now could lose the user's clipboard.
+        if (_state == State.Idle && mode != Mode.Dictate && _readAloud?.IsActive == true && !_readAloud.IsSpeaking)
+        {
+            Core.Log.Info($"Hotkey {label} ignored: Vorlesen is preparing");
+            Sounds.Error();
+            return;
+        }
         var now = Environment.TickCount64;
         var gateOpen = _state == State.Idle || _pressGate.Accept(now);
         if (_state != State.Idle && !gateOpen)
@@ -1412,6 +1419,7 @@ internal sealed partial class TrayApp : ApplicationContext
         {
             _cts.Dispose();
             _cts = null;
+            _selectionCts?.Cancel(); // an early end must stop the selection copy still polling
             _selectionCts?.Dispose();
             _selectionCts = null;
             _selection = null;
@@ -1823,7 +1831,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private async Task AddSelectionToGlossaryAsync()
     {
-        if (_state != State.Idle || _glossaryBusy || _selection != null)
+        if (_state != State.Idle || _glossaryBusy || _selection != null || (_readAloud?.IsActive == true && !_readAloud.IsSpeaking))
         {
             Sounds.Error();
             return;
@@ -2101,6 +2109,14 @@ internal sealed partial class TrayApp : ApplicationContext
         SetState(_state); // tooltip "Bereit" instead of "Kein API-Schlüssel"
         _offline.Prewarm();
         _mcp.SyncOfflineMode();
+        AfterOfflineMaybeChanged();
+    }
+
+    // Offline mode may just have been switched on: cloud read-aloud and a streaming cloud chat answer must stop.
+    private void AfterOfflineMaybeChanged()
+    {
+        _readAloud.StopIfCloudWhileOffline();
+        _chatWindow?.CancelIfCloudWhileOffline();
     }
 
     /// <summary>Opens the settings window on <paramref name="page"/> (e.g. „Konten“ from a missing-key popup).</summary>
@@ -2171,6 +2187,7 @@ internal sealed partial class TrayApp : ApplicationContext
             _offline.Prewarm(); // offline mode may just have been switched on
             DropScreenshotIfNotAllowed();
             _mcp.SyncOfflineMode();
+            AfterOfflineMaybeChanged();
         };
         _settingsForm.FormClosed += (_, _) =>
         {
