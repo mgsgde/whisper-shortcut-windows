@@ -870,7 +870,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private void StartLiveDictation(string stored)
     {
         var reason = Core.LiveDictation.UnavailableReason(_meeting.IsActive,
-            _settings.EffectiveSpeechEngine == Core.Engine.Local, OfflineEngine.SpeechInstalled, _settings.AutoPaste);
+            _settings.EffectiveSpeechEngine == Core.Engine.Local, OfflineEngine.SpeechInstalled);
         if (reason is { } why)
         {
             Core.Log.Info($"LIVE-DICTATE: not started ({why})");
@@ -928,7 +928,7 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         if (_fakeGemini) return "test";
         // No TextCleanup.ForDictation per piece: it would capitalise and end every piece with a period.
-        return GlossaryBackstops(Core.LiveDictation.FinishPiece(await _offline.TranscribeAsync(wav, ct)));
+        return GlossaryBackstops(Core.LiveDictation.FinishPiece(await _offline.TranscribeAsync(wav, ct), Core.PunctuationMode.Automatic));
     }
 
     /// <summary>Forgets the live session. Does not touch the clipboard.</summary>

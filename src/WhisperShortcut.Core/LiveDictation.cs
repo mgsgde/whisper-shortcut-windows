@@ -4,7 +4,68 @@ using System.Globalization;
 namespace WhisperShortcut.Core;
 
 /// <summary>Why Live diktieren cannot start, in the order the user would fix it.</summary>
-public enum LiveUnavailable { DuringMeeting, NotOffline, NotDownloaded, AutoPasteOff }
+public enum LiveUnavailable { DuringMeeting, NotParakeet, NotDownloaded }
+
+/// <summary>The dictation shortcut's mode: normal Diktieren or Live diktieren.</summary>
+public enum DictateMode { Dictate, Live }
+
+/// <summary>What the dictation shortcut does for a mode and the availability of Live.</summary>
+public enum LiveStartDecision { StartDictate, StartLive, Refuse }
+
+/// <summary>What is known about the character before the caret in the focused field.</summary>
+public enum CaretKind { Unknown, StartOfText, Character }
+
+/// <summary>
+/// The character already before the caret (Mac FocusedTextContext.CaretContext). Unknown and start of text leave the
+/// first live piece unspaced. The character is dictated text: never logged, <see cref="LogKind"/> is the label that is.
+/// </summary>
+public readonly record struct CaretContext(CaretKind Kind, char Character = '\0')
+{
+    /// <summary>The caret could not be read.</summary>
+    public static CaretContext Unknown => new(CaretKind.Unknown);
+
+    /// <summary>The caret is at the start of the field.</summary>
+    public static CaretContext StartOfText => new(CaretKind.StartOfText);
+
+    /// <summary>The character right before the caret.</summary>
+    public static CaretContext Of(char character) => new(CaretKind.Character, character);
+
+    /// <summary>"unknown", "start", "letter", "space", "newline" or "other". Never the character.</summary>
+    public string LogKind => Kind switch
+    {
+        CaretKind.Unknown => "unknown",
+        CaretKind.StartOfText => "start",
+        _ when char.IsLetter(Character) => "letter",
+        _ when Character == ' ' => "space",
+        _ when LiveChunkJoiner.IsNewline(Character) => "newline",
+        _ => "other",
+    };
+}
+
+/// <summary>
+/// The last character of the previous live dictation, kept in memory so the next one can be spaced and cased when the
+/// caret cannot be read. Never persisted, never logged; it is patient text. <paramref name="App"/> is the target
+/// process name.
+/// </summary>
+public sealed record LastInsertion(char Character, string App, DateTime At)
+{
+    /// <summary>Older than this, the user has most likely moved on.</summary>
+    public static readonly TimeSpan MaxAge = TimeSpan.FromSeconds(600);
+
+    /// <summary>The memory for a finished dictation, or null when nothing was inserted or the target is unknown.</summary>
+    public static LastInsertion? Make(string insertedText, string? app, DateTime now) =>
+        insertedText.Length == 0 || string.IsNullOrEmpty(app) ? null : new LastInsertion(insertedText[^1], app, now);
+
+    /// <summary>A readable caret always wins. Only Unknown falls back to the memory, and only for the same app, within <see cref="MaxAge"/>.</summary>
+    public static CaretContext Seed(CaretContext caret, LastInsertion? last, string? frontmostApp, DateTime now)
+    {
+        if (caret.Kind != CaretKind.Unknown || last == null || frontmostApp == null
+            || !string.Equals(last.App, frontmostApp, StringComparison.OrdinalIgnoreCase)) return caret;
+        var age = now - last.At;
+        if (age < TimeSpan.Zero || age >= MaxAge) return caret;
+        return CaretContext.Of(last.Character);
+    }
+}
 
 /// <summary>What happens to the clipboard when a live dictation ends.</summary>
 public enum LiveClipboardEnd
@@ -54,30 +115,96 @@ public static class LiveDictation
         TimeSpan.FromSeconds(0.6), -40f, TimeSpan.FromSeconds(0.2));
 
     /// <summary>Null when Live diktieren may start; otherwise the first thing the user has to fix.</summary>
-    public static LiveUnavailable? UnavailableReason(bool duringMeeting, bool speechIsLocal, bool speechInstalled, bool autoPaste)
+    public static LiveUnavailable? UnavailableReason(bool duringMeeting, bool speechIsLocal, bool speechInstalled)
     {
         if (duringMeeting) return LiveUnavailable.DuringMeeting;
-        if (!speechIsLocal) return LiveUnavailable.NotOffline;
+        if (!speechIsLocal) return LiveUnavailable.NotParakeet;
         if (!speechInstalled) return LiveUnavailable.NotDownloaded;
-        if (!autoPaste) return LiveUnavailable.AutoPasteOff;
         return null;
     }
 
     /// <summary>The German notice for a reason.</summary>
     public static string Message(LiveUnavailable reason) => reason switch
     {
-        LiveUnavailable.DuringMeeting => "Live diktieren geht nicht, solange ein Live Meeting läuft.",
-        LiveUnavailable.NotOffline => "Live diktieren funktioniert nur mit der Spracherkennung auf diesem PC (Parakeet). Unter „Diktieren“ die Spracherkennung „Auf diesem PC (Parakeet)“ wählen oder den Offline-Modus einschalten.",
-        LiveUnavailable.NotDownloaded => "Für Live diktieren zuerst die Offline-Spracherkennung laden, in den Einstellungen unter „Diktieren“ → „Offline-Modelle“.",
-        LiveUnavailable.AutoPasteOff => "Live diktieren schreibt direkt an die Cursorstelle. Dafür unter „Allgemein“ „Automatisch einfügen“ einschalten.",
+        LiveUnavailable.DuringMeeting => "Live diktieren ist während eines Meetings nicht verfügbar.",
+        LiveUnavailable.NotParakeet => "Live diktieren funktioniert mit dem Offline-Modell Parakeet. Wähle es unter Einstellungen → Diktieren.",
+        LiveUnavailable.NotDownloaded => "Lade Parakeet unter Einstellungen → Diktieren, um Live diktieren zu nutzen.",
         _ => "",
     };
 
-    // HOOK(punctuation, macOS #322): when Settings gets the Punctuation mode („Automatisch“ / „Nur wenn gesprochen“),
-    // take the mode here like the Mac's LiveDictation.finishPiece: spoken-only strips the model's punctuation first,
-    // then applies the spoken commands. Not on this base yet; every piece gets automatic punctuation.
-    /// <summary>One decoded piece the way offline dictation finishes a text: the spoken layout commands applied.</summary>
-    public static string FinishPiece(string text) => SpokenPunctuation.Apply(text);
+    /// <summary>What the dictation shortcut does in <paramref name="mode"/> given why Live may be unavailable.</summary>
+    public static (LiveStartDecision Decision, LiveUnavailable? Reason) StartDecision(DictateMode mode, LiveUnavailable? unavailable)
+    {
+        if (mode == DictateMode.Dictate) return (LiveStartDecision.StartDictate, null);
+        // During a live meeting, Live is never offered: the meeting already owns a dedicated dictation
+        // segment, so the Dictate mode falls back to recording that instead of refusing.
+        if (unavailable == LiveUnavailable.DuringMeeting) return (LiveStartDecision.StartDictate, null);
+        if (unavailable is { } reason) return (LiveStartDecision.Refuse, reason);
+        return (LiveStartDecision.StartLive, null);
+    }
+
+    /// <summary>
+    /// One decoded piece as normal offline dictation finishes a transcript: standalone fillers dropped, model
+    /// punctuation stripped in "Only when spoken" mode, then the spoken layout commands. Edge line breaks
+    /// ("neuer Absatz" at the very end of a piece) are kept: <see cref="LiveChunkJoiner"/> relies on them to lay out
+    /// the next piece without adding a space after. <paramref name="timedMarks"/>: the piece's commas, periods, "?" and
+    /// "!" were already filtered by token timing, so Strip removes only semicolons.
+    /// </summary>
+    public static string FinishPiece(string text, PunctuationMode mode, bool timedMarks = false)
+    {
+        var withoutFillers = RemovingFillers(text);
+        var source = mode == PunctuationMode.SpokenOnly
+            ? SpokenPunctuation.StripModelPunctuation(withoutFillers, timedMarks)
+            : withoutFillers;
+        return SpokenPunctuation.Apply(source, mode, keepsEdgeBreaks: true);
+    }
+
+    // "hmm" is two or more m's; "hm" is the single one. Longer forms come first so a word boundary
+    // still decides, and "ähm" is not eaten as "äh".
+    private static readonly System.Text.RegularExpressions.Regex FillerRegex = new(
+        @"[ \t]*\b(?:mm-hmm|mmhmm|m-hm|mhm|hm{2,}|hm|ähm|äh|öhm|ehm)\b[,.;]?[ \t]*",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+    private static readonly System.Text.RegularExpressions.Regex FillerSpaceRun = new(@"[ \t]{2,}");
+
+    /// <summary>
+    /// Parakeet writes fillers ("Mm-hmm", "Ähm") into the record. Whole word, case-insensitive, plus one comma, period or
+    /// semicolon glued on, and the spaces around them. "Um", "ah", "aha", "achso" and "oh" stay: they are real German
+    /// words. A piece of only fillers comes back "".
+    /// </summary>
+    private static string RemovingFillers(string text)
+    {
+        if (!FillerRegex.IsMatch(text)) return text;
+        var replaced = FillerRegex.Replace(text, " ");
+        return FillerSpaceRun.Replace(replaced, " ").Trim(' ', '\t');
+    }
+
+    /// <summary>
+    /// The character before the caret in <paramref name="text"/> (a control's text, as WM_GETTEXT returns it) at
+    /// <paramref name="caretIndex"/>. Unknown for an index outside the text; start of text at 0. With
+    /// <paramref name="crCountsAsOneBeforeLf"/> (RichEdit: its selection offsets count a "\r\n" pair as one position) the
+    /// text is walked counting each pair once, and a caret right after a pair yields '\n'.
+    /// </summary>
+    public static CaretContext CaretFromText(string text, int caretIndex, bool crCountsAsOneBeforeLf)
+    {
+        if (caretIndex < 0) return CaretContext.Unknown;
+        if (!crCountsAsOneBeforeLf)
+        {
+            if (caretIndex > text.Length) return CaretContext.Unknown;
+            return caretIndex == 0 ? CaretContext.StartOfText : CaretContext.Of(text[caretIndex - 1]);
+        }
+        if (caretIndex == 0) return CaretContext.StartOfText;
+        var position = 0;
+        var i = 0;
+        while (i < text.Length)
+        {
+            char unit;
+            if (text[i] == '\r' && i + 1 < text.Length && text[i + 1] == '\n') { unit = '\n'; i += 2; }
+            else { unit = text[i]; i++; }
+            position++;
+            if (position == caretIndex) return CaretContext.Of(unit);
+        }
+        return CaretContext.Unknown;
+    }
 
     // ---- Comparing with the whole-file decode ----
 
@@ -158,26 +285,45 @@ public static class LiveDictation
 /// <summary>
 /// Turns decoded pieces into the exact strings to insert, append-only.
 /// <list type="bullet">
-/// <item><b>Spacing:</b> one space between pieces, none at the very start, none after a line break, none
-/// before a piece that starts with a line break (spoken "neuer Absatz" becomes one) or with closing punctuation.</item>
+/// <item><b>Spacing:</b> one space between pieces, none at the very start. The seed is the character already before the
+/// caret: a letter takes that leading space ("Basistherapie" + "Ah" -> " Ah"), whitespace or a line break there does
+/// not, and an unknown caret keeps the plain start. Also none after a line break, none before a piece that starts with
+/// a line break (spoken "neuer Absatz" becomes one) or with closing punctuation, none on either side of a slash
+/// ("Schrägstrich" said in one piece and the next word in another must still read "L4/L5").</item>
 /// <item><b>A period at a breath:</b> Parakeet punctuates each piece on its own, so a pause mid-sentence can end a
 /// piece with "." although the sentence goes on. A piece's final period is therefore held back and emitted with
 /// the next piece: dropped when that piece starts with a lowercase letter (the sentence clearly continued), kept
 /// otherwise, and flushed by <see cref="Finish"/> at Stop. Abbreviations ("z. B.", "Dr.", "ca.", numbers) are never
 /// held: only a period after a word of five or more letters without inner dots is. German capitalises nouns, so a
-/// capital start is weak evidence; the period is then kept, which is what not holding it would have done anyway.</item>
+/// capital start is weak evidence; the period is then kept, which is what not holding it would have done anyway.
+/// Never held at all when <see cref="HoldsPeriods"/> is false ("Only when spoken"): every period there was said on
+/// purpose.</item>
+/// <item><b>A capital after a pause:</b> Parakeet capitalises the first word of every piece. With
+/// <see cref="HoldsPeriods"/> false, when the text so far (the seeded character plus <see cref="Inserted"/>) is
+/// non-empty and does not end (trailing spaces aside) in ". ! ? :" or a newline, that capital is taken off a function
+/// word (<see cref="SpokenPunctuation.LowercasingFunctionWord"/>). Nouns and verbs keep Parakeet's capital.</item>
 /// </list>
 /// </summary>
 public sealed class LiveChunkJoiner
 {
     private string _inserted = "";
     private bool _heldPeriod;
+    // One character already before the caret, or empty when the field starts there or the caret could not be read.
+    // Spacing and the spoken-only lower-case check see this plus _inserted; Inserted does not include it.
+    private string _precedingText = "";
 
-    /// <summary>Everything handed out so far, held marks included once emitted.</summary>
+    /// <summary>Everything handed out so far, held marks included once emitted (not the seeded character).</summary>
     public string Inserted => _inserted;
 
+    /// <summary>False in "Only when spoken" mode: no period is ever held back.</summary>
+    public bool HoldsPeriods { get; set; } = true;
+
     /// <summary>Characters that never get a space in front.</summary>
-    public static readonly HashSet<char> ClosingPunctuation = new() { ',', '.', ';', ':', '!', '?', ')', ']', '»', '“' };
+    public static readonly HashSet<char> ClosingPunctuation = new() { ',', '.', ';', ':', '!', '?', ')', ']', '»', '“', '…' };
+
+    /// <summary>The character already before the caret. Start of text and unknown leave the first piece unspaced.</summary>
+    public void Seed(CaretContext context) =>
+        _precedingText = context.Kind == CaretKind.Character ? context.Character.ToString() : "";
 
     /// <summary>The text to insert for <paramref name="piece"/> (possibly empty).</summary>
     public string Next(string piece)
@@ -186,17 +332,22 @@ public sealed class LiveChunkJoiner
         var body = piece.Trim(' ', '\t');
         if (body.Length == 0) return "";
 
+        if (!HoldsPeriods) body = LowercaseLeadingFunctionWord(body, _precedingText + _inserted);
+
         var output = new System.Text.StringBuilder();
         if (_heldPeriod)
         {
             _heldPeriod = false;
             if (!StartsWithLowercaseLetter(body)) output.Append('.');
         }
-        char? last = output.Length > 0 ? output[^1] : _inserted.Length > 0 ? _inserted[^1] : null;
+        var before = _precedingText + _inserted + output;
         char first = body[0];
-        if (last is { } l && !IsLineBreak(l) && !IsLineBreak(first) && !ClosingPunctuation.Contains(first))
+        // Whitespace (a space or a line break already in the field, or a break this joiner wrote) already separates
+        // the next piece, so it must not gain a second space.
+        if (before.Length > 0 && !char.IsWhiteSpace(before[^1]) && before[^1] != '/'
+            && !IsNewline(first) && first != '/' && !ClosingPunctuation.Contains(first))
             output.Append(' ');
-        if (HoldsFinalPeriod(body))
+        if (HoldsPeriods && HoldsFinalPeriod(body))
         {
             body = body[..^1];
             _heldPeriod = true;
@@ -216,7 +367,25 @@ public sealed class LiveChunkJoiner
         return ".";
     }
 
-    private static bool IsLineBreak(char c) => c == '\n' || c == '\r';
+    internal static bool IsNewline(char c) =>
+        c is '\n' or '\r' or '\u000B' or '\u000C' or '\u0085' or '\u2028' or '\u2029';
+
+    // Parakeet capitalises the first word after a pause. Mid-sentence, in spoken-only mode, that capital belongs only
+    // on a noun or a verb.
+    private static string LowercaseLeadingFunctionWord(string body, string inserted)
+    {
+        var prior = inserted.Trim(' ', '\t');
+        if (prior.Length == 0) return body;
+        var last = prior[^1];
+        if (IsNewline(last) || last is '.' or '!' or '?' or ':') return body;
+        var split = -1;
+        for (var i = 0; i < body.Length; i++)
+            if (char.IsWhiteSpace(body[i])) { split = i; break; }
+        var word = split < 0 ? body : body[..split];
+        var lowered = SpokenPunctuation.LowercasingFunctionWord(word);
+        if (lowered == null) return body;
+        return split < 0 ? lowered : lowered + body[split..];
+    }
 
     /// <summary>True for a letter that is lower case.</summary>
     public static bool StartsWithLowercaseLetter(string text) =>
@@ -273,11 +442,18 @@ public sealed class LiveDictationSession
     private int _failedPieces;
     private bool _retryQueued;
 
-    /// <summary>Creates a session with the decoder and the inserter.</summary>
-    public LiveDictationSession(Func<byte[], CancellationToken, Task<string>> decode, Func<string, Task<bool>> insert)
+    /// <summary>
+    /// Creates a session with the decoder and the inserter. <paramref name="holdsPeriods"/> is false in "Only when
+    /// spoken" mode, where the joiner must never hold a period back. <paramref name="caret"/> is the character already
+    /// before the cursor; the default (Unknown) spaces the first piece as before.
+    /// </summary>
+    public LiveDictationSession(Func<byte[], CancellationToken, Task<string>> decode, Func<string, Task<bool>> insert,
+        bool holdsPeriods = true, CaretContext caret = default)
     {
         _decode = decode;
         _insert = insert;
+        _joiner.HoldsPeriods = holdsPeriods;
+        _joiner.Seed(caret);
     }
 
     /// <summary>True after <see cref="Cancel"/>.</summary>
