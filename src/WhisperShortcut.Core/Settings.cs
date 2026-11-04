@@ -605,10 +605,25 @@ public sealed partial class Settings
     {
         var dir = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+        var dto = ToDto(_protector.Protect);
+        var tmp = _path + ".tmp";
+        File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
+        File.Move(tmp, _path, overwrite: true);
+    }
+
+    /// <summary>
+    /// Everything that would be saved, as one string, keys hashed (DPAPI output differs on every call). Equal
+    /// fingerprints = equal settings: the app reuses a settings window built in advance only while it matches.
+    /// </summary>
+    public string Fingerprint() => JsonSerializer.Serialize(ToDto(key =>
+        Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))), Json);
+
+    private Dto ToDto(Func<string, string> protect)
+    {
         var dto = new Dto
         {
-            ApiKeyProtected = ApiKey.Length == 0 ? "" : _protector.Protect(ApiKey),
-            OpenAiKeyProtected = OpenAiKey.Length == 0 ? "" : _protector.Protect(OpenAiKey),
+            ApiKeyProtected = ApiKey.Length == 0 ? "" : protect(ApiKey),
+            OpenAiKeyProtected = OpenAiKey.Length == 0 ? "" : protect(OpenAiKey),
             SpeechEngine = EngineName(SpeechEngine),
             TextEngine = EngineName(TextEngine),
             PunctuationMode = PunctuationModeName(PunctuationMode),
@@ -669,9 +684,7 @@ public sealed partial class Settings
             WelcomeStep = WelcomeStep,
         };
         SaveFeatures(dto);
-        var tmp = _path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
-        File.Move(tmp, _path, overwrite: true);
+        return dto;
     }
 
     private sealed class TemplateDto

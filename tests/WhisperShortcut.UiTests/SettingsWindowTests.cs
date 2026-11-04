@@ -48,7 +48,7 @@ public sealed class SettingsWindowTests : IDisposable
         });
     }
 
-    /// <summary>The window opened in 5.5 s before the 0.5 work and in about 2 s after; a regression shows up here.</summary>
+    /// <summary>Building and showing a new window (the app normally shows one built in advance); a regression shows up here.</summary>
     [Fact]
     public void SettingsWindow_OpensQuickly()
     {
@@ -59,10 +59,37 @@ public sealed class SettingsWindowTests : IDisposable
             var watch = Stopwatch.StartNew();
             using var form = OpenSettings();
             watch.Stop();
-            // Measured 04.11.2026 on Magnus's PC: 9.1 s (Debug) before the lazy page layout, 5.4 s after. The budget
-            // catches a page that lays itself out up front again, not normal noise.
-            const int budget = 12000; // Release measures the same; 5–9 s depending on load on this PC (04.11.2026)
+            // Measured 04.11.2026 on Magnus's PC: 9.1 s before the lazy page layout, 5.4 s after, about 2 s once Show
+            // stopped laying out per container (SettingsForm.SetVisibleCore). Without the app's prebuilt window this
+            // is what the first Alt+0 costs.
+            const int budget = 4000;
             Assert.True(watch.ElapsedMilliseconds < budget, $"settings window took {watch.ElapsedMilliseconds} ms to open (budget {budget} ms)");
+        });
+    }
+
+    /// <summary>
+    /// The app builds the window in advance (TrayApp.ScheduleSpareSettings), so Alt+0 only has to make it visible —
+    /// instant like the Mac. Building it must neither show it nor take the focus.
+    /// </summary>
+    [Fact]
+    public void PrewarmedWindow_ShowsInstantly()
+    {
+        OnSta(() =>
+        {
+            var settings = Core.Settings.Load(Path.Combine(_dir, "settings.json"), new Core.PlainSecretProtector());
+            using var form = new SettingsForm(settings, new OfflineEngine(settings), new Core.GeminiClient(settings),
+                new Core.OpenAiClient(settings), new UpdateService(settings, () => true, () => { })) { ShowInTaskbar = false };
+            form.Prewarm();
+            Assert.False(form.Visible);
+            Assert.Equal(1.0, form.Opacity);
+
+            form.Load += (_, _) => form.Location = new System.Drawing.Point(-3000, -3000); // keep the test off screen
+            form.Location = new System.Drawing.Point(-3000, -3000);
+            var watch = Stopwatch.StartNew();
+            form.Show();
+            Application.DoEvents();
+            watch.Stop();
+            Assert.True(watch.ElapsedMilliseconds < 600, $"prewarmed settings window took {watch.ElapsedMilliseconds} ms to show");
         });
     }
 

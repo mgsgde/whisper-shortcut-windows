@@ -820,6 +820,26 @@ internal sealed class ClipboardPaster
         finally { CloseClipboard(); }
     }
 
+    /// <summary>
+    /// Puts a screenshot on the clipboard as PNG and CF_DIB (apps that only read bitmaps), like the Mac's pasteboard.
+    /// Not counted as our own write: a paste restore still waiting then sees "changed by someone else" and leaves it.
+    /// </summary>
+    public bool PutImage(byte[] png, Bitmap image)
+    {
+        CancelLateWatch();
+        byte[] dib;
+        using (var rgb = image.Clone(new Rectangle(Point.Empty, image.Size), System.Drawing.Imaging.PixelFormat.Format24bppRgb))
+        using (var bmp = new MemoryStream())
+        {
+            rgb.Save(bmp, System.Drawing.Imaging.ImageFormat.Bmp);
+            dib = bmp.ToArray()[14..]; // CF_DIB is the BMP file without its 14-byte file header
+        }
+        var snap = new ClipboardSnapshot();
+        snap.Items.Add((RegisterClipboardFormat("PNG"), png));
+        snap.Items.Add((CF_DIB, dib));
+        return RestoreCore(snap);
+    }
+
     private bool TryReadText(out string? text)
     {
         text = null;

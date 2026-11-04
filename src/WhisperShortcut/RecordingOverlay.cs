@@ -108,7 +108,8 @@ internal sealed class RecordingOverlay : Form
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
-        TopMost = true;
+        // WHY no TopMost = true: WinForms then activates the window on Show despite ShowWithoutActivation, which
+        // took the focus from the chat (it closes on focus loss) and from the target window. WS_EX_TOPMOST below keeps it on top.
         AccessibleName = Core.UserCopy.OverlayAccessibleName;
         AccessibleRole = AccessibleRole.StatusBar;
         _timer.Tick += (_, _) => OnTick();

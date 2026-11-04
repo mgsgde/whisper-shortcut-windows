@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -16,6 +17,23 @@ internal static class ScreenshotCapture
     /// <summary>Opens the snip UI and returns the captured area as a PNG image, or null on cancel, timeout or an unusable image.</summary>
     public static async Task<Core.ScreenshotImage?> CaptureAsync(ClipboardPaster paster, CancellationToken ct)
     {
+        // Our own picker first (instant, like the Mac); Windows' snip UI only if capturing the screen failed.
+        try
+        {
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            var picked = await SnipOverlay.PickAsync(ct);
+            if (picked == null) { Core.Log.Info("Snip: cancelled"); return null; }
+            using (var input = new MemoryStream(picked))
+            using (var image = new Bitmap(input))
+                if (!paster.PutImage(picked, image)) Core.Log.Warn("Snip: clipboard busy, image not left on the clipboard");
+            Core.Log.Info($"Snip: PNG {picked.Length / 1024} KB in {watch.ElapsedMilliseconds} ms, left on the clipboard");
+            return Core.ScreenshotImage.FromPng(picked);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception e) when (e is ExternalException or ArgumentException or Win32Exception or InvalidOperationException)
+        {
+            Core.Log.Error("Snip: own picker failed, using the Windows snip UI", e);
+        }
         var raw = await paster.CaptureSnipAsync(Launch, SnipUiRunning, ct);
         if (raw == null) return null;
         var png = raw.Value.IsPng ? raw.Value.Data : DibToPng(raw.Value.Data);

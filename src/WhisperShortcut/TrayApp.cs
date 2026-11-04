@@ -225,6 +225,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
         _mcp = new McpService(_settings, _ui, () => _state != State.Idle, () => _settingsForm?.HasUnsavedChanges == true, AfterMcpApply);
         _mcp.StartIfEnabled();
+        ScheduleSpareSettings(5000);
         _readAloud = new ReadAloudController(_settings, _paster, _gemini, _openAi, (t, m, i, a) => Notify(t, m, i, a), () => ShowSettings(), TrySave, _ui);
         _readAloud.StateChanged += () =>
         {
@@ -2113,7 +2114,10 @@ internal sealed partial class TrayApp : ApplicationContext
         // front counts, so the settings dialogs (MessageBox) keep the hotkeys off as well.
         // The welcome tour in front is the exception: its „Ausprobieren“ step needs the dictate shortcut.
         bool tourInFront = _welcomeForm is { IsDisposed: false, Visible: true } tour && ClipboardPaster.ForegroundRoot() == tour.Handle;
-        bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow() && !tourInFront;
+        // The chat is ours too, but it needs the shortcuts (dictating into it): with the settings open behind it,
+        // the chat in front turned them all off.
+        bool chatInFront = _chatWindow is { IsDisposed: false, Visible: true } chat && ClipboardPaster.ForegroundRoot() == chat.Handle;
+        bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow() && !tourInFront && !chatInFront;
         bool wanted = Core.HotkeyPolicy.WantGlobalHotkeys(settingsInFront, _state == State.Idle);
         if (wanted == _globalHotkeysOn) return;
         if (wanted)
@@ -2258,6 +2262,46 @@ internal sealed partial class TrayApp : ApplicationContext
         ShowSettings();
     }
 
+    // ---------------- settings window built in advance ----------------
+
+    private SettingsForm? _spareSettings;
+    private string? _spareFingerprint;
+    private System.Windows.Forms.Timer? _spareTimer;
+
+    /// <summary>A few seconds from now, when nothing else runs, build the next settings window (Mac: opens instantly).</summary>
+    private void ScheduleSpareSettings(int delayMs = 3000)
+    {
+        _spareTimer?.Dispose();
+        _spareTimer = new System.Windows.Forms.Timer { Interval = delayMs };
+        _spareTimer.Tick += (_, _) =>
+        {
+            // Busy (recording, a window open): try again later; the build blocks the UI thread for a moment.
+            if (_state != State.Idle || _settingsForm != null || _welcomeForm is { IsDisposed: false }) return;
+            _spareTimer!.Dispose();
+            _spareTimer = null;
+            if (_spareSettings is { IsDisposed: false } && _spareFingerprint == _settings.Fingerprint()) return;
+            _spareSettings?.Dispose();
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            _spareSettings = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
+            _spareSettings.Prewarm();
+            _spareFingerprint = _settings.Fingerprint();
+            Core.Log.Info($"Settings window built in advance in {watch.ElapsedMilliseconds} ms");
+        };
+        _spareTimer.Start();
+    }
+
+    /// <summary>The window built in advance, if the settings are still what it shows; otherwise null (and it goes).</summary>
+    private SettingsForm? TakeSpareSettings()
+    {
+        var spare = _spareSettings;
+        _spareSettings = null;
+        if (spare is not { IsDisposed: false }) return null;
+        if (_spareFingerprint == _settings.Fingerprint()) return spare;
+        Core.Log.Info("Settings changed since the window was built in advance: building a new one");
+        spare.Dispose();
+        return null;
+    }
+
     private void ShowSettings()
     {
         if (_welcomeForm is { IsDisposed: false } tour)
@@ -2284,7 +2328,7 @@ internal sealed partial class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
+        var form = _settingsForm = TakeSpareSettings() ?? new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
         // Activation messages can still arrive after FormClosed: only the open window may re-evaluate.
         _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.
@@ -2308,6 +2352,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
+            ScheduleSpareSettings();
             ShowTrayHintOnce();
             // Posted so it runs after any activation message still queued for the closing form; forced
             // because the hotkeys may have been changed in the window.

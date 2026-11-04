@@ -802,7 +802,8 @@ internal sealed partial class SettingsForm : Form
         if (!_pages.TryGetValue(name, out var page)) return;
         Core.Log.Info($"Settings page {name}");
         if (page.Controls.Count > 0 && page.Controls[0] is TableLayoutPanel root && _building.Remove(root)) root.ResumeLayout(false);
-        foreach (var p in _pages.Values) p.Visible = p == page;
+        // Suspended: a page becoming visible otherwise lays itself out once per container (see SetVisibleCore).
+        WithLayoutSuspended(page, () => { foreach (var p in _pages.Values) p.Visible = p == page; });
         foreach (var n in _nav) n.Selected = n.Text == name;
         if (name != General) StopMicTest();
         FitHints();
