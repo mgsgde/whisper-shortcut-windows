@@ -49,7 +49,7 @@ internal sealed partial class SettingsForm
         page.Controls.Add(Section("Verbindung", first: true));
         _mcpSwitch = new ToggleSwitch { Checked = mcp.Config.Enabled, AccessibleName = "Verbindung für KI-Apps" };
         var switchCard = new Card();
-        switchCard.AddRow(SettingRow("Claude und andere KI-Apps zulassen", "", _mcpSwitch, ToggleWidth, out _mcpStatus));
+        switchCard.AddRow(SettingRow("KI-Apps auf diesem PC die Verbindung erlauben", "", _mcpSwitch, ToggleWidth, out _mcpStatus));
         var privacy = Block();
         privacy.Controls.Add(Wrap("Nur Apps auf diesem PC kommen heran, und nur mit dem Zugangsschlüssel. Was Claude hier liest (Glossar, "
             + "Anweisungen, Einstellungen), geht an Anthropic. Diktierte Texte, Aufnahmen und API-Schlüssel gibt WhisperShortcut nie heraus. "
@@ -59,10 +59,11 @@ internal sealed partial class SettingsForm
         _mcpSwitch.CheckedChanged += (_, _) => { if (_mcpSwitch.Checked != mcp.Config.Enabled) mcp.SetEnabled(_mcpSwitch.Checked); };
 
         // --- access level ---
-        page.Controls.Add(Section("Was KI-Apps dürfen"));
+        SectionIcons.TryAdd("KI-Apps dürfen", "\uE72E");
+        page.Controls.Add(Section("KI-Apps dürfen"));
         _mcpRead = new OptionButton("Nur lesen");
-        _mcpPropose = new OptionButton("Änderungen vorschlagen, ich bestätige jede");
-        _mcpApply = new OptionButton("Änderungen direkt übernehmen");
+        _mcpPropose = new OptionButton("Änderungen zur Freigabe vorschlagen");
+        _mcpApply = new OptionButton("Änderungen direkt vornehmen");
         var levels = new[] { (_mcpRead, McpAccessLevel.Read), (_mcpPropose, McpAccessLevel.Propose), (_mcpApply, McpAccessLevel.Apply) };
         foreach (var (option, level) in levels)
         {
@@ -88,7 +89,7 @@ internal sealed partial class SettingsForm
         _desktopConnect = new FluentButton("Verbinden") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Claude Desktop verbinden" };
         _codeConnect = new FluentButton("Verbinden") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Claude Code verbinden" };
         _copySetup = new FluentButton("Kopieren") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Einrichtung kopieren" };
-        _newKeys = new FluentButton("Erneuern …") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Zugangsschlüssel erneuern" };
+        _newKeys = new FluentButton("Neuer Zugriffsschlüssel …") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Zugangsschlüssel erneuern" };
         var connectCard = new Card();
         connectCard.AddRow(SettingRow("Claude Desktop", "", _desktopConnect, ButtonWidth, out _desktopState));
         connectCard.AddRow(SettingRow("Claude Code", "", _codeConnect, ButtonWidth, out _codeState));
@@ -111,7 +112,8 @@ internal sealed partial class SettingsForm
         page.Controls.Add(_pendingCard);
 
         // --- change log ---
-        page.Controls.Add(Section("Änderungen durch KI-Apps"));
+        SectionIcons.TryAdd("Von KI-Apps geändert", "\uE81C");
+        page.Controls.Add(Section("Von KI-Apps geändert"));
         _changesBlock = Block();
         var changesCard = new Card();
         changesCard.AddRow(_changesBlock);
