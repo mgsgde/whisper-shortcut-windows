@@ -1682,7 +1682,14 @@ internal sealed partial class SettingsForm : Form
         bool speechReady = OfflineEngine.SpeechInstalled, llmReady = OfflineEngine.LlmInstalled(llm);
         UpdateRow(_speechRow, "speech", speechReady, ComponentSize(Core.OfflineCatalog.Parakeet), download);
         UpdateRow(_llmRow, "llm", llmReady, llmParts.Sum(ComponentSize), download);
-        RefreshPickers();
+        // WHY: this runs on every download progress tick. Rebuilding the tiles relayouts the whole page and froze the
+        // window during a download; the tiles only show installed or not, so refresh only when that changes.
+        var pickerState = (speechReady, llmReady, llm.Component.Id);
+        if (pickerState != _pickerModelState)
+        {
+            _pickerModelState = pickerState;
+            RefreshPickers();
+        }
         _llmChoice.Enabled = download?.Id != "llm";
     }
 

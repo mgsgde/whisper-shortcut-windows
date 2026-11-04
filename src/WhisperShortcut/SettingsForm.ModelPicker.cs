@@ -24,6 +24,8 @@ internal sealed partial class SettingsForm
     }
 
     private readonly List<Picker> _pickers = new();
+    /// <summary>What the tiles last showed about the models on this PC (installed speech, installed LLM, which LLM).</summary>
+    private (bool, bool, string)? _pickerModelState;
     private const int TileWidth = 214, TileHeight = 52;
 
     /// <summary>A model picker card for one step; <paramref name="engine"/> and the model combos are its stored state.</summary>
