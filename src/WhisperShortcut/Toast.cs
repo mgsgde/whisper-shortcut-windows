@@ -46,6 +46,8 @@ internal sealed class Toast : Form
     private RectangleF _actionRect, _closeRect;
     private enum Hot { None, Action, Close }
     private Hot _hot;
+    // The last frame drawn showed the card at rest: until it fades, nothing on it moves (hover redraws itself).
+    private bool _settled;
 
     /// <summary>Screen bounds of the recording overlay while it is visible (the notice then sits above it), else null.</summary>
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
@@ -139,6 +141,7 @@ internal sealed class Toast : Form
             _appearStart = DateTime.UtcNow;
             Show();
         }
+        _settled = false;
         _timer.Start();
         Redraw();
     }
@@ -186,6 +189,9 @@ internal sealed class Toast : Form
         return new SizeF(CardW * s, (Pad + 20) * s + 4 * s + BodyHeight(g) + buttons + Pad * s);
     }
 
+    /// <summary>For the UI tests: one animation frame, as the 33 ms timer runs it.</summary>
+    internal void TickForTests() => OnTick();
+
     private void OnTick()
     {
         var now = DateTime.UtcNow;
@@ -195,6 +201,11 @@ internal sealed class Toast : Form
             Dismiss();
             return;
         }
+        // WHY: a warning stays 30 s and an error with an action until it is used; repainting the card (shadow, text)
+        // 30 times a second for that long only took CPU from the transcription. One frame at rest, then until the fade.
+        bool animating = _fadeStart != null || (now - _appearStart).TotalSeconds < FadeIn;
+        if (!animating && _settled) return;
+        _settled = !animating;
         Redraw();
     }
 
