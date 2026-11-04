@@ -303,6 +303,7 @@ internal sealed class MeetingController : IDisposable
             || !Core.MeetingOptions.ShouldAskLongMeeting(minutes, DateTime.UtcNow - _startedUtc, _safeguardAsked)) return;
         _safeguardAsked = true;
         _safeguardTimer?.Stop();
+        var asked = _session; // the dialog is modal: the meeting may end or change while it is open
         Core.Log.Info($"Meeting: safeguard question after {minutes} min");
         var page = new TaskDialogPage
         {
@@ -314,7 +315,7 @@ internal sealed class MeetingController : IDisposable
         page.Buttons.Add(stop);
         page.Buttons.Add(keep);
         page.DefaultButton = keep;
-        if (TaskDialog.ShowDialog(page, TaskDialogStartupLocation.CenterScreen) == stop && _session != null)
+        if (TaskDialog.ShowDialog(page, TaskDialogStartupLocation.CenterScreen) == stop && asked != null && _session == asked)
         {
             Core.Log.Info("Meeting: stopped from the safeguard question");
             _ = StopAsync();
