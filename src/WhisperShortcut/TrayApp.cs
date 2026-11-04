@@ -1412,6 +1412,7 @@ internal sealed partial class TrayApp : ApplicationContext
         {
             _cts.Dispose();
             _cts = null;
+            _selectionCts?.Cancel(); // an early end must stop the selection copy still polling
             _selectionCts?.Dispose();
             _selectionCts = null;
             _selection = null;
