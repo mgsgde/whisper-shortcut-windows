@@ -561,7 +561,18 @@ internal sealed partial class ChatWindow : Form
         {
             Core.Log.Error("Chat could not be saved", e);
         }
-        ReloadSessions();
+        ShowInList(session);
+    }
+
+    /// <summary>
+    /// Puts a just saved chat at its place in the list. WHY not <see cref="ReloadSessions"/>: that reads and parses every
+    /// chat file, and Persist runs twice per message (question and answer), on the UI thread.
+    /// </summary>
+    private void ShowInList(Core.ChatSession session)
+    {
+        var all = _sessions.Items.Cast<Core.ChatSession>().Where(s => s.Id != session.Id).Append(session)
+            .OrderByDescending(s => s.Updated).ToList();
+        FillList(all);
     }
 
     // ---------------- sessions ----------------
@@ -595,7 +606,7 @@ internal sealed partial class ChatWindow : Form
         try { _store.Delete(s.Id); }
         catch (Exception e) { Core.Log.Error("Chat could not be deleted", e); }
         if (s.Id == _session.Id) NewChat();
-        ReloadSessions();
+        FillList(_sessions.Items.Cast<Core.ChatSession>().Where(x => x.Id != s.Id).ToList());
     }
 
     private void ReloadSessions()
@@ -607,6 +618,11 @@ internal sealed partial class ChatWindow : Form
             Core.Log.Error("Chats could not be listed", e);
             all = Array.Empty<Core.ChatSession>();
         }
+        FillList(all);
+    }
+
+    private void FillList(IReadOnlyList<Core.ChatSession> all)
+    {
         _sessions.BeginUpdate();
         _sessions.Items.Clear();
         foreach (var s in all) _sessions.Items.Add(s);
@@ -659,9 +675,35 @@ internal sealed partial class ChatWindow : Form
     }
     private static readonly Font HeadingFont = new("Segoe UI Semibold", 12f);
 
+    // True while Render rebuilds the whole transcript: the runs neither scroll nor paint one by one.
+    private bool _rendering;
+
     private void Render()
     {
-        _transcript.SuspendLayout();
+        _rendering = true;
+        // WHY redraw off: every run selected, scrolled and repainted the box; a long chat repainted it hundreds of times.
+        SetRedraw(_transcript, false);
+        try { RenderRuns(); }
+        finally
+        {
+            _rendering = false;
+            SetRedraw(_transcript, true);
+        }
+        ScrollToEnd();
+        _transcript.Invalidate();
+    }
+
+    private static void SetRedraw(Control control, bool on)
+    {
+        const int WM_SETREDRAW = 0x000B;
+        if (control.IsHandleCreated) SendMessage(control.Handle, WM_SETREDRAW, on ? 1 : 0, 0);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr hWnd, int msg, int wParam, int lParam);
+
+    private void RenderRuns()
+    {
         _transcript.Clear();
         if (_session.Messages.Count == 0)
         {
@@ -698,8 +740,6 @@ internal sealed partial class ChatWindow : Form
             }
             AppendRun("\n\n", Theme.Body, Theme.Text);
         }
-        _transcript.ResumeLayout();
-        ScrollToEnd();
     }
 
     private void AppendRun(string text, Font font, Color color, Color? back = null)
@@ -709,7 +749,7 @@ internal sealed partial class ChatWindow : Form
         _transcript.SelectionColor = color;
         _transcript.SelectionBackColor = back ?? _transcript.BackColor;
         _transcript.SelectedText = text.ReplaceLineEndings("\n");
-        ScrollToEnd();
+        if (!_rendering) ScrollToEnd();
     }
 
     private void ScrollToEnd()
