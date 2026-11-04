@@ -61,12 +61,26 @@ internal sealed class MeetingAudioCapture : IDisposable
     {
         _stopped = false;
         _micStopped = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        var waveIn = new WaveInEvent
+        // NAudio's WaveInEvent captures SynchronizationContext.Current in its constructor and posts
+        // RecordingStopped to it. Stop() blocks the UI thread on _micStopped, so with the UI context the
+        // handler could only run after the 2 s wait timed out. Create it without a context so the handler
+        // runs on the capture thread.
+        WaveInEvent waveIn;
+        var previousContext = SynchronizationContext.Current;
+        SynchronizationContext.SetSynchronizationContext(null);
+        try
         {
-            DeviceNumber = Microphones.DeviceNumber(_microphone),
-            WaveFormat = new WaveFormat(TargetRate, 16, 1),
-            BufferMilliseconds = 50,
-        };
+            waveIn = new WaveInEvent
+            {
+                DeviceNumber = Microphones.DeviceNumber(_microphone),
+                WaveFormat = new WaveFormat(TargetRate, 16, 1),
+                BufferMilliseconds = 50,
+            };
+        }
+        finally
+        {
+            SynchronizationContext.SetSynchronizationContext(previousContext);
+        }
         waveIn.DataAvailable += OnMicData;
         waveIn.RecordingStopped += (_, e) =>
         {
