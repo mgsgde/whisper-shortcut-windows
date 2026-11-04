@@ -10,7 +10,7 @@ internal enum Mode { Dictate, Prompt, Template }
 /// 1st press starts, 2nd press stops and processes, a press while processing cancels.
 /// Everything runs on the UI thread; no window ever takes focus during a recording.
 /// </summary>
-internal sealed class TrayApp : ApplicationContext
+internal sealed partial class TrayApp : ApplicationContext
 {
     private enum State { Idle, Recording, Processing }
 
@@ -1685,9 +1685,9 @@ internal sealed class TrayApp : ApplicationContext
     private string? MeetingUnavailable()
     {
         if (_fakeGemini) return null;
-        if (_settings.EffectiveSpeechEngine == Core.Engine.Local && !OfflineEngine.SpeechInstalled)
+        if (_settings.EffectiveMeetingSpeechEngine == Core.Engine.Local && !OfflineEngine.SpeechInstalled)
             return "Die Offline-Spracherkennung ist noch nicht geladen. In den Einstellungen unter „Offline-Modelle“ laden.";
-        if (MissingKeyFor(Mode.Dictate) is { } provider)
+        if (MeetingMissingKey() is { } provider) // TrayApp.Meetings.cs
             return $"Noch kein {provider}-Schlüssel eingetragen. Bitte zuerst in den Einstellungen eintragen.";
         return null;
     }
@@ -1699,24 +1699,16 @@ internal sealed class TrayApp : ApplicationContext
     private async Task<string> TranscribeMeetingChunkAsync(byte[] wav, CancellationToken ct)
     {
         if (_fakeGemini) return "Das ist ein Testabschnitt aus dem Meeting.";
-        string raw = GlossaryBackstops(await TranscribeAsync(wav, ct, meetingChunk: true));
+        string raw = GlossaryBackstops(await TranscribeMeetingRawAsync(wav, ct)); // TrayApp.Meetings.cs
         string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), Core.Wav.DurationSeconds(wav));
         return Core.TextCleanup.LooksLikeRefusal(text) ? "" : text;
     }
 
-    /// <summary>End-of-meeting summary with the Dictate Prompt model of the chosen text engine.</summary>
+    /// <summary>End-of-meeting summary with the meeting summary model (Settings → Meetings).</summary>
     private Task<string> SummarizeMeetingAsync(string transcript, CancellationToken ct)
     {
         if (_fakeGemini) return Task.FromResult("Hauptpunkte:\n- Testmeeting ohne Gemini");
-        var text = Core.MeetingPrompts.Clip(transcript);
-        return _settings.EffectiveTextEngine switch
-        {
-            Core.Engine.Local when !OfflineEngine.LlmInstalled(_offline.SelectedLlm) =>
-                throw new InvalidOperationException("The offline language model is not installed."),
-            Core.Engine.Local => _offline.PromptAsync(text, Core.MeetingPrompts.SummaryInstruction, Core.MeetingPrompts.SummarySystemPrompt, ct),
-            Core.Engine.OpenAI => _openAi.PromptTextAsync(text, Core.MeetingPrompts.SummaryInstruction, Core.MeetingPrompts.SummarySystemPrompt, ct),
-            _ => _gemini.PromptTextAsync(text, Core.MeetingPrompts.SummaryInstruction, Core.MeetingPrompts.SummarySystemPrompt, ct),
-        };
+        return SummarizeMeetingWithModelAsync(Core.MeetingPrompts.Clip(transcript), ct); // TrayApp.Meetings.cs
     }
 
     // ---------------- glossary ----------------

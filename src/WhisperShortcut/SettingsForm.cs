@@ -109,7 +109,7 @@ internal sealed partial class SettingsForm : Form
     private static readonly (string Name, string Icon)[] Pages =
     {
         (General, "\uE713"), (AccountsPage, "\uE8D7"), (DictatePage, "\uE720"), (PromptPage, "\uE70F"),
-        (TemplatesPage, "\uE8A5"), (ScreenshotPage, "\uE722"), (ReadAloudPage, "\uE767"), (AiAppsPage, "\uE8F2"), (PrivacyPage, "\uEA18"), (InfoPage, "\uE946"),
+        (TemplatesPage, "\uE8A5"), (ScreenshotPage, "\uE722"), (ReadAloudPage, "\uE767"), (MeetingsPage, "\uE7C8"), (AiAppsPage, "\uE8F2"), (PrivacyPage, "\uEA18"), (InfoPage, "\uE946"),
     };
 
     // Inset (96 dpi) of a description inside a card row with a control of this width on the right.
@@ -599,6 +599,9 @@ internal sealed partial class SettingsForm : Form
 
         // ================= page: Vorlesen (SettingsForm.ReadAloud.cs) =================
         BuildReadAloudPage();
+
+        // ================= page: Meetings (SettingsForm.Meetings.cs) =================
+        BuildMeetingsPage();
 
         // ================= page: Claude & KI-Apps (SettingsForm.AiApps.cs) =================
         BuildAiAppsPage(mcp);
@@ -1770,7 +1773,7 @@ internal sealed partial class SettingsForm : Form
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
         _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value, _liveKey.Value,
-        SelectedPunctuation.ToString(), _settingsKey.Value, _rightCtrl.Checked.ToString(), ReadAloudSnapshot(),
+        SelectedPunctuation.ToString(), _settingsKey.Value, _rightCtrl.Checked.ToString(), ReadAloudSnapshot(), MeetingsSnapshot(),
     }.Concat(_quick.Select(q => q.Text))
      .Concat(_templates.Select(t => string.Join("\u0002", t.Id, t.Name, t.Instructions, t.Hotkey))));
 
@@ -1959,6 +1962,7 @@ internal sealed partial class SettingsForm : Form
         _settings.SendScreenshots = _sendScreenshots.Checked;
         _settings.RightCtrlDictation = _rightCtrl.Checked;
         var readAloudBefore = ApplyReadAloud(keysOk);
+        var meetingsBefore = ApplyMeetings();
         try
         {
             _settings.Save();
@@ -1976,6 +1980,7 @@ internal sealed partial class SettingsForm : Form
             _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
             _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation) = before;
             RestoreReadAloud(readAloudBefore);
+            RestoreMeetings(meetingsBefore);
             // Said once, then in the status line: this runs after every edit.
             var error = Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message);
             if (error != _lastSaveError) Warn(error);

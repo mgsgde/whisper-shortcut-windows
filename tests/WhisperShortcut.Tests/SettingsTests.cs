@@ -778,6 +778,64 @@ public class QuickActionRequestTests
     }
 
     [Fact]
+    public void Meetings_NewInstall_MacDefaults()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.Gemini, s.MeetingSpeechEngine);
+        Assert.Equal(Settings.DefaultTranscriptionModel, s.MeetingTranscriptionModel);
+        Assert.Equal("gemini-3.5-flash-lite", s.MeetingSummaryModel);
+        Assert.Equal(60, s.MeetingChunkSeconds);
+        Assert.Equal(90, s.MeetingSafeguardMinutes);
+        s.OfflineMode = true;
+        Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
+        Assert.Equal(Engine.Local, s.EffectiveMeetingTextEngine);
+    }
+
+    [Fact]
+    public void Meetings_OlderFile_KeepsTheDictationProviders()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, """
+            { "speechEngine": "openai", "textEngine": "local", "openAiTranscriptionModel": "gpt-4o-mini-transcribe",
+              "transcriptionModel": "gemini-3.8-flash", "openAiPromptModel": "gpt-6-luna" }
+            """);
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.OpenAI, s.MeetingSpeechEngine);
+        Assert.Equal("gpt-4o-mini-transcribe", s.MeetingOpenAiTranscriptionModel);
+        Assert.Equal("gemini-3.8-flash", s.MeetingTranscriptionModel);
+        Assert.Equal(Engine.Local, s.MeetingTextEngine);
+        Assert.Equal("gpt-6-luna", s.MeetingOpenAiSummaryModel);
+        Assert.Equal("gemini-3.5-flash-lite", s.MeetingSummaryModel);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void Meetings_RoundTrip_AndUnknownValuesFallBack()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.MeetingSpeechEngine = Engine.Local;
+        s.MeetingTextEngine = Engine.OpenAI;
+        s.MeetingOpenAiSummaryModel = "gpt-5.4-mini";
+        s.MeetingChunkSeconds = 30;
+        s.MeetingSafeguardMinutes = 0;
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.Local, t.MeetingSpeechEngine);
+        Assert.Equal(Engine.OpenAI, t.MeetingTextEngine);
+        Assert.Equal("gpt-5.4-mini", t.MeetingOpenAiSummaryModel);
+        Assert.Equal(30, t.MeetingChunkSeconds);
+        Assert.Equal(0, t.MeetingSafeguardMinutes);
+
+        File.WriteAllText(path, File.ReadAllText(path).Replace("\"meetingChunkSeconds\": 30", "\"meetingChunkSeconds\": 25"));
+        Assert.Equal(60, Settings.Load(path, new PlainSecretProtector()).MeetingChunkSeconds);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
     public void ReadAloud_Defaults()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
