@@ -832,6 +832,12 @@ internal sealed partial class SettingsForm : Form
         var links = new Card();
         links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
             LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
+        // Mac #344 „Meine Einstellungen senden“: sits with the contact ways because it is one.
+        var sendSettings = new FluentButton("Senden …") { MinimumSize = new Size(96, 32), AccessibleName = "Meine Einstellungen senden" };
+        sendSettings.Click += (_, _) => FeedbackReportDialog.Open(this, _settings, _mcp);
+        links.AddRow(SettingRow("Meine Einstellungen senden", "Teile deine Einstellungen mit dem Entwickler, wenn etwas nicht "
+            + "funktioniert hat: Version, Modelle, Tastenkürzel und welche Anweisungen geändert sind, nie ein Schlüssel. Du siehst "
+            + "vorher alles und kannst es bearbeiten.", sendSettings, 96, out _));
         var report = new FluentButton("Melden …") { MinimumSize = new Size(96, 32), AccessibleName = "Problem melden" };
         report.Click += (_, _) => ReportProblem();
         var reportLog = new FluentButton("Protokoll") { MinimumSize = new Size(96, 32), AccessibleName = "Protokollordner zum Anhängen öffnen" };
