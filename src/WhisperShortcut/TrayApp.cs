@@ -505,6 +505,13 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         var label = mode.ToString();
         Core.Log.Info($"Hotkey {label} in state {_state}");
+        // Vorlesen copies the selection while preparing: a second copy now could lose the user's clipboard.
+        if (_state == State.Idle && mode != Mode.Dictate && _readAloud?.IsActive == true && !_readAloud.IsSpeaking)
+        {
+            Core.Log.Info($"Hotkey {label} ignored: Vorlesen is preparing");
+            Sounds.Error();
+            return;
+        }
         var now = Environment.TickCount64;
         var gateOpen = _state == State.Idle || _pressGate.Accept(now);
         if (_state != State.Idle && !gateOpen)
@@ -1824,7 +1831,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private async Task AddSelectionToGlossaryAsync()
     {
-        if (_state != State.Idle || _glossaryBusy || _selection != null)
+        if (_state != State.Idle || _glossaryBusy || _selection != null || (_readAloud?.IsActive == true && !_readAloud.IsSpeaking))
         {
             Sounds.Error();
             return;
