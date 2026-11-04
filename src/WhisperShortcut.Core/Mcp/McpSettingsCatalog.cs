@@ -254,7 +254,7 @@ public static class McpSettingsCatalog
                 Options = () => new[]
                 {
                     new McpSettingOption("automatic", "Automatisch", true, null),
-                    new McpSettingOption("spokenOnly", "Nur wenn gesprochen", true, null),
+                    new McpSettingOption("spokenOnly", "Nur gesprochen", true, null),
                 },
                 Write = v => settings.PunctuationMode = Text(v) == "spokenOnly" ? PunctuationMode.SpokenOnly : PunctuationMode.Automatic,
             },

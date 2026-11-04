@@ -183,6 +183,68 @@ public class ChatTests : IDisposable
     }
 
     [Fact]
+    public void Store_round_trips_the_thinking_level_and_old_files_load_as_default()
+    {
+        var s = Session("Hallo", T0);
+        s.ThinkingLevel = "high";
+        _store.Save(s);
+        Assert.Equal("high", _store.Load(s.Id)!.ThinkingLevel);
+        var path = Path.Combine(_root, s.Id.ToString("D") + ".json");
+        Assert.Equal("high", (string?)JsonNode.Parse(File.ReadAllText(path))!["thinkingLevel"]);
+
+        var old = Session("alt", T0);
+        _store.Save(old);
+        var oldPath = Path.Combine(_root, old.Id.ToString("D") + ".json");
+        var node = JsonNode.Parse(File.ReadAllText(oldPath))!.AsObject();
+        node.Remove("thinkingLevel");
+        File.WriteAllText(oldPath, node.ToJsonString());
+        Assert.Equal("default", _store.Load(old.Id)!.ThinkingLevel);
+    }
+
+    [Fact]
+    public void Store_round_trips_attachments()
+    {
+        var s = ChatSession.New(T0);
+        s.Add(new ChatMessage(ChatRole.User, "Bild", T0, null, null,
+            new[] { new ChatAttachment("a.png", "image/png", "QUJD"), new ChatAttachment("n.txt", "text/plain", "eA==") }));
+        _store.Save(s);
+        var back = _store.Load(s.Id)!.Messages[0].Attachments!;
+        Assert.Equal(2, back.Count);
+        Assert.Equal(new ChatAttachment("a.png", "image/png", "QUJD"), back[0]);
+        Assert.Equal("n.txt", back[1].FileName);
+    }
+
+    [Fact]
+    public void Window_counts_attachment_data_toward_the_limit()
+    {
+        var big = new ChatMessage(ChatRole.User, "a", T0, null, null, new[] { new ChatAttachment("x.png", "image/png", new string('A', 500)) });
+        var msgs = new[] { big, M("b"), U("c") };
+        Assert.Single(ChatText.Window(msgs, 100)); // the image message no longer fits; only the last user message stays
+        Assert.Equal(3, ChatText.Window(msgs, 1000).Count);
+        // The last message is kept even when it alone is over the limit.
+        var last = new[] { U("x"), big };
+        Assert.Single(ChatText.Window(last, 100));
+    }
+
+    [Fact]
+    public void Flatten_appends_text_files_and_ignores_images()
+    {
+        var txt = new ChatAttachment("n.txt", "text/plain", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("Inhalt")));
+        var png = new ChatAttachment("a.png", "image/png", "QUJD");
+        var msgs = new[] { new ChatMessage(ChatRole.User, "Lies das", T0, null, null, new[] { txt, png }) };
+        Assert.Equal("Lies das\n\nDatei „n.txt“:\nInhalt", ChatText.Flatten("", msgs));
+    }
+
+    [Fact]
+    public void ToMarkdown_lists_attachment_names()
+    {
+        var s = ChatSession.New(T0);
+        s.Add(new ChatMessage(ChatRole.User, "Hi", T0, null, null,
+            new[] { new ChatAttachment("a.png", "image/png", "QQ=="), new ChatAttachment("b.pdf", "application/pdf", "QQ==") }));
+        Assert.Contains("## User\nHi\n_Anhänge: a.png, b.pdf_\n", ChatText.ToMarkdown(s));
+    }
+
+    [Fact]
     public void Store_writes_camelCase_json_named_after_the_id()
     {
         var s = Session("Hallo", T0);
@@ -271,8 +333,18 @@ public class ChatTests : IDisposable
     [Fact]
     public void Commands_are_listed_in_the_mac_order()
     {
-        Assert.Equal(new[] { "/new", "/model", "/gemini", "/gpt", "/settings", "/pin", "/unpin", "/meeting", "/copy" },
+        Assert.Equal(new[]
+            {
+                "/new", "/screenshot", "/attach", "/model", "/gemini",
+                "/gemini35flashlite", "/gemini31flashlite", "/gemini4argon",
+                "/gpt", "/gpt6luna", "/gpt54mini",
+                "/think", "/settings", "/pin", "/unpin", "/meeting", "/copy", "/feedback",
+            },
             ChatCommands.All.Select(c => c.Command));
+        Assert.Equal("Zu Gemini 3.5 Flash-Lite wechseln", ChatCommands.All.Single(c => c.Command == "/gemini35flashlite").Description);
+        Assert.Equal("Zu GPT-6 Luna wechseln", ChatCommands.All.Single(c => c.Command == "/gpt6luna").Description);
+        Assert.Equal("Denktiefe für diesen Chat festlegen: minimal | low | medium | high | default",
+            ChatCommands.All.Single(c => c.Command == "/think").Description);
         Assert.All(ChatCommands.All, c => Assert.False(string.IsNullOrWhiteSpace(c.Description)));
     }
 
@@ -283,6 +355,67 @@ public class ChatTests : IDisposable
         Assert.Equal(new[] { "/pin" }, ChatCommands.Suggestions("/pi").Select(c => c.Command));
         Assert.Equal(new[] { "/model", "/meeting" }, ChatCommands.Suggestions("/M").Select(c => c.Command));
         Assert.Equal(new[] { "/unpin" }, ChatCommands.Suggestions("/UN").Select(c => c.Command));
+    }
+
+    [Fact]
+    public void Suggestions_list_custom_commands_first()
+    {
+        var custom = new[]
+        {
+            new UserCommand("protokoll", "Protokoll", "Das Protokoll", UserCommandScope.Meeting, "b", "p"),
+            new UserCommand("neu-x", "Neu x", "Eigener", UserCommandScope.Both, "b", "p"),
+        };
+        Assert.Equal(ChatCommands.All.Count + 2, ChatCommands.Suggestions("/", custom).Count);
+        var n = ChatCommands.Suggestions("/n", custom);
+        Assert.Equal(new[] { "/neu-x", "/new" }, n.Select(c => c.Command));
+        Assert.Equal("Eigener", n[0].Description);
+        Assert.Equal("/protokoll", ChatCommands.Suggestions("/", custom)[0].Command);
+        Assert.Equal(ChatCommands.All.Count, ChatCommands.Suggestions("/", null).Count);
+    }
+
+    [Fact]
+    public void ReservedNames_cover_all_built_ins_and_the_silent_alias()
+    {
+        Assert.All(ChatCommands.All, c => Assert.Contains(c.Command[1..], ChatCommands.ReservedNames));
+        Assert.Contains("openai", ChatCommands.ReservedNames);
+        Assert.Contains("gpt6luna", ChatCommands.ReservedNames);
+        Assert.DoesNotContain("protokoll", ChatCommands.ReservedNames);
+    }
+
+    [Theory]
+    [InlineData("/gpt6luna", "gpt-6-luna")]
+    [InlineData("/GPT54MINI ignoriert", "gpt-5.4-mini")]
+    [InlineData("/gemini35flashlite", "gemini-3.5-flash-lite")]
+    [InlineData("/gemini4argon", "gemini-4-argon")]
+    public void TryParse_model_aliases_carry_the_model_id(string input, string modelId)
+    {
+        Assert.True(ChatCommands.TryParse(input, out var kind, out var arg));
+        Assert.Equal(ChatCommandKind.ModelAlias, kind);
+        Assert.Equal(modelId, arg);
+    }
+
+    [Theory]
+    [InlineData("/screenshot", ChatCommandKind.Screenshot, "")]
+    [InlineData("/attach", ChatCommandKind.Attach, "")]
+    [InlineData("/think high", ChatCommandKind.Think, "high")]
+    [InlineData("/feedback", ChatCommandKind.Feedback, "")]
+    public void TryParse_new_commands(string input, ChatCommandKind kind, string argument)
+    {
+        Assert.True(ChatCommands.TryParse(input, out var k, out var arg));
+        Assert.Equal(kind, k);
+        Assert.Equal(argument, arg);
+    }
+
+    [Fact]
+    public void TryParseUser_finds_custom_commands_case_insensitively_with_arguments()
+    {
+        var custom = new[] { new UserCommand("protokoll", "Protokoll", "d", UserCommandScope.Meeting, "b", "p") };
+        Assert.True(ChatCommands.TryParseUser(" /Protokoll  kurz bitte ", custom, out var cmd, out var args));
+        Assert.Equal("protokoll", cmd.Name);
+        Assert.Equal("kurz bitte", args);
+        Assert.False(ChatCommands.TryParseUser("/protokollx", custom, out _, out _));
+        Assert.False(ChatCommands.TryParseUser("protokoll", custom, out _, out _));
+        Assert.False(ChatCommands.TryParseUser("/new", custom, out _, out _));
     }
 
     [Theory]
@@ -349,5 +482,19 @@ public class ChatTests : IDisposable
         Assert.DoesNotContain("Google Tasks", p);
         Assert.Contains("offline on the user's PC", ChatPrompts.DefaultOfflineSystemPrompt);
         Assert.DoesNotContain("Mac", ChatPrompts.DefaultOfflineSystemPrompt);
+    }
+
+    [Fact]
+    public void A_named_chat_keeps_its_name_after_the_first_question()
+    {
+        var session = ChatSession.New(DateTimeOffset.Now);
+        session.MeetingId = "m1";
+        session.Title = "📝 Meeting 04.11.";
+        session.Add(new ChatMessage(ChatRole.User, "Was wurde entschieden?", DateTimeOffset.Now));
+        Assert.Equal("📝 Meeting 04.11.", session.Title);
+
+        var plain = ChatSession.New(DateTimeOffset.Now);
+        plain.Add(new ChatMessage(ChatRole.User, "Hallo Welt", DateTimeOffset.Now));
+        Assert.Equal("Hallo Welt", plain.Title);
     }
 }

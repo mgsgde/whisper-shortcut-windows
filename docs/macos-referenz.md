@@ -333,6 +333,9 @@ Nicht „angleichen“, ohne Magnus zu fragen:
 - **Chat-Kürzel Alt+6** statt ⌥Leertaste: Alt+Leertaste öffnet unter Windows das Systemmenü jedes Fensters.
 - **Vorlesen offline** mit den Windows-Stimmen (SAPI) statt der macOS-Stimmen, ebenso automatisch im Offline-Modus.
 - **Meeting** startet zusätzlich über das Tray-Menü „Meeting“ (Mac nur im Chat mit /meeting).
+- **Meeting-Chat:** Meetings sind auf Windows keine eigenen Chat-Tabs. Der Chat, aus dem `/meeting` startet, wird der
+  Meeting-Chat; ein Meeting aus dem Tray bietet im Chat „Fragen zum laufenden Meeting“ an.
+- **Anrede:** Windows duzt durchgehend, der Mac siezt. Wortlaut sonst aus `Localizable.xcstrings`.
 - **Bewusst noch nicht da:** Was Windows absichtlich nicht hat (Smart Improvement, Schreibstil,
   weitere Anbieter, im Chat Ordner, Gedächtnis und verbundene Dienste), steht in Abschnitt C der Paritätsliste.
 

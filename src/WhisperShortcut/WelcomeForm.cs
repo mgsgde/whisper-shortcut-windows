@@ -138,7 +138,7 @@ internal sealed class WelcomeForm : Form
         _cloudCard = new ChoiceCard("", "Cloud", "Am genauesten", new[]
         {
             "Beste Erkennung, in mehr Sprachen",
-            "Auch für Dictate Prompt mit großen Modellen",
+            "Ermöglicht auch Chat und Vorlesen",
             "Braucht ein Konto, du bezahlst den Anbieter",
         });
         var cards = new TableLayoutPanel { ColumnCount = 2, AutoSize = true, Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0, 18, 0, 12) };
@@ -655,6 +655,11 @@ internal sealed class WelcomeForm : Form
             Add(Show(_settings.ActivePromptHotkey), "Dictate Prompt", "Text markieren, eine Anweisung sprechen, die Auswahl wird an Ort und Stelle umgeschrieben");
         if (_settings.ActiveScreenshotHotkey.Length > 0)
             Add(Show(_settings.ActiveScreenshotHotkey), "Bildschirmfoto", "einen Bereich wählen, das Bild geht mit der nächsten Anweisung mit");
+        // Mac WelcomeSteps: Chat and Vorlesen follow Bildschirmfoto.
+        if (_settings.ActiveChatHotkey.Length > 0)
+            Add(Show(_settings.ActiveChatHotkey), "Chat", "ein vollständiges Chatfenster, mit Bildschirmfotos und Dateien");
+        if (_settings.ActiveReadAloudHotkey.Length > 0)
+            Add(Show(_settings.ActiveReadAloudHotkey), "Vorlesen", "Text irgendwo markieren und vorlesen lassen");
         if (_settings.ActiveLiveDictateHotkey.Length > 0)
             Add(Show(_settings.ActiveLiveDictateHotkey), "Live diktieren", "der Text erscheint nach jeder Pause am Cursor");
         if (_settings.ActiveGlossaryHotkey.Length > 0)

@@ -56,7 +56,7 @@ public sealed class ChatClient
     /// <see cref="OperationCanceledException"/> on cancel, and <see cref="ArgumentException"/> for <see cref="Engine.Local"/>.
     /// </summary>
     public async Task<ChatReply> SendAsync(Engine engine, string model, string systemPrompt,
-        IReadOnlyList<ChatMessage> messages, Action<string>? onDelta, bool webSearch, CancellationToken ct)
+        IReadOnlyList<ChatMessage> messages, Action<string>? onDelta, bool webSearch, CancellationToken ct, string? thinkingLevel = null)
     {
         if (engine == Engine.Local)
             throw new ArgumentException("Der Offline-Motor wird von der App selbst bedient.", nameof(engine));
@@ -77,8 +77,8 @@ public sealed class ChatClient
         }
 
         var body = gemini
-            ? BuildGeminiBody(systemPrompt, messages, webSearch)
-            : BuildOpenAiBody(model, systemPrompt, messages);
+            ? BuildGeminiBody(model, systemPrompt, messages, webSearch, thinkingLevel)
+            : BuildOpenAiBody(model, systemPrompt, messages, thinkingLevel);
 
         for (var attempt = 1; ; attempt++)
         {
@@ -121,17 +121,24 @@ public sealed class ChatClient
 
     // ---- request bodies ----
 
-    internal static string BuildGeminiBody(string systemPrompt, IReadOnlyList<ChatMessage> messages, bool webSearch)
+    internal static string BuildGeminiBody(string model, string systemPrompt, IReadOnlyList<ChatMessage> messages, bool webSearch,
+        string? thinkingLevel = null)
     {
         var contents = new JsonArray();
         foreach (var m in messages)
         {
-            if (string.IsNullOrWhiteSpace(m.Text)) continue; // Gemini rejects empty parts
-            contents.Add(new JsonObject
-            {
-                ["role"] = m.Role == ChatRole.User ? "user" : "model",
-                ["parts"] = new JsonArray(new JsonObject { ["text"] = m.Text }),
-            });
+            var hasFiles = m.Attachments is { Count: > 0 };
+            if (string.IsNullOrWhiteSpace(m.Text) && !hasFiles) continue; // Gemini rejects empty parts
+            var parts = new JsonArray();
+            // Every turn's attachments go out again on every request (like the Mac).
+            if (hasFiles)
+                foreach (var a in m.Attachments!)
+                    parts.Add(new JsonObject
+                    {
+                        ["inline_data"] = new JsonObject { ["mime_type"] = a.MimeType, ["data"] = a.DataBase64 },
+                    });
+            if (!string.IsNullOrWhiteSpace(m.Text)) parts.Add(new JsonObject { ["text"] = m.Text });
+            contents.Add(new JsonObject { ["role"] = m.Role == ChatRole.User ? "user" : "model", ["parts"] = parts });
         }
         var body = new JsonObject
         {
@@ -140,32 +147,63 @@ public sealed class ChatClient
                 ["parts"] = new JsonArray(new JsonObject { ["text"] = systemPrompt }),
             },
             ["contents"] = contents,
-            // "low", not "minimal": the 3.8 models reject "minimal".
-            ["generationConfig"] = new JsonObject
-            {
-                ["thinkingConfig"] = new JsonObject { ["thinkingLevel"] = "low" },
-            },
         };
+        // "low", not "minimal", where the model rejects "minimal" (see ChatThinking).
+        if (ChatThinking.GeminiConfig(model, thinkingLevel) is { } thinking)
+            body["generationConfig"] = new JsonObject { ["thinkingConfig"] = thinking };
         if (webSearch)
             body["tools"] = new JsonArray(new JsonObject { ["google_search"] = new JsonObject() });
         return body.ToJsonString(Compact);
     }
 
-    internal static string BuildOpenAiBody(string model, string systemPrompt, IReadOnlyList<ChatMessage> messages)
+    internal static string BuildOpenAiBody(string model, string systemPrompt, IReadOnlyList<ChatMessage> messages,
+        string? thinkingLevel = null)
     {
         var list = new JsonArray();
         if (!string.IsNullOrWhiteSpace(systemPrompt))
             list.Add(new JsonObject { ["role"] = "system", ["content"] = systemPrompt });
         foreach (var m in messages)
         {
-            if (string.IsNullOrWhiteSpace(m.Text)) continue;
-            list.Add(new JsonObject
+            var hasFiles = m.Role == ChatRole.User && m.Attachments is { Count: > 0 };
+            if (string.IsNullOrWhiteSpace(m.Text) && !hasFiles) continue;
+            JsonNode content = m.Text;
+            if (hasFiles)
             {
-                ["role"] = m.Role == ChatRole.User ? "user" : "assistant",
-                ["content"] = m.Text,
-            });
+                var parts = new JsonArray();
+                if (!string.IsNullOrWhiteSpace(m.Text)) parts.Add(new JsonObject { ["type"] = "text", ["text"] = m.Text });
+                foreach (var a in m.Attachments!) parts.Add(OpenAiAttachmentPart(a));
+                content = parts;
+            }
+            list.Add(new JsonObject { ["role"] = m.Role == ChatRole.User ? "user" : "assistant", ["content"] = content });
         }
-        return new JsonObject { ["model"] = model, ["stream"] = true, ["messages"] = list }.ToJsonString(Compact);
+        var body = new JsonObject { ["model"] = model, ["stream"] = true, ["messages"] = list };
+        if (ChatThinking.OpenAiEffort(model, thinkingLevel) is { } effort) body["reasoning_effort"] = effort;
+        return body.ToJsonString(Compact);
+    }
+
+    private static JsonObject OpenAiAttachmentPart(ChatAttachment a)
+    {
+        if (ChatAttachments.IsImage(a))
+            return new JsonObject
+            {
+                ["type"] = "image_url",
+                ["image_url"] = new JsonObject { ["url"] = $"data:{a.MimeType};base64,{a.DataBase64}" },
+            };
+        if (a.MimeType == "application/pdf")
+            return new JsonObject
+            {
+                ["type"] = "file",
+                ["file"] = new JsonObject
+                {
+                    ["filename"] = a.FileName,
+                    ["file_data"] = $"data:application/pdf;base64,{a.DataBase64}",
+                },
+            };
+        return new JsonObject
+        {
+            ["type"] = "text",
+            ["text"] = $"Datei „{a.FileName}“:\n{ChatAttachments.DecodeText(a)}",
+        };
     }
 
     // ---- Gemini ----

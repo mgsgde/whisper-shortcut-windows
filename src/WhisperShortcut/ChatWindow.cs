@@ -7,7 +7,7 @@ namespace WhisperShortcut;
 /// tray row „Chat“; like the Mac it closes when another app comes to the front, unless pinned with /pin.
 /// Everything runs on the UI thread; stream pieces are posted back to it.
 /// </summary>
-internal sealed class ChatWindow : Form
+internal sealed partial class ChatWindow : Form
 {
     private readonly Core.Settings _settings;
     private readonly Core.ChatClient _client;
@@ -104,6 +104,7 @@ internal sealed class ChatWindow : Form
         var header = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Dock = DockStyle.Top, Margin = new Padding(0, 0, 0, 6) };
         header.Controls.Add(_model);
         header.Controls.Add(_pin);
+        AddHeaderExtras(header); // ChatWindow.Meeting.cs: thinking depth, meeting chat
         _model.LinkClicked += (_, _) => ShowModelMenu();
 
         _transcriptMenu.Items.Add("Kopieren", null, (_, _) => { if (_transcript.SelectionLength > 0) _transcript.Copy(); });
@@ -127,9 +128,10 @@ internal sealed class ChatWindow : Form
         _commands.DrawItem += DrawCommand;
         _commands.MouseClick += (_, _) => AcceptCommand();
 
-        var main = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Padding = new Padding(12, 12, 16, 12) };
+        var main = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6, Padding = new Padding(12, 12, 16, 12) };
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         main.RowStyles.Add(new RowStyle(SizeType.AutoSize));
@@ -138,12 +140,14 @@ internal sealed class ChatWindow : Form
         transcriptFrame.Controls.Add(_transcript);
         main.Controls.Add(transcriptFrame, 0, 1);
         main.Controls.Add(commandsHolder, 0, 2);
-        main.Controls.Add(inputRow, 0, 3);
-        main.Controls.Add(_status, 0, 4);
+        main.Controls.Add(BuildComposerExtras(), 0, 3); // ChatWindow.Attachments.cs / .Meeting.cs: attachment chips, meeting buttons
+        main.Controls.Add(inputRow, 0, 4);
+        main.Controls.Add(_status, 0, 5);
         Controls.Add(main);
         Controls.Add(sidebar);
 
         _input.KeyDown += OnInputKey;
+        Activated += (_, _) => OnBroughtToFront(); // Mac: the commands folder is re-read whenever the window comes to the front
         _input.TextChanged += (_, _) => UpdateCommands();
         Deactivate += (_, _) =>
         {
@@ -228,6 +232,11 @@ internal sealed class ChatWindow : Form
 
     private void OnInputKey(object? sender, KeyEventArgs e)
     {
+        if (e.KeyData is (Keys.Control | Keys.V) or (Keys.Shift | Keys.Insert) && TryPasteAttachments())
+        {
+            e.SuppressKeyPress = e.Handled = true;
+            return;
+        }
         if (_commands.Visible && e.KeyCode is Keys.Down or Keys.Up)
         {
             int n = _commands.Items.Count;
@@ -261,7 +270,7 @@ internal sealed class ChatWindow : Form
 
     private void UpdateCommands()
     {
-        var found = Core.ChatCommands.Suggestions(_input.Text);
+        var found = Core.ChatCommands.Suggestions(_input.Text, _userCommands);
         if (found.Count == 0)
         {
             HideCommands();
@@ -289,13 +298,13 @@ internal sealed class ChatWindow : Form
         _input.SelectionStart = _input.TextLength;
         HideCommands();
         _input.Focus();
-        if (c.Command != "/model") Submit();
+        if (c.Command is not ("/model" or "/think")) Submit(); // commands with an argument are completed, not run
     }
 
     private void Submit()
     {
         var text = _input.Text.Trim();
-        if (text.Length == 0) return;
+        if (text.Length == 0 && _pending.Count == 0) return;
         HideCommands();
         if (Core.ChatCommands.TryParse(text, out var kind, out var argument))
         {
@@ -304,8 +313,13 @@ internal sealed class ChatWindow : Form
             return;
         }
         if (_cts != null) return; // one answer at a time; Esc stops the running one
+        if (Core.ChatCommands.TryParseUser(text, _userCommands, out var command, out var args))
+        {
+            RunUserCommand(command, args);
+            return;
+        }
         _input.Clear();
-        _ = SendAsync(text);
+        _ = SendAsync(text, TakePending());
     }
 
     private void Run(Core.ChatCommandKind kind, string argument)
@@ -340,7 +354,24 @@ internal sealed class ChatWindow : Form
             case Core.ChatCommandKind.Meeting:
                 bool was = _meetingActive();
                 _toggleMeeting();
-                SetStatus(was ? "Meeting wird beendet …" : _meetingActive() ? "Meeting läuft. Mit /meeting beenden." : "", Tone.Secondary);
+                if (!was && _meetingActive()) AttachToLiveMeeting(); // ChatWindow.Meeting.cs: this chat becomes the meeting chat
+                SetStatus(was ? "Meeting wird beendet …" : _meetingActive() ? "Meeting läuft. Frag hier jederzeit dazu, mit /meeting beenden." : "", Tone.Secondary);
+                UpdateMeetingUi();
+                break;
+            case Core.ChatCommandKind.ModelAlias:
+                if (ChatModels().FirstOrDefault(m => m.Id == argument) is { } alias) Pick(alias);
+                break;
+            case Core.ChatCommandKind.Think:
+                RunThink(argument);
+                break;
+            case Core.ChatCommandKind.Attach:
+                PickFiles();
+                break;
+            case Core.ChatCommandKind.Screenshot:
+                _ = CaptureScreenshotAsync();
+                break;
+            case Core.ChatCommandKind.Feedback:
+                SendFeedback();
                 break;
             case Core.ChatCommandKind.Copy:
                 if (_session.Messages.Count == 0) SetStatus("Der Chat ist noch leer.", Tone.Secondary);
@@ -410,6 +441,7 @@ internal sealed class ChatWindow : Form
     {
         _model.Text = ModelName + " ▾";
         _pin.Text = _pinned ? "📌 Angeheftet (/unpin)" : "";
+        UpdateHeaderExtras();
         _defaultStatus = "Enter sendet · Umschalt+Enter neue Zeile · / für Befehle · Esc schließt";
         if (_cts == null) SetStatus(_defaultStatus, Tone.Secondary);
     }
@@ -422,15 +454,16 @@ internal sealed class ChatWindow : Form
 
     // ---------------- sending ----------------
 
-    private async Task SendAsync(string text)
+    private async Task SendAsync(string text, IReadOnlyList<Core.ChatAttachment>? attachments = null)
     {
         var session = _session;
-        session.Add(new Core.ChatMessage(Core.ChatRole.User, text, DateTimeOffset.Now));
+        session.Add(new Core.ChatMessage(Core.ChatRole.User, text, DateTimeOffset.Now, Attachments: attachments is { Count: > 0 } ? attachments : null));
         Persist(session);
         var engine = _settings.EffectiveChatEngine;
         var model = _settings.EffectiveChatModel;
         var modelName = ModelName;
         var system = Core.ChatPrompts.Effective(_settings.ChatSystemPrompt, offline: engine == Core.Engine.Local);
+        system = WithMeetingContext(system, session); // ChatWindow.Meeting.cs
         var window = Core.ChatText.Window(session.Messages, engine == Core.Engine.Local ? Core.ChatText.LocalWindowChars : 200_000);
 
         var cts = _cts = new CancellationTokenSource();
@@ -458,12 +491,13 @@ internal sealed class ChatWindow : Form
                     partial.Append(piece);
                     AppendRun(piece, Theme.Body, Theme.Text);
                     if (partial.Length == piece.Length) SetStatus("Schreibt … (Esc bricht ab)", Tone.Secondary);
-                }), _settings.ChatWebSearch, cts.Token);
+                }), _settings.ChatWebSearch, cts.Token, session.ThinkingLevel);
             }
             if (IsDisposed) return;
             session.Add(new Core.ChatMessage(Core.ChatRole.Model, reply.Text.Trim(), DateTimeOffset.Now, reply.Sources, modelName));
             Persist(session);
-            SetStatus("", Tone.Secondary);
+            SetStatus(engine == Core.Engine.Local && window.Any(m => m.Attachments?.Any(a => !Core.ChatAttachments.IsText(a)) == true)
+                ? "Bilder und PDFs kann das Modell auf diesem PC nicht lesen; es hat nur den Text bekommen." : "", Tone.Secondary);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
@@ -538,6 +572,7 @@ internal sealed class ChatWindow : Form
         _session = Core.ChatSession.New(DateTimeOffset.Now);
         _sessions.ClearSelected();
         Render();
+        UpdateHeader();
         SetStatus("", Tone.Secondary);
         _input.Focus();
     }
@@ -546,6 +581,7 @@ internal sealed class ChatWindow : Form
     {
         _session = _store.Load(session.Id) ?? session;
         Render();
+        UpdateHeader();
         SetStatus("", Tone.Secondary);
     }
 
@@ -637,6 +673,8 @@ internal sealed class ChatWindow : Form
             if (m.Role == Core.ChatRole.User)
             {
                 AppendRun("Du\n", Theme.Strong, Theme.Accent);
+                if (m.Attachments is { Count: > 0 } files)
+                    AppendRun("📎 " + string.Join(", ", files.Select(f => f.FileName)) + "\n", Theme.Small, Theme.Secondary);
                 AppendRun(m.Text + "\n\n", Theme.Body, Theme.Text);
                 continue;
             }

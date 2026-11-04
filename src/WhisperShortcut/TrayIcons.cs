@@ -13,6 +13,37 @@ internal static class TrayIcons
     public static readonly Icon Ready = Load("app.ico", SystemInformation.SmallIconSize);
     public static readonly Icon Recording = Load("recording.ico", SystemInformation.SmallIconSize);
     public static readonly Icon Processing = Load("processing.ico", SystemInformation.SmallIconSize);
+    /// <summary>Mac ⚠️ in the menu bar: dictation is not set up yet (no key, offline model not loaded). The app icon with an amber badge.</summary>
+    public static readonly Icon Warning = WithBadge(Ready);
+
+    private static Icon WithBadge(Icon icon)
+    {
+        using var bmp = icon.ToBitmap();
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            int d = Math.Max(7, bmp.Width / 2);
+            var r = new Rectangle(bmp.Width - d, bmp.Height - d, d - 1, d - 1);
+            using var amber = new SolidBrush(Color.FromArgb(255, 245, 166, 35));
+            using var ring = new Pen(Color.FromArgb(255, 32, 32, 32), Math.Max(1f, d / 8f));
+            g.FillEllipse(amber, r);
+            g.DrawEllipse(ring, r);
+            using var bang = new Font("Segoe UI", d * 0.62f, FontStyle.Bold, GraphicsUnit.Pixel);
+            TextRenderer.DrawText(g, "!", bang, r, Color.FromArgb(255, 32, 32, 32),
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+        var handle = bmp.GetHicon();
+        using var temp = Icon.FromHandle(handle);
+        var copy = (Icon)temp.Clone(); // own the pixels, then free the GDI handle
+        NativeIcon.DestroyIcon(handle);
+        return copy;
+    }
+
+    private static class NativeIcon
+    {
+        [System.Runtime.InteropServices.DllImport("user32.dll")]
+        public static extern bool DestroyIcon(IntPtr handle);
+    }
 
     private static Icon Load(string name, Size? size)
     {
