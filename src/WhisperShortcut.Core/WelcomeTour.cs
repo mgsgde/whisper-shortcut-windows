@@ -94,6 +94,6 @@ public static class WelcomeTour
         _ => false,
     };
 
-    /// <summary>The closing line of the tour (Mac "You can revisit this tour any time from Settings → About.").</summary>
-    public const string RevisitHint = "Du kannst die Einführung jederzeit unter Einstellungen → Über erneut ansehen.";
+    /// <summary>The closing line of the tour (Mac #346: "You can revisit this tour any time from Welcome Tour… in the menu bar.").</summary>
+    public const string RevisitHint = "Du findest die Einführung jederzeit wieder unter „Einführung …“ im Menü des WhisperShortcut-Symbols unten rechts.";
 }
