@@ -11,24 +11,23 @@ public class LiveDictationTests
     [Fact]
     public void Available_when_nothing_is_missing()
     {
-        Assert.Null(LiveDictation.UnavailableReason(duringMeeting: false, speechIsLocal: true, speechInstalled: true, autoPaste: true));
+        Assert.Null(LiveDictation.UnavailableReason(duringMeeting: false, speechIsLocal: true, speechInstalled: true));
     }
 
     [Fact]
     public void Each_missing_condition_names_its_own_reason()
     {
-        Assert.Equal(LiveUnavailable.DuringMeeting, LiveDictation.UnavailableReason(true, true, true, true));
-        Assert.Equal(LiveUnavailable.NotOffline, LiveDictation.UnavailableReason(false, false, true, true));
-        Assert.Equal(LiveUnavailable.NotDownloaded, LiveDictation.UnavailableReason(false, true, false, true));
-        Assert.Equal(LiveUnavailable.AutoPasteOff, LiveDictation.UnavailableReason(false, true, true, false));
+        Assert.Equal(LiveUnavailable.DuringMeeting, LiveDictation.UnavailableReason(true, true, true));
+        Assert.Equal(LiveUnavailable.NotParakeet, LiveDictation.UnavailableReason(false, false, true));
+        Assert.Equal(LiveUnavailable.NotDownloaded, LiveDictation.UnavailableReason(false, true, false));
     }
 
     [Fact]
     public void Reasons_are_reported_in_the_order_the_user_fixes_them()
     {
-        Assert.Equal(LiveUnavailable.DuringMeeting, LiveDictation.UnavailableReason(true, false, false, false));
-        Assert.Equal(LiveUnavailable.NotOffline, LiveDictation.UnavailableReason(false, false, false, false));
-        Assert.Equal(LiveUnavailable.NotDownloaded, LiveDictation.UnavailableReason(false, true, false, false));
+        Assert.Equal(LiveUnavailable.DuringMeeting, LiveDictation.UnavailableReason(true, false, false));
+        Assert.Equal(LiveUnavailable.NotParakeet, LiveDictation.UnavailableReason(false, false, false));
+        Assert.Equal(LiveUnavailable.NotDownloaded, LiveDictation.UnavailableReason(false, true, false));
     }
 
     [Fact]
@@ -36,7 +35,137 @@ public class LiveDictationTests
     {
         foreach (var reason in Enum.GetValues<LiveUnavailable>())
             Assert.False(string.IsNullOrWhiteSpace(LiveDictation.Message(reason)));
-        Assert.Equal("Live diktieren geht nicht, solange ein Live Meeting läuft.", LiveDictation.Message(LiveUnavailable.DuringMeeting));
+        Assert.Equal("Live diktieren ist während eines Meetings nicht verfügbar.", LiveDictation.Message(LiveUnavailable.DuringMeeting));
+        Assert.Equal("Live diktieren funktioniert mit dem Offline-Modell Parakeet. Wähle es unter Einstellungen → Diktieren.",
+            LiveDictation.Message(LiveUnavailable.NotParakeet));
+        Assert.Equal("Lade Parakeet unter Einstellungen → Diktieren, um Live diktieren zu nutzen.",
+            LiveDictation.Message(LiveUnavailable.NotDownloaded));
+    }
+
+    // ---- Dictate mode ----
+
+    [Fact]
+    public void Start_decision_dictate_never_depends_on_availability()
+    {
+        foreach (LiveUnavailable? reason in new LiveUnavailable?[] { null, LiveUnavailable.DuringMeeting, LiveUnavailable.NotParakeet, LiveUnavailable.NotDownloaded })
+            Assert.Equal((LiveStartDecision.StartDictate, (LiveUnavailable?)null), LiveDictation.StartDecision(DictateMode.Dictate, reason));
+    }
+
+    [Fact]
+    public void Start_decision_live_starts_when_available_and_refuses_with_the_reason_otherwise()
+    {
+        Assert.Equal((LiveStartDecision.StartLive, (LiveUnavailable?)null), LiveDictation.StartDecision(DictateMode.Live, null));
+        foreach (var reason in new[] { LiveUnavailable.NotParakeet, LiveUnavailable.NotDownloaded })
+            Assert.Equal((LiveStartDecision.Refuse, (LiveUnavailable?)reason), LiveDictation.StartDecision(DictateMode.Live, reason));
+    }
+
+    [Fact]
+    public void Start_decision_live_during_a_meeting_starts_a_dictate_segment_instead_of_refusing() =>
+        Assert.Equal((LiveStartDecision.StartDictate, (LiveUnavailable?)null),
+            LiveDictation.StartDecision(DictateMode.Live, LiveUnavailable.DuringMeeting));
+
+    // ---- Caret ----
+
+    [Fact]
+    public void Caret_log_kind_never_names_the_character()
+    {
+        Assert.Equal("unknown", CaretContext.Unknown.LogKind);
+        Assert.Equal("start", CaretContext.StartOfText.LogKind);
+        Assert.Equal("letter", CaretContext.Of('s').LogKind);
+        Assert.Equal("space", CaretContext.Of(' ').LogKind);
+        Assert.Equal("newline", CaretContext.Of('\n').LogKind);
+        Assert.Equal("newline", CaretContext.Of('\r').LogKind);
+        Assert.Equal("other", CaretContext.Of('.').LogKind);
+        Assert.Equal(CaretContext.Unknown, default(CaretContext));
+    }
+
+    [Fact]
+    public void Caret_from_text_reads_the_character_before_the_caret()
+    {
+        Assert.Equal(CaretContext.Unknown, LiveDictation.CaretFromText("abc", -1, false));
+        Assert.Equal(CaretContext.Unknown, LiveDictation.CaretFromText("abc", 4, false));
+        Assert.Equal(CaretContext.StartOfText, LiveDictation.CaretFromText("abc", 0, false));
+        Assert.Equal(CaretContext.StartOfText, LiveDictation.CaretFromText("", 0, false));
+        Assert.Equal(CaretContext.Of('a'), LiveDictation.CaretFromText("abc", 1, false));
+        Assert.Equal(CaretContext.Of('c'), LiveDictation.CaretFromText("abc", 3, false));
+    }
+
+    [Fact]
+    public void Caret_from_text_without_rich_edit_offsets_sees_a_lone_cr()
+    {
+        // Plain index: the '\r' of a "\r\n" pair is what sits before caret 1.
+        Assert.Equal(CaretContext.Of('\r'), LiveDictation.CaretFromText("a\r\nb", 2, false));
+        Assert.Equal(CaretContext.Of('\n'), LiveDictation.CaretFromText("a\r\nb", 3, false));
+    }
+
+    [Fact]
+    public void Caret_from_text_counts_a_crlf_pair_as_one_position_for_rich_edit()
+    {
+        // Logical positions: a=1, "\r\n"=2, b=3.
+        Assert.Equal(CaretContext.Of('a'), LiveDictation.CaretFromText("a\r\nb", 1, true));
+        Assert.Equal(CaretContext.Of('\n'), LiveDictation.CaretFromText("a\r\nb", 2, true));
+        Assert.Equal(CaretContext.Of('b'), LiveDictation.CaretFromText("a\r\nb", 3, true));
+        Assert.Equal(CaretContext.Unknown, LiveDictation.CaretFromText("a\r\nb", 4, true));
+        Assert.Equal(CaretContext.StartOfText, LiveDictation.CaretFromText("a\r\nb", 0, true));
+        // A lone CR stays one position.
+        Assert.Equal(CaretContext.Of('\r'), LiveDictation.CaretFromText("a\rb", 2, true));
+    }
+
+    // ---- Last insertion memory ----
+
+    private static readonly DateTime MemoryNow = new(2026, 11, 4, 12, 0, 0, DateTimeKind.Utc);
+
+    private static LastInsertion Memory(char character = 's', string app = "winword", double ageSeconds = 5) =>
+        new(character, app, MemoryNow.AddSeconds(-ageSeconds));
+
+    [Fact]
+    public void Memory_seeds_an_unknown_caret_for_the_same_app()
+    {
+        var seeded = LastInsertion.Seed(CaretContext.Unknown, Memory(), "WINWORD", MemoryNow);
+        Assert.Equal(CaretContext.Of('s'), seeded);
+    }
+
+    [Fact]
+    public void Memory_is_ignored_for_another_app_when_expired_or_missing()
+    {
+        Assert.Equal(CaretContext.Unknown, LastInsertion.Seed(CaretContext.Unknown, Memory(), "notepad", MemoryNow));
+        Assert.Equal(CaretContext.Unknown, LastInsertion.Seed(CaretContext.Unknown, Memory(ageSeconds: 601), "winword", MemoryNow));
+        Assert.Equal(CaretContext.Unknown, LastInsertion.Seed(CaretContext.Unknown, null, "winword", MemoryNow));
+        Assert.Equal(CaretContext.Unknown, LastInsertion.Seed(CaretContext.Unknown, Memory(), null, MemoryNow));
+        // A clock that went backwards is not trusted either.
+        Assert.Equal(CaretContext.Unknown, LastInsertion.Seed(CaretContext.Unknown, Memory(ageSeconds: -5), "winword", MemoryNow));
+    }
+
+    [Fact]
+    public void A_readable_caret_wins_over_the_memory()
+    {
+        Assert.Equal(CaretContext.StartOfText, LastInsertion.Seed(CaretContext.StartOfText, Memory(), "winword", MemoryNow));
+        Assert.Equal(CaretContext.Of('.'), LastInsertion.Seed(CaretContext.Of('.'), Memory(), "winword", MemoryNow));
+    }
+
+    [Fact]
+    public void Make_keeps_the_last_character_nothing_for_empty_text_or_unknown_target()
+    {
+        Assert.Equal('s', LastInsertion.Make("… Dosis", "winword", MemoryNow)?.Character);
+        Assert.Null(LastInsertion.Make("", "winword", MemoryNow));
+        Assert.Null(LastInsertion.Make("a", null, MemoryNow));
+        Assert.Null(LastInsertion.Make("a", "", MemoryNow));
+    }
+
+    [Fact]
+    public void Seeded_with_the_previous_dictations_ending_the_next_piece_is_spaced_and_cased()
+    {
+        var afterWord = new LiveChunkJoiner();
+        afterWord.Seed(CaretContext.Of('s'));
+        Assert.Equal(" Weiter geht's", afterWord.Next("Weiter geht's"));
+
+        var afterPeriod = new LiveChunkJoiner { HoldsPeriods = false };
+        afterPeriod.Seed(CaretContext.Of('.'));
+        Assert.Equal(" Weiter geht's", afterPeriod.Next("Weiter geht's"));
+
+        var spokenOnly = new LiveChunkJoiner { HoldsPeriods = false };
+        spokenOnly.Seed(CaretContext.Of('s'));
+        Assert.Equal(" und dann", spokenOnly.Next("Und dann"));
     }
 
     // ---- Chunk policy ----
@@ -89,10 +218,73 @@ public class LiveDictationTests
 
     // ---- Piece finishing ----
 
+    private const PunctuationMode Auto = PunctuationMode.Automatic;
+    private const PunctuationMode Spoken = PunctuationMode.SpokenOnly;
+
     [Fact]
     public void FinishPiece_applies_spoken_punctuation()
     {
-        Assert.Equal("Befund:", LiveDictation.FinishPiece("Befund Doppelpunkt"));
+        Assert.Equal("Befund:", LiveDictation.FinishPiece("Befund Doppelpunkt", Auto));
+    }
+
+    [Fact]
+    public void Spoken_only_a_spoken_Punkt_ends_the_piece_with_a_period() =>
+        Assert.EndsWith(".", LiveDictation.FinishPiece("befund Punkt", Spoken));
+
+    [Fact]
+    public void Spoken_only_keeps_the_model_period_strips_its_comma_automatic_keeps_both()
+    {
+        Assert.Equal("Der Befund ist unauffällig.", LiveDictation.FinishPiece("Der Befund ist unauffällig.", Spoken));
+        Assert.Equal("Gangbild unauffällig.", LiveDictation.FinishPiece("Gangbild, unauffällig.", Spoken));
+        Assert.Equal("Der Befund ist unauffällig.", LiveDictation.FinishPiece("Der Befund ist unauffällig.", Auto));
+    }
+
+    [Fact]
+    public void Spoken_only_the_joiner_holds_a_spoken_final_period_like_a_model_one()
+    {
+        var joiner = new LiveChunkJoiner();
+        Assert.StartsWith("befund", joiner.Next(LiveDictation.FinishPiece("befund Punkt", Spoken)));
+        Assert.Equal(". Keine Auffälligkeiten", joiner.Next(LiveDictation.FinishPiece("Keine Auffälligkeiten", Spoken)));
+    }
+
+    [Fact]
+    public void Standalone_fillers_are_dropped_real_words_stay()
+    {
+        Assert.Equal("", LiveDictation.FinishPiece("Mm-hmm", Auto));
+        Assert.Equal("was ist das", LiveDictation.FinishPiece("Hmm, was ist das", Auto));
+        Assert.Equal("", LiveDictation.FinishPiece("Hmmm", Auto));
+        Assert.Equal("Basistherapie.", LiveDictation.FinishPiece("Basistherapie ähm Punkt", Spoken));
+        Assert.Equal("Um zehn Uhr", LiveDictation.FinishPiece("Um zehn Uhr", Auto));
+        Assert.Equal("Ah stimmt, aha und achso oh", LiveDictation.FinishPiece("Ah stimmt, aha und achso oh", Auto));
+    }
+
+    [Fact]
+    public void Timed_marks_keep_the_spoken_comma_without_timings_the_old_rule_strips_it()
+    {
+        Assert.Equal("Gangbild, geht weiter.", LiveDictation.FinishPiece("Gangbild, geht weiter.", Spoken, timedMarks: true));
+        Assert.Equal("Gangbild geht weiter.", LiveDictation.FinishPiece("Gangbild, geht weiter.", Spoken));
+    }
+
+    [Fact]
+    public void A_spoken_exclamation_mark_stays_an_exclamation_mark_through_finish_piece()
+    {
+        Assert.Equal("Wirklich!", LiveDictation.FinishPiece("Wirklich!", Spoken, timedMarks: true));
+        Assert.Equal("Wirklich.!", LiveDictation.FinishPiece("Wirklich.!", Spoken, timedMarks: true));
+        Assert.Equal("Wirklich.", LiveDictation.FinishPiece("Wirklich.!", Spoken));
+        // The word itself, with the periods Parakeet put around it, becomes "!" and not ".".
+        Assert.Equal("Bitte Befund nachreichen!", LiveDictation.FinishPiece("Bitte Befund nachreichen. Ausrufezeichen.", Spoken));
+        Assert.Equal("Bitte Befund nachreichen!", LiveDictation.FinishPiece("Bitte Befund nachreichen. Ausrufezeichen.", Spoken, timedMarks: true));
+    }
+
+    [Fact]
+    public void Spoken_Semikolon_and_Strichpunkt_become_a_semicolon_with_and_without_timings()
+    {
+        foreach (var word in new[] { "Semikolon", "Strichpunkt" })
+        {
+            var sentence = $"Hüfte frei beweglich {word} Knie mit Erguss";
+            Assert.Equal("Hüfte frei beweglich; Knie mit Erguss", LiveDictation.FinishPiece(sentence, Spoken));
+            Assert.Equal("Hüfte frei beweglich; Knie mit Erguss", LiveDictation.FinishPiece(sentence, Spoken, timedMarks: true));
+        }
     }
 
     // ---- Joiner ----
@@ -157,6 +349,125 @@ public class LiveDictationTests
         Assert.Equal("Schmerzen", j.Next("Schmerzen."));
         Assert.Equal("", j.Next(""));
         Assert.Equal(".", j.Finish());
+    }
+
+    [Fact]
+    public void Spoken_only_a_spoken_period_is_never_held_even_before_a_lowercase_word()
+    {
+        var j = new LiveChunkJoiner { HoldsPeriods = false };
+        Assert.Equal("klagt.", j.Next("klagt."));
+        Assert.Equal(" seit gestern", j.Next("seit gestern"));
+        Assert.Equal("klagt. seit gestern", j.Inserted);
+    }
+
+    [Fact]
+    public void Spoken_only_a_function_word_at_the_next_piece_start_is_lowercased_mid_sentence()
+    {
+        var j = new LiveChunkJoiner { HoldsPeriods = false };
+        Assert.Equal("Sie klagt", j.Next("Sie klagt"));
+        Assert.Equal(" über Schmerzen", j.Next("Über Schmerzen"));
+        Assert.Equal("Sie klagt über Schmerzen", j.Inserted);
+    }
+
+    [Fact]
+    public void Spoken_only_a_kept_model_period_lets_the_next_piece_keep_its_capital()
+    {
+        var j = new LiveChunkJoiner { HoldsPeriods = false };
+        Assert.Equal("Die Patientin klagt.", j.Next(LiveDictation.FinishPiece("Die Patientin klagt.", Spoken)));
+        Assert.Equal(" Über Schmerzen", j.Next(LiveDictation.FinishPiece("Über Schmerzen", Spoken)));
+        Assert.Equal("Die Patientin klagt. Über Schmerzen", j.Inserted);
+    }
+
+    [Fact]
+    public void Spoken_only_a_capital_stays_when_the_previous_piece_ended_the_sentence()
+    {
+        var j = new LiveChunkJoiner { HoldsPeriods = false };
+        Assert.Equal("Ende.", j.Next("Ende."));
+        Assert.Equal(" Über Schmerzen", j.Next("Über Schmerzen"));
+        Assert.Equal("Ende. Über Schmerzen", j.Inserted);
+    }
+
+    [Fact]
+    public void With_periods_held_a_capital_at_a_piece_start_stays()
+    {
+        var j = new LiveChunkJoiner();
+        Assert.Equal("Sie klagt", j.Next("Sie klagt"));
+        Assert.Equal(" Über Schmerzen", j.Next("Über Schmerzen"));
+        Assert.Equal("Sie klagt Über Schmerzen", j.Inserted);
+    }
+
+    [Fact]
+    public void A_seeded_caret_spaces_the_first_piece_and_is_not_part_of_the_inserted_text()
+    {
+        var afterLetter = new LiveChunkJoiner();
+        afterLetter.Seed(CaretContext.Of('e'));
+        Assert.Equal(" Ah stimmt", afterLetter.Next("Ah stimmt"));
+        Assert.Equal(" Ah stimmt", afterLetter.Inserted);
+
+        var afterSpace = new LiveChunkJoiner();
+        afterSpace.Seed(CaretContext.Of(' '));
+        Assert.Equal("Ah stimmt", afterSpace.Next("Ah stimmt"));
+
+        var afterNewline = new LiveChunkJoiner();
+        afterNewline.Seed(CaretContext.Of('\n'));
+        Assert.Equal("Ah stimmt", afterNewline.Next("Ah stimmt"));
+
+        var afterCr = new LiveChunkJoiner();
+        afterCr.Seed(CaretContext.Of('\r'));
+        Assert.Equal("Ah stimmt", afterCr.Next("Ah stimmt"));
+
+        var atStart = new LiveChunkJoiner();
+        atStart.Seed(CaretContext.StartOfText);
+        Assert.Equal("Ah stimmt", atStart.Next("Ah stimmt"));
+
+        var unknown = new LiveChunkJoiner();
+        unknown.Seed(CaretContext.Unknown);
+        var today = new LiveChunkJoiner();
+        Assert.Equal(today.Next("Der Patient"), unknown.Next("Der Patient"));
+        Assert.Equal(today.Next("klagt über Schmerzen"), unknown.Next("klagt über Schmerzen"));
+        Assert.Equal(today.Inserted, unknown.Inserted);
+    }
+
+    [Fact]
+    public void Spoken_only_a_seeded_letter_lowercases_a_leading_function_word()
+    {
+        var j = new LiveChunkJoiner { HoldsPeriods = false };
+        j.Seed(CaretContext.Of('g'));
+        Assert.Equal(" und weiter", j.Next("Und weiter"));
+        Assert.Equal(" und weiter", j.Inserted);
+    }
+
+    [Fact]
+    public void A_spoken_paragraph_break_at_the_very_end_of_a_piece_is_not_lost()
+    {
+        var j = new LiveChunkJoiner();
+        var first = LiveDictation.FinishPiece("Befund neuer Absatz", Auto);
+        var second = LiveDictation.FinishPiece("Inspektion unauffällig", Auto);
+        Assert.Equal("Befund\n\n", j.Next(first));
+        Assert.Equal("Inspektion unauffällig", j.Next(second));
+        Assert.Equal("Befund\n\nInspektion unauffällig", j.Inserted);
+    }
+
+    [Fact]
+    public void A_slash_said_across_two_pieces_gets_no_space_on_either_side()
+    {
+        var afterSlash = new LiveChunkJoiner();
+        Assert.Equal("L4/", afterSlash.Next("L4/"));
+        Assert.Equal("L5", afterSlash.Next("L5"));
+        Assert.Equal("L4/L5", afterSlash.Inserted);
+
+        var beforeSlash = new LiveChunkJoiner();
+        Assert.Equal("L4", beforeSlash.Next("L4"));
+        Assert.Equal("/L5", beforeSlash.Next("/L5"));
+        Assert.Equal("L4/L5", beforeSlash.Inserted);
+    }
+
+    [Fact]
+    public void An_ellipsis_attaches_to_the_previous_piece()
+    {
+        var j = new LiveChunkJoiner();
+        Assert.Equal("Gesamt", j.Next("Gesamt"));
+        Assert.Equal("… und", j.Next("… und"));
     }
 
     // ---- Drift ----

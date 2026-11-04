@@ -79,6 +79,15 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly System.Windows.Forms.Timer _liveRetryTimer = new() { Interval = 500 };
     // The window the live dictation types into; set once the recording runs.
     private IntPtr _liveTarget;
+    /// <summary>Bumped by every recording that starts; right Ctrl remembers the one it started (Mac fnStartedRecordingID).</summary>
+    private long _recordingSerial;
+    private long _rightCtrlRecording = -1;
+    /// <summary>Process the current live dictation inserts into (Mac liveTargetBundleId), for the last-insertion memory.</summary>
+    private string? _liveTargetApp;
+    /// <summary>Punctuation mode of the current live dictation, fixed at its start like Diktieren (Mac livePunctuationMode).</summary>
+    private Core.PunctuationMode _livePunctuation = Core.PunctuationMode.Automatic;
+    /// <summary>What the previous live dictation ended with, while nothing has moved the caret since.</summary>
+    private readonly LiveInsertionMemory _lastLive;
     private IReadOnlyList<string> _unsupported = Array.Empty<string>();
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
@@ -148,6 +157,7 @@ internal sealed partial class TrayApp : ApplicationContext
 
         _hotkeys = new HotkeyService();
         _rightCtrl = new Core.RightCtrlDictationToggle(new RightCtrlBridge(this), () => Environment.TickCount64);
+        _lastLive = new LiveInsertionMemory(IsOwnShortcut);
         _paster = new ClipboardPaster(_hotkeys.Handle);
 
         _statusItem = new ToolStripMenuItem(Core.UserCopy.ReadyStatus) { Enabled = false };
@@ -430,12 +440,55 @@ internal sealed partial class TrayApp : ApplicationContext
     private void OnHotkey(Mode mode)
     {
         var stored = mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey;
-        HandleHotkeyPress(mode, stored, canStopOrCancel: true, () => StartRecording(mode, stored));
+        // Stop, cancel and busy stay as they are: the Diktieren key ends whichever recording runs, Live included (Mac).
+        HandleHotkeyPress(mode, stored, canStopOrCancel: true,
+            () => { if (mode == Mode.Dictate) StartDictateByMode(stored, "Diktieren shortcut"); else StartRecording(mode, stored); });
     }
 
     /// <summary>
-    /// What the right Ctrl toggle drives (Mac: MenuBarController as FnDictationToggleDelegate). Only a plain Diktat
-    /// started this way is its own: a Prompt, template or Live recording is never stopped by right Ctrl.
+    /// The Diktieren key and right Ctrl start what Diktieren → Modus says (Mac toggleDictation / fnDictationStart with
+    /// LiveDictation.startDecision). Live that cannot start says why and starts nothing: no silent fallback. During a
+    /// live meeting the decision falls back to a normal Diktat, as on the Mac.
+    /// </summary>
+    private void StartDictateByMode(string stored, string source)
+    {
+        var (decision, reason) = Core.LiveDictation.StartDecision(_settings.DictateMode, LiveUnavailable());
+        switch (decision)
+        {
+            case Core.LiveStartDecision.StartDictate:
+                StartRecording(Mode.Dictate, stored);
+                break;
+            case Core.LiveStartDecision.StartLive:
+                Core.Log.Info($"SHORTCUTS: {source} starts Live diktieren (mode)");
+                StartLiveDictation(stored);
+                break;
+            default:
+                PresentLiveUnavailable(reason!.Value);
+                break;
+        }
+    }
+
+    private Core.LiveUnavailable? LiveUnavailable() => Core.LiveDictation.UnavailableReason(_meeting.IsActive,
+        _settings.EffectiveSpeechEngine == Core.Engine.Local, OfflineEngine.SpeechInstalled);
+
+    /// <summary>A key press (key plus held modifiers) that is one of our own shortcuts: it must not erase the last-insertion memory.</summary>
+    private bool IsOwnShortcut(Keys pressed) =>
+        new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveLiveDictateHotkey }
+            .Any(stored => Hotkey.TryParse(stored, out var h) && (h.Key
+                | ((h.Modifiers & NativeMethods.MOD_CONTROL) != 0 ? Keys.Control : 0)
+                | ((h.Modifiers & NativeMethods.MOD_ALT) != 0 ? Keys.Alt : 0)
+                | ((h.Modifiers & NativeMethods.MOD_SHIFT) != 0 ? Keys.Shift : 0)) == pressed);
+
+    private void PresentLiveUnavailable(Core.LiveUnavailable why)
+    {
+        Core.Log.Info($"LIVE-DICTATE: not started ({why})");
+        Sounds.Error();
+        Notify(Core.UserCopy.LiveTitle, Core.LiveDictation.Message(why), ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
+    }
+
+    /// <summary>
+    /// What the right Ctrl toggle drives (Mac: MenuBarController as FnDictationToggleDelegate). It starts what Diktieren →
+    /// Modus says and ends only the recording it started itself (Diktat or Live).
     /// </summary>
     private sealed class RightCtrlBridge(TrayApp app) : Core.IRightCtrlDictationDelegate
     {
@@ -443,7 +496,9 @@ internal sealed partial class TrayApp : ApplicationContext
         {
             if (app._state != State.Idle) return false;
             Core.Log.Info("Hotkey RightCtrl in state Idle");
-            app.StartRecording(Mode.Dictate, Core.HotkeyText.RightCtrl);
+            app.StartDictateByMode(Core.HotkeyText.RightCtrl, "Right Ctrl");
+            // Right Ctrl ends only the recording it started, never one another shortcut began, even of the same kind.
+            app._rightCtrlRecording = app._state == State.Recording ? app._recordingSerial : -1;
             return IsRecording();
         }
 
@@ -457,7 +512,8 @@ internal sealed partial class TrayApp : ApplicationContext
             if (IsRecording()) app.OnEscape();
         }
 
-        public bool IsRecording() => app._state == State.Recording && app._mode == Mode.Dictate && app._live == null;
+        public bool IsRecording() => app._state == State.Recording && app._mode == Mode.Dictate
+            && app._recordingSerial == app._rightCtrlRecording;
 
         public bool IsProcessing() => app._state == State.Processing && app._mode == Mode.Dictate;
 
@@ -845,6 +901,7 @@ internal sealed partial class TrayApp : ApplicationContext
             return;
         }
         Sounds.Start();
+        _recordingSerial++;
         SetState(State.Recording);
         // One turn only: a Dictate run leaves the image for the next Dictate Prompt or template run.
         _runShot = mode != Mode.Dictate && Core.ScreenshotPolicy.Allowed(_settings) ? _heldShot.Take() : null;
@@ -872,19 +929,29 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void StartLiveDictation(string stored)
     {
-        var reason = Core.LiveDictation.UnavailableReason(_meeting.IsActive,
-            _settings.EffectiveSpeechEngine == Core.Engine.Local, OfflineEngine.SpeechInstalled, _settings.AutoPaste);
-        if (reason is { } why)
+        if (LiveUnavailable() is { } why)
         {
-            Core.Log.Info($"LIVE-DICTATE: not started ({why})");
-            Sounds.Error();
-            Notify(Core.UserCopy.LiveTitle, Core.LiveDictation.Message(why), ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
+            PresentLiveUnavailable(why);
             return;
         }
+        // The character already before the caret spaces and cases the first piece (Mac #328); when it cannot be read,
+        // the end of the previous live dictation into the same program stands in for it (Mac #339).
+        var front = ClipboardPaster.ForegroundRoot();
+        _liveTargetApp = FocusedTextContext.ProcessName(front);
+        var readCaret = FocusedTextContext.CharacterBeforeCaret(front);
+        var caret = Core.LastInsertion.Seed(readCaret, _lastLive.Last, _liveTargetApp, DateTime.UtcNow);
+        Core.Log.Info(caret != readCaret
+            ? $"LIVE-DICTATE: caret context from last dictation ({caret.LogKind})"
+            : $"LIVE-DICTATE: caret context {caret.LogKind}");
+        _lastLive.Forget(null); // the new session records its own ending; the old memory is spent either way
+        // Like Diktieren: "Nur gesprochen" applies offline, outside meetings (Live never runs in a meeting).
+        _livePunctuation = Core.PunctuationModes.Effective(_settings.PunctuationMode, isOffline: true, duringMeeting: false);
         // The session exists before the recording starts, so a failed start finds it and discards it.
         var session = new Core.LiveDictationSession(
             (wav, ct) => DecodeLivePieceAsync(wav, ct),
-            text => _paster.PasteLivePieceAsync(text, _liveTarget, CancellationToken.None));
+            text => _paster.PasteLivePieceAsync(text, _liveTarget, CancellationToken.None),
+            holdsPeriods: _livePunctuation != Core.PunctuationMode.SpokenOnly,
+            caret: caret);
         _liveTarget = IntPtr.Zero;
         _livePieces.Clear();
         lock (_liveGate)
@@ -931,7 +998,12 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         if (_fakeGemini) return "test";
         // No TextCleanup.ForDictation per piece: it would capitalise and end every piece with a period.
-        return GlossaryBackstops(Core.LiveDictation.FinishPiece(await _offline.TranscribeAsync(wav, ct)));
+        var mode = _livePunctuation;
+        if (mode != Core.PunctuationMode.SpokenOnly)
+            return GlossaryBackstops(Core.LiveDictation.FinishPiece(await _offline.TranscribeAsync(wav, ct), mode));
+        // "Nur gesprochen": Parakeet's marks stay only where the token timings show speech time behind them (Mac #339/#347).
+        var (text, timed) = await _offline.TranscribeSpokenMarksAsync(wav, ct);
+        return GlossaryBackstops(Core.LiveDictation.FinishPiece(text, mode, timedMarks: timed));
     }
 
     /// <summary>Forgets the live session. Does not touch the clipboard.</summary>
@@ -1047,6 +1119,7 @@ internal sealed partial class TrayApp : ApplicationContext
             {
                 _overlay.ShowDone(Core.UserCopy.LiveInserted);
                 done = true;
+                _lastLive.Remember(outcome.Text, _liveTargetApp);
             }
 
             if (finalText.Length > 0) _recent.Add(finalText);
@@ -1786,12 +1859,22 @@ internal sealed partial class TrayApp : ApplicationContext
     private async Task<string> TranscribeOfflineAsync(byte[] wav, CancellationToken ct,
         Core.PunctuationMode punctuation = Core.PunctuationMode.Automatic)
     {
-        var joined = await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
-            (chunk, c) => _offline.TranscribeAsync(chunk, c), maxParallel: 1, ct);
-        var source = punctuation == Core.PunctuationMode.SpokenOnly
-            ? Core.SpokenPunctuation.StripModelPunctuation(joined)
-            : joined;
-        return Core.SpokenPunctuation.Apply(source, punctuation);
+        if (punctuation != Core.PunctuationMode.SpokenOnly)
+        {
+            var joined = await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
+                (chunk, c) => _offline.TranscribeAsync(chunk, c), maxParallel: 1, ct);
+            return Core.SpokenPunctuation.Apply(joined, punctuation);
+        }
+        // "Nur gesprochen" (Mac #339/#347): each piece keeps Parakeet's marks only where the token timings show speech
+        // time behind them; a piece without usable timings falls back to the plain strip. Then, as on the Mac, the
+        // joined text loses only semicolons (timedMarks) before the spoken commands are applied.
+        var spoken = await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
+            async (chunk, c) =>
+            {
+                var (text, timed) = await _offline.TranscribeSpokenMarksAsync(chunk, c);
+                return timed ? text : Core.SpokenPunctuation.StripModelPunctuation(text);
+            }, maxParallel: 1, ct);
+        return Core.SpokenPunctuation.Apply(Core.SpokenPunctuation.StripModelPunctuation(spoken, timedMarks: true), punctuation);
     }
 
     // ---------------- live meeting ----------------
@@ -2295,6 +2378,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _icon.Dispose();
         _keyUpTimer.Dispose();
         _liveRetryTimer.Dispose();
+        _lastLive.Dispose();
         _templateReplay.Clear();
         _replayExpiry.Dispose();
         _snipCts?.Cancel();

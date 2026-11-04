@@ -24,7 +24,7 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | 0,2 s Nachlauf nach Stopp | `audioTailCaptureDelay` | `MicAudioSource.TailCapture` | erledigt |
 | Einfügeziel vom Start gemerkt | `PasteTargetPolicy` (pro App) | `PasteTargetPolicy` (pro Fenster, strenger) | erledigt |
 | Sicheres Einfügen, Satzzeichen nur gesprochen (#321/#322) | 8.75 | – | **PR #32** |
-| Live diktieren (#324) | 8.75 | – | **PR #33** |
+| Live diktieren (#324 … #347) | 8.75 | – | ja (Mac-Stand #347, `plan-mac-angleich.md` 11.24) |
 | Lange Diktate: Stücke schon während der Aufnahme | `ChunkedDictateRecorder` | Stücke erst nach Stopp (ab 150 s) | offen (mittel) |
 | Ein fehlgeschlagenes Stück | Rest wird trotzdem eingefügt | ganzer Lauf scheitert, bleibt wiederholbar | bewusst anders (nichts fehlt still in der Mitte) |
 | Abgebrochene Aufnahme transkribieren | Menüeintrag, nur Diktat | Tray-Eintrag nach Abbruch beim Verarbeiten (Plan Schritt 9) | erledigt |
@@ -182,6 +182,12 @@ Stücken, eingefügt nur ins Fenster vom Start (wartet sonst und holt nach). Die
 Kürzel übernimmt ihre Rolle. Offen: Einstellung „Satzzeichen“ (#322, Hook in `LiveDictation.FinishPiece`) und
 „Zwischenablage nach dem Einfügen leeren“ (gibt es auf Windows nicht, Hook in `ClipboardAtEnd`), kein Schutz für
 Passwortfelder (Windows hat kein `IsSecureEventInputEnabled`).
+
+**Nachtrag 04.11.2026 — Live diktieren auf Mac-Stand #347:** Diktieren → „Modus“ (Diktieren / Live diktieren) gilt für
+das Diktieren-Kürzel und die rechte Strg-Taste; „Automatisch einfügen“ ist für Live nicht mehr nötig (das Kürzel ist die
+Bitte, am Cursor zu schreiben). „Nur gesprochen“ gilt auch live, Parakeets eigene Satzzeichen bleiben nur, wenn die
+Token-Zeiten zeigen, dass sie gesagt wurden. Die Hooks in `FinishPiece` und `ClipboardAtEnd` sind damit erledigt.
+Einzelheiten und Abweichungen: `plan-mac-angleich.md` 11.24.
 
 **Nachtrag 03.11.2026, Kürzel und Menü wie auf dem Mac:** Ziffern-Kürzel wie `ShortcutConfig.default`, Modifier
 Alt statt `⌃⌥` (Strg+Alt ist AltGr): Alt+1 Diktieren, Alt+2 Dictate Prompt, Alt+3 Bildschirmfoto (bleibt in der

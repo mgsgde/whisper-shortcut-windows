@@ -79,6 +79,27 @@ public class SettingsTests
     }
 
     [Fact]
+    public void DictateMode_DefaultsToDictateAndRoundTrips()
+    {
+        var path = Tmp();
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{}"); // an old file without the key
+        var s = Settings.Load(path, new Reverse());
+        Assert.Equal(DictateMode.Dictate, s.DictateMode);
+
+        s.DictateMode = DictateMode.Live;
+        s.Save();
+        Assert.Contains("\"dictateMode\": \"live\"", File.ReadAllText(path));
+        Assert.Equal(DictateMode.Live, Settings.Load(path, new Reverse()).DictateMode);
+
+        File.WriteAllText(path, "{\"dictateMode\": \" LIVE \"}");
+        Assert.Equal(DictateMode.Live, Settings.Load(path, new Reverse()).DictateMode);
+        File.WriteAllText(path, "{\"dictateMode\": \"quatsch\"}");
+        Assert.Equal(DictateMode.Dictate, Settings.Load(path, new Reverse()).DictateMode);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
     public void PunctuationMode_DefaultsToAutomaticAndRoundTrips()
     {
         var path = Tmp();

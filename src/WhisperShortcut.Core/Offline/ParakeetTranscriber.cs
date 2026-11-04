@@ -73,10 +73,18 @@ public sealed class ParakeetTranscriber : IDisposable
     }
 
     /// <summary>Transcribes a 16-bit PCM WAV; returns the trimmed text, "" for silence.</summary>
-    public string Transcribe(byte[] wav)
+    public string Transcribe(byte[] wav) => TranscribeDetailed(wav).Text;
+
+    /// <summary>
+    /// Like <see cref="Transcribe"/>, plus the token timings sherpa-onnx reports (for
+    /// <see cref="ParakeetPunctuationTiming"/>). Tokens is null when they are missing or implausible:
+    /// durations are only filled for TDT greedy decoding, so a glossary (beam search) load has none.
+    /// </summary>
+    public ParakeetDecode TranscribeDetailed(byte[] wav)
     {
         var samples = Wav.ReadMonoFloat(wav, out var rate);
-        if (samples.Length == 0) return "";
+        if (samples.Length == 0) return new ParakeetDecode("", null, 0);
+        var audioSeconds = samples.Length / (double)rate;
         lock (_gate)
         {
             ObjectDisposedException.ThrowIf(_disposed, this);
@@ -84,8 +92,28 @@ public sealed class ParakeetTranscriber : IDisposable
             // Another rate than 16 kHz is passed as is; sherpa-onnx resamples.
             stream.AcceptWaveform(rate, samples);
             _recognizer.Decode(stream);
-            return (stream.Result.Text ?? "").Trim();
+            var result = stream.Result;
+            return new ParakeetDecode((result.Text ?? "").Trim(), BuildTokens(result, audioSeconds), audioSeconds);
         }
+    }
+
+    private static IReadOnlyList<ParakeetPunctuationTiming.Token>? BuildTokens(OfflineRecognizerResult result, double audioSeconds)
+    {
+        var tokens = result.Tokens;
+        var starts = result.Timestamps;
+        var durations = result.Durations;
+        if (tokens == null || starts == null || durations == null) return null;
+        if (tokens.Length == 0 || tokens.Length != starts.Length || tokens.Length != durations.Length) return null;
+        var list = new List<ParakeetPunctuationTiming.Token>(tokens.Length);
+        for (var i = 0; i < tokens.Length; i++)
+        {
+            double start = starts[i];
+            double end = start + durations[i];
+            // A unit mismatch (e.g. frames instead of seconds) would run far past the audio.
+            if (end > audioSeconds + 0.5) return null;
+            list.Add(new ParakeetPunctuationTiming.Token(tokens[i], start, end));
+        }
+        return list;
     }
 
     /// <inheritdoc />
@@ -99,3 +127,6 @@ public sealed class ParakeetTranscriber : IDisposable
         }
     }
 }
+
+/// <summary>One decode: the text, the token timings when sherpa-onnx gave usable ones, and the audio length in seconds.</summary>
+public sealed record ParakeetDecode(string Text, IReadOnlyList<ParakeetPunctuationTiming.Token>? Tokens, double AudioSeconds);

@@ -81,6 +81,26 @@ public sealed class SettingsWindowTests : IDisposable
         });
     }
 
+    /// <summary>
+    /// Diktieren → Modus (Mac Dictate mode): Live is always selectable; it shows either the Live caption or the orange
+    /// note saying why it cannot start, never both. Back on Diktieren the note goes away.
+    /// </summary>
+    [Fact]
+    public void DictateMode_LiveShowsCaptionOrWarning()
+    {
+        OnSta(() =>
+        {
+            using var form = OpenSettings();
+            form.ShowPage("Diktieren");
+            Application.DoEvents();
+            var live = form.SetDictateModeForTests(Core.DictateMode.Live);
+            Assert.True(live.WarningVisible ^ live.Caption.Length > 0, $"warning {live.WarningVisible}, caption '{live.Caption}'");
+            var dictate = form.SetDictateModeForTests(Core.DictateMode.Dictate);
+            Assert.False(dictate.WarningVisible);
+            Assert.Equal("Der Text wird eingefügt, wenn du stoppst.", dictate.Caption);
+        });
+    }
+
     private SettingsForm OpenSettings()
     {
         var settings = Core.Settings.Load(Path.Combine(_dir, "settings.json"), new Core.PlainSecretProtector());

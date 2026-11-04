@@ -132,7 +132,7 @@ public class SpokenPunctuationTests
     {
         Assert.Equal("3,5 cm", S("3 Komma 5 cm"));
         Assert.Equal("Hallo, 5 Stück", S("Hallo Komma 5 Stück"));
-        Assert.Equal("drei, fünf", S("drei Komma fünf"));
+        Assert.Equal("3,5", S("drei Komma fünf"));
     }
 
     [Fact]
@@ -156,14 +156,38 @@ public class SpokenPunctuationTests
     [Fact]
     public void StripsModelPunctuation()
     {
-        Assert.Equal("Hallo Welt Wie geht's Gut", Strip("Hallo, Welt. Wie geht's? Gut!"));
-        Assert.Equal("Ende", Strip("Ende..."));
+        // Parakeet writes a spoken "Punkt" as "." itself, so the sentence marks stay and so do capitals.
+        Assert.Equal("Hallo Welt. Wie geht's Gut", Strip("Hallo, Welt. Wie geht's? Gut!"));
+        Assert.Equal("Ende...", Strip("Ende..."));
+        Assert.Equal("Befund: a b c.", Strip("Befund: a; b, c."));
     }
+
+    [Fact]
+    public void StripsGuessedQuestionAndExclamationMarks()
+    {
+        Assert.Equal("Die Dosis stimmt und weiter", SpokenOnly("Die Dosis stimmt? Und weiter"));
+        Assert.Equal("Stimmt die Dosis?", SpokenOnly("Stimmt die Dosis Fragezeichen"));
+        Assert.Equal("Stimmt die Dosis?", SpokenOnly("Stimmt die Dosis? Fragezeichen"));
+        Assert.Equal("Wirklich!", SpokenOnly("Wirklich! Ausrufezeichen"));
+        // Nouns and the formal "Sie" keep their capital.
+        Assert.Equal("Stimmt das Dosis gleich", SpokenOnly("Stimmt das? Dosis gleich"));
+        Assert.Equal("Geht es Sie kommen", SpokenOnly("Geht es? Sie kommen"));
+        Assert.Equal("a?b und 1!2", Strip("a?b und 1!2"));
+    }
+
+    [Fact]
+    public void TimedMarksOnlyStripSemicolons()
+    {
+        Assert.Equal("Gut! Danke. a b, c?", SpokenPunctuation.StripModelPunctuation("Gut! Danke. a; b, c?", timedMarks: true));
+        Assert.Equal("Wirklich! Weiter", SpokenPunctuation.StripModelPunctuation("Wirklich! Weiter", timedMarks: true));
+    }
+
+    private static string SpokenOnly(string text) => SpokenPunctuation.Apply(Strip(text), Spoken);
 
     [Fact]
     public void StripKeepsNumbers()
     {
-        Assert.Equal("Wert 3.5 und 1,2 mg ok", Strip("Wert 3.5 und 1,2 mg, ok."));
+        Assert.Equal("Wert 3.5 und 1,2 mg ok.", Strip("Wert 3.5 und 1,2 mg, ok."));
         Assert.Equal("a.b", Strip("a.b"));
     }
 
@@ -172,8 +196,8 @@ public class SpokenPunctuationTests
     {
         var spoken = "Am 3. November untersuchte Dr. Müller z. B. Nr. 5 Punkt";
         Assert.Equal("Am 3. November untersuchte Dr. Müller z. B. Nr. 5.", S(Strip(spoken)));
-        Assert.Equal("Der Befund ist unauffällig Weiter ok", Strip("Der Befund ist unauffällig. Weiter, ok."));
-        Assert.Equal("bis 5", Strip("bis 5."));
+        Assert.Equal("Der Befund ist unauffällig. Weiter ok.", Strip("Der Befund ist unauffällig. Weiter, ok."));
+        Assert.Equal("bis 5.", Strip("bis 5."));
         Assert.Equal("5. Lendenwirbel", Strip("5. Lendenwirbel"));
     }
 
@@ -187,7 +211,7 @@ public class SpokenPunctuationTests
     public void StripKeepsMoreAbbreviations(string text)
     {
         Assert.Equal(text, Strip(text));
-        Assert.Equal("Er ging nach Hause Dann kam sie", Strip("Er ging nach Hause. Dann kam sie."));
+        Assert.Equal("Er ging nach Hause. Dann kam sie.", Strip("Er ging nach Hause. Dann kam sie."));
     }
 
     [Fact]
@@ -242,5 +266,151 @@ public class SpokenPunctuationTests
         Assert.Equal(text, A(text));
         Assert.Equal(text, SpokenPunctuation.Apply(text, PunctuationMode.Automatic));
         Assert.Equal("Doppelpunkte und Kommas", S("Doppelpunkte und Kommas"));
+    }
+
+    // ---- Cases added with the Mac port ----
+
+    [Fact]
+    public void GluedLineBreak()
+    {
+        var raw = "Befund Doppelpunkt Neue Zeileinspektion unauffällig neue Zeilepalpation Doppelpunkt Triggerpunkte im Trapezius.";
+        Assert.Equal("Befund:\nInspektion unauffällig\nPalpation: Triggerpunkte im Trapezius.", A(raw));
+    }
+
+    [Fact]
+    public void NewLinePluralStaysWords()
+    {
+        var text = "Bitte zwei neue Zeilen einfügen, neue Zeilenumbrüche vermeiden.";
+        Assert.Equal(text, A(text));
+    }
+
+    [Fact]
+    public void WordAfterExistingColonIsDropped()
+    {
+        Assert.Equal("Befund: Druckschmerz L4", A("Befund: Doppelpunkt Druckschmerz L4"));
+        Assert.Equal("Anamnese:\nPatientin berichtet\n\nBefund:\nunauffällig",
+            A("Anamnese:\nDoppelpunkt Patientin berichtet\n\nBefund:\nunauffällig"));
+        Assert.Equal("Therapie:\nMobilisation", A("Therapie: Doppelpunkt\nMobilisation"));
+    }
+
+    [Fact]
+    public void StructuredReplyUnchanged()
+    {
+        var reply = "Anamnese:\nSchmerzen LWS.\n\nBefund:\n(nicht diktiert)\n\nTherapie:\nMobilisation C6/C7.";
+        Assert.Equal(reply, A(reply));
+    }
+
+    [Fact]
+    public void SlashMishearings()
+    {
+        Assert.Equal("Arbeitsmarkt/im ADL", S("Arbeitsmarkt Schreckstrich im ADL"));
+        Assert.Equal("Hals/Nacken", S("Hals Schräg Strich Nacken"));
+        Assert.Equal("Hals/Nacken", S("Hals Schräg-Strich Nacken"));
+        Assert.Equal("zwei Schrägstriche im Text", S("zwei Schrägstriche im Text"));
+    }
+
+    [Fact]
+    public void Ellipsis()
+    {
+        Assert.Equal("Gesamt GdB… und", S("Gesamt GdB drei Pünktchen und"));
+        Assert.Equal("Gesamt GdB… und", S("Gesamt GdB drei Puenktchen und"));
+        Assert.Equal("Gesamt GdB… und", S("Gesamt GdB Auslassungspunkte und"));
+        Assert.Equal("drei Punkte erreicht", S("drei Punkte erreicht"));
+        Assert.Equal("Gesamt GdB drei Pünktchen und", A("Gesamt GdB drei Pünktchen und"));
+    }
+
+    [Fact]
+    public void DatesAndClinicalAbbreviationsKeepPeriod()
+    {
+        Assert.Equal("Seit dem 12. März.", SpokenOnly("Seit dem 12. März."));
+        Assert.Equal("Pat. ist mobil.", SpokenOnly("Pat. ist mobil."));
+    }
+
+    [Fact]
+    public void PunktBeforeDigitOrNumberWordIsNoun()
+    {
+        Assert.Equal("unter Punkt 3 der Fragen", SpokenOnly("unter Punkt 3 der Fragen"));
+        Assert.Equal("Unter Punkt drei steht", SpokenOnly("Unter Punkt drei steht"));
+    }
+
+    [Fact]
+    public void DecimalCommaBetweenNumberWords()
+    {
+        Assert.Equal("Messwert 2,5", SpokenOnly("Messwert zwei Komma fünf"));
+        Assert.Equal("3,5", S("drei Komma fünf"));
+        var automatic = "zwei Komma fünf";
+        Assert.Equal(automatic, SpokenPunctuation.Apply(automatic, PunctuationMode.Automatic));
+        // A pair that continues a list stays words.
+        Assert.Equal("zwei, fünf, vier", S("zwei Komma fünf Komma vier"));
+    }
+
+    [Fact]
+    public void RepeatedSpokenMarksCollapse() =>
+        Assert.Equal("Ende. Weiter", SpokenOnly("Ende Punkt Punkt weiter"));
+
+    [Fact]
+    public void ModelPeriodAndCapitalKeptCommaDropped()
+    {
+        Assert.Equal("Sie klagt. Über Schmerzen.", SpokenOnly("Sie klagt. Über Schmerzen."));
+        Assert.Equal("Befund. Seit gestern", SpokenOnly("Befund. Seit gestern"));
+        Assert.Equal("Wir bitten Sie um Antwort", SpokenOnly("Wir bitten, Sie um Antwort"));
+        Assert.Equal("klagt. Über", SpokenOnly("klagt. Punkt Über"));
+    }
+
+    [Fact]
+    public void SpokenMarkNextToModelMarkDoesNotDouble()
+    {
+        Assert.Equal("Gangbild, geht weiter.", SpokenOnly("Gangbild Komma geht weiter. Punkt."));
+        Assert.Equal("Neue Befunde liegen nicht vor.", SpokenOnly("Neue Befunde liegen nicht vor Punkt."));
+        Assert.Equal("Neue Befunde liegen nicht vor.", SpokenOnly("Neue Befunde liegen nicht vor. Punkt"));
+        Assert.Equal("Gehstrecke unter 500 m.", SpokenOnly("Gehstrecke unter 500 m Punkt."));
+        Assert.Equal("Gut?", SpokenOnly("Gut. Fragezeichen"));
+        Assert.Equal("Gut! Danke", SpokenOnly("Gut! Ausrufezeichen danke"));
+    }
+
+    [Fact]
+    public void GluedSlash()
+    {
+        Assert.Equal("Arbeitsmarkt/im ADL", SpokenOnly("Arbeitsmarktschrägstrich im ADL"));
+        Assert.Equal("Arbeitsmarkt/Bewegung", SpokenOnly("Arbeitsmarktschrägstrichbewegung"));
+        Assert.Equal("Die Schrägstriche fehlen", SpokenOnly("Die Schrägstriche fehlen"));
+        Assert.Equal("Arbeitsmarkt/bewegung", SpokenOnly("Arbeitsmarkt Schrägstrichbewegung"));
+        Assert.Equal("Arbeitsmarktschrägstrich im ADL", A("Arbeitsmarktschrägstrich im ADL"));
+    }
+
+    [Fact]
+    public void GluedEllipsis()
+    {
+        Assert.Equal("Gesamt GDB… und", SpokenOnly("Gesamt GDB3-Pünktchen und"));
+        Assert.Equal("Gesamt GDB… und", SpokenOnly("Gesamt GDB 3 Pünktchen und"));
+        Assert.Equal("Gesamt GDB… und", SpokenOnly("Gesamt GDB drei-Pünktchen und"));
+        Assert.Equal("Es gibt 13 Pünktchen", SpokenOnly("Es gibt 13 Pünktchen"));
+    }
+
+    [Fact]
+    public void KeepsEdgeBreaksTrimsSpacesOnly()
+    {
+        Assert.Equal("Befund\n\n", SpokenPunctuation.Apply("Befund neuer Absatz", keepsEdgeBreaks: true));
+        Assert.Equal("Befund", SpokenPunctuation.Apply("Befund neuer Absatz"));
+        Assert.Equal("Erste Zeile\n", SpokenPunctuation.Apply("Erste Zeile neue Zeile", keepsEdgeBreaks: true));
+        Assert.Equal("Befund\n\n", SpokenPunctuation.Apply("  Befund neuer Absatz  ", keepsEdgeBreaks: true));
+    }
+
+    [Fact]
+    public void SemicolonWords()
+    {
+        Assert.Equal("Hüfte frei beweglich; Knie", S("Hüfte frei beweglich Semikolon Knie"));
+        Assert.Equal("a; b", S("a Strichpunkt b"));
+    }
+
+    [Fact]
+    public void CommandWordsAndFunctionWords()
+    {
+        Assert.Contains("doppelpunkt", SpokenPunctuation.CommandWords);
+        Assert.Contains("zeile", SpokenPunctuation.CommandWords);
+        Assert.Equal("und", SpokenPunctuation.LowercasingFunctionWord("Und"));
+        Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Sie"));
+        Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Dosis"));
+        Assert.Null(SpokenPunctuation.LowercasingFunctionWord("und"));
     }
 }

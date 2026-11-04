@@ -65,6 +65,13 @@ internal sealed partial class SettingsForm
     /// <summary>For the UI tests: the names of all settings pages.</summary>
     internal IReadOnlyList<string> PageNamesForTests => _pages.Keys.ToList();
 
+    /// <summary>For the UI tests: picks Diktieren → Modus and reports what the section then shows.</summary>
+    internal (bool WarningVisible, string Caption) SetDictateModeForTests(Core.DictateMode mode)
+    {
+        _dictateMode.SelectedItem = _dictateMode.Items.Cast<ChoiceItem<Core.DictateMode>>().First(i => i.Value == mode);
+        return (_liveWarning.Visible, _dictateModeText.Visible ? _dictateModeText.Text : "");
+    }
+
     /// <summary>For the UI tests: what a download progress tick does (OfflineEngine.DownloadChanged).</summary>
     internal void DownloadTickForTests() => UpdateModelRows();
 
