@@ -82,6 +82,8 @@ internal sealed class TrayApp : ApplicationContext
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
     private WelcomeForm? _welcomeForm;
+    // The settings were asked for while the tour was open: open them once it closes.
+    private bool _settingsAfterTour;
     // Mac „Einrichtung abschließen …“: shown while the welcome tour is not finished.
     private readonly ToolStripMenuItem _finishSetupItem;
     private readonly Toast _toast = new();
@@ -2032,6 +2034,9 @@ internal sealed class TrayApp : ApplicationContext
             open.Reveal();
             return;
         }
+        // WHY one at a time: both windows write keys and engines; the settings window would later store its stale fields
+        // over what the tour just saved. Closing applies its pending edits first.
+        _settingsForm?.Close();
         var form = _welcomeForm = new WelcomeForm(_settings, _offline, _gemini, _openAi);
         form.Saved += AfterTourSaved;
         form.Completed += () =>
@@ -2046,6 +2051,11 @@ internal sealed class TrayApp : ApplicationContext
         form.FormClosed += (_, _) =>
         {
             if (_welcomeForm == form) _welcomeForm = null;
+            if (_settingsAfterTour)
+            {
+                _settingsAfterTour = false;
+                _ui.Post(_ => ShowSettings(), null);
+            }
             ShowTrayHintOnce();
         };
         form.Show();
@@ -2085,6 +2095,14 @@ internal sealed class TrayApp : ApplicationContext
 
     private void ShowSettings()
     {
+        if (_welcomeForm is { IsDisposed: false } tour)
+        {
+            // See ShowWelcome: the tour and the settings window are never open together.
+            tour.Reveal();
+            _settingsAfterTour = true;
+            Notify("Einführung läuft", "Die Einstellungen öffnen sich, sobald du die Einführung schließt oder abschließt.", ToolTipIcon.Info);
+            return;
+        }
         if (_settingsForm != null)
         {
             if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
