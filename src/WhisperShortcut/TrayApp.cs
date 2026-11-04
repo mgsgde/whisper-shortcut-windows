@@ -159,6 +159,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _rightCtrl = new Core.RightCtrlDictationToggle(new RightCtrlBridge(this), () => Environment.TickCount64);
         _lastLive = new LiveInsertionMemory(IsOwnShortcut);
         _paster = new ClipboardPaster(_hotkeys.Handle);
+        _hotkeys.ClipboardMessage = _paster.OnClipboardMessage; // the hotkey window owns the clipboard: delayed rendering lands there
 
         _statusItem = new ToolStripMenuItem(Core.UserCopy.ReadyStatus) { Enabled = false };
         // Titles are the Mac's German ones (Localizable.xcstrings).
@@ -984,7 +985,12 @@ internal sealed partial class TrayApp : ApplicationContext
         _liveTarget = _pasteTarget;
         _paster.BeginLive(_settings.RestoreClipboard);
         _liveRetryTimer.Start();
-        Core.Log.Info("LIVE-DICTATE: started");
+        var targetName = _liveTarget == IntPtr.Zero ? "none" : FocusedTextContext.ProcessName(_liveTarget) ?? "unknown";
+        Core.Log.Info($"LIVE-DICTATE: started (target {targetName})");
+        if (_liveTarget == IntPtr.Zero)
+            Core.Log.Info("LIVE-DICTATE: no target window captured; pieces will be held");
+        else if (NativeMethods.GetWindowThreadProcessId(_liveTarget, out uint targetPid) != 0 && targetPid == (uint)Environment.ProcessId)
+            Core.Log.Info("LIVE-DICTATE: target is a window of this app; pieces will be held");
     }
 
     /// <summary>Capture thread: cuts the stream at pauses and hands finished pieces to the UI thread.</summary>
@@ -2304,23 +2310,31 @@ internal sealed partial class TrayApp : ApplicationContext
             if (_state != State.Idle || _settingsForm != null || _welcomeForm is { IsDisposed: false }) return;
             if (NativeMethods.IdleMilliseconds() < SpareBuildIdleMs) return;
             var watch = System.Diagnostics.Stopwatch.StartNew();
-            if (_spareSettings is not { IsDisposed: false } || _spareFingerprint != _settings.Fingerprint())
-            {
-                _spareSettings?.Dispose();
-                _spareSettings = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
-                _spareSettings.Prewarm();
-                _spareFingerprint = _settings.Fingerprint();
-                Core.Log.Info($"Settings window built in advance in {watch.ElapsedMilliseconds} ms");
-                return; // the chat, if still needed, on the next tick
-            }
-            _spareTimer!.Dispose();
-            _spareTimer = null;
-            if (_chatWindow is { IsDisposed: false }) return;
-            // The chat lives until the app quits (TrayApp.Chat.cs): built once, its first Alt+6 only makes it visible.
-            ChatWindow().Prewarm();
-            Core.Log.Info($"Chat window built in advance in {watch.ElapsedMilliseconds} ms");
+            // The builds below pump messages; a hotkey must not start a recording inside them (it would capture our own window).
+            _hotkeys.HoldActions();
+            try { SpareBuildTick(watch); }
+            finally { _hotkeys.ReleaseActions(); }
         };
         _spareTimer.Start();
+    }
+
+    private void SpareBuildTick(System.Diagnostics.Stopwatch watch)
+    {
+        if (_spareSettings is not { IsDisposed: false } || _spareFingerprint != _settings.Fingerprint())
+        {
+            _spareSettings?.Dispose();
+            _spareSettings = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
+            _spareSettings.Prewarm();
+            _spareFingerprint = _settings.Fingerprint();
+            Core.Log.Info($"Settings window built in advance in {watch.ElapsedMilliseconds} ms");
+            return; // the chat, if still needed, on the next tick
+        }
+        _spareTimer!.Dispose();
+        _spareTimer = null;
+        if (_chatWindow is { IsDisposed: false }) return;
+        // The chat lives until the app quits (TrayApp.Chat.cs): built once, its first Alt+6 only makes it visible.
+        ChatWindow().Prewarm();
+        Core.Log.Info($"Chat window built in advance in {watch.ElapsedMilliseconds} ms");
     }
 
     /// <summary>The window built in advance, if the settings are still what it shows; otherwise null (and it goes).</summary>

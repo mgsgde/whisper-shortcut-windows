@@ -12,7 +12,10 @@ internal static class NativeMethods
     public const uint GMEM_MOVEABLE = 0x0002;
 
     public const uint INPUT_KEYBOARD = 1;
-    public const uint KEYEVENTF_KEYUP = 0x0002;
+    public const uint KEYEVENTF_KEYUP = 0x0002, KEYEVENTF_UNICODE = 0x0004;
+    public const ushort VK_RETURN = 0x0D;
+    /// <summary>Delayed clipboard rendering: sent to the clipboard owner window when a program reads a format we promised.</summary>
+    public const int WM_RENDERFORMAT = 0x0305, WM_RENDERALLFORMATS = 0x0306, WM_DESTROYCLIPBOARD = 0x0307;
     public const ushort VK_SHIFT = 0x10, VK_CONTROL = 0x11, VK_MENU = 0x12, VK_LWIN = 0x5B, VK_RWIN = 0x5C,
         VK_LSHIFT = 0xA0, VK_RSHIFT = 0xA1, VK_LCONTROL = 0xA2, VK_RCONTROL = 0xA3, VK_LMENU = 0xA4, VK_RMENU = 0xA5;
 
@@ -91,6 +94,9 @@ internal static class NativeMethods
 
     [DllImport("user32.dll", SetLastError = true)]
     public static extern IntPtr SetClipboardData(uint uFormat, IntPtr hMem);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetClipboardOwner();
 
     [DllImport("user32.dll")]
     public static extern bool IsClipboardFormatAvailable(uint format);

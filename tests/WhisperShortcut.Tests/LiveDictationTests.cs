@@ -178,7 +178,7 @@ public class LiveDictationTests
         Assert.Equal(TimeSpan.FromSeconds(0.6), p.SilenceDuration);
         Assert.Equal(TimeSpan.FromSeconds(0.2), p.MeterWindow);
         Assert.Equal(TimeSpan.FromSeconds(30), p.MaxChunk);
-        Assert.Equal(-40f, p.SilenceThresholdDb);
+        Assert.Equal(-45f, p.SilenceThresholdDb);
         Assert.Equal(TimeSpan.FromSeconds(0.4), LiveDictation.PieceGap);
         Assert.Equal(TimeSpan.FromMilliseconds(50), LiveDictation.PrePasteDelay);
     }

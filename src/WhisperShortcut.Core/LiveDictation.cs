@@ -110,9 +110,11 @@ public static class LiveDictation
     /// <summary>
     /// Mac <c>RotationPolicy.live</c> (min 1.5 s, cut after 0.6 s of silence = three 0.2 s windows); the 30 s max is
     /// ours (the Mac has none; it keeps a piece decodable when someone talks without a pause).
+    /// The -45 dB threshold is the Mac's ChunkedDictateRecorder.silenceThresholdDB; -40 counted quiet speech as a pause
+    /// and cut pieces mid-sentence (1-2 character pieces).
     /// </summary>
     public static MeetingChunkPolicy ChunkPolicy { get; } = new(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1.5),
-        TimeSpan.FromSeconds(0.6), -40f, TimeSpan.FromSeconds(0.2));
+        TimeSpan.FromSeconds(0.6), -45f, TimeSpan.FromSeconds(0.2));
 
     /// <summary>Null when Live diktieren may start; otherwise the first thing the user has to fix.</summary>
     public static LiveUnavailable? UnavailableReason(bool duringMeeting, bool speechIsLocal, bool speechInstalled)

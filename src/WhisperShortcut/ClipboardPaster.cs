@@ -294,7 +294,19 @@ internal sealed class ClipboardPaster
         // The dictation ended (Esc) while this piece waited for the modifiers: write and paste nothing.
         if (generation != _liveGeneration) return false;
         CancelLateWatch(); // our own write below would look like a late copy
-        if (!WriteText(text)) return false;
+        string? processName = FocusedTextContext.ProcessName(target);
+        if (Core.LiveTextTyping.IsChromium(processName))
+        {
+            // Chromium's renderer sometimes drops a synthesized paste (Mac #339): type the piece, clipboard untouched.
+            if (generation != _liveGeneration) return false;
+            var typing = System.Diagnostics.Stopwatch.StartNew();
+            int chunks = TypeText(text);
+            if (chunks < 0) return false;
+            Core.Log.Info($"LIVE-DICTATE: typed {text.Length} chars into {processName} in {typing.ElapsedMilliseconds} ms (chunks={chunks})");
+            await Task.Delay(Core.LiveDictation.PieceGap, ct);
+            return true;
+        }
+        if (!WriteLiveText(text)) return false;
         uint mine = GetClipboardSequenceNumber();
         await Task.Delay(Core.LiveDictation.PrePasteDelay, ct);
         // An Alt+Tab in those 50 ms must not send the piece elsewhere.
@@ -303,11 +315,167 @@ internal sealed class ClipboardPaster
         if (generation != _liveGeneration) return false;
         // Someone replaced the clipboard in those 50 ms (the user's copy): Ctrl+V would paste that.
         if (GetClipboardSequenceNumber() != mine) return false;
+        var total = System.Diagnostics.Stopwatch.StartNew();
+        long sentAt = System.Diagnostics.Stopwatch.GetTimestamp();
         SendChord(0x56); // V
+        // Proof of delivery (Mac): the target reading the clipboard. Unread after 600 ms: one more Ctrl+V, and only
+        // while the target is still in front and the clipboard is still ours.
+        bool read = await WaitForLiveReadAsync(LiveReadWait, ct);
+        if (!read && ForegroundRoot() == target && generation == _liveGeneration && GetClipboardSequenceNumber() == _lastOwnWriteSequence)
+        {
+            SendChord(0x56);
+            read = await WaitForLiveReadAsync(LiveReadWait, ct);
+            Core.Log.Info($"LIVE-DICTATE: resent Ctrl+V (read={read.ToString().ToLowerInvariant()})");
+        }
+        if (read)
+        {
+            long ticks = Math.Max(0, Interlocked.Read(ref _liveReadTimestamp) - sentAt);
+            Core.Log.Info($"LIVE-DICTATE: target read the piece after {ticks * 1000 / System.Diagnostics.Stopwatch.Frequency} ms");
+        }
+        else Core.Log.Info("LIVE-DICTATE: target never read the piece");
         Core.Log.Info($"LIVE-DICTATE: inserted {text.Length} chars");
-        await Task.Delay(Core.LiveDictation.PieceGap, ct);
+        var rest = Core.LiveDictation.PieceGap - total.Elapsed; // a piece never takes less than the gap
+        if (rest > TimeSpan.Zero) await Task.Delay(rest, ct);
         return true;
     }
+
+    // ---- live pieces: delayed clipboard rendering and typing ----
+
+    private static readonly TimeSpan LiveReadWait = TimeSpan.FromMilliseconds(600);
+
+    // The text promised to the clipboard (CF_UNICODETEXT with a null handle) until the first reader asks for it.
+    private string? _lazyText;
+    private long _liveReadTimestamp; // Stopwatch timestamp of the first read; 0 = nobody read it yet
+
+    /// <summary>
+    /// Like <see cref="WriteText"/>, but the text is only handed over when a program reads it (WM_RENDERFORMAT):
+    /// the first read tells <see cref="WaitForLiveReadAsync"/> that the target really took the piece (Mac: lazy pasteboard provider).
+    /// </summary>
+    private bool WriteLiveText(string text)
+    {
+        if (!Open()) return false;
+        bool ok = false;
+        try
+        {
+            EmptyClipboard(); // WM_DESTROYCLIPBOARD to ourselves clears the previous promise
+            Interlocked.Exchange(ref _liveReadTimestamp, 0);
+            _lazyText = text;
+            if (SetClipboardData(CF_UNICODETEXT, IntPtr.Zero) == IntPtr.Zero)
+            {
+                _lazyText = null;
+                return false;
+            }
+            // Immediate data, no rendering needed: keep it out of the Win+V history and the cloud clipboard.
+            SetDword("CanIncludeInClipboardHistory", 0);
+            SetDword("CanUploadToCloudClipboard", 0);
+            ok = true;
+            return true;
+        }
+        finally
+        {
+            CloseClipboard();
+            // Read after CloseClipboard so the number is the one our write ended on.
+            if (ok) _lastOwnWriteSequence = GetClipboardSequenceNumber();
+        }
+    }
+
+    /// <summary>Delayed-rendering messages of the clipboard owner window (see HotkeyService.ClipboardMessage).</summary>
+    public void OnClipboardMessage(int msg, IntPtr wParam)
+    {
+        switch (msg)
+        {
+            case WM_RENDERFORMAT:
+                if ((uint)wParam == CF_UNICODETEXT) RenderLazyText();
+                break;
+            case WM_RENDERALLFORMATS:
+                // We are going away (or the owner window is): render now if we still own the clipboard, so the text survives.
+                if (_lazyText != null && OpenClipboard(_owner))
+                {
+                    try
+                    {
+                        if (GetClipboardOwner() == _owner) RenderLazyText();
+                    }
+                    finally { CloseClipboard(); }
+                }
+                break;
+            case WM_DESTROYCLIPBOARD:
+                _lazyText = null; // someone else took the clipboard (or we emptied it): nothing left to render
+                break;
+        }
+    }
+
+    /// <summary>Answers WM_RENDERFORMAT: SetClipboardData without opening the clipboard (the reader has it open).</summary>
+    private void RenderLazyText()
+    {
+        string? text = _lazyText;
+        if (text == null) return;
+        uint before = GetClipboardSequenceNumber();
+        IntPtr handle = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)((text.Length + 1) * 2));
+        if (handle == IntPtr.Zero) return;
+        IntPtr ptr = GlobalLock(handle);
+        Marshal.Copy(text.ToCharArray(), 0, ptr, text.Length);
+        Marshal.WriteInt16(ptr, text.Length * 2, 0);
+        GlobalUnlock(handle);
+        if (SetClipboardData(CF_UNICODETEXT, handle) == IntPtr.Zero) GlobalFree(handle);
+        else
+        {
+            Interlocked.CompareExchange(ref _liveReadTimestamp, System.Diagnostics.Stopwatch.GetTimestamp(), 0);
+            // Should rendering move the sequence number, it is still our write (EndLive's restore checks it).
+            uint after = GetClipboardSequenceNumber();
+            if (before == _lastOwnWriteSequence && after != before) _lastOwnWriteSequence = after;
+        }
+    }
+
+    private async Task<bool> WaitForLiveReadAsync(TimeSpan limit, CancellationToken ct)
+    {
+        var watch = System.Diagnostics.Stopwatch.StartNew();
+        while (Interlocked.Read(ref _liveReadTimestamp) == 0)
+        {
+            if (watch.Elapsed >= limit) return false;
+            await Task.Delay(10, ct);
+        }
+        return true;
+    }
+
+    /// <summary>
+    /// Types <paramref name="text"/> into the window in front as Unicode key events (Enter for line breaks), each chunk
+    /// in one SendInput call. Returns the chunk count, or -1 when SendInput failed.
+    /// </summary>
+    private static int TypeText(string text)
+    {
+        var chunks = Core.LiveTextTyping.Chunks(text);
+        for (int i = 0; i < chunks.Count; i++)
+        {
+            var inputs = new List<INPUT>();
+            if (chunks[i].IsNewline)
+            {
+                inputs.Add(Key(VK_RETURN, false));
+                inputs.Add(Key(VK_RETURN, true));
+            }
+            else
+            {
+                foreach (char unit in chunks[i].Text!)
+                {
+                    inputs.Add(UnicodeKey(unit, false));
+                    inputs.Add(UnicodeKey(unit, true));
+                }
+            }
+            uint sent = SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
+            if (sent != inputs.Count)
+            {
+                Core.Log.Error($"SendInput sent {sent}/{inputs.Count} while typing (win32 error {Marshal.GetLastWin32Error()})");
+                return -1;
+            }
+            if (i < chunks.Count - 1) Thread.Sleep(2); // the target's message loop keeps up with the chunks
+        }
+        return chunks.Count;
+    }
+
+    private static INPUT UnicodeKey(char unit, bool up) => new()
+    {
+        type = INPUT_KEYBOARD,
+        U = new InputUnion { ki = new KEYBDINPUT { wVk = 0, wScan = unit, dwFlags = KEYEVENTF_UNICODE | (up ? KEYEVENTF_KEYUP : 0) } },
+    };
 
     /// <summary>Ends a live dictation and settles the clipboard as <paramref name="action"/> says. Always forgets the saved original.</summary>
     public void EndLive(Core.LiveClipboardEnd action, string? text)

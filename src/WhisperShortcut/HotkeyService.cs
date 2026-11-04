@@ -253,22 +253,59 @@ internal sealed class HotkeyService : NativeWindow, IDisposable
         U = new InputUnion { ki = new KEYBDINPUT { wVk = VK_MENU_MASK, dwFlags = up ? KEYEVENTF_KEYUP : 0, dwExtraInfo = MaskSignature } },
     };
 
+    private int _holdDepth;
+    private readonly List<Action> _held = new();
+
+    /// <summary>
+    /// Until the matching <see cref="ReleaseActions"/>, hotkey actions are queued instead of run. A window built in
+    /// advance pumps messages (Application.DoEvents) for about a second; a hotkey handled in there would see our own
+    /// half-built window in front and capture the wrong dictation target.
+    /// </summary>
+    public void HoldActions() => _holdDepth++;
+
+    /// <summary>Ends a hold; the queued actions run from the message loop, after the caller's build has returned.</summary>
+    public void ReleaseActions()
+    {
+        if (_holdDepth > 0) _holdDepth--;
+        if (_holdDepth > 0 || _held.Count == 0) return;
+        var queued = _held.ToArray();
+        _held.Clear();
+        foreach (var a in queued) Post(a); // posted, not called: this runs inside the build's own call stack
+    }
+
+    private void Run(Action action)
+    {
+        if (_holdDepth > 0) _held.Add(action);
+        else action();
+    }
+
     private void Post(Action action)
     {
         _posted.Enqueue(action);
         PostMessage(Handle, WM_RUN_POSTED, IntPtr.Zero, IntPtr.Zero);
     }
 
+    /// <summary>
+    /// This window is the clipboard owner (ClipboardPaster): the render/destroy messages of delayed rendering land
+    /// here. Return value is ignored; the messages have no result.
+    /// </summary>
+    public Action<int, IntPtr>? ClipboardMessage;
+
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg is WM_RENDERFORMAT or WM_RENDERALLFORMATS or WM_DESTROYCLIPBOARD)
+        {
+            ClipboardMessage?.Invoke(m.Msg, m.WParam);
+            return;
+        }
         if (m.Msg == WM_HOTKEY && _handlers.TryGetValue((int)m.WParam, out var handler))
         {
-            handler();
+            Run(handler);
             return;
         }
         if (m.Msg == WM_RUN_POSTED)
         {
-            while (_posted.TryDequeue(out var action)) action();
+            while (_posted.TryDequeue(out var action)) Run(action);
             return;
         }
         base.WndProc(ref m);
