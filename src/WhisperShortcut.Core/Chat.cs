@@ -48,6 +48,9 @@ public sealed class ChatSession
     /// <summary>Thinking depth of this chat (<c>/think</c>), a <see cref="ChatThinking.Levels"/> entry; old files load as "default".</summary>
     public string ThinkingLevel { get; set; } = ChatThinking.Default;
 
+    /// <summary>Id of the meeting this chat is attached to (see <see cref="MeetingChatContext"/>); null for normal chats.</summary>
+    public string? MeetingId { get; set; }
+
     /// <summary>A new, empty chat.</summary>
     public static ChatSession New(DateTimeOffset now) =>
         new() { Id = Guid.NewGuid(), Created = now, Updated = now };
