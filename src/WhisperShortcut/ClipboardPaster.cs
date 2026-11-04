@@ -353,6 +353,8 @@ internal sealed class ClipboardPaster
             await Task.Delay(Core.ClipboardPasteGuard.RestoreDelay);
             if (GetClipboardSequenceNumber() != ours) return;
             if (Clear()) Core.Log.Info("LIVE-DICTATE: cleared clipboard after last piece");
+            // Our own clear is no late copy: move the watch's baseline along.
+            if (_lateWatch != null) _lateBaseline = GetClipboardSequenceNumber();
         }
         catch (Exception e)
         {
@@ -595,8 +597,12 @@ internal sealed class ClipboardPaster
     private bool Clear()
     {
         if (!Open()) return false;
-        try { return EmptyClipboard(); }
+        bool ok;
+        try { ok = EmptyClipboard(); }
         finally { CloseClipboard(); }
+        // Our own clear is no user copy: read after CloseClipboard so the number is the one our write ended on.
+        if (ok) _lastOwnWriteSequence = GetClipboardSequenceNumber();
+        return ok;
     }
 
     // ---- keyboard ----
