@@ -210,8 +210,10 @@ public sealed class LiveMeetingSession : IDisposable
             if (retry.FirstError != null) _lastError = retry.FirstError;
         }
 
-        _store.SetDuration(id, elapsed);
-        _store.MarkEnded(id, _clock());
+        try { _store.SetDuration(id, elapsed); }
+        catch (Exception ex) { Log.Warn($"Meeting: duration not saved ({ex.GetType().Name})"); }
+        try { _store.MarkEnded(id, _clock()); }
+        catch (Exception ex) { Log.Warn($"Meeting: end not saved ({ex.GetType().Name})"); }
 
         var summarySaved = false;
         Exception? summaryError = null;
