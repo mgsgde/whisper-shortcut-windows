@@ -202,7 +202,20 @@ internal sealed class ClipboardPaster
         _pendingOriginal = original;
         _pendingSequence = ourSequence;
 
-        await Task.Delay(Core.ClipboardPasteGuard.PrePasteDelay, ct);
+        try { await Task.Delay(Core.ClipboardPasteGuard.PrePasteDelay, ct); }
+        catch (OperationCanceledException)
+        {
+            // Cancelled (Esc) right before Ctrl+V: nothing was pasted, so settle the clipboard now.
+            if (GetClipboardSequenceNumber() == ourSequence)
+            {
+                if (original != null) Restore(original);
+                else Clear();
+            }
+            restore.Cancel();
+            if (_pendingRestore == restore) { _pendingRestore = null; _pendingOriginal = null; }
+            restore.Dispose();
+            throw;
+        }
         // Something else may have written the clipboard meanwhile: Ctrl+V would paste that instead of our text.
         uint currentSequence = GetClipboardSequenceNumber();
         TryReadText(out var current);
