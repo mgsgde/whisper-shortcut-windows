@@ -460,6 +460,7 @@ internal sealed class ChatWindow : Form
                     if (partial.Length == piece.Length) SetStatus("Schreibt … (Esc bricht ab)", Tone.Secondary);
                 }), _settings.ChatWebSearch, cts.Token);
             }
+            if (IsDisposed) return;
             session.Add(new Core.ChatMessage(Core.ChatRole.Model, reply.Text.Trim(), DateTimeOffset.Now, reply.Sources, modelName));
             Persist(session);
             SetStatus("", Tone.Secondary);
@@ -467,6 +468,7 @@ internal sealed class ChatWindow : Form
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
         {
             Core.Log.Info("Chat: stopped by the user");
+            if (IsDisposed) return;
             if (partial.Length > 0)
             {
                 session.Add(new Core.ChatMessage(Core.ChatRole.Model, partial.ToString().Trim() + " …", DateTimeOffset.Now, null, modelName));
@@ -477,24 +479,34 @@ internal sealed class ChatWindow : Form
         catch (Core.GeminiException e)
         {
             Core.Log.Error($"Chat: {e.Provider} {e.Kind}");
+            if (IsDisposed) return;
             SetStatus(e.Message, Tone.Bad);
         }
         catch (Exception e) when (e is OfflineNotReadyException or Core.LocalLlmException)
         {
+            if (IsDisposed) return;
             SetStatus(e.Message + " Unter Einstellungen → Dictate Prompt lässt es sich laden.", Tone.Bad);
         }
         catch (Exception e)
         {
             Core.Log.Error("Chat failed", e);
+            if (IsDisposed) return;
             SetStatus("Die Antwort konnte nicht geladen werden. Details stehen im Protokoll.", Tone.Bad);
         }
         finally
         {
             if (_cts == cts) { _cts = null; _runningEngine = null; }
             cts.Dispose();
-            _send.Enabled = true;
-            if (_session == session) Render();
+            if (!IsDisposed) _send.Enabled = true;
+            if (!IsDisposed && _session == session) Render();
         }
+    }
+
+    protected override void Dispose(bool disposing)
+    {
+        // Quitting while an answer streams: stop the request.
+        if (disposing) _cts?.Cancel();
+        base.Dispose(disposing);
     }
 
     // Stream pieces arrive on the HTTP thread; after the app quit there is no window to draw into.
