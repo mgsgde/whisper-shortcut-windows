@@ -20,7 +20,8 @@ internal sealed class TtsPlayer : IDisposable
     {
         _buffer = buffer;
         // WaveOut converts nothing by itself; 16-bit PCM is what every output device takes.
-        _out.Init(new BufferSampleProvider(buffer), convertTo16Bit: true);
+        try { _out.Init(new BufferSampleProvider(buffer), convertTo16Bit: true); }
+        catch { _out.Dispose(); throw; }
         _out.PlaybackStopped += (_, e) => { if (!_disposed) Finished?.Invoke(e.Exception); };
     }
 
