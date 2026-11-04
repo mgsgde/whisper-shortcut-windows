@@ -19,9 +19,13 @@ public enum ChatRole
 /// <summary>A web page a model answer was grounded on (Gemini Google Search).</summary>
 public sealed record ChatSource(string Title, string Url);
 
-/// <summary>One turn of a chat. <see cref="Model"/> is the display name of the model that answered (model messages only).</summary>
+/// <summary>
+/// One turn of a chat. <see cref="Model"/> is the display name of the model that answered (model messages only).
+/// <see cref="Attachments"/> are the files and images sent with a user message.
+/// </summary>
 public sealed record ChatMessage(
-    ChatRole Role, string Text, DateTimeOffset At, IReadOnlyList<ChatSource>? Sources = null, string? Model = null);
+    ChatRole Role, string Text, DateTimeOffset At, IReadOnlyList<ChatSource>? Sources = null, string? Model = null,
+    IReadOnlyList<ChatAttachment>? Attachments = null);
 
 /// <summary>One saved chat: its messages plus the title shown in the history.</summary>
 public sealed class ChatSession
@@ -103,6 +107,8 @@ public static class ChatText
         {
             lines.Add(m.Role == ChatRole.User ? "## User" : "## Assistant");
             lines.Add(m.Text);
+            if (m.Attachments is { Count: > 0 })
+                lines.Add("_Anhänge: " + string.Join(", ", m.Attachments.Select(a => a.FileName)) + "_");
             lines.Add("");
         }
         return string.Join("\n", lines);
@@ -120,35 +126,51 @@ public static class ChatText
 
         var sb = new StringBuilder();
         if (!string.IsNullOrWhiteSpace(systemPrompt)) sb.Append(systemPrompt.Trim()).Append("\n\n");
-        var history = messages.Take(last < 0 ? messages.Count : last).Where(m => m.Text.Trim().Length > 0).ToList();
+        var history = messages.Take(last < 0 ? messages.Count : last)
+            .Select(m => (m.Role, Text: WithTextFiles(m)))
+            .Where(m => m.Text.Length > 0).ToList();
         if (history.Count > 0)
         {
             sb.Append("Bisheriger Verlauf:\n");
             foreach (var m in history)
-                sb.Append(m.Role == ChatRole.User ? "Nutzer: " : "Assistent: ").Append(m.Text.Trim()).Append('\n');
+                sb.Append(m.Role == ChatRole.User ? "Nutzer: " : "Assistent: ").Append(m.Text).Append('\n');
             sb.Append('\n');
         }
         if (last >= 0)
         {
             if (history.Count > 0) sb.Append("Aktuelle Nachricht:\n");
-            sb.Append(messages[last].Text.Trim());
+            sb.Append(WithTextFiles(messages[last]));
         }
         return sb.ToString().TrimEnd();
     }
 
+    // The message text plus its text attachments (images and PDFs cannot go to the offline engine).
+    private static string WithTextFiles(ChatMessage m)
+    {
+        var text = m.Text;
+        if (m.Attachments != null)
+            foreach (var a in m.Attachments.Where(ChatAttachments.IsText))
+                text += $"\n\nDatei „{a.FileName}“:\n{ChatAttachments.DecodeText(a)}";
+        return text.Trim();
+    }
+
+    /// <summary>The size a message counts for in <see cref="Window"/>: its text plus the Base64 length of every attachment.</summary>
+    public static long SizeOf(ChatMessage m) =>
+        m.Text.Length + (m.Attachments?.Sum(a => (long)a.DataBase64.Length) ?? 0);
+
     /// <summary>
-    /// The newest messages whose text fits into <paramref name="maxChars"/>. The last message is always kept
+    /// The newest messages whose text (and attachment data) fits into <paramref name="maxChars"/>. The last message is always kept
     /// and the window starts with a user message (a model reply without its question confuses the APIs).
     /// </summary>
     public static IReadOnlyList<ChatMessage> Window(IReadOnlyList<ChatMessage> messages, int maxChars = 200_000)
     {
         if (messages.Count == 0) return messages;
         var start = messages.Count - 1;
-        var total = messages[start].Text.Length;
-        while (start > 0 && total + messages[start - 1].Text.Length <= maxChars)
+        var total = SizeOf(messages[start]);
+        while (start > 0 && total + SizeOf(messages[start - 1]) <= maxChars)
         {
             start--;
-            total += messages[start].Text.Length;
+            total += SizeOf(messages[start]);
         }
         while (start < messages.Count - 1 && messages[start].Role != ChatRole.User) start++;
         return start == 0 ? messages : messages.Skip(start).ToList();

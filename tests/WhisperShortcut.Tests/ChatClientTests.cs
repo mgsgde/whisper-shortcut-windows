@@ -429,4 +429,73 @@ public class ChatClientTests
         Assert.Equal("low", (string?)JsonNode.Parse(h.Calls[1].Body)!["reasoning_effort"]);
         Assert.Null(JsonNode.Parse(h.Calls[2].Body)!["reasoning_effort"]);
     }
+
+    // ---- attachments ----
+
+    private static ChatAttachment Png => new("a.png", "image/png", "QUJD");
+    private static ChatAttachment Pdf => new("b.pdf", "application/pdf", "UERG");
+    private static ChatAttachment Txt => new("c.txt", "text/plain", Convert.ToBase64String(Encoding.UTF8.GetBytes("Zeile äö")));
+
+    [Fact]
+    public void Gemini_body_puts_inline_data_before_the_text_and_keeps_attachment_only_messages()
+    {
+        var msgs = new[]
+        {
+            new ChatMessage(ChatRole.User, "Was ist das?", T0, null, null, new[] { Png, Pdf }),
+            new ChatMessage(ChatRole.Model, "Ein Bild.", T0),
+            new ChatMessage(ChatRole.User, "  ", T0, null, null, new[] { Txt }),
+        };
+        var contents = JsonNode.Parse(ChatClient.BuildGeminiBody("gemini-3.8-flash", "S", msgs, false, null))!["contents"]!.AsArray();
+        Assert.Equal(3, contents.Count);
+        var p0 = contents[0]!["parts"]!.AsArray();
+        Assert.Equal(3, p0.Count);
+        Assert.Equal("image/png", (string?)p0[0]!["inline_data"]!["mime_type"]);
+        Assert.Equal("QUJD", (string?)p0[0]!["inline_data"]!["data"]);
+        Assert.Equal("application/pdf", (string?)p0[1]!["inline_data"]!["mime_type"]);
+        Assert.Equal("Was ist das?", (string?)p0[2]!["text"]);
+        var p2 = contents[2]!["parts"]!.AsArray();
+        Assert.Single(p2);
+        Assert.NotNull(p2[0]!["inline_data"]);
+    }
+
+    [Fact]
+    public void Gemini_body_still_skips_blank_messages_without_attachments()
+    {
+        var msgs = new[] { new ChatMessage(ChatRole.User, "x", T0), new ChatMessage(ChatRole.User, " ", T0) };
+        Assert.Single(JsonNode.Parse(ChatClient.BuildGeminiBody("gemini-3.8-flash", "S", msgs, false, null))!["contents"]!.AsArray());
+    }
+
+    [Fact]
+    public void OpenAi_body_uses_content_parts_for_image_pdf_and_text_files()
+    {
+        var msgs = new[]
+        {
+            new ChatMessage(ChatRole.User, "Schau", T0, null, null, new[] { Png, Pdf, Txt }),
+            new ChatMessage(ChatRole.Model, "ok", T0),
+            new ChatMessage(ChatRole.User, "weiter", T0),
+        };
+        var list = JsonNode.Parse(ChatClient.BuildOpenAiBody("gpt-6-sol", "S", msgs))!["messages"]!.AsArray();
+        var parts = list[1]!["content"]!.AsArray();
+        Assert.Equal("text", (string?)parts[0]!["type"]);
+        Assert.Equal("Schau", (string?)parts[0]!["text"]);
+        Assert.Equal("image_url", (string?)parts[1]!["type"]);
+        Assert.Equal("data:image/png;base64,QUJD", (string?)parts[1]!["image_url"]!["url"]);
+        Assert.Equal("file", (string?)parts[2]!["type"]);
+        Assert.Equal("b.pdf", (string?)parts[2]!["file"]!["filename"]);
+        Assert.Equal("data:application/pdf;base64,UERG", (string?)parts[2]!["file"]!["file_data"]);
+        Assert.Equal("text", (string?)parts[3]!["type"]);
+        Assert.Equal("Datei „c.txt“:\nZeile äö", (string?)parts[3]!["text"]);
+        // Without attachments the content stays a plain string.
+        Assert.Equal("ok", (string?)list[2]!["content"]);
+        Assert.Equal("weiter", (string?)list[3]!["content"]);
+    }
+
+    [Fact]
+    public void OpenAi_body_omits_the_text_part_of_a_blank_message()
+    {
+        var msgs = new[] { new ChatMessage(ChatRole.User, "", T0, null, null, new[] { Png }) };
+        var parts = JsonNode.Parse(ChatClient.BuildOpenAiBody("gpt-6-sol", "", msgs))!["messages"]![0]!["content"]!.AsArray();
+        Assert.Single(parts);
+        Assert.Equal("image_url", (string?)parts[0]!["type"]);
+    }
 }

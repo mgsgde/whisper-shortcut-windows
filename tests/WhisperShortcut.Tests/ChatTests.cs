@@ -178,6 +178,49 @@ public class ChatTests : IDisposable
     }
 
     [Fact]
+    public void Store_round_trips_attachments()
+    {
+        var s = ChatSession.New(T0);
+        s.Add(new ChatMessage(ChatRole.User, "Bild", T0, null, null,
+            new[] { new ChatAttachment("a.png", "image/png", "QUJD"), new ChatAttachment("n.txt", "text/plain", "eA==") }));
+        _store.Save(s);
+        var back = _store.Load(s.Id)!.Messages[0].Attachments!;
+        Assert.Equal(2, back.Count);
+        Assert.Equal(new ChatAttachment("a.png", "image/png", "QUJD"), back[0]);
+        Assert.Equal("n.txt", back[1].FileName);
+    }
+
+    [Fact]
+    public void Window_counts_attachment_data_toward_the_limit()
+    {
+        var big = new ChatMessage(ChatRole.User, "a", T0, null, null, new[] { new ChatAttachment("x.png", "image/png", new string('A', 500)) });
+        var msgs = new[] { big, M("b"), U("c") };
+        Assert.Single(ChatText.Window(msgs, 100)); // the image message no longer fits; only the last user message stays
+        Assert.Equal(3, ChatText.Window(msgs, 1000).Count);
+        // The last message is kept even when it alone is over the limit.
+        var last = new[] { U("x"), big };
+        Assert.Single(ChatText.Window(last, 100));
+    }
+
+    [Fact]
+    public void Flatten_appends_text_files_and_ignores_images()
+    {
+        var txt = new ChatAttachment("n.txt", "text/plain", Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes("Inhalt")));
+        var png = new ChatAttachment("a.png", "image/png", "QUJD");
+        var msgs = new[] { new ChatMessage(ChatRole.User, "Lies das", T0, null, null, new[] { txt, png }) };
+        Assert.Equal("Lies das\n\nDatei „n.txt“:\nInhalt", ChatText.Flatten("", msgs));
+    }
+
+    [Fact]
+    public void ToMarkdown_lists_attachment_names()
+    {
+        var s = ChatSession.New(T0);
+        s.Add(new ChatMessage(ChatRole.User, "Hi", T0, null, null,
+            new[] { new ChatAttachment("a.png", "image/png", "QQ=="), new ChatAttachment("b.pdf", "application/pdf", "QQ==") }));
+        Assert.Contains("## User\nHi\n_Anhänge: a.png, b.pdf_\n", ChatText.ToMarkdown(s));
+    }
+
+    [Fact]
     public void Store_writes_camelCase_json_named_after_the_id()
     {
         var s = Session("Hallo", T0);
