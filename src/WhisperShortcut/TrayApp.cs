@@ -2109,6 +2109,14 @@ internal sealed partial class TrayApp : ApplicationContext
         SetState(_state); // tooltip "Bereit" instead of "Kein API-Schlüssel"
         _offline.Prewarm();
         _mcp.SyncOfflineMode();
+        AfterOfflineMaybeChanged();
+    }
+
+    // Offline mode may just have been switched on: cloud read-aloud and a streaming cloud chat answer must stop.
+    private void AfterOfflineMaybeChanged()
+    {
+        _readAloud.StopIfCloudWhileOffline();
+        _chatWindow?.CancelIfCloudWhileOffline();
     }
 
     /// <summary>Opens the settings window on <paramref name="page"/> (e.g. „Konten“ from a missing-key popup).</summary>
@@ -2179,6 +2187,7 @@ internal sealed partial class TrayApp : ApplicationContext
             _offline.Prewarm(); // offline mode may just have been switched on
             DropScreenshotIfNotAllowed();
             _mcp.SyncOfflineMode();
+            AfterOfflineMaybeChanged();
         };
         _settingsForm.FormClosed += (_, _) =>
         {

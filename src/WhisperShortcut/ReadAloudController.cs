@@ -27,6 +27,8 @@ internal sealed class ReadAloudController : IDisposable
     private TtsPlayer? _player;
     // Counts runs so a late callback of a stopped run cannot touch the next one.
     private int _run;
+    // Provider of the model the running read-aloud captured at start.
+    private Core.TtsProvider _runningProvider;
 
     /// <summary>Raised on the UI thread when it starts, starts speaking or ends.</summary>
     public event Action? StateChanged;
@@ -72,6 +74,16 @@ internal sealed class ReadAloudController : IDisposable
         _ = StartAsync();
     }
 
+    /// <summary>Offline mode was just switched on: a running cloud voice must stop (the Windows voice may go on).</summary>
+    public void StopIfCloudWhileOffline()
+    {
+        if (IsActive && _settings.OfflineMode && _runningProvider != Core.TtsProvider.System)
+        {
+            Core.Log.Info("Read aloud: stopped, offline mode switched on");
+            Stop();
+        }
+    }
+
     /// <summary>Stops synthesis and playback, hides the card. Safe to call when idle.</summary>
     public void Stop()
     {
@@ -98,6 +110,7 @@ internal sealed class ReadAloudController : IDisposable
         }
 
         int run = ++_run;
+        _runningProvider = model.Provider;
         _cts = new CancellationTokenSource();
         var ct = _cts.Token;
         SetPhase(Phase.Preparing);

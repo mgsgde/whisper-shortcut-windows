@@ -48,6 +48,8 @@ internal sealed class ChatWindow : Form
 
     private Core.ChatSession _session = Core.ChatSession.New(DateTimeOffset.Now);
     private CancellationTokenSource? _cts;
+    // Engine of the running answer (null while idle).
+    private Core.Engine? _runningEngine;
     private bool _pinned;
     private bool _holdOpen; // a dialog of ours is in front: that is no "click outside"
     private string _defaultStatus = "";
@@ -198,6 +200,16 @@ internal sealed class ChatWindow : Form
         }
         _cts?.Cancel();
         base.OnFormClosing(e);
+    }
+
+    /// <summary>Offline mode was just switched on: a running cloud answer is cancelled like with Esc.</summary>
+    public void CancelIfCloudWhileOffline()
+    {
+        if (_cts != null && _settings.OfflineMode && _runningEngine != Core.Engine.Local)
+        {
+            Core.Log.Info("Chat: stopped, offline mode switched on");
+            _cts.Cancel();
+        }
     }
 
     protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -422,6 +434,7 @@ internal sealed class ChatWindow : Form
         var window = Core.ChatText.Window(session.Messages);
 
         var cts = _cts = new CancellationTokenSource();
+        _runningEngine = engine;
         _send.Enabled = false;
         SetStatus("Denkt nach … (Esc bricht ab)", Tone.Secondary);
         Render();
@@ -477,7 +490,7 @@ internal sealed class ChatWindow : Form
         }
         finally
         {
-            if (_cts == cts) _cts = null;
+            if (_cts == cts) { _cts = null; _runningEngine = null; }
             cts.Dispose();
             _send.Enabled = true;
             if (_session == session) Render();
