@@ -36,8 +36,9 @@ internal sealed class ReadAloudController : IDisposable
     {
         _settings = settings;
         _paster = paster;
-        _gemini = gemini;
-        _openAi = openAi;
+        // Mac maybeRewriteForSpeech uses the chat model (Settings → Chat): clients that read the chat choice on every call.
+        _gemini = new Core.GeminiClient(() => settings.ApiKey, () => settings.TranscriptionModel, () => settings.ChatModel);
+        _openAi = new Core.OpenAiClient(() => settings.OpenAiKey, () => settings.OpenAiTranscriptionModel, () => settings.ChatOpenAiModel);
         _tts = new Core.TtsClient(settings);
         _notify = notify;
         _showSettings = showSettings;
@@ -239,7 +240,7 @@ internal sealed class ReadAloudController : IDisposable
 
     /// <summary>
     /// Mac maybeRewriteForSpeech: only with the switch on, only when the text is not plain prose (prose comes back
-    /// unchanged after a 2–6 s round trip), with the Dictate Prompt text model. Any failure reads the original.
+    /// unchanged after a 2–6 s round trip), with the chat model. Any failure reads the original.
     /// </summary>
     private async Task<string> MaybeRewriteAsync(string text, CancellationToken ct)
     {
@@ -252,7 +253,7 @@ internal sealed class ReadAloudController : IDisposable
             Core.Log.Info("Read aloud: plain prose, no rewrite");
             return text;
         }
-        Func<Task<string>>? call = _settings.EffectiveTextEngine switch
+        Func<Task<string>>? call = _settings.EffectiveChatEngine switch
         {
             Core.Engine.Gemini when !string.IsNullOrWhiteSpace(_settings.ApiKey) =>
                 () => _gemini.CompleteTextAsync(prompt, text, ct),
@@ -263,7 +264,7 @@ internal sealed class ReadAloudController : IDisposable
         };
         if (call == null)
         {
-            Core.Log.Info($"Read aloud: no rewrite with text engine {_settings.EffectiveTextEngine}");
+            Core.Log.Info($"Read aloud: no rewrite with chat engine {_settings.EffectiveChatEngine}");
             return text;
         }
         try

@@ -390,7 +390,6 @@ public sealed partial class Settings
             s.ReadAloudVoiceOpenAi = ReadAloud.NormalizeVoice(TtsProvider.OpenAI, dto.ReadAloudVoiceOpenAi);
             s.ReadAloudSpeed = ReadAloud.NormalizeSpeed(dto.ReadAloudSpeed ?? ReadAloud.DefaultSpeed);
             s.ReadAloudSmartRewrite = dto.ReadAloudSmartRewrite ?? true;
-            s.LoadFeatures(dto); // Settings.Features.cs: Vorlesen extras, Meetings, Chat
             s.RightCtrlDictation = dto.RightCtrlDictation ?? true;
             s.Templates = LoadTemplates(dto.Templates);
             s.TemplateHotkey = dto.TemplateHotkey ?? "";
@@ -412,6 +411,7 @@ public sealed partial class Settings
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
                 : QuickActionList.Clean(dto.QuickActions);
+            s.LoadFeatures(dto); // Settings.Features.cs: Vorlesen extras, Meetings, Chat (after the keys it checks against)
             // An update adds the Read Aloud key to a file that never had it. It must not take a key the user already uses.
             if (dto.ReadAloudHotkey == null && s.ReadAloudHotkeyEnabled && s.ReadAloudKeyClashes())
                 s.ReadAloudHotkeyEnabled = false;
@@ -476,6 +476,8 @@ public sealed partial class Settings
         LiveDictateHotkeyEnabled = d.LiveDictateHotkeyEnabled;
         OpenSettingsHotkeyEnabled = d.OpenSettingsHotkeyEnabled;
         ReadAloudHotkeyEnabled = d.ReadAloudHotkeyEnabled;
+        ChatHotkey = d.ChatHotkey;
+        ChatHotkeyEnabled = d.ChatHotkeyEnabled;
     }
 
     // Missing list = old file: no templates. Null entries are skipped; a blank id gets a fresh one.

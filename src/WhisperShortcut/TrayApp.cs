@@ -170,7 +170,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _meeting = new MeetingController(_settings, _ui, TranscribeMeetingChunkAsync, SummarizeMeetingAsync, MeetingUnavailable,
             Notify, TrySave, () => new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveGlossaryHotkey,
                     _settings.ActiveScreenshotHotkey, _settings.TemplateHotkey, _settings.ActiveLiveDictateHotkey,
-                    _settings.ActiveOpenSettingsHotkey, _settings.ActiveReadAloudHotkey }
+                    _settings.ActiveOpenSettingsHotkey, _settings.ActiveReadAloudHotkey, _settings.ActiveChatHotkey }
                 .Concat(_settings.Templates.Select(t => t.Hotkey)).Where(k => k.Length > 0).ToArray(),
             suspend => { if (suspend) { _hotkeys.UnregisterAll(); _globalHotkeysOn = false; } else SyncGlobalHotkeys(notify: true); },
             fakeAudio: testWav != null || fakeGemini);
@@ -181,8 +181,8 @@ internal sealed partial class TrayApp : ApplicationContext
             _proposalsItem, _stopItem, _stopSeparator,
             _dictateItem, _promptItem, _screenshotItem, _readAloudItem, _glossaryItem, _liveItem, new ToolStripSeparator(),
             _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
-            // Mac: the meeting starts from the Chat window, which Windows does not have; its row sits where Chat is.
-            _meeting.MenuItem, new ToolStripSeparator(),
+            // Mac: „Chat“ above Settings, and the meeting starts from the chat (/meeting); Windows keeps its Meeting row too.
+            ChatMenuItem(), _meeting.MenuItem, new ToolStripSeparator(),
             _settingsItem, welcomeItem, feedbackItem, quitItem,
         });
         menu.Opening += (_, _) =>
@@ -289,6 +289,7 @@ internal sealed partial class TrayApp : ApplicationContext
             (_settings.ActiveLiveDictateHotkey, OnLiveHotkey),
             (_settings.ActiveScreenshotHotkey, OnScreenshotHotkey),
             (_settings.ActiveReadAloudHotkey, OnReadAloudHotkey),
+            (_settings.ActiveChatHotkey, ToggleChat), // TrayApp.Chat.cs
             (_settings.ActiveOpenSettingsHotkey, ToggleSettings),
         };
         foreach (var (stored, action) in keys)
@@ -311,6 +312,7 @@ internal sealed partial class TrayApp : ApplicationContext
             ("Glossar", _settings.ActiveGlossaryHotkey),
             ("Screenshot", _settings.ActiveScreenshotHotkey),
             ("Vorlesen", _settings.ActiveReadAloudHotkey),
+            ("Chat", _settings.ActiveChatHotkey),
             ("Live Meeting", _settings.MeetingHotkey),
             ("Live diktieren", _settings.ActiveLiveDictateHotkey),
             ("Einstellungen", _settings.ActiveOpenSettingsHotkey),
@@ -370,6 +372,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _screenshotItem.ShortcutKeyDisplayString = Key(_settings.ActiveScreenshotHotkey);
         _readAloudItem.Text = _readAloud?.IsActive == true ? "Vorlesen beenden" : "Vorlesen";
         _readAloudItem.ShortcutKeyDisplayString = Key(_settings.ActiveReadAloudHotkey);
+        UpdateChatRow();
         _glossaryItem.ShortcutKeyDisplayString = Key(_settings.ActiveGlossaryHotkey);
         _liveItem.ShortcutKeyDisplayString = Key(_settings.ActiveLiveDictateHotkey);
         _settingsItem.ShortcutKeyDisplayString = Key(_settings.ActiveOpenSettingsHotkey);
@@ -2085,6 +2088,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _updateNoticeTimer.Dispose();
         _updates.Dispose();
         _readAloud.Dispose();
+        DisposeChat();
         _overlay.Dispose();
         _toast.Dispose();
         _meeting.Dispose();

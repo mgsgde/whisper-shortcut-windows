@@ -836,6 +836,58 @@ public class QuickActionRequestTests
     }
 
     [Fact]
+    public void Chat_NewInstall_MacDefaults_AndRoundTrip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Alt+6", s.ActiveChatHotkey);
+        Assert.Equal(Engine.Gemini, s.EffectiveChatEngine);
+        Assert.Equal("gemini-3.8-flash", s.EffectiveChatModel);
+        Assert.True(s.ChatWebSearch);
+        Assert.True(s.ChatCloseOnFocusLoss);
+        Assert.Equal("", s.ChatSystemPrompt);
+
+        s.ChatEngine = Engine.OpenAI;
+        s.ChatOpenAiModel = "gpt-6-luna";
+        s.ChatWebSearch = false;
+        s.ChatCloseOnFocusLoss = false;
+        s.ChatSystemPrompt = "Antworte knapp.";
+        s.ChatHotkeyEnabled = false;
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.OpenAI, t.ChatEngine);
+        Assert.Equal("gpt-6-luna", t.EffectiveChatModel);
+        Assert.False(t.ChatWebSearch);
+        Assert.False(t.ChatCloseOnFocusLoss);
+        Assert.Equal("Antworte knapp.", t.ChatSystemPrompt);
+        Assert.Equal("", t.ActiveChatHotkey);
+        t.OfflineMode = true;
+        Assert.Equal(Engine.Local, t.EffectiveChatEngine);
+        Assert.Equal(ModelPickers.LocalId, t.EffectiveChatModel);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Chat_OlderFile_FollowsDictatePrompt_AndKeyStaysOffWhenTaken()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, """
+            { "textEngine": "openai", "openAiPromptModel": "gpt-5.4-mini", "templateHotkey": "Alt+6" }
+            """);
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(Engine.OpenAI, s.ChatEngine);
+        Assert.Equal("gpt-5.4-mini", s.ChatOpenAiModel);
+        Assert.Equal("Alt+6", s.ChatHotkey);
+        Assert.False(s.ChatHotkeyEnabled); // Alt+6 already opens the template picker
+
+        File.WriteAllText(path, """{ "textEngine": "gemini" }""");
+        Assert.Equal("Alt+6", Settings.Load(path, new PlainSecretProtector()).ActiveChatHotkey);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
     public void ReadAloud_Defaults()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");

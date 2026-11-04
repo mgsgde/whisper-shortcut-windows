@@ -330,8 +330,11 @@ Nicht „angleichen“, ohne Magnus zu fragen:
   folgen trotzdem Abschnitt 2, soweit es die Funktion auf Windows gibt.
 - **Wo Windows besser ist:** Abschnitt D in [`macos-paritaet.md`](macos-paritaet.md) (Mikrofonwahl mit
   Pegel, Admin-Fenster-Erkennung, Diktate nicht im Win+V-Verlauf …). Das bleibt.
-- **Bewusst noch nicht da:** Was Windows absichtlich nicht hat (Chat, Smart Improvement, Schreibstil,
-  weitere Anbieter), steht in Abschnitt C der Paritätsliste.
+- **Chat-Kürzel Alt+6** statt ⌥Leertaste: Alt+Leertaste öffnet unter Windows das Systemmenü jedes Fensters.
+- **Vorlesen offline** mit den Windows-Stimmen (SAPI) statt der macOS-Stimmen, ebenso automatisch im Offline-Modus.
+- **Meeting** startet zusätzlich über das Tray-Menü „Meeting“ (Mac nur im Chat mit /meeting).
+- **Bewusst noch nicht da:** Was Windows absichtlich nicht hat (Smart Improvement, Schreibstil,
+  weitere Anbieter, im Chat Ordner, Gedächtnis und verbundene Dienste), steht in Abschnitt C der Paritätsliste.
 
 ## Aktualisieren
 

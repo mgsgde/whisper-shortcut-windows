@@ -15,4 +15,4 @@ steht dort in Abschnitt 8 und bleibt. Ein Schritt ist je ein Commit, den Magnus 
 | 7 | Aufnahmeanzeige wie die Pill („Hört zu“, „Prompt“, „Denkt nach“, ✕) | Pill-Views | offen |
 | 8 | Einführung als Tour in Schritten statt Banner | `Onboarding/WelcomeSteps` | offen |
 | 9 | Fehlende Abläufe: abgebrochene Aufnahme transkribieren, 9 Schnell-Prompts, „Erneut ohne Vorlage“, Sprache wählbar, Temperatur/Thinking unter Erweitert | `MenuBarController`, Tabs | offen |
-| 10 | Umfang: Vorlesen, Meetings-Seite, Chat (zuletzt, nur nach Rücksprache) | `ReadAloudSettingsTab`, `ChatSettingsTab` | offen, Magnus entscheidet |
+| 10 | Umfang: Vorlesen, Meetings-Seite, Chat | `ReadAloudSettingsTab`, `MeetingsSettingsTab`, `ChatSettingsTab` | teilweise erledigt (Branch `feat/mac-parity-10`): Vorlesen mit Alt+4, Cloud- und Windows-Stimmen; Meetings-Seite mit eigenen Modellen, Abschnittslänge und Meeting-Schutz; Chatfenster (Alt+6) mit Verlauf, Streaming, Google-Suche, Befehlen und Chat-Seite. Offen: im Chat Bilder/Dateien, Ordner, Gedächtnis, eigene Befehle, verbundene Dienste, /think, /feedback; Meeting-Chat (Fragen zum laufenden Meeting); Vorlesen mit Grok |

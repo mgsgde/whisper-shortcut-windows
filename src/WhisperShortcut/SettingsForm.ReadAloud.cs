@@ -102,7 +102,7 @@ internal sealed partial class SettingsForm
         page.Controls.Add(speedCard);
 
         // --- smart rewriting ---
-        page.Controls.Add(Section("Intelligentes Umschreiben", subtitle: "Lass dein Textmodell (Einstellungen → Dictate Prompt) Code, Logs, "
+        page.Controls.Add(Section("Intelligentes Umschreiben", subtitle: "Lass dein Chat-Modell (Einstellungen → Chat) Code, Logs, "
             + "Markdown oder unordentliche Notizen fürs Vorlesen umschreiben. Normaler Fließtext wird direkt vorgelesen, ohne den zusätzlichen Umweg."));
         _readAloudRewrite = new ToggleSwitch { Checked = _settings.ReadAloudSmartRewrite, AccessibleName = "Text vor dem Vorlesen sprechgerecht umschreiben" };
         var rewriteCard = new Card();
@@ -111,7 +111,7 @@ internal sealed partial class SettingsForm
         page.Controls.Add(rewriteCard);
 
         // --- rewrite prompt (Mac SystemPromptSectionEditor „Rewrite Prompt“) ---
-        page.Controls.Add(Section("Umschreib-Prompt", subtitle: "Anweisungen an dein Textmodell, wenn intelligentes Umschreiben eingeschaltet "
+        page.Controls.Add(Section("Umschreib-Prompt", subtitle: "Anweisungen an dein Chat-Modell, wenn intelligentes Umschreiben eingeschaltet "
             + "ist. Es bekommt den markierten Text und gibt eine gut vorlesbare Fassung zurück."));
         _readAloudPrompt = new PromptEditor(Core.ReadAloud.DefaultRewritePrompt, _settings.ReadAloudRewritePrompt, "Umschreib-Prompt");
         page.Controls.Add(PlainPromptCard(_readAloudPrompt));
