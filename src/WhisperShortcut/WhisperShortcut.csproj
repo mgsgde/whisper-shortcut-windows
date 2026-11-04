@@ -6,7 +6,7 @@
     <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <!-- Shown in the settings window and compared with the latest GitHub release: keep in step with the git tag. -->
-    <Version>0.7.1</Version>
+    <Version>0.7.2</Version>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- sherpa-onnx ships native DLLs (onnxruntime, sherpa-onnx-c-api); a single-file exe must carry them. -->
