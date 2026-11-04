@@ -4,15 +4,22 @@ using System.Drawing.Text;
 namespace WhisperShortcut;
 
 /// <summary>
-/// The notice that used to be a Windows balloon: a dark card in the bottom right corner with an icon,
-/// a title and up to a few lines of text. Fades in, stays a few seconds, closes on a click (which also
-/// runs the notice's action, e.g. opening the settings). Never takes focus, so a paste in the user's
-/// window is not disturbed. One notice at a time: a new one replaces the one on screen.
+/// Notices like the Mac popups (PopupNotificationWindow, position "Center bottom"): a dark card at the bottom centre
+/// of the work area, above the recording overlay while that is visible, with an icon, a title, up to a few lines of
+/// text, a visible action button when the notice offers one, and ✕ to close. Info stays 3 s, warnings and errors 30 s,
+/// an error with an action stays until it is used or closed. A click elsewhere on the card closes it. Never takes
+/// focus, so a paste in the user's window is not disturbed. One notice at a time: a new one replaces the one on screen.
 /// </summary>
 internal sealed class Toast : Form
 {
-    private static readonly TimeSpan Shown = TimeSpan.FromSeconds(7);
-    private const float ShadowMargin = 24, CardW = 384, Pad = 18, IconCol = 44, FadeIn = 0.18f, FadeOut = 0.2f;
+    /// <summary>Mac notificationDuration: success and info.</summary>
+    public static readonly TimeSpan InfoShown = TimeSpan.FromSeconds(3);
+
+    /// <summary>Mac errorNotificationDuration: errors and warnings.</summary>
+    public static readonly TimeSpan ErrorShown = TimeSpan.FromSeconds(30);
+
+    private const float ShadowMargin = 24, CardW = 420, Pad = 18, IconCol = 44, FadeIn = 0.18f, FadeOut = 0.2f;
+    private const float BottomMargin = 30, OverlayGap = 12, ButtonH = 30, ButtonGap = 12, CloseSize = 24;
     private const int MaxLines = 5;
 
     private static readonly string BodyFace =
@@ -25,15 +32,24 @@ internal sealed class Toast : Form
         FormatFlags = StringFormatFlags.NoWrap | StringFormatFlags.NoClip,
     };
     private readonly StringFormat _wrap = new(StringFormat.GenericTypographic) { Trimming = StringTrimming.EllipsisWord };
-    private Font? _titleFont, _bodyFont;
+    private Font? _titleFont, _bodyFont, _buttonFont;
     private int _fontDpi;
 
     private string _title = "", _text = "";
+    private string? _actionLabel;
     private ToolTipIcon _kind;
-    private Action? _onClick;
-    private DateTime _appearStart, _until;
-    private DateTime? _fadeStart;
+    private Action? _onAction;
+    private DateTime _appearStart;
+    private DateTime? _until, _fadeStart;
     private Point _basePos;
+    // Hit areas in client coordinates, set while painting.
+    private RectangleF _actionRect, _closeRect;
+    private enum Hot { None, Action, Close }
+    private Hot _hot;
+
+    /// <summary>Screen bounds of the recording overlay while it is visible (the notice then sits above it), else null.</summary>
+    [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+    public Func<Rectangle?>? AvoidBounds { get; set; }
 
     public Toast()
     {
@@ -42,7 +58,6 @@ internal sealed class Toast : Form
         StartPosition = FormStartPosition.Manual;
         TopMost = true;
         AccessibleRole = AccessibleRole.Alert;
-        Cursor = Cursors.Hand;
         _timer.Tick += (_, _) => OnTick();
     }
 
@@ -76,15 +91,29 @@ internal sealed class Toast : Form
     private float S => DeviceDpi / 96f;
     private static bool Hc => SystemInformation.HighContrast;
 
-    /// <summary>Shows the notice; <paramref name="onClick"/> runs when the user clicks it.</summary>
-    public void Present(string title, string text, ToolTipIcon kind, Action? onClick)
+    /// <summary>How long a notice stays: null = until it is used or closed (an error with an action, like the Mac).</summary>
+    public static TimeSpan? Lifetime(ToolTipIcon kind, bool hasAction) => kind switch
+    {
+        ToolTipIcon.Error when hasAction => null,
+        ToolTipIcon.Error or ToolTipIcon.Warning => ErrorShown,
+        _ => InfoShown,
+    };
+
+    /// <summary>
+    /// Shows the notice. With <paramref name="onAction"/> a button labelled <paramref name="actionLabel"/> runs it
+    /// (and closes the notice).
+    /// </summary>
+    public void Present(string title, string text, ToolTipIcon kind, Action? onAction, string? actionLabel)
     {
         _title = title;
         _text = text;
         _kind = kind;
-        _onClick = onClick;
+        _onAction = onAction;
+        _actionLabel = onAction == null ? null : string.IsNullOrWhiteSpace(actionLabel) ? "Öffnen" : actionLabel;
         _fadeStart = null;
-        _until = DateTime.UtcNow + Shown;
+        _hot = Hot.None;
+        var life = Lifetime(kind, onAction != null);
+        _until = life == null ? null : DateTime.UtcNow + life.Value;
         EnsureFonts();
 
         using var probe = LayeredWindow.NewBitmap(1, 1);
@@ -94,11 +123,16 @@ internal sealed class Toast : Form
         int m = (int)Math.Ceiling(ShadowMargin * s);
         var card = CardSize(pg);
         var size = new Size((int)Math.Ceiling(card.Width) + 2 * m, (int)Math.Ceiling(card.Height) + 2 * m);
-        var area = Screen.FromHandle(NativeMethods.GetForegroundWindow()).WorkingArea;
-        _basePos = new Point(area.Right - size.Width + m / 2 - (int)(8 * s), area.Bottom - size.Height + m / 2 - (int)(8 * s));
+        var screen = Screen.FromHandle(NativeMethods.GetForegroundWindow());
+        var area = screen.WorkingArea;
+        // Bottom centre (Mac "Center bottom"), above the recording overlay when it is on this screen.
+        int cardBottom = area.Bottom - (int)(BottomMargin * s);
+        if (AvoidBounds?.Invoke() is { } overlay && area.IntersectsWith(overlay))
+            cardBottom = Math.Min(cardBottom, overlay.Top - (int)(OverlayGap * s));
+        _basePos = new Point(area.Left + (area.Width - size.Width) / 2, cardBottom - (int)Math.Ceiling(card.Height) - m);
         if (Size != size || Location != _basePos) SetBounds(_basePos.X, _basePos.Y, size.Width, size.Height);
         AccessibleName = title;
-        AccessibleDescription = text;
+        AccessibleDescription = _actionLabel == null ? text : $"{text} ({_actionLabel})";
         if (!Visible)
         {
             _appearStart = DateTime.UtcNow;
@@ -120,9 +154,11 @@ internal sealed class Toast : Form
         if (_titleFont != null && _fontDpi == DeviceDpi) return;
         _titleFont?.Dispose();
         _bodyFont?.Dispose();
+        _buttonFont?.Dispose();
         _fontDpi = DeviceDpi;
         _titleFont = new Font("Segoe UI Semibold", 14.5f * S, FontStyle.Regular, GraphicsUnit.Pixel);
         _bodyFont = new Font(BodyFace, 12.5f * S, FontStyle.Regular, GraphicsUnit.Pixel);
+        _buttonFont = new Font("Segoe UI Semibold", 12.5f * S, FontStyle.Regular, GraphicsUnit.Pixel);
     }
 
     private static void Configure(Graphics g)
@@ -132,7 +168,8 @@ internal sealed class Toast : Form
         g.TextRenderingHint = TextRenderingHint.AntiAliasGridFit;
     }
 
-    private float BodyWidth => (CardW - Pad - IconCol - Pad) * S;
+    // The text column leaves room for ✕ on the right.
+    private float BodyWidth => (CardW - Pad - IconCol - Pad - CloseSize / 2) * S;
 
     private float BodyHeight(Graphics g)
     {
@@ -144,13 +181,14 @@ internal sealed class Toast : Form
     private SizeF CardSize(Graphics g)
     {
         float s = S;
-        return new SizeF(CardW * s, (Pad + 20) * s + 4 * s + BodyHeight(g) + Pad * s);
+        float buttons = _actionLabel == null ? 0 : (ButtonGap + ButtonH) * s;
+        return new SizeF(CardW * s, (Pad + 20) * s + 4 * s + BodyHeight(g) + buttons + Pad * s);
     }
 
     private void OnTick()
     {
         var now = DateTime.UtcNow;
-        if (_fadeStart == null && now >= _until) _fadeStart = now;
+        if (_fadeStart == null && _until is { } until && now >= until) _fadeStart = now;
         if (_fadeStart != null && (now - _fadeStart.Value).TotalSeconds >= FadeOut)
         {
             Dismiss();
@@ -175,11 +213,11 @@ internal sealed class Toast : Form
         {
             Configure(g);
             float m = ShadowMargin * s;
-            Paint(g, new RectangleF(m, m, Width - 2 * m, Height - 2 * m), s);
+            PaintCard(g, new RectangleF(m, m, Width - 2 * m, Height - 2 * m), s);
         }
-        // Slides in from the right edge.
-        int slide = (int)((1 - appear) * 18 * s);
-        LayeredWindow.Update(Handle, bmp, new Point(_basePos.X + slide, _basePos.Y), (byte)Math.Clamp(255 * appear * fade, 0, 255));
+        // Rises from below, like the Mac popup.
+        int slide = (int)((1 - appear) * 14 * s);
+        LayeredWindow.Update(Handle, bmp, new Point(_basePos.X, _basePos.Y + slide), (byte)Math.Clamp(255 * appear * fade, 0, 255));
     }
 
     private Color Tone => Hc ? SystemColors.WindowText : _kind switch
@@ -189,7 +227,7 @@ internal sealed class Toast : Form
         _ => Color.FromArgb(96, 175, 255),
     };
 
-    private void Paint(Graphics g, RectangleF card, float s)
+    private void PaintCard(Graphics g, RectangleF card, float s)
     {
         float radius = 16 * s;
         if (!Hc) LayeredWindow.Shadow(g, card, radius, s);
@@ -220,9 +258,39 @@ internal sealed class Toast : Form
 
         float textX = card.X + (Pad + IconCol) * s;
         using (var brush = new SolidBrush(primary))
-            g.DrawString(_title, _titleFont!, brush, new RectangleF(textX, y, card.Right - textX - Pad * s, 22 * s), _line);
+            g.DrawString(_title, _titleFont!, brush, new RectangleF(textX, y, card.Right - textX - (Pad + CloseSize) * s, 22 * s), _line);
+        float bodyH = BodyHeight(g);
         using (var brush = new SolidBrush(secondary))
-            g.DrawString(_text, _bodyFont!, brush, new RectangleF(textX, y + 24 * s, BodyWidth, _bodyFont!.GetHeight(g) * MaxLines), _wrap);
+            g.DrawString(_text, _bodyFont!, brush, new RectangleF(textX, y + 24 * s, BodyWidth, bodyH + 2 * s), _wrap);
+
+        // ✕ in the top right corner.
+        _closeRect = new RectangleF(card.Right - (Pad / 2 + CloseSize) * s, card.Y + Pad / 2 * s, CloseSize * s, CloseSize * s);
+        if (_hot == Hot.Close && !Hc)
+        {
+            using var hover = new SolidBrush(Color.FromArgb(40, 255, 255, 255));
+            g.FillEllipse(hover, _closeRect);
+        }
+        using (var cross = new Pen(_hot == Hot.Close ? primary : secondary, 1.6f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round })
+        {
+            float cx = _closeRect.X + _closeRect.Width / 2, cy = _closeRect.Y + _closeRect.Height / 2, k = 4.2f * s;
+            g.DrawLine(cross, cx - k, cy - k, cx + k, cy + k);
+            g.DrawLine(cross, cx + k, cy - k, cx - k, cy + k);
+        }
+
+        // The action as a real button under the text (Mac: Retry, Top up, Sign in …).
+        _actionRect = RectangleF.Empty;
+        if (_actionLabel != null)
+        {
+            var labelSize = g.MeasureString(_actionLabel, _buttonFont!, PointF.Empty, _line);
+            float w = Math.Min(labelSize.Width + 28 * s, card.Right - textX - Pad * s);
+            _actionRect = new RectangleF(textX, y + 24 * s + bodyH + ButtonGap * s, w, ButtonH * s);
+            using var path = Theme.Rounded(_actionRect, 6 * s);
+            var fill = Hc ? SystemColors.Highlight : _hot == Hot.Action ? Color.FromArgb(120, 190, 255) : Color.FromArgb(96, 175, 255);
+            using (var brush = new SolidBrush(fill)) g.FillPath(brush, path);
+            using var ink = new SolidBrush(Hc ? SystemColors.HighlightText : Color.FromArgb(16, 18, 24));
+            using var centred = new StringFormat(_line) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+            g.DrawString(_actionLabel, _buttonFont!, ink, _actionRect, centred);
+        }
     }
 
     private void DrawIcon(Graphics g, PointF c, float s)
@@ -251,10 +319,32 @@ internal sealed class Toast : Form
         }
     }
 
+    private Hot HitTest(Point p) =>
+        _closeRect.Contains(p) ? Hot.Close : _actionRect.Contains(p) ? Hot.Action : Hot.None;
+
+    protected override void OnMouseMove(MouseEventArgs e)
+    {
+        base.OnMouseMove(e);
+        var hot = HitTest(e.Location);
+        Cursor = hot == Hot.None ? Cursors.Default : Cursors.Hand;
+        if (hot == _hot) return;
+        _hot = hot;
+        Redraw();
+    }
+
+    protected override void OnMouseLeave(EventArgs e)
+    {
+        base.OnMouseLeave(e);
+        if (_hot == Hot.None) return;
+        _hot = Hot.None;
+        Redraw();
+    }
+
     protected override void OnMouseClick(MouseEventArgs e)
     {
         base.OnMouseClick(e);
-        var action = _onClick;
+        // The button runs the action; ✕ and any other spot just close (Mac: a click on the popup hides it).
+        var action = HitTest(e.Location) == Hot.Action ? _onAction : null;
         Dismiss();
         action?.Invoke();
     }
@@ -266,6 +356,7 @@ internal sealed class Toast : Form
             _timer.Dispose();
             _titleFont?.Dispose();
             _bodyFont?.Dispose();
+            _buttonFont?.Dispose();
             _line.Dispose();
             _wrap.Dispose();
         }

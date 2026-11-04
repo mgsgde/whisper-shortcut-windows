@@ -23,7 +23,6 @@ internal sealed class TrayApp : ApplicationContext
         Core.DictationTemplate? Template = null, string StopKey = "", bool ClipboardOnly = false,
         Core.ScreenshotImage? Screenshot = null);
 
-    private const string RetryHint = " Hier klicken, um es noch einmal zu versuchen.";
 
     private readonly string? _testWav;
     private readonly bool _fakeGemini;
@@ -164,8 +163,10 @@ internal sealed class TrayApp : ApplicationContext
         feedbackItem.DropDownItems.Add(new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog()));
         var quitItem = new ToolStripMenuItem("WhisperShortcut beenden", null, (_, _) => Quit());
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        // Popups sit above the recording pill while it is on screen (Mac centerBottomPillClearance).
+        _toast.AvoidBounds = () => _overlay.Visible ? _overlay.Bounds : null;
         _meeting = new MeetingController(_settings, _ui, TranscribeMeetingChunkAsync, SummarizeMeetingAsync, MeetingUnavailable,
-            Notify, TrySave, () => new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveGlossaryHotkey,
+            (title, text, icon, open) => Notify(title, text, icon, open, open == null ? null : Core.UserCopy.ActionOpenFolder), TrySave, () => new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveGlossaryHotkey,
                     _settings.ActiveScreenshotHotkey, _settings.TemplateHotkey, _settings.ActiveLiveDictateHotkey,
                     _settings.ActiveOpenSettingsHotkey }
                 .Concat(_settings.Templates.Select(t => t.Hotkey)).Where(k => k.Length > 0).ToArray(),
@@ -233,8 +234,8 @@ internal sealed class TrayApp : ApplicationContext
         else if (MissingKey)
         {
             Notify("Willkommen bei WhisperShortcut",
-                "Bitte zuerst den API-Schlüssel eintragen: hier klicken oder auf das blaue Symbol unten rechts.",
-                ToolTipIcon.Info, ShowSettings);
+                "Trag zuerst einen API-Schlüssel ein oder schalte den Offline-Modus ein.",
+                ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
         }
     }
 
@@ -250,8 +251,8 @@ internal sealed class TrayApp : ApplicationContext
         _lastFailed = new FailedRun(rec.Wav, mode, rec.Seconds, null, null, IntPtr.Zero,
             StopKey: mode == Mode.Prompt ? _settings.PromptHotkey : _settings.DictateHotkey, ClipboardOnly: true);
         Notify("Aufnahme unterbrochen",
-            $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Hier klicken, um sie zu transkribieren. Der Text landet in der Zwischenablage.",
-            ToolTipIcon.Warning, RetryLast);
+            $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Der Text landet nach dem Transkribieren in der Zwischenablage.",
+            ToolTipIcon.Warning, RetryLast, "Transkribieren");
         return true;
     }
 
@@ -335,8 +336,8 @@ internal sealed class TrayApp : ApplicationContext
             _lastWarnedHotkeys = failedKey;
             Notify("Tastenkürzel belegt",
                 $"{string.Join(" und ", failed)} {(failed.Count > 1 ? "werden" : "wird")} schon von einem anderen Programm benutzt. "
-                + "Hier klicken und in den Einstellungen ein anderes wählen.",
-                ToolTipIcon.Warning, ShowSettings);
+                + "Wähl in den Einstellungen ein anderes.",
+                ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
         }
     }
 
@@ -676,27 +677,27 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Info($"Hotkey {mode} with a local engine, models missing");
             Sounds.Error();
-            Notify("Offline-Modelle fehlen",
+            Notify(Core.UserCopy.ModelNotDownloadedTitle,
                 (mode == Mode.Dictate || !OfflineEngine.SpeechInstalled
                     ? "Die Offline-Spracherkennung ist noch nicht geladen."
                     : "Das Sprachmodell für „Text bearbeiten“ ist noch nicht geladen.")
-                + " Hier klicken und in den Einstellungen unter „Offline-Modelle“ laden.",
-                ToolTipIcon.Warning, ShowSettings);
+                + " Du lädst es in den Einstellungen unter „Offline-Modelle“.",
+                ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
         }
         if (mode != Mode.Dictate && _settings.EffectiveTextEngine == Core.Engine.Local && OfflineEngine.LlmUnsupportedCpu)
         {
             Core.Log.Info($"Hotkey {mode} with the local text engine, but this CPU cannot run the language model");
             Sounds.Error();
-            Notify("Offline-Sprachmodell", Core.LlamaServerHost.UnsupportedCpuMessage, ToolTipIcon.Warning, ShowSettings);
+            Notify(Core.UserCopy.OfflineModelErrorTitle, Core.LlamaServerHost.UnsupportedCpuMessage, ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
         }
         if (MissingKeyFor(mode) is { } provider)
         {
             Core.Log.Info($"Hotkey pressed but no {provider} key (Schlüssel fehlt)");
             Sounds.Error();
-            Notify("Schlüssel fehlt", $"Noch kein {provider}-Schlüssel eingetragen. Hier klicken, um ihn einzutragen.",
-                ToolTipIcon.Warning, ShowSettings);
+            Notify(Core.UserCopy.ProviderErrorTitle(Core.GeminiErrorKind.NoKey, provider), $"Noch kein {provider}-Schlüssel eingetragen. Du trägst ihn in den Einstellungen unter „Konten“ ein.",
+                ToolTipIcon.Warning, () => ShowSettingsPage(SettingsForm.AccountsPage), Core.UserCopy.ActionOpenSettings);
             return;
         }
 
@@ -792,7 +793,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Info($"LIVE-DICTATE: not started ({why})");
             Sounds.Error();
-            Notify(Core.UserCopy.LiveTitle, Core.LiveDictation.Message(why), ToolTipIcon.Info, ShowSettings);
+            Notify(Core.UserCopy.LiveTitle, Core.LiveDictation.Message(why), ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
         }
         // The session exists before the recording starts, so a failed start finds it and discards it.
@@ -955,7 +956,7 @@ internal sealed class TrayApp : ApplicationContext
             }
             else if (outcome.Text.Length == 0)
             {
-                Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
+                Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
             }
             else
             {
@@ -988,7 +989,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error("Dictate (live): unexpected error", e);
             Sounds.Error();
-            NotifyRetryable("Fehler", "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", Failed());
+            NotifyRetryable(Core.UserCopy.ErrorTitle, "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", Failed());
             session.Cancel();
             _paster.EndLive(cancelledAction, null);
         }
@@ -1224,19 +1225,19 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error($"{_mode}: offline model missing");
             Sounds.Error();
-            Notify("Offline-Modelle fehlen", e.Message + " Hier klicken, um es in den Einstellungen zu laden.", ToolTipIcon.Warning, ShowSettings);
+            Notify(Core.UserCopy.ModelNotDownloadedTitle, e.Message, ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
         }
         catch (Core.LocalLlmException e)
         {
             Core.Log.Error($"{_mode}: local LLM failed", e);
             Sounds.Error();
-            NotifyRetryable("Offline-Sprachmodell", e.Message, Failed());
+            NotifyRetryable(Core.UserCopy.OfflineModelErrorTitle, e.Message, Failed());
         }
         catch (Core.EmptyModelReplyException e)
         {
             Core.Log.Error($"{_mode}: empty model reply");
             Sounds.Error();
-            NotifyRetryable("Keine Antwort", e.Message, Failed());
+            NotifyRetryable(Core.UserCopy.NoReplyTitle, e.Message, Failed());
         }
         catch (Core.GeminiException e)
         {
@@ -1247,15 +1248,16 @@ internal sealed class TrayApp : ApplicationContext
                 // Retrying cannot fill an empty account, but the audio stays for "Letzte Aufnahme erneut verarbeiten" after topping up.
                 _lastFailed = Failed();
                 var url = e.BillingUrl;
-                Notify($"{e.Provider}: Guthaben", e.Message + " Hier klicken, um es aufzuladen.", ToolTipIcon.Error,
-                    url == null ? ShowSettings : () => OpenBillingUrl(url));
+                Notify(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, ToolTipIcon.Error,
+                    url == null ? ShowSettings : () => OpenBillingUrl(url), url == null ? Core.UserCopy.ActionOpenSettings : Core.UserCopy.ActionTopUp);
             }
             else if (e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey)
-                Notify($"{e.Provider}-Fehler", e.Message, ToolTipIcon.Error, ShowSettings);
+                Notify(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, ToolTipIcon.Error,
+                    () => ShowSettingsPage(SettingsForm.AccountsPage), Core.UserCopy.ActionOpenSettings);
             else if (e.Kind is Core.GeminiErrorKind.Network or Core.GeminiErrorKind.Timeout or Core.GeminiErrorKind.Quota or Core.GeminiErrorKind.Server)
-                NotifyRetryable($"{e.Provider}-Fehler", e.Message, Failed());
+                NotifyRetryable(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, Failed());
             else
-                Notify($"{e.Provider}-Fehler", e.Message, ToolTipIcon.Error);
+                Notify(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, ToolTipIcon.Error);
         }
         catch (Exception e) when (e is Core.AudioSilentException or MicrophoneUnavailableException)
         {
@@ -1302,7 +1304,7 @@ internal sealed class TrayApp : ApplicationContext
             return;
         }
         _lastFailed = run;
-        Notify(title, message + RetryHint, ToolTipIcon.Error, () => RetryLast());
+        Notify(title, message, ToolTipIcon.Error, () => RetryLast(), Core.UserCopy.ActionRetry);
     }
 
     private async Task<string> DictateAsync(byte[] wav, double seconds, CancellationToken ct)
@@ -1318,7 +1320,7 @@ internal sealed class TrayApp : ApplicationContext
         // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
         if (Core.TextCleanup.LooksLikeRefusal(text)) text = "";
         Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup, punctuation {punctuation}");
-        if (text.Length == 0) Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
+        if (text.Length == 0) Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
         return text;
     }
 
@@ -1347,7 +1349,7 @@ internal sealed class TrayApp : ApplicationContext
             if (_settings.EffectiveTextEngine != Core.Engine.Gemini) return await PromptFromTranscriptAsync(wav, selection, systemPrompt, ct);
         if (!HasSpeech(wav))
         {
-            Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
+            Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
             return "";
         }
         SetBusy(Core.UserCopy.EditingText);
@@ -1364,8 +1366,7 @@ internal sealed class TrayApp : ApplicationContext
                 Core.Log.Info("Prompt: bare edit command without selection, refused");
                 _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
                 Sounds.Error();
-                Notify("Bitte erst Text markieren", "Zum Bearbeiten zuerst den Text markieren, dann das Kürzel drücken und die Anweisung sprechen.",
-                    ToolTipIcon.Info);
+                Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
                 return "";
             }
         }
@@ -1404,7 +1405,7 @@ internal sealed class TrayApp : ApplicationContext
         Core.Log.Info($"Template: transcript {transcript.Length} chars, selection {selection?.Length ?? 0} chars");
         if (transcript.Length == 0 && !Core.TemplatePrompt.AcceptsEmptyTranscript(selection))
         {
-            Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
+            Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
             return "";
         }
 
@@ -1452,15 +1453,14 @@ internal sealed class TrayApp : ApplicationContext
         Core.Log.Info($"Prompt via transcript ({_settings.EffectiveTextEngine}): instruction {instruction.Length} chars");
         if (instruction.Length == 0)
         {
-            Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
+            Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
             return "";
         }
         if (selection == null && Core.BareEditCommand.Matches(instruction))
         {
             Core.Log.Info("Prompt: bare edit command without selection, refused");
             Sounds.Error();
-            Notify("Bitte erst Text markieren", "Zum Bearbeiten zuerst den Text markieren, dann das Kürzel drücken und die Anweisung sprechen.",
-                ToolTipIcon.Info);
+            Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
             return "";
         }
 
@@ -1847,8 +1847,8 @@ internal sealed class TrayApp : ApplicationContext
         var update = _updates.Available;
         if (update == null) return;
         Notify($"Version {update.Version} ist da",
-            "Hier klicken, um zu sehen, was neu ist, und es zu installieren. Ohne Klick bleibt alles, wie es ist.",
-            ToolTipIcon.Info, _updates.ShowDialog);
+            "Sieh dir an, was neu ist, und installier es. Ohne Klick bleibt alles, wie es ist.",
+            ToolTipIcon.Info, _updates.ShowDialog, "Ansehen");
     }
 
     /// <summary>
@@ -1894,10 +1894,11 @@ internal sealed class TrayApp : ApplicationContext
         _statusItem.Text = status;
     }
 
-    private void Notify(string title, string text, ToolTipIcon icon, Action? onClick = null)
+    /// <summary>Popup like the Mac's; <paramref name="onAction"/> becomes a button labelled <paramref name="actionLabel"/>.</summary>
+    private void Notify(string title, string text, ToolTipIcon icon, Action? onAction = null, string? actionLabel = null)
     {
         Core.Log.Info($"Notify: {title}");  // title only: the text can quote an error message
-        _toast.Present(title, text, icon, onClick);
+        _toast.Present(title, text, icon, onAction, actionLabel);
     }
 
     /// <summary>
@@ -1927,6 +1928,13 @@ internal sealed class TrayApp : ApplicationContext
     public void OpenWelcome() => _ui.Post(_ => ShowSettings(welcome: true), null);
 
     private void ShowSettings() => ShowSettings(welcome: false);
+
+    /// <summary>Opens the settings window on <paramref name="page"/> (e.g. „Konten“ from a missing-key popup).</summary>
+    private void ShowSettingsPage(string page)
+    {
+        ShowSettings();
+        _settingsForm?.ShowPage(page);
+    }
 
     /// <summary>
     /// The open-settings hotkey (Mac SettingsManager.toggleSettings): closes the window when it is open, opens it otherwise.

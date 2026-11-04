@@ -66,6 +66,65 @@ public static class UserCopy
         return ((current + step) % count + count) % count;
     }
 
+    // ---- Popups (Mac PopupNotificationWindow + SpeechErrorFormatter, German from Localizable.xcstrings, du-form) ----
+
+    /// <summary>Action button: run the failed recording again (Mac "Retry").</summary>
+    public const string ActionRetry = "Erneut versuchen";
+
+    /// <summary>Action button: open the provider's billing page (Mac "Top up").</summary>
+    public const string ActionTopUp = "Aufladen";
+
+    /// <summary>Action button: open the settings window (Mac "Open Settings").</summary>
+    public const string ActionOpenSettings = "Einstellungen öffnen";
+
+    /// <summary>Action button for a finished or interrupted meeting.</summary>
+    public const string ActionOpenFolder = "Ordner öffnen";
+
+    /// <summary>Mac "Didn't catch that".</summary>
+    public const string NoSpeechTitle = "Nichts verstanden";
+
+    /// <summary>Mac "Nothing to transcribe. Check the microphone and try again.", du-form.</summary>
+    public const string NoSpeechText = "Nichts zu transkribieren. Prüf das Mikrofon und versuch es noch einmal.";
+
+    /// <summary>Mac "📝 Nothing Selected".</summary>
+    public const string NothingSelectedTitle = "📝 Nichts markiert";
+
+    /// <summary>Mac noSelectedText, du-form.</summary>
+    public const string NothingSelectedText =
+        "Dictate Prompt bearbeitet markierten Text, und es war nichts markiert. Markiere zuerst den Text, den du ändern "
+        + "möchtest, drück dann das Kürzel und sag, was damit geschehen soll.";
+
+    /// <summary>Mac "⚠️ No Reply".</summary>
+    public const string NoReplyTitle = "⚠️ Keine Antwort";
+
+    /// <summary>Mac "⚠️ Offline Model Error".</summary>
+    public const string OfflineModelErrorTitle = "⚠️ Fehler beim Offline-Modell";
+
+    /// <summary>Mac "📥 Model Not Downloaded".</summary>
+    public const string ModelNotDownloadedTitle = "📥 Modell nicht geladen";
+
+    /// <summary>Mac "❌ Error".</summary>
+    public const string ErrorTitle = "❌ Fehler";
+
+    /// <summary>
+    /// Popup title for a failed cloud call, Mac SpeechErrorFormatter.shortStatus where Windows has the same error.
+    /// <paramref name="message"/> tells the two server cases apart (model gone vs. service busy).
+    /// </summary>
+    public static string ProviderErrorTitle(GeminiErrorKind kind, string provider, string? message = null) => kind switch
+    {
+        GeminiErrorKind.NoKey => provider == "Gemini" ? "⚠️ Kein Google-API-Schlüssel" : $"⚠️ Kein {provider}-API-Schlüssel",
+        GeminiErrorKind.InvalidKey => "❌ Ungültiger API-Schlüssel",
+        GeminiErrorKind.Network => "⏰ Netzwerkfehler",
+        GeminiErrorKind.Timeout => "⏰ Zeitüberschreitung",
+        GeminiErrorKind.Quota => "⏳ Limit erreicht",
+        GeminiErrorKind.Billing => "💳 Abrechnung erforderlich",
+        GeminiErrorKind.Truncated => "⚠️ Antwort abgeschnitten",
+        GeminiErrorKind.Server when message == ModelGone(provider) => "❌ Modell nicht mehr verfügbar",
+        GeminiErrorKind.Server when message == ServerBusy(provider) => "🔄 Dienst nicht erreichbar",
+        GeminiErrorKind.Server => "❌ Serverfehler",
+        _ => ErrorTitle,
+    };
+
     public static string ServerBusy(string provider) =>
         $"{provider} antwortet gerade nicht. Bitte später erneut versuchen.";
 

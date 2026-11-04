@@ -84,4 +84,33 @@ public class UserCopyTests
         Assert.Equal("Das Modell konnte nicht gelöscht werden. Details stehen im Protokoll.",
             UserCopy.TechnicalFallback("Das Modell konnte nicht gelöscht werden", "HRESULT: 0x80070020"));
     }
+
+    [Theory]
+    [InlineData(GeminiErrorKind.NoKey, "Gemini", "⚠️ Kein Google-API-Schlüssel")]
+    [InlineData(GeminiErrorKind.NoKey, "OpenAI", "⚠️ Kein OpenAI-API-Schlüssel")]
+    [InlineData(GeminiErrorKind.InvalidKey, "OpenAI", "❌ Ungültiger API-Schlüssel")]
+    [InlineData(GeminiErrorKind.Network, "Gemini", "⏰ Netzwerkfehler")]
+    [InlineData(GeminiErrorKind.Timeout, "Gemini", "⏰ Zeitüberschreitung")]
+    [InlineData(GeminiErrorKind.Quota, "Gemini", "⏳ Limit erreicht")]
+    [InlineData(GeminiErrorKind.Billing, "OpenAI", "💳 Abrechnung erforderlich")]
+    [InlineData(GeminiErrorKind.Server, "Gemini", "❌ Serverfehler")]
+    public void ProviderErrorTitle_UsesTheMacTitles(GeminiErrorKind kind, string provider, string title) =>
+        Assert.Equal(title, UserCopy.ProviderErrorTitle(kind, provider));
+
+    [Fact]
+    public void ProviderErrorTitle_TellsTheServerCasesApart()
+    {
+        Assert.Equal("❌ Modell nicht mehr verfügbar", UserCopy.ProviderErrorTitle(GeminiErrorKind.Server, "OpenAI", UserCopy.ModelGone("OpenAI")));
+        Assert.Equal("🔄 Dienst nicht erreichbar", UserCopy.ProviderErrorTitle(GeminiErrorKind.Server, "Gemini", UserCopy.ServerBusy("Gemini")));
+    }
+
+    [Fact]
+    public void PopupTexts_AreDuForm()
+    {
+        foreach (var t in new[] { UserCopy.NoSpeechText, UserCopy.NothingSelectedText })
+        {
+            Assert.DoesNotContain("Sie ", t);
+            Assert.DoesNotContain("Ihr", t);
+        }
+    }
 }
