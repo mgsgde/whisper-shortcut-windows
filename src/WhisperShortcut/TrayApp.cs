@@ -2268,6 +2268,13 @@ internal sealed partial class TrayApp : ApplicationContext
     private string? _spareFingerprint;
     private System.Windows.Forms.Timer? _spareTimer;
 
+    /// <summary>
+    /// The build blocks the UI thread for one to two seconds on a small PC. Started while the user works, it delayed the
+    /// next hotkey by that much (typical: close the settings, then dictate to try the change). It waits until neither
+    /// keyboard nor mouse were used for this long.
+    /// </summary>
+    private const long SpareBuildIdleMs = 4000;
+
     /// <summary>A few seconds from now, when nothing else runs, build the next settings window (Mac: opens instantly).</summary>
     private void ScheduleSpareSettings(int delayMs = 3000)
     {
@@ -2277,6 +2284,7 @@ internal sealed partial class TrayApp : ApplicationContext
         {
             // Busy (recording, a window open): try again later; the build blocks the UI thread for a moment.
             if (_state != State.Idle || _settingsForm != null || _welcomeForm is { IsDisposed: false }) return;
+            if (NativeMethods.IdleMilliseconds() < SpareBuildIdleMs) return;
             _spareTimer!.Dispose();
             _spareTimer = null;
             if (_spareSettings is { IsDisposed: false } && _spareFingerprint == _settings.Fingerprint()) return;

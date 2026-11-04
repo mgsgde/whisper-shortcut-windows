@@ -57,6 +57,20 @@ internal static class NativeMethods
     [DllImport("user32.dll")]
     public static extern short GetAsyncKeyState(int vKey);
 
+    [StructLayout(LayoutKind.Sequential)]
+    private struct LASTINPUTINFO { public uint cbSize; public uint dwTime; }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetLastInputInfo(ref LASTINPUTINFO info);
+
+    /// <summary>Milliseconds since the last keyboard or mouse input anywhere on this session (0 if unknown).</summary>
+    public static long IdleMilliseconds()
+    {
+        var info = new LASTINPUTINFO { cbSize = (uint)Marshal.SizeOf<LASTINPUTINFO>() };
+        if (!GetLastInputInfo(ref info)) return 0;
+        return (uint)Environment.TickCount - info.dwTime; // both wrap at 2^32 ms; unsigned subtraction handles it
+    }
+
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
