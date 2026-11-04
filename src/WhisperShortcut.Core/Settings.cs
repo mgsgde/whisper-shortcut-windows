@@ -186,7 +186,8 @@ public sealed class Settings
     public bool OpenSettingsHotkeyEnabled { get; set; } = true;
 
     /// <summary>
-    /// The right Ctrl key alone toggles dictation, the Windows stand-in for the Mac's Fn key. On by default like the Mac.
+    /// The right Ctrl key alone toggles dictation, the Windows stand-in for the Mac's Fn key. On for new installs like the
+    /// Mac; off for installs that ran before (pinned in Load), so an update does not start dictating on a key they use.
     /// The keyboard hook that reads it comes separately.
     /// </summary>
     public bool RightCtrlDictation { get; set; } = true;
@@ -340,7 +341,7 @@ public sealed class Settings
             s.ScreenshotHotkeyEnabled = dto.ScreenshotHotkeyEnabled ?? s.ScreenshotHotkeyEnabled;
             s.LiveDictateHotkeyEnabled = dto.LiveDictateHotkeyEnabled ?? s.LiveDictateHotkeyEnabled;
             s.OpenSettingsHotkeyEnabled = dto.OpenSettingsHotkeyEnabled ?? s.OpenSettingsHotkeyEnabled;
-            s.RightCtrlDictation = dto.RightCtrlDictation ?? true;
+            s.RightCtrlDictation = dto.RightCtrlDictation ?? s.RightCtrlDictation;
             s.Templates = LoadTemplates(dto.Templates);
             s.TemplateHotkey = dto.TemplateHotkey ?? "";
             s.SendScreenshots = dto.SendScreenshots ?? false;
@@ -386,6 +387,8 @@ public sealed class Settings
         OpenSettingsHotkey = LegacyShortcuts.OpenSettings;
         DictateHotkeyEnabled = PromptHotkeyEnabled = GlossaryHotkeyEnabled = true;
         ScreenshotHotkeyEnabled = LiveDictateHotkeyEnabled = OpenSettingsHotkeyEnabled = true;
+        // Right Ctrl did nothing before; it stays that way until the user switches it on.
+        RightCtrlDictation = false;
     }
 
     /// <summary>The new-install shortcuts (same values as the property initializers).</summary>
@@ -404,6 +407,7 @@ public sealed class Settings
         ScreenshotHotkeyEnabled = d.ScreenshotHotkeyEnabled;
         LiveDictateHotkeyEnabled = d.LiveDictateHotkeyEnabled;
         OpenSettingsHotkeyEnabled = d.OpenSettingsHotkeyEnabled;
+        RightCtrlDictation = d.RightCtrlDictation;
     }
 
     // Missing list = old file: no templates. Null entries are skipped; a blank id gets a fresh one.

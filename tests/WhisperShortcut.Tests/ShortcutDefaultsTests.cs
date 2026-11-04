@@ -166,11 +166,24 @@ public class ShortcutDefaultsTests
     }
 
     [Fact]
-    public void ExistingInstall_RightCtrlDictationDefaultsOn()
+    public void ExistingInstall_RightCtrlDictationStartsOff_AndStaysOffAfterSave()
     {
         var dir = NewDir();
-        Assert.True(LoadJson(dir, "{}").RightCtrlDictation);
-        Assert.False(LoadJson(dir, "{\"rightCtrlDictation\":false}").RightCtrlDictation);
+        var s = LoadJson(dir, "{}");
+        Assert.False(s.RightCtrlDictation);
+        s.Save();
+        Assert.False(Settings.Load(Path.Combine(dir, "settings.json"), new PlainSecretProtector()).RightCtrlDictation);
+        Assert.False(LoadJson(dir, "{ nope").RightCtrlDictation);
+        Assert.True(LoadJson(dir, "{\"rightCtrlDictation\":true}").RightCtrlDictation);
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void PinnedFile_RightCtrlDictation_MissingIsOn_StoredValueWins()
+    {
+        var dir = NewDir();
+        Assert.True(LoadJson(dir, "{\"shortcutDefaultsAltV1\":true}").RightCtrlDictation);
+        Assert.False(LoadJson(dir, "{\"shortcutDefaultsAltV1\":true,\"rightCtrlDictation\":false}").RightCtrlDictation);
         Directory.Delete(dir, true);
     }
 }
