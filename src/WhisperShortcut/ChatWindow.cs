@@ -431,7 +431,7 @@ internal sealed class ChatWindow : Form
         var model = _settings.EffectiveChatModel;
         var modelName = ModelName;
         var system = Core.ChatPrompts.Effective(_settings.ChatSystemPrompt, offline: engine == Core.Engine.Local);
-        var window = Core.ChatText.Window(session.Messages);
+        var window = Core.ChatText.Window(session.Messages, engine == Core.Engine.Local ? Core.ChatText.LocalWindowChars : 200_000);
 
         var cts = _cts = new CancellationTokenSource();
         _runningEngine = engine;
@@ -447,7 +447,7 @@ internal sealed class ChatWindow : Form
             if (engine == Core.Engine.Local)
             {
                 // The local model answers in one piece (no stream); the Mac's offline chat behaves the same way.
-                var answer = await _offline.CompleteAsync(system, Core.ChatText.Flatten(system, window), 2048, cts.Token);
+                var answer = await _offline.CompleteAsync(system, Core.ChatText.Flatten("", window), 2048, cts.Token);
                 reply = new Core.ChatReply(answer.Trim(), Array.Empty<Core.ChatSource>());
             }
             else

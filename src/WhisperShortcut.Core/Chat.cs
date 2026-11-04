@@ -134,6 +134,12 @@ public static class ChatText
     }
 
     /// <summary>
+    /// Character budget of the history for the local model: llama-server runs with -c 16384; about 24 000 German
+    /// characters leave room for the system prompt and a 2048-token answer.
+    /// </summary>
+    public const int LocalWindowChars = 24_000;
+
+    /// <summary>
     /// The newest messages whose text fits into <paramref name="maxChars"/>. The last message is always kept
     /// and the window starts with a user message (a model reply without its question confuses the APIs).
     /// </summary>
