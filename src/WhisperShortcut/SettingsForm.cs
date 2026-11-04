@@ -8,7 +8,7 @@ namespace WhisperShortcut;
 /// Allgemein, Konten, Diktieren, Dictate Prompt, Vorlagen, Bildschirmfoto, Claude & KI-Apps, Datenschutz & Berechtigungen, Über; the page on the right as
 /// rounded cards; every edit applies by itself (no Speichern, like the Mac). Light or dark follows Windows. German UI.
 /// </summary>
-internal sealed partial class SettingsForm : Form
+internal sealed partial class SettingsForm : FastShowForm
 {
     private readonly Core.Settings _settings;
     private readonly OfflineEngine _offline;
@@ -803,7 +803,7 @@ internal sealed partial class SettingsForm : Form
         Core.Log.Info($"Settings page {name}");
         if (page.Controls.Count > 0 && page.Controls[0] is TableLayoutPanel root && _building.Remove(root)) root.ResumeLayout(false);
         // Suspended: a page becoming visible otherwise lays itself out once per container (see SetVisibleCore).
-        WithLayoutSuspended(page, () => { foreach (var p in _pages.Values) p.Visible = p == page; });
+        LayoutBatch.Run(page, () => { foreach (var p in _pages.Values) p.Visible = p == page; });
         foreach (var n in _nav) n.Selected = n.Text == name;
         if (name != General) StopMicTest();
         FitHints();
@@ -1895,19 +1895,9 @@ internal sealed partial class SettingsForm : Form
             .Where(w => w.Label.MaximumSize != w.Size)
             .ToList();
         if (changed.Count == 0) return;
-        // WHY suspended: every new MaximumSize re-lays out the nested auto-size tables of all pages, about a
-        // hundred times on the first open (2 s). Suspended, each container lays out once, children first.
-        var containers = new List<Control>();
-        void Collect(Control c)
-        {
-            if (!c.HasChildren) return;
-            containers.Add(c);
-            foreach (Control child in c.Controls) Collect(child);
-        }
-        Collect(_pageHost);
-        foreach (var c in containers) c.SuspendLayout();
-        foreach (var (label, size) in changed) label.MaximumSize = size;
-        for (int i = containers.Count - 1; i >= 0; i--) containers[i].ResumeLayout(true);
+        // WHY batched: every new MaximumSize re-lays out the nested auto-size tables of all pages, about a
+        // hundred times on the first open (2 s). Batched, each container lays out once, children first.
+        LayoutBatch.Run(_pageHost, () => { foreach (var (label, size) in changed) label.MaximumSize = size; });
     }
 
     // ---------------- save / close ----------------
