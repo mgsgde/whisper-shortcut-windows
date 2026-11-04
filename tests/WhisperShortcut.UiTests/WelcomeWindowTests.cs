@@ -49,7 +49,9 @@ public sealed class WelcomeWindowTests : IDisposable
                 Application.DoEvents();
             }
             watch.Stop();
-            const int budget = 2000;
+            // A width change rewraps the visible page (about 100 ms each on Magnus's PC, up to 2.3 s for 20 under the
+            // load of the full UI test run); the budget catches every page relaying out again, not that.
+            const int budget = 4000;
             Assert.True(watch.ElapsedMilliseconds < budget, $"20 resizes took {watch.ElapsedMilliseconds} ms (budget {budget} ms)");
         });
     }
