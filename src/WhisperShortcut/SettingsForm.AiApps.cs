@@ -129,7 +129,7 @@ internal sealed partial class SettingsForm
             if (Visible) RefreshConnectionStates();
             _mcpClock.Enabled = Visible;
         };
-        FormClosed += (_, _) =>
+        Disposed += (_, _) =>
         {
             mcp.Changed -= RefreshAiApps;
             _mcpClock.Dispose();

@@ -456,7 +456,7 @@ internal sealed partial class SettingsForm : FastShowForm
         _llmRow.Remove.LinkClicked += (_, _) => RemoveModel(SelectedLlmChoice.Component, SelectedLlmChoice.DisplayName);
         _llmChoice.SelectedIndexChanged += (_, _) => { UpdateModelRows(); RefreshPickers(); };
         _offline.DownloadChanged += UpdateModelRows;
-        FormClosed += (_, _) => _offline.DownloadChanged -= UpdateModelRows;
+        Disposed += (_, _) => _offline.DownloadChanged -= UpdateModelRows;
 
         // --- screen content (Mac: Include screenshot) ---
         prompt.Controls.Add(Section("Bildschirminhalt", subtitle: "Schickt bei Dictate Prompt ein Bildschirmfoto mit, damit das Modell sieht, was du siehst."));
@@ -773,6 +773,11 @@ internal sealed partial class SettingsForm : FastShowForm
         FormClosed += (_, _) =>
         {
             if (!_discard) RecordPromptHistory(_openedPrompts.Dictate, _openedPrompts.PromptMode, _openedPrompts.Template);
+        };
+        // WHY on Disposed and not on FormClosed: a window built in advance that went stale is disposed without ever
+        // being closed. Its subscriptions kept it alive and ran its handlers (download ticks, theme switches) forever.
+        Disposed += (_, _) =>
+        {
             Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
             dirtyTimer.Dispose();
             _geminiKey.Dispose();

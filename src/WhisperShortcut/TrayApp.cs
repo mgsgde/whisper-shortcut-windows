@@ -2440,6 +2440,8 @@ internal sealed partial class TrayApp : ApplicationContext
         _updates.Dispose();
         _readAloud.Dispose();
         DisposeChat();
+        _spareTimer?.Dispose();
+        _spareSettings?.Dispose(); // the window built in advance: its timers and the AI-app subscription go with it
         _overlay.Dispose();
         _toast.Dispose();
         _meeting.Dispose();
