@@ -915,6 +915,9 @@ internal sealed partial class SettingsForm : Form
         card.AddRow(SettingRow("Nach Updates suchen", "", _updateButton, ButtonWidth, out _updateStatus));
         _updateStatus.Text = "Fragt GitHub nach der neuesten Version. Installiert wird erst nach deinem Klick.";
         if (_updates.Available != null) ShowUpdateFound(_updates.Available);
+        // The app builds this window in advance (TrayApp.ScheduleSpareSettings), before the first automatic check
+        // a minute after start: a version found since then shows when the window does.
+        VisibleChanged += (_, _) => { if (Visible && _updates.Available is { } found) ShowUpdateFound(found); };
         _autoUpdate = new ToggleSwitch { Checked = _settings.AutoUpdateCheck, AccessibleName = "Automatisch nach Updates suchen" };
         // The practice runs in offline mode, which promises that nothing leaves the PC: say plainly what this one request sends.
         card.AddRow(SettingRow("Automatisch nach Updates suchen", "Kurz nach dem Start und einmal am Tag. Eine neue Version meldet sich "
