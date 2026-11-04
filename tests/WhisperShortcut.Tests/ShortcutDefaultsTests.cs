@@ -264,4 +264,27 @@ public class ShortcutDefaultsTests
         Assert.Equal("", u.ReadAloudHotkey);
         Directory.Delete(dir, true);
     }
+
+    [Theory]
+    [InlineData("alt + 6")]
+    [InlineData("Alt+6")]
+    [InlineData("ALT+6")]
+    public void FileWithoutChatField_TemplateWithSameKeyInAnySpelling_TurnsChatOff(string spelling)
+    {
+        var dir = NewDir();
+        var s = LoadJson(dir, "{\"templates\":[{\"id\":\"t1\",\"name\":\"Mail\",\"instructions\":\"x\",\"hotkey\":\"" + spelling + "\"}]}");
+        Assert.False(s.ChatHotkeyEnabled);
+        Directory.Delete(dir, true);
+    }
+
+    [Theory]
+    [InlineData("alt + 4")]
+    [InlineData("Alt+4")]
+    public void PinnedFile_WithoutReadAloudField_TemplateWithSameKeyInAnySpelling_TurnsReadAloudOff(string spelling)
+    {
+        var dir = NewDir();
+        var s = LoadJson(dir, "{\"shortcutDefaultsAltV1\":true,\"templates\":[{\"id\":\"t1\",\"name\":\"Mail\",\"instructions\":\"x\",\"hotkey\":\"" + spelling + "\"}]}");
+        Assert.False(s.ReadAloudHotkeyEnabled);
+        Directory.Delete(dir, true);
+    }
 }

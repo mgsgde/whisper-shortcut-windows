@@ -114,7 +114,7 @@ public sealed partial class Settings
             MeetingHotkey, TemplateHotkey, ReadAloudHotkey,
         };
         others.AddRange(Templates.Select(t => t.Hotkey));
-        return others.Any(k => !string.IsNullOrWhiteSpace(k) && string.Equals(k.Trim(), ChatHotkey.Trim(), StringComparison.OrdinalIgnoreCase));
+        return others.Any(k => SameKey(k, ChatHotkey));
     }
 
     private void LoadFeatures(Dto dto)

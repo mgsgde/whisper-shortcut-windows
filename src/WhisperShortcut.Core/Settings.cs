@@ -498,8 +498,16 @@ public sealed partial class Settings
             MeetingHotkey, TemplateHotkey,
         };
         others.AddRange(Templates.Select(t => t.Hotkey));
-        return others.Any(k => !string.IsNullOrWhiteSpace(k)
-            && string.Equals(k.Trim(), ReadAloudHotkey.Trim(), StringComparison.OrdinalIgnoreCase));
+        return others.Any(k => SameKey(k, ReadAloudHotkey));
+    }
+
+    // Two stored keys are the same when they normalize to the same text ("alt + 6" == "Alt+6"); falls back to the trimmed string.
+    private static bool SameKey(string? a, string? b)
+    {
+        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
+        string na = Mcp.HotkeyRules.TryNormalize(a, out var x) ? x : a.Trim();
+        string nb = Mcp.HotkeyRules.TryNormalize(b, out var y) ? y : b.Trim();
+        return string.Equals(na, nb, StringComparison.OrdinalIgnoreCase);
     }
 
     /// <summary>The new-install shortcuts (same values as the property initializers).</summary>
