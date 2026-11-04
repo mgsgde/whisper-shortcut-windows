@@ -9,11 +9,12 @@ namespace WhisperShortcut;
 /// The pill at the bottom of the screen, the Windows counterpart of the Mac's recording pill:
 /// shows that a recording runs, that the microphone hears something, how long it runs, how to stop
 /// or cancel it, and then "Wird verarbeitet …" and a short check mark when the text is in.
-/// During Dictate Prompt it grows into a card with the quick instructions (Ctrl+1–5 or a click), and
+/// During Dictate Prompt it grows into a card with the quick instructions (Ctrl+1–9 or a click), and
 /// after a language-model reply it can show the "Nicht in deinem Diktat" warning.
 /// It never takes focus (WS_EX_NOACTIVATE, MA_NOACTIVATE), otherwise Ctrl+V would land in the pill
-/// instead of the user's window. Clicks pass through (WS_EX_TRANSPARENT) except while the card or the
-/// warning is up, which are meant to be clicked.
+/// instead of the user's window. Like the Mac pill it carries a ✕ that discards the recording or cancels the
+/// processing, so it takes clicks while recording and processing; the short "done" mark lets clicks pass
+/// through (WS_EX_TRANSPARENT).
 /// The window is a per-pixel-alpha layered window: the pill is drawn into a bitmap (true round ends,
 /// a soft shadow, fade and slide in and out) and handed to UpdateLayeredWindow.
 /// </summary>
@@ -94,6 +95,14 @@ internal sealed class RecordingOverlay : Form
     /// <summary>A quick instruction row was clicked (index into the list given to ShowRecording).</summary>
     public event Action<int>? QuickActionClicked;
 
+    /// <summary>The ✕ was clicked: discard the recording or cancel the processing (same as Esc).</summary>
+    public event Action? CancelClicked;
+
+    // The ✕ (Mac PillCircleButton "xmark"), set while painting; empty when there is none.
+    private RectangleF _cancelRect;
+    private bool _cancelHot;
+    private const float CancelSize = 26;
+
     public RecordingOverlay()
     {
         FormBorderStyle = FormBorderStyle.None;
@@ -153,7 +162,7 @@ internal sealed class RecordingOverlay : Form
         _stopKey = stopKey;
         _hint = Core.UserCopy.OverlayStopHint(stopKey);
         // Dictate Prompt and templates: the selection is known only after Ctrl+C (up to 0.5 s), see SetSelection.
-        _context = mode != Mode.Dictate ? "Markierung wird gelesen …" : null;
+        _context = mode != Mode.Dictate ? Core.UserCopy.OverlayReadingSelection : null;
         if (_template) quickActions = null;
         _quick = mode == Mode.Prompt ? quickActions ?? Array.Empty<string>() : Array.Empty<string>();
         _quickLabel = "Oder direkt anwenden:";
@@ -183,8 +192,7 @@ internal sealed class RecordingOverlay : Form
         else if (selection == null)
         {
             // Nothing to edit: what the user says is the text (a finding, a letter) or a request for one.
-            _title = "Text oder Anweisung sprechen";
-            _context = "Nichts markiert: schreibt neuen Text an die Cursorstelle";
+            _context = Core.UserCopy.OverlayNothingSelected;
             _contextWarn = true;
             _quickLabel = "Oder auf das Gesprochene anwenden:";
         }
@@ -259,6 +267,9 @@ internal sealed class RecordingOverlay : Form
 
     private bool ShowsCard => _phase == Phase.Recording && _quick.Count > 0;
 
+    // Recording and processing carry the ✕, like the Mac pill.
+    private bool HasCancel => _phase is Phase.Recording or Phase.Processing;
+
     private bool ShowsScreenshot => _phase == Phase.Recording && _screenshot;
 
     // Plain pill: nothing below the header. Everything else is a card with softer corners.
@@ -323,13 +334,14 @@ internal sealed class RecordingOverlay : Form
 
         _phaseStart = DateTime.UtcNow;
         _fadeStart = null;
-        AccessibleDescription = Core.UserCopy.OverlayAnnouncement(_title, _hint, _context);
+        AccessibleDescription = Core.UserCopy.OverlayAnnouncement(_title, _hint, _context)
+            + (_phase == Phase.Recording ? $". ✕: {Core.UserCopy.OverlayDiscard}" : _phase == Phase.Processing ? $". ✕: {Core.UserCopy.OverlayCancelProcessing}" : "");
         if (!Visible)
         {
             _appearStart = DateTime.UtcNow;
             Show();
         }
-        SetClickThrough(!(ShowsCard || _phase == Phase.Warning));
+        SetClickThrough(!(HasCancel || ShowsCard || _phase == Phase.Warning));
         _timer.Start();
         Redraw();
         Core.Log.Info($"Overlay: {_phase} at {Bounds}, visible {Visible}");
@@ -426,6 +438,15 @@ internal sealed class RecordingOverlay : Form
         float textX = x + TextX * s;
         DrawIndicator(g, new PointF(x + 29 * s, headerCy), s, now);
 
+        _cancelRect = RectangleF.Empty;
+        if (HasCancel)
+        {
+            // ✕ at the right end of the header; the timer and the bars move left of it.
+            _cancelRect = new RectangleF(right - (16 + CancelSize) * s, headerCy - CancelSize / 2 * s, CancelSize * s, CancelSize * s);
+            DrawCancel(g, _cancelRect, s);
+            right = _cancelRect.X + 12 * s;
+        }
+
         float titleMax = right - textX - 20 * s;
         if (_phase == Phase.Recording)
         {
@@ -456,6 +477,7 @@ internal sealed class RecordingOverlay : Form
             g.DrawString(_warningWords, _bodyFont!, br, new RectangleF(textX, y + (HeaderH - 4) * s, right - textX - 24 * s, lines * 18 * s), _wrap);
         }
         if (hasHint) DrawHint(g, textX, y + 39 * s, right - textX - 20 * s, s);
+        right = card.Right; // the lines below the header use the full width
 
         if (_context != null)
         {
@@ -495,6 +517,22 @@ internal sealed class RecordingOverlay : Form
             return;
         }
         DrawText(g, _hint, _smallFont!, CMuted, x, cy, maxW);
+    }
+
+    /// <summary>The round ✕ button (Mac: white mark on a dark grey disc).</summary>
+    private void DrawCancel(Graphics g, RectangleF r, float s)
+    {
+        using (var disc = new SolidBrush(Hc ? SystemColors.ButtonFace : _cancelHot ? Color.FromArgb(96, 96, 104) : Color.FromArgb(71, 71, 78)))
+            g.FillEllipse(disc, r);
+        if (Hc)
+        {
+            using var edge = new Pen(SystemColors.WindowFrame, 1f);
+            g.DrawEllipse(edge, r);
+        }
+        using var mark = new Pen(Hc ? SystemColors.ControlText : Color.White, 1.8f * s) { StartCap = LineCap.Round, EndCap = LineCap.Round };
+        float cx = r.X + r.Width / 2, cy = r.Y + r.Height / 2, k = 4.2f * s;
+        g.DrawLine(mark, cx - k, cy - k, cx + k, cy + k);
+        g.DrawLine(mark, cx + k, cy - k, cx - k, cy + k);
     }
 
     /// <summary>A small rounded key cap; returns the x of its right edge.</summary>
@@ -688,17 +726,20 @@ internal sealed class RecordingOverlay : Form
     {
         base.OnMouseMove(e);
         int hover = ShowsCard ? _rowRects.FindIndex(r => r.Contains(e.Location)) : -1;
-        Cursor = hover >= 0 || _phase == Phase.Warning ? Cursors.Hand : Cursors.Default;
-        if (hover == _hover) return;
+        bool cancelHot = HasCancel && _cancelRect.Contains(e.Location);
+        Cursor = hover >= 0 || cancelHot || _phase == Phase.Warning ? Cursors.Hand : Cursors.Default;
+        if (hover == _hover && cancelHot == _cancelHot) return;
         _hover = hover;
+        _cancelHot = cancelHot;
         Redraw();
     }
 
     protected override void OnMouseLeave(EventArgs e)
     {
         base.OnMouseLeave(e);
-        if (_hover < 0) return;
+        if (_hover < 0 && !_cancelHot) return;
         _hover = -1;
+        _cancelHot = false;
         Redraw();
     }
 
@@ -708,6 +749,11 @@ internal sealed class RecordingOverlay : Form
         if (_phase == Phase.Warning)
         {
             HideOverlay();
+            return;
+        }
+        if (HasCancel && _cancelRect.Contains(e.Location))
+        {
+            CancelClicked?.Invoke();
             return;
         }
         if (!ShowsCard) return;

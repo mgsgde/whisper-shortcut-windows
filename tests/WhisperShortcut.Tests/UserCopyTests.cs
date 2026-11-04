@@ -23,9 +23,12 @@ public class UserCopyTests
     public void StatusLines_StayGermanAndSpecific()
     {
         Assert.Equal("Aufnahme läuft – Strg+Umschalt+D beendet sie", UserCopy.RecordingStatus("Strg+Umschalt+D"));
-        Assert.Equal("Sprache wird erkannt …", UserCopy.Transcribing);
-        Assert.Equal("Anweisung wird erkannt …", UserCopy.RecognizingInstruction);
-        Assert.Equal("Text wird bearbeitet …", UserCopy.EditingText);
+        // The Mac pill labels (Transcribing, Thinking, Listening, Prompting).
+        Assert.Equal("Wird transkribiert …", UserCopy.Transcribing);
+        Assert.Equal("Denkt nach …", UserCopy.RecognizingInstruction);
+        Assert.Equal("Denkt nach …", UserCopy.EditingText);
+        Assert.Equal("Hört zu", UserCopy.OverlayDictateTitle);
+        Assert.Equal("Prompt läuft", UserCopy.OverlayPromptTitle);
         Assert.Equal("Kürzer fassen …", UserCopy.QuickActionBusy("Kürzer fassen"));
         Assert.Equal("Wird verarbeitet …", UserCopy.QuickActionBusy("  "));
         Assert.Contains("Esc", UserCopy.OverlayStopHint("Strg+Umschalt+P"));

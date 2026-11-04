@@ -212,6 +212,7 @@ internal sealed class TrayApp : ApplicationContext
         // A finished download changes the idle status ("Modelle noch nicht geladen" → "Bereit").
         _offline.DownloadChanged += () => { if (_state == State.Idle) SetState(State.Idle); };
         _overlay.QuickActionClicked += OnQuickAction;
+        _overlay.CancelClicked += OnEscape; // the pill's ✕ (Mac): discard the recording or cancel the processing
         _updates.Found += OnUpdateFound;
         _updateNoticeTimer.Tick += (_, _) =>
         {
