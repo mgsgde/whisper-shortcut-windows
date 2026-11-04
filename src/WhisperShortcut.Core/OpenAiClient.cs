@@ -27,12 +27,18 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     private readonly Func<string> _transcriptionModel;
     private readonly Func<string> _promptModel;
 
+    /// <summary>Spoken language for transcription (ISO 639-1 or "auto"), read on every call; "auto" sends no language field.</summary>
+    public Func<string> Language { get; init; } = () => TranscriptionLanguages.Auto;
+
     /// <summary>Base of the exponential backoff between retries (1.5 s, doubling, capped at 15 s; tests set it to zero).</summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(1.5);
 
     /// <summary>Creates a client reading key and models from <paramref name="settings"/> on every call.</summary>
     public OpenAiClient(Settings settings, HttpClient? http = null)
-        : this(() => settings.OpenAiKey, () => settings.OpenAiTranscriptionModel, () => settings.OpenAiPromptModel, http) { }
+        : this(() => settings.OpenAiKey, () => settings.OpenAiTranscriptionModel, () => settings.OpenAiPromptModel, http)
+    {
+        Language = () => settings.TranscriptionLanguage;
+    }
 
     /// <summary>Creates a client with explicit providers (evaluated on every call).</summary>
     public OpenAiClient(Func<string?> apiKeyProvider, Func<string> transcriptionModel,
@@ -66,6 +72,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         var keywordStyle = OpenAiModels.TakesKeywords(model);
         var keywords = keywordStyle && sendKeywords ? GlossaryPrompt.Keywords(glossary) : Array.Empty<string>();
         var hint = keywordStyle ? "" : GlossaryPrompt.Hint(glossary);
+        var language = TranscriptionLanguages.ForRequest(Language());
         if (keywordStyle) Log.Info($"OpenAI transcription: {keywords.Count} keyword(s){(sendKeywords ? "" : " (keywords off)")}");
         HttpContent Build()
         {
@@ -76,6 +83,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
             form.Add(new StringContent(model), "model");
             if (!keywordStyle) form.Add(new StringContent("0"), "temperature");
             form.Add(new StringContent("json"), "response_format");
+            if (language != null) form.Add(new StringContent(language), "language");
             foreach (var k in keywords) form.Add(new StringContent(k, Encoding.UTF8), "keywords");
             if (hint.Length > 0) form.Add(new StringContent(hint, Encoding.UTF8), "prompt");
             return form;

@@ -29,6 +29,8 @@ internal sealed partial class SettingsForm : Form
     private readonly Control[] _engineOnly;
     private readonly Card _dictateGeminiCard, _dictateOpenAiCard, _promptGeminiCard, _promptOpenAiCard;
     private readonly FluentCombo _punctuation;
+    // Diktieren → Sprache (OpenAI only) and Erweitert → Genauigkeit (Gemini only), like the Mac.
+    private readonly FluentCombo _language, _temperature, _thinking;
     /// <summary>Diktieren → Satzzeichen: only offline speech recognition writes spoken marks out as words.</summary>
     private readonly Control[] _punctuationOnly;
     private readonly FluentCombo _mic;
@@ -45,9 +47,8 @@ internal sealed partial class SettingsForm : Form
     private readonly PromptEditor _promptPrompt;
     private readonly ToggleSwitch _autoStart;
     private readonly ToggleSwitch _autoPaste;
-    private readonly ToggleSwitch _restoreClipboard;
+    private readonly FluentCombo _afterPaste;
     private readonly ToggleSwitch _sounds;
-    private readonly Banner _welcome;
     private ThemedLabel _updateStatus = null!;
     private FluentButton _updateButton = null!;
     private readonly UpdateService _updates;
@@ -100,6 +101,9 @@ internal sealed partial class SettingsForm : Form
 
     /// <summary>Raised after the settings were written; the window stays open.</summary>
     public event Action? Saved;
+
+    /// <summary>Über → Einführung → „Zeigen“: open the welcome tour.</summary>
+    public event Action? WelcomeRequested;
     private bool _discard;
 
     public const string General = "Allgemein", AccountsPage = "Konten", DictatePage = "Diktieren", PromptPage = "Dictate Prompt",
@@ -116,8 +120,7 @@ internal sealed partial class SettingsForm : Form
     private const int RowPadding = 16, RowGap = 24;
     private const int KeyWidth = 200, ComboWidth = 300, ToggleWidth = 88, ButtonWidth = 120;
 
-    /// <param name="welcome">First start: a short "what to do now" box on top of the first page.</param>
-    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, UpdateService updates, bool welcome = false, McpService? mcp = null)
+    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, UpdateService updates, McpService? mcp = null)
     {
         _settings = settings;
         _updates = updates;
@@ -155,17 +158,6 @@ internal sealed partial class SettingsForm : Form
         var privacy = NewPage(PrivacyPage, "Ob etwas diesen PC verlassen darf und worauf WhisperShortcut hier zugreifen kann.");
 
         // ================= page: Allgemein =================
-        {
-            _welcome = new Banner
-            {
-                Text = Core.UserCopy.Welcome(Hotkey.Display(settings.DictateHotkey)),
-                AccessibleName = Core.UserCopy.WelcomeAccessibleName,
-                AutoSize = true, Padding = new Padding(14, 12, 14, 12), Margin = new Padding(0, 4, 0, 4), Visible = welcome,
-            };
-            Fit(_welcome, 0);
-            general.Controls.Add(_welcome);
-        }
-
         // --- shortcuts: all in one list, like the Mac's General → Keyboard Shortcuts ---
         general.Controls.Add(Section("Tastenkürzel", first: true));
         general.Controls.Add(Wrap("Globale Tastenkürzel – sie funktionieren in jeder App. Einmal drücken zum Starten, noch einmal zum Beenden. "
@@ -225,16 +217,21 @@ internal sealed partial class SettingsForm : Form
         // --- clipboard (Mac: Auto-paste, After auto-paste) ---
         general.Controls.Add(Section("Zwischenablage", subtitle: "Was mit dem Text nach der Aufnahme passiert. Er liegt immer auch in der Zwischenablage."));
         _autoPaste = new ToggleSwitch { Checked = settings.AutoPaste, AccessibleName = "Automatisch einfügen" };
-        _restoreClipboard = new ToggleSwitch { Checked = settings.RestoreClipboard, AccessibleName = "Zwischenablage wiederherstellen" };
+        _afterPaste = new FluentCombo { Width = ComboWidth, AccessibleName = "Zwischenablage nach dem Einfügen" };
+        foreach (var mode in Core.ClipboardAfterPasteModes.All) _afterPaste.Items.Add(new AfterPasteItem(mode));
+        _afterPaste.SelectedItem = _afterPaste.Items.Cast<AfterPasteItem>().First(i => i.Mode == settings.ClipboardAfterPaste);
         var pasteCard = new Card();
         pasteCard.AddRow(SettingRow("Automatisch einfügen", "Der Text erscheint dort, wo der Cursor steht. Aus: Er liegt nur in der "
             + "Zwischenablage und wird mit Strg+V selbst eingefügt.", _autoPaste, ToggleWidth, out _));
-        pasteCard.AddRow(SettingRow("Zwischenablage wiederherstellen", "Nach dem Einfügen kommt zurück, was vorher in der Zwischenablage war.",
-            _restoreClipboard, ToggleWidth, out _));
+        // Mac "After auto-paste": the explanation line follows the chosen option.
+        pasteCard.AddRow(SettingRow("Nach dem Einfügen", "", _afterPaste, ComboWidth, out var afterPasteText));
+        void DescribeAfterPaste() => afterPasteText.Text = Core.ClipboardAfterPasteModes.Explanation(SelectedAfterPaste);
+        _afterPaste.SelectedIndexChanged += (_, _) => DescribeAfterPaste();
+        DescribeAfterPaste();
         general.Controls.Add(pasteCard);
-        // Without pasting nothing is restored: the text itself stays in the clipboard.
-        _autoPaste.CheckedChanged += (_, _) => _restoreClipboard.Enabled = _autoPaste.Checked;
-        _restoreClipboard.Enabled = _autoPaste.Checked;
+        // Without pasting there is nothing to settle afterwards: the text itself stays in the clipboard (Mac: disabled).
+        _autoPaste.CheckedChanged += (_, _) => _afterPaste.Enabled = _autoPaste.Checked;
+        _afterPaste.Enabled = _autoPaste.Checked;
 
         // --- Erweitert (Mac: General → Advanced at the end): sounds (Windows only, off like the Mac) and the recording keys ---
         _sounds = new ToggleSwitch { Checked = settings.Sounds, AccessibleName = "Signaltöne" };
@@ -243,32 +240,18 @@ internal sealed partial class SettingsForm : Form
             + "Aus: Nur das Symbol und die Anzeige am Bildschirm zeigen, was gerade passiert.", _sounds, ToggleWidth, out _));
         var fixedCard = new Card();
         fixedCard.AddRow(SettingRow("Aufnahme verwerfen oder Verarbeitung abbrechen", null, KeyCap("Esc"), ButtonWidth + 40, out _));
-        fixedCard.AddRow(SettingRow("Schnellanweisung anwenden (nur bei Dictate Prompt)", null, KeyCap("Strg+1 bis Strg+5"), ButtonWidth + 40, out _));
+        fixedCard.AddRow(SettingRow("Schnellanweisung anwenden (nur bei Dictate Prompt)", null, KeyCap(Core.QuickActionList.KeyRange), ButtonWidth + 40, out _));
         AddAdvanced(general,
             Section("Töne", first: true), soundCard,
             Section("Während einer Aufnahme", subtitle: "Diese Tasten sind nur belegt, solange die Anzeige unten zu sehen ist. "
                 + "Sonst gehören sie wie gewohnt den anderen Programmen."), fixedCard);
 
         // ================= page: Konten (Mac Accounts: one section per provider key) =================
-        _geminiKey = new KeyField(settings.ApiKey ?? "", (k, ct) => _gemini.CheckKeyAsync(k, ct), result => result switch
-        {
-            Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
-            Core.KeyCheck.Invalid => ("✗ Google kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
-            Core.KeyCheck.Forbidden => ("✗ Google kennt den Schlüssel, lässt ihn aber nicht an Gemini. In Google AI Studio einen neuen Schlüssel erstellen.", Tone.Bad),
-            Core.KeyCheck.NoConnection => ("Keine Verbindung zu Google. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
-            _ => ("Google hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
-        }, k => SaveCheckedKey(k, gemini: true));
+        _geminiKey = new KeyField(settings.ApiKey ?? "", (k, ct) => _gemini.CheckKeyAsync(k, ct), GeminiKeyMessage, k => SaveCheckedKey(k, gemini: true));
         AddKeyCard(accounts, _geminiKey, "Google-API-Schlüssel", "Für Gemini: Diktieren und Dictate Prompt. Bitte einen Schlüssel aus einem "
             + "Google-Projekt mit Abrechnung verwenden: Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen.",
             "Schlüssel in Google AI Studio erstellen", "https://aistudio.google.com/apikey");
-        _openAiKey = new KeyField(settings.OpenAiKey ?? "", (k, ct) => _openAi.CheckKeyAsync(k, ct), result => result switch
-        {
-            Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
-            Core.KeyCheck.Invalid => ("✗ OpenAI kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
-            Core.KeyCheck.Forbidden => ("✗ OpenAI kennt den Schlüssel, er darf aber keine Modelle benutzen. Rechte des Projekts prüfen.", Tone.Bad),
-            Core.KeyCheck.NoConnection => ("Keine Verbindung zu OpenAI. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
-            _ => ("OpenAI hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
-        }, k => SaveCheckedKey(k, gemini: false));
+        _openAiKey = new KeyField(settings.OpenAiKey ?? "", (k, ct) => _openAi.CheckKeyAsync(k, ct), OpenAiKeyMessage, k => SaveCheckedKey(k, gemini: false));
         AddKeyCard(accounts, _openAiKey, "OpenAI-API-Schlüssel", "Für die Transkriptions- und Textmodelle von OpenAI. Ein API-Schlüssel mit "
             + "Guthaben auf platform.openai.com; ein ChatGPT-Abo zählt dafür nicht.",
             "Schlüssel bei OpenAI erstellen", "https://platform.openai.com/api-keys");
@@ -328,6 +311,16 @@ internal sealed partial class SettingsForm : Form
         dictate.Controls.Add(punctuationCard);
         _punctuationOnly = new Control[] { punctuationSection, punctuationCard };
 
+        // Mac Diktieren → Sprache (languageSection, WhisperLanguage). Only the OpenAI API takes a language.
+        dictate.Controls.Add(Section("Sprache", subtitle: "In welcher Sprache du diktierst."));
+        _language = new FluentCombo { Width = ComboWidth, AccessibleName = "Sprache" };
+        foreach (var (code, name) in Core.TranscriptionLanguages.All) _language.Items.Add(new ChoiceItem<string>(code, name));
+        _language.SelectedItem = _language.Items.Cast<ChoiceItem<string>>().First(i => i.Value == Core.TranscriptionLanguages.Normalize(settings.TranscriptionLanguage));
+        var languageCard = new Card();
+        languageCard.AddRow(SettingRow("Sprache", "Gilt nur für OpenAI: Bei „Automatisch erkennen“ bestimmt das Modell die Sprache selbst. "
+            + "Gemini und Parakeet auf diesem PC erkennen die Sprache immer selbst und ignorieren diese Wahl.", _language, ComboWidth, out _));
+        dictate.Controls.Add(languageCard);
+
         // --- glossary (Mac: in the Dictate tab) ---
         dictate.Controls.Add(Section("Glossar"));
         dictate.Controls.Add(Wrap("Ein Begriff pro Zeile: Namen, Medikamente, Fachwörter, die richtig geschrieben werden sollen. "
@@ -354,6 +347,25 @@ internal sealed partial class SettingsForm : Form
         _dictatePrompt = new PromptEditor(Core.Prompts.DefaultTranscriptionSystemPrompt, settings.DictateSystemPrompt, "Anweisungen Diktieren");
         _dictateHistory = new HistoryLink(_dictatePrompt.Box, _history, Core.PromptField.Dictate);
         dictate.Controls.Add(PromptCard(_dictatePrompt, _dictateHistory));
+
+        // Mac Diktieren → Advanced → „Genauigkeit“ (tuningSection): temperature and thinking for Gemini.
+        _temperature = new FluentCombo { Width = ComboWidth, AccessibleName = "Temperatur" };
+        foreach (var (value, label) in Core.TranscriptionTuning.Temperatures) _temperature.Items.Add(new ChoiceItem<double>(value, label));
+        _temperature.SelectedItem = _temperature.Items.Cast<ChoiceItem<double>>()
+            .First(i => i.Value == Core.TranscriptionTuning.NormalizeTemperature(settings.TranscriptionTemperature));
+        _thinking = new FluentCombo { Width = ComboWidth, AccessibleName = "Denkaufwand" };
+        foreach (var (value, label) in Core.TranscriptionTuning.ThinkingLevels) _thinking.Items.Add(new ChoiceItem<string>(value, label));
+        _thinking.SelectedItem = _thinking.Items.Cast<ChoiceItem<string>>()
+            .First(i => i.Value == Core.TranscriptionTuning.NormalizeThinking(settings.TranscriptionThinking));
+        var tuningCard = new Card();
+        tuningCard.AddRow(SettingRow("Temperatur", "Niedriger heißt wörtlicher. WhisperShortcut nutzt 0,0, das gibt wieder, was gesagt wurde. "
+            + "Höhere Werte sind die häufigste Ursache für erfundene oder vertauschte Wörter.", _temperature, ComboWidth, out _));
+        tuningCard.AddRow(SettingRow("Denkaufwand", "Mehr Denkaufwand hilft bei schwierigem Ton, Akzenten und ungewöhnlichem Vokabular, "
+            + "kostet aber Zeit: bei Flash-Lite fast nichts, bei Pro etwa das Doppelte. Gemini 3.7/3.8 Flash und Pro laufen nicht unter "
+            + "„Niedrig“ und werden darauf angehoben.", _thinking, ComboWidth, out _));
+        AddAdvanced(dictate,
+            Section("Genauigkeit", subtitle: "Wie frei das Modell vom Gehörten abweichen darf und wie lange es vorher nachdenken darf. "
+                + "Gilt nur für Gemini; OpenAI und Parakeet nehmen diese Werte nicht.", first: true), tuningCard);
 
         // ================= page: Dictate Prompt =================
         prompt.Controls.Add(Section("Modell", subtitle: "Das Modell, das deine gesprochene Anweisung hört und auf den markierten Text anwendet."));
@@ -411,7 +423,7 @@ internal sealed partial class SettingsForm : Form
 
         prompt.Controls.Add(Section("Schnellanweisungen"));
         prompt.Controls.Add(Wrap($"Erscheinen bei Dictate Prompt ({Hotkey.Display(settings.PromptHotkey)}) unten in der Anzeige. "
-            + "Strg+1 bis Strg+5 oder ein Klick wendet sie sofort an: auf die Markierung oder, ohne Markierung, auf das gerade "
+            + $"{Core.QuickActionList.KeyRange} oder ein Klick wendet sie sofort an: auf die Markierung oder, ohne Markierung, auf das gerade "
             + "Diktierte. Beispiel: Text markieren, Strg+3, schon kürzer. Leere Felder werden ausgelassen.", 0));
         var quickTable = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0) };
         quickTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
@@ -680,7 +692,7 @@ internal sealed partial class SettingsForm : Form
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
         var dirtyTimer = new System.Windows.Forms.Timer { Interval = 150 };
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
-        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation };
+        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation, _afterPaste, _language, _temperature, _thinking };
         dirtyTimer.Tick += (_, _) =>
         {
             if (_snapshot.Length == 0 || combos.Any(c => c.DroppedDown)) return;
@@ -816,12 +828,7 @@ internal sealed partial class SettingsForm : Form
 
         info.Controls.Add(Section("Einführung", subtitle: "Die geführte Tour durch die Funktionen von WhisperShortcut noch einmal ansehen."));
         var tour = new FluentButton("Zeigen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Einführung zeigen" };
-        tour.Click += (_, _) =>
-        {
-            _welcome.Visible = true;
-            ShowPage(General);
-            ((ScrollableControl)_pages[General]).AutoScrollPosition = Point.Empty;
-        };
+        tour.Click += (_, _) => WelcomeRequested?.Invoke(); // the tour window (Mac: Settings → About → Welcome Tour)
         var tourCard = new Card();
         tourCard.AddRow(SettingRow("Einführung noch einmal zeigen", Core.UserCopy.WelcomeTourHint, tour, ButtonWidth, out _));
         info.Controls.Add(tourCard);
@@ -1351,8 +1358,28 @@ internal sealed partial class SettingsForm : Form
         return true;
     }
 
-    /// <summary>One API key: the field, Anzeigen / Prüfen, and a check that runs while the key is pasted.</summary>
-    private sealed class KeyField : IDisposable
+    /// <summary>What the Google key check says (also used by the welcome tour).</summary>
+    internal static (string Text, Tone Tone) GeminiKeyMessage(Core.KeyCheck result) => result switch
+    {
+        Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
+        Core.KeyCheck.Invalid => ("✗ Google kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
+        Core.KeyCheck.Forbidden => ("✗ Google kennt den Schlüssel, lässt ihn aber nicht an Gemini. In Google AI Studio einen neuen Schlüssel erstellen.", Tone.Bad),
+        Core.KeyCheck.NoConnection => ("Keine Verbindung zu Google. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
+        _ => ("Google hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
+    };
+
+    /// <summary>What the OpenAI key check says (also used by the welcome tour).</summary>
+    internal static (string Text, Tone Tone) OpenAiKeyMessage(Core.KeyCheck result) => result switch
+    {
+        Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
+        Core.KeyCheck.Invalid => ("✗ OpenAI kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
+        Core.KeyCheck.Forbidden => ("✗ OpenAI kennt den Schlüssel, er darf aber keine Modelle benutzen. Rechte des Projekts prüfen.", Tone.Bad),
+        Core.KeyCheck.NoConnection => ("Keine Verbindung zu OpenAI. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
+        _ => ("OpenAI hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
+    };
+
+    /// <summary>One API key: the field, Anzeigen / Prüfen, and a check that runs while the key is pasted. Also used by the welcome tour.</summary>
+    internal sealed class KeyField : IDisposable
     {
         public TextBox Box { get; }
         public ThemedLabel Status { get; } = new() { AutoSize = true, Margin = new Padding(0, 4, 0, 0), Text = "" };
@@ -1471,6 +1498,23 @@ internal sealed partial class SettingsForm : Form
     {
         public override string ToString() => Label;
     }
+
+    /// <summary>A combo entry: the stored value and its German label.</summary>
+    private sealed record ChoiceItem<T>(T Value, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private string SelectedLanguage => ((ChoiceItem<string>)_language.SelectedItem!).Value;
+    private double SelectedTemperature => ((ChoiceItem<double>)_temperature.SelectedItem!).Value;
+    private string SelectedThinking => ((ChoiceItem<string>)_thinking.SelectedItem!).Value;
+
+    private sealed record AfterPasteItem(Core.ClipboardAfterPaste Mode)
+    {
+        public override string ToString() => Core.ClipboardAfterPasteModes.Label(Mode);
+    }
+
+    private Core.ClipboardAfterPaste SelectedAfterPaste => ((AfterPasteItem)_afterPaste.SelectedItem!).Mode;
 
     private Core.PunctuationMode SelectedPunctuation => ((PunctuationItem)_punctuation.SelectedItem!).Mode;
 
@@ -1764,9 +1808,10 @@ internal sealed partial class SettingsForm : Form
         SelectedModel(_dictateModelOpenAi), SelectedModel(_promptModelOpenAi),
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
-        _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), _restoreClipboard.Checked.ToString(), _sounds.Checked.ToString(),
+        _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), SelectedAfterPaste.ToString(), _sounds.Checked.ToString(),
         _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value, _liveKey.Value,
         SelectedPunctuation.ToString(), _settingsKey.Value, _rightCtrl.Checked.ToString(),
+        SelectedLanguage, Core.TranscriptionTuning.Format(SelectedTemperature), SelectedThinking,
     }.Concat(_quick.Select(q => q.Text))
      .Concat(_templates.Select(t => string.Join("\u0002", t.Id, t.Name, t.Instructions, t.Hotkey))));
 
@@ -1910,12 +1955,13 @@ internal sealed partial class SettingsForm : Form
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
             _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
-            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
+            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
             _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
-            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation);
+            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
+            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _geminiKey.Value;
@@ -1948,8 +1994,11 @@ internal sealed partial class SettingsForm : Form
         _settings.DictateSystemPrompt = _dictatePrompt.Value;
         _settings.PromptModeSystemPrompt = _promptPrompt.Value;
         _settings.AutoPaste = _autoPaste.Checked;
-        _settings.RestoreClipboard = _restoreClipboard.Checked;
+        _settings.ClipboardAfterPaste = SelectedAfterPaste;
         _settings.PunctuationMode = SelectedPunctuation;
+        _settings.TranscriptionLanguage = SelectedLanguage;
+        _settings.TranscriptionTemperature = SelectedTemperature;
+        _settings.TranscriptionThinking = SelectedThinking;
         _settings.Sounds = _sounds.Checked;
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
         _settings.SendScreenshots = _sendScreenshots.Checked;
@@ -1964,12 +2013,13 @@ internal sealed partial class SettingsForm : Form
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
                 _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
                 _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
-                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.RestoreClipboard, _settings.Sounds,
+                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
             _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
-            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation) = before;
+            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
+            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking) = before;
             // Said once, then in the status line: this runs after every edit.
             var error = Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message);
             if (error != _lastSaveError) Warn(error);
@@ -1984,7 +2034,7 @@ internal sealed partial class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, restore clipboard {_settings.RestoreClipboard}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode})");
         // Also with a key problem: the same state is not written again until the user edits something.
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;

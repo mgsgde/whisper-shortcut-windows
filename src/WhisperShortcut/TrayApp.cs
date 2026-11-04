@@ -23,7 +23,6 @@ internal sealed class TrayApp : ApplicationContext
         Core.DictationTemplate? Template = null, string StopKey = "", bool ClipboardOnly = false,
         Core.ScreenshotImage? Screenshot = null);
 
-    private const string RetryHint = " Hier klicken, um es noch einmal zu versuchen.";
 
     private readonly string? _testWav;
     private readonly bool _fakeGemini;
@@ -52,7 +51,7 @@ internal sealed class TrayApp : ApplicationContext
     // In memory only: in a practice a dictation must not stay behind in a file.
     private readonly Core.RecentTexts _recent = new();
     private static readonly Hotkey Escape = new(0, Keys.Escape);
-    // Ctrl+1–5 while a Dictate Prompt recording runs: apply a quick instruction (Settings.QuickActions).
+    // Ctrl+1–9 while a Dictate Prompt recording runs: apply a quick instruction (Settings.QuickActions).
     private static readonly Hotkey[] QuickKeys =
         Enumerable.Range(0, Core.QuickActionList.Max).Select(i => new Hotkey(NativeMethods.MOD_CONTROL, Keys.D1 + i)).ToArray();
 
@@ -82,6 +81,11 @@ internal sealed class TrayApp : ApplicationContext
     private IReadOnlyList<string> _unsupported = Array.Empty<string>();
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
+    private WelcomeForm? _welcomeForm;
+    // The settings were asked for while the tour was open: open them once it closes.
+    private bool _settingsAfterTour;
+    // Mac „Einrichtung abschließen …“: shown while the welcome tour is not finished.
+    private readonly ToolStripMenuItem _finishSetupItem;
     private readonly Toast _toast = new();
     private readonly UpdateService _updates;
     private readonly ToolStripMenuItem _updateItem;
@@ -102,6 +106,11 @@ internal sealed class TrayApp : ApplicationContext
     // Screenshot hotkey: the image waits here for the next Dictate Prompt or template run (memory only, 5 min).
     private readonly Core.ScreenshotHold _heldShot = new(() => DateTime.UtcNow);
     private readonly System.Windows.Forms.Timer _shotExpiry = new() { Interval = 15_000 };
+    // Mac transcribeCancelledRecording / runAgainWithoutTemplate: audio kept in memory only.
+    private readonly Core.CancelledRecording _cancelled = new();
+    private readonly Core.TemplateReplay _templateReplay = new();
+    private readonly System.Windows.Forms.Timer _replayExpiry = new() { Interval = 15_000 };
+    private readonly ToolStripMenuItem _cancelledItem, _withoutTemplateItem;
     private Core.ScreenshotImage? _runShot;
     private CancellationTokenSource? _snipCts;
     private readonly MeetingController _meeting;
@@ -150,6 +159,8 @@ internal sealed class TrayApp : ApplicationContext
         _copyLast = new ToolStripMenuItem("Letzte Transkription kopieren", null, (_, _) => CopyRecent(_recent.Latest));
         _recentMenu = new ToolStripMenuItem("Letzte Transkriptionen");
         _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Visible = false };
+        _cancelledItem = new ToolStripMenuItem("Abgebrochene Aufnahme transkribieren", null, (_, _) => TranscribeCancelledRecording()) { Visible = false };
+        _withoutTemplateItem = new ToolStripMenuItem("Nochmal ohne Vorlage", null, (_, _) => RunAgainWithoutTemplate()) { Visible = false };
         // An update restarts the app: not in the middle of a dictation or a meeting.
         _updates = new UpdateService(_settings, () => _state == State.Idle && _meeting?.IsActive != true, Quit);
         _updateItem = new ToolStripMenuItem("Update installieren …", null, (_, _) => _updates.ShowDialog())
@@ -157,15 +168,18 @@ internal sealed class TrayApp : ApplicationContext
             Visible = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold),
         };
         _settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings());
-        var welcomeItem = new ToolStripMenuItem("Einführung …", null, (_, _) => ShowSettings(welcome: true));
+        var welcomeItem = new ToolStripMenuItem("Einführung …", null, (_, _) => OpenWelcome());
+        _finishSetupItem = new ToolStripMenuItem("Einrichtung abschließen …", null, (_, _) => OpenWelcome()) { Visible = false };
         // Mac: „Feedback senden“ with the problem report first. Windows adds the log, which the report points to.
         var feedbackItem = new ToolStripMenuItem("Feedback senden");
         feedbackItem.DropDownItems.Add(new ToolStripMenuItem("Problem melden …", null, (_, _) => ShowSettings()));
         feedbackItem.DropDownItems.Add(new ToolStripMenuItem("Protokoll öffnen", null, (_, _) => OpenLog()));
         var quitItem = new ToolStripMenuItem("WhisperShortcut beenden", null, (_, _) => Quit());
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        // Popups sit above the recording pill while it is on screen (Mac centerBottomPillClearance).
+        _toast.AvoidBounds = () => _overlay.Visible ? _overlay.Bounds : null;
         _meeting = new MeetingController(_settings, _ui, TranscribeMeetingChunkAsync, SummarizeMeetingAsync, MeetingUnavailable,
-            Notify, TrySave, () => new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveGlossaryHotkey,
+            (title, text, icon, open) => Notify(title, text, icon, open, open == null ? null : Core.UserCopy.ActionOpenFolder), TrySave, () => new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveGlossaryHotkey,
                     _settings.ActiveScreenshotHotkey, _settings.TemplateHotkey, _settings.ActiveLiveDictateHotkey,
                     _settings.ActiveOpenSettingsHotkey }
                 .Concat(_settings.Templates.Select(t => t.Hotkey)).Where(k => k.Length > 0).ToArray(),
@@ -175,9 +189,10 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.AddRange(new ToolStripItem[]
         {
             _statusItem, _updateItem, new ToolStripSeparator(),
-            _proposalsItem, _stopItem, _stopSeparator,
+            _finishSetupItem, _proposalsItem, _stopItem, _stopSeparator,
             _dictateItem, _promptItem, _screenshotItem, _glossaryItem, _liveItem, new ToolStripSeparator(),
-            _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
+            // Mac order: Copy Last, Recent, Transcribe Cancelled Recording, Run Again Without Template; then Windows' retry.
+            _copyLast, _recentMenu, _cancelledItem, _withoutTemplateItem, _retryItem, new ToolStripSeparator(),
             // Mac: the meeting starts from the Chat window, which Windows does not have; its row sits where Chat is.
             _meeting.MenuItem, new ToolStripSeparator(),
             _settingsItem, welcomeItem, feedbackItem, quitItem,
@@ -201,6 +216,14 @@ internal sealed class TrayApp : ApplicationContext
         {
             if (_live is { HasHeldText: true } session && ClipboardPaster.ForegroundRoot() == _liveTarget) session.RetryHeld();
         };
+        _replayExpiry.Tick += (_, _) =>
+        {
+            if (_templateReplay.DropIfExpired(DateTime.UtcNow))
+            {
+                Core.Log.Info("Template replay dropped: unused for 10 minutes");
+                _replayExpiry.Stop();
+            }
+        };
         _shotExpiry.Tick += (_, _) =>
         {
             if (_heldShot.DropIfExpired()) Core.Log.Info("Screenshot dropped: unused for 5 minutes");
@@ -211,6 +234,7 @@ internal sealed class TrayApp : ApplicationContext
         // A finished download changes the idle status ("Modelle noch nicht geladen" → "Bereit").
         _offline.DownloadChanged += () => { if (_state == State.Idle) SetState(State.Idle); };
         _overlay.QuickActionClicked += OnQuickAction;
+        _overlay.CancelClicked += OnEscape; // the pill's ✕ (Mac): discard the recording or cancel the processing
         _updates.Found += OnUpdateFound;
         _updateNoticeTimer.Tick += (_, _) =>
         {
@@ -222,7 +246,8 @@ internal sealed class TrayApp : ApplicationContext
         if (!testRun) _updates.Start();
         _ui.Post(_ => _meeting.OnStartup(), null);
 
-        if (firstRun && !testRun)
+        // Mac: the tour opens at every start until it was finished with „Fertig“ (closing it is not finishing).
+        if (!testRun && !_settings.WelcomeCompleted)
         {
             OpenWelcome();
         }
@@ -233,8 +258,8 @@ internal sealed class TrayApp : ApplicationContext
         else if (MissingKey)
         {
             Notify("Willkommen bei WhisperShortcut",
-                "Bitte zuerst den API-Schlüssel eintragen: hier klicken oder auf das blaue Symbol unten rechts.",
-                ToolTipIcon.Info, ShowSettings);
+                "Trag zuerst einen API-Schlüssel ein oder schalte den Offline-Modus ein.",
+                ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
         }
     }
 
@@ -250,8 +275,8 @@ internal sealed class TrayApp : ApplicationContext
         _lastFailed = new FailedRun(rec.Wav, mode, rec.Seconds, null, null, IntPtr.Zero,
             StopKey: mode == Mode.Prompt ? _settings.PromptHotkey : _settings.DictateHotkey, ClipboardOnly: true);
         Notify("Aufnahme unterbrochen",
-            $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Hier klicken, um sie zu transkribieren. Der Text landet in der Zwischenablage.",
-            ToolTipIcon.Warning, RetryLast);
+            $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Der Text landet nach dem Transkribieren in der Zwischenablage.",
+            ToolTipIcon.Warning, RetryLast, "Transkribieren");
         return true;
     }
 
@@ -335,8 +360,8 @@ internal sealed class TrayApp : ApplicationContext
             _lastWarnedHotkeys = failedKey;
             Notify("Tastenkürzel belegt",
                 $"{string.Join(" und ", failed)} {(failed.Count > 1 ? "werden" : "wird")} schon von einem anderen Programm benutzt. "
-                + "Hier klicken und in den Einstellungen ein anderes wählen.",
-                ToolTipIcon.Warning, ShowSettings);
+                + "Wähl in den Einstellungen ein anderes.",
+                ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
         }
     }
 
@@ -351,6 +376,7 @@ internal sealed class TrayApp : ApplicationContext
         bool idle = _state == State.Idle;
         _stopItem.Visible = _stopSeparator.Visible = !idle;
         _proposalsItem.Visible = _mcp != null && _mcp.Proposals.Pending.Count > 0;
+        _finishSetupItem.Visible = !_settings.WelcomeCompleted;
         bool recording = _state == State.Recording;
         _dictateItem.Text = recording && _mode == Mode.Dictate && _live == null ? "Diktat beenden" : "Diktieren";
         _dictateItem.ShortcutKeyDisplayString = Key(_settings.ActiveDictateHotkey);
@@ -364,6 +390,12 @@ internal sealed class TrayApp : ApplicationContext
         _copyLast.Visible = _recent.Latest != null;
         _recentMenu.Visible = _recent.Items.Count > 0;
         _retryItem.Visible = _lastFailed != null && idle;
+        _cancelledItem.Visible = _cancelled.HasRecording;
+        var replay = _templateReplay.Current(DateTime.UtcNow);
+        _withoutTemplateItem.Visible = replay != null;
+        if (replay != null)
+            _withoutTemplateItem.ToolTipText = $"Führt dein letztes Diktat noch einmal mit dem System-Prompt von Dictate Prompt aus statt mit „{replay.Value.TemplateName}“. "
+                + "Das Ergebnis kommt in die Zwischenablage.";
     }
 
     /// <summary>The menu's „Stopp“ (Mac stopCurrentOperation): stops a recording, cancels the processing.</summary>
@@ -540,8 +572,7 @@ internal sealed class TrayApp : ApplicationContext
         if (_live != null)
         {
             // Text already inserted stays: it is in another window.
-            // HOOK(clear clipboard, macOS): Windows has no „Zwischenablage nach dem Einfügen leeren“ setting yet; pass it here when it exists.
-            _paster.EndLive(Core.LiveDictation.ClipboardAtEnd(_settings.RestoreClipboard, false, null, false), null);
+            _paster.EndLive(LiveClipboardAtEnd(null, false), null);
             DiscardLive();
         }
         CancelSelectionCopy(); // no Ctrl+C into the user's window after the cancel
@@ -550,6 +581,11 @@ internal sealed class TrayApp : ApplicationContext
         _overlay.HideOverlay();
         SetState(State.Idle);
     }
+
+    // Live diktieren ends: the clipboard setting decides between restore, keep and clear (Mac "After auto-paste").
+    private Core.LiveClipboardEnd LiveClipboardAtEnd(Core.LiveDictationOutcome? outcome, bool fallbackHasText) =>
+        Core.LiveDictation.ClipboardAtEnd(_settings.RestoreClipboard,
+            clearAfterPaste: _settings.ClipboardAfterPaste == Core.ClipboardAfterPaste.Clear, outcome, fallbackHasText);
 
     private void CancelSelectionCopy()
     {
@@ -672,27 +708,27 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Info($"Hotkey {mode} with a local engine, models missing");
             Sounds.Error();
-            Notify("Offline-Modelle fehlen",
+            Notify(Core.UserCopy.ModelNotDownloadedTitle,
                 (mode == Mode.Dictate || !OfflineEngine.SpeechInstalled
                     ? "Die Offline-Spracherkennung ist noch nicht geladen."
                     : "Das Sprachmodell für „Text bearbeiten“ ist noch nicht geladen.")
-                + " Hier klicken und in den Einstellungen unter „Offline-Modelle“ laden.",
-                ToolTipIcon.Warning, ShowSettings);
+                + " Du lädst es in den Einstellungen unter „Offline-Modelle“.",
+                ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
         }
         if (mode != Mode.Dictate && _settings.EffectiveTextEngine == Core.Engine.Local && OfflineEngine.LlmUnsupportedCpu)
         {
             Core.Log.Info($"Hotkey {mode} with the local text engine, but this CPU cannot run the language model");
             Sounds.Error();
-            Notify("Offline-Sprachmodell", Core.LlamaServerHost.UnsupportedCpuMessage, ToolTipIcon.Warning, ShowSettings);
+            Notify(Core.UserCopy.OfflineModelErrorTitle, Core.LlamaServerHost.UnsupportedCpuMessage, ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
         }
         if (MissingKeyFor(mode) is { } provider)
         {
             Core.Log.Info($"Hotkey pressed but no {provider} key (Schlüssel fehlt)");
             Sounds.Error();
-            Notify("Schlüssel fehlt", $"Noch kein {provider}-Schlüssel eingetragen. Hier klicken, um ihn einzutragen.",
-                ToolTipIcon.Warning, ShowSettings);
+            Notify(Core.UserCopy.ProviderErrorTitle(Core.GeminiErrorKind.NoKey, provider), $"Noch kein {provider}-Schlüssel eingetragen. Du trägst ihn in den Einstellungen unter „Konten“ ein.",
+                ToolTipIcon.Warning, () => ShowSettingsPage(SettingsForm.AccountsPage), Core.UserCopy.ActionOpenSettings);
             return;
         }
 
@@ -766,6 +802,8 @@ internal sealed class TrayApp : ApplicationContext
             mode == Mode.Prompt ? _settings.QuickActions : null,
             templateName: mode == Mode.Template ? _template!.DisplayName : null, screenshot: _runShot != null,
             title: _live != null ? Core.UserCopy.LiveTitle : null);
+        if (mode == Mode.Dictate && _live == null && _welcomeForm is { TakesTryResult: true } tour && _pasteTarget == tour.Handle)
+            tour.ShowTryListening();
         if (_selection != null)
         {
             var pending = _selection;
@@ -788,7 +826,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Info($"LIVE-DICTATE: not started ({why})");
             Sounds.Error();
-            Notify(Core.UserCopy.LiveTitle, Core.LiveDictation.Message(why), ToolTipIcon.Info, ShowSettings);
+            Notify(Core.UserCopy.LiveTitle, Core.LiveDictation.Message(why), ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
         }
         // The session exists before the recording starts, so a failed start finds it and discards it.
@@ -873,7 +911,7 @@ internal sealed class TrayApp : ApplicationContext
         byte[]? wav = null;
         double seconds = 0;
         FailedRun? Failed() => wav == null ? null : new FailedRun(wav, Mode.Dictate, seconds, null, null, _liveTarget, StopKey: _stopKey, ClipboardOnly: true);
-        var cancelledAction = Core.LiveDictation.ClipboardAtEnd(_settings.RestoreClipboard, false, null, false);
+        var cancelledAction = LiveClipboardAtEnd(null, false);
 
         try
         {
@@ -921,8 +959,7 @@ internal sealed class TrayApp : ApplicationContext
                 }
             }
 
-            // HOOK(clear clipboard, macOS): Windows has no „Zwischenablage nach dem Einfügen leeren“ setting yet; pass it here when it exists.
-            var action = Core.LiveDictation.ClipboardAtEnd(_settings.RestoreClipboard, clearAfterPaste: false, outcome, fallback.Length > 0);
+            var action = LiveClipboardAtEnd(outcome, fallback.Length > 0);
             _paster.EndLive(action, action switch
             {
                 Core.LiveClipboardEnd.KeepHeld => outcome.HeldText,
@@ -952,7 +989,7 @@ internal sealed class TrayApp : ApplicationContext
             }
             else if (outcome.Text.Length == 0)
             {
-                Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
+                Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
             }
             else
             {
@@ -985,7 +1022,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error("Dictate (live): unexpected error", e);
             Sounds.Error();
-            NotifyRetryable("Fehler", "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", Failed());
+            NotifyRetryable(Core.UserCopy.ErrorTitle, "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", Failed());
             session.Cancel();
             _paster.EndLive(cancelledAction, null);
         }
@@ -1033,6 +1070,46 @@ internal sealed class TrayApp : ApplicationContext
         if (_state != State.Idle || _lastFailed == null) return;
         var run = _lastFailed;
         Core.Log.Info($"{run.Mode}: retrying the last recording ({run.Seconds:0.0} s)");
+        RunAgain(run);
+    }
+
+    // Mac: „Beschäftigt“ when a menu row needs the pipeline while a recording or a run is going.
+    private bool NotIdleSayBusy()
+    {
+        if (_state == State.Idle) return false;
+        Notify("Beschäftigt", "Beende zuerst die laufende Aufnahme und versuch es dann erneut.", ToolTipIcon.Info);
+        return true;
+    }
+
+    /// <summary>
+    /// Tray „Abgebrochene Aufnahme transkribieren“ (Mac transcribeCancelledRecording): the dictation cancelled while it was
+    /// processed runs again. Started from idle, so the result is copied, never pasted.
+    /// </summary>
+    private void TranscribeCancelledRecording()
+    {
+        if (NotIdleSayBusy()) return;
+        if (_cancelled.Take() is not { } kept) return;
+        Core.Log.Info($"Dictate: transcribing the cancelled recording ({kept.Seconds:0.0} s)");
+        RunAgain(new FailedRun(kept.Wav, Mode.Dictate, kept.Seconds, null, null, IntPtr.Zero,
+            StopKey: _settings.DictateHotkey, ClipboardOnly: true));
+    }
+
+    /// <summary>
+    /// Tray „Nochmal ohne Vorlage“ (Mac runAgainWithoutTemplate): the last template dictation's audio goes through
+    /// Dictate Prompt with its own system prompt, no template and no selection, and the result is only copied.
+    /// </summary>
+    private void RunAgainWithoutTemplate()
+    {
+        if (NotIdleSayBusy()) return;
+        if (_templateReplay.Current(DateTime.UtcNow) is not { } kept) return;
+        Core.Log.Info($"Prompt: running the last template dictation again without its template ({kept.Seconds:0.0} s)");
+        RunAgain(new FailedRun(kept.Wav, Mode.Prompt, kept.Seconds, null, null, IntPtr.Zero,
+            StopKey: _settings.PromptHotkey, ClipboardOnly: true));
+    }
+
+    /// <summary>Runs kept audio through the pipeline from idle (retry, cancelled recording, without template).</summary>
+    private void RunAgain(FailedRun run)
+    {
         _mode = run.Mode;
         _template = run.Template;
         _stopKey = run.StopKey;
@@ -1111,11 +1188,29 @@ internal sealed class TrayApp : ApplicationContext
             if (text.Length == 0)
             {
                 Core.RecordingCheckpoint.DiscardAll();
+                if (_mode == Mode.Dictate && _welcomeForm is { TakesTryResult: true } silentTour && _pasteTarget == silentTour.Handle) silentTour.ShowTryResult("");
                 return; // already reported
             }
             _lastFailed = null; // this run worked; the old failure is history
             Core.RecordingCheckpoint.DiscardAll();
             _recent.Add(text);
+            // Mac: a template shaped this dictation; for 10 minutes the same audio can run without it.
+            if (_mode == Mode.Template && wav is { Length: > 0 } && _template != null)
+            {
+                _templateReplay.Keep(wav, seconds, _template.DisplayName, DateTime.UtcNow);
+                _replayExpiry.Start();
+            }
+
+            // The tour's „Ausprobieren“ step started this dictation in its own window: show the text there.
+            if (_mode == Mode.Dictate && retry == null && _welcomeForm is { TakesTryResult: true } tour
+                && _pasteTarget != IntPtr.Zero && _pasteTarget == tour.Handle)
+            {
+                _paster.KeepOnClipboard(text);
+                tour.ShowTryResult(text);
+                _overlay.ShowDone("Es funktioniert");
+                done = true;
+                return;
+            }
 
             // A quick-action rewrite that lost most of a long selection must not silently replace it. Spoken
             // instructions are unknown here (Gemini hears them) and "fass zusammen" is a normal request, so
@@ -1142,8 +1237,8 @@ internal sealed class TrayApp : ApplicationContext
             var keepOnly = !Core.ClipboardPasteGuard.MayAutoPaste(_settings.AutoPaste, clipboardOnlyRun: retry != null);
             var outcome = keepOnly
                 ? (_paster.KeepOnClipboard(text) ? PasteOutcome.ClipboardOnlyByChoice : PasteOutcome.Failed)
-                : await _paster.PasteAsync(text, _pasteTarget, _settings.RestoreClipboard, ct);
-            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, restore {(_settings.RestoreClipboard ? "on" : "off")}");
+                : await _paster.PasteAsync(text, _pasteTarget, _settings.ClipboardAfterPaste, ct);
+            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, after paste {Core.ClipboardAfterPasteModes.Name(_settings.ClipboardAfterPaste)}");
             switch (outcome)
             {
                 case PasteOutcome.ClipboardOnlyByChoice when _unsupported.Count > 0:
@@ -1209,6 +1304,13 @@ internal sealed class TrayApp : ApplicationContext
         {
             // The pill disappearing is the feedback; a balloon on top of it would be noise.
             Core.Log.Info($"{_mode}: cancelled by user");
+            // Mac: a cancel is one keystroke and can be an accident; keep a dictation for the tray menu (only dictation:
+            // an instruction run again as dictation would paste the instruction).
+            if (_mode == Mode.Dictate && wav is { Length: > 0 })
+            {
+                _cancelled.Keep(wav, seconds);
+                Core.Log.Info($"Dictate: kept the cancelled recording ({seconds:0.0} s) for the tray menu");
+            }
             Core.RecordingCheckpoint.DiscardAll();
         }
         catch (SelectionUnreadableException)
@@ -1221,19 +1323,19 @@ internal sealed class TrayApp : ApplicationContext
         {
             Core.Log.Error($"{_mode}: offline model missing");
             Sounds.Error();
-            Notify("Offline-Modelle fehlen", e.Message + " Hier klicken, um es in den Einstellungen zu laden.", ToolTipIcon.Warning, ShowSettings);
+            Notify(Core.UserCopy.ModelNotDownloadedTitle, e.Message, ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
         }
         catch (Core.LocalLlmException e)
         {
             Core.Log.Error($"{_mode}: local LLM failed", e);
             Sounds.Error();
-            NotifyRetryable("Offline-Sprachmodell", e.Message, Failed());
+            NotifyRetryable(Core.UserCopy.OfflineModelErrorTitle, e.Message, Failed());
         }
         catch (Core.EmptyModelReplyException e)
         {
             Core.Log.Error($"{_mode}: empty model reply");
             Sounds.Error();
-            NotifyRetryable("Keine Antwort", e.Message, Failed());
+            NotifyRetryable(Core.UserCopy.NoReplyTitle, e.Message, Failed());
         }
         catch (Core.GeminiException e)
         {
@@ -1244,15 +1346,16 @@ internal sealed class TrayApp : ApplicationContext
                 // Retrying cannot fill an empty account, but the audio stays for "Letzte Aufnahme erneut verarbeiten" after topping up.
                 _lastFailed = Failed();
                 var url = e.BillingUrl;
-                Notify($"{e.Provider}: Guthaben", e.Message + " Hier klicken, um es aufzuladen.", ToolTipIcon.Error,
-                    url == null ? ShowSettings : () => OpenBillingUrl(url));
+                Notify(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, ToolTipIcon.Error,
+                    url == null ? ShowSettings : () => OpenBillingUrl(url), url == null ? Core.UserCopy.ActionOpenSettings : Core.UserCopy.ActionTopUp);
             }
             else if (e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey)
-                Notify($"{e.Provider}-Fehler", e.Message, ToolTipIcon.Error, ShowSettings);
+                Notify(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, ToolTipIcon.Error,
+                    () => ShowSettingsPage(SettingsForm.AccountsPage), Core.UserCopy.ActionOpenSettings);
             else if (e.Kind is Core.GeminiErrorKind.Network or Core.GeminiErrorKind.Timeout or Core.GeminiErrorKind.Quota or Core.GeminiErrorKind.Server)
-                NotifyRetryable($"{e.Provider}-Fehler", e.Message, Failed());
+                NotifyRetryable(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, Failed());
             else
-                Notify($"{e.Provider}-Fehler", e.Message, ToolTipIcon.Error);
+                Notify(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, ToolTipIcon.Error);
         }
         catch (Exception e) when (e is Core.AudioSilentException or MicrophoneUnavailableException)
         {
@@ -1299,7 +1402,7 @@ internal sealed class TrayApp : ApplicationContext
             return;
         }
         _lastFailed = run;
-        Notify(title, message + RetryHint, ToolTipIcon.Error, () => RetryLast());
+        Notify(title, message, ToolTipIcon.Error, () => RetryLast(), Core.UserCopy.ActionRetry);
     }
 
     private async Task<string> DictateAsync(byte[] wav, double seconds, CancellationToken ct)
@@ -1315,7 +1418,7 @@ internal sealed class TrayApp : ApplicationContext
         // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
         if (Core.TextCleanup.LooksLikeRefusal(text)) text = "";
         Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup, punctuation {punctuation}");
-        if (text.Length == 0) Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
+        if (text.Length == 0) Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
         return text;
     }
 
@@ -1344,7 +1447,7 @@ internal sealed class TrayApp : ApplicationContext
             if (_settings.EffectiveTextEngine != Core.Engine.Gemini) return await PromptFromTranscriptAsync(wav, selection, systemPrompt, ct);
         if (!HasSpeech(wav))
         {
-            Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
+            Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
             return "";
         }
         SetBusy(Core.UserCopy.EditingText);
@@ -1361,8 +1464,7 @@ internal sealed class TrayApp : ApplicationContext
                 Core.Log.Info("Prompt: bare edit command without selection, refused");
                 _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
                 Sounds.Error();
-                Notify("Bitte erst Text markieren", "Zum Bearbeiten zuerst den Text markieren, dann das Kürzel drücken und die Anweisung sprechen.",
-                    ToolTipIcon.Info);
+                Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
                 return "";
             }
         }
@@ -1401,7 +1503,7 @@ internal sealed class TrayApp : ApplicationContext
         Core.Log.Info($"Template: transcript {transcript.Length} chars, selection {selection?.Length ?? 0} chars");
         if (transcript.Length == 0 && !Core.TemplatePrompt.AcceptsEmptyTranscript(selection))
         {
-            Notify("Nichts erkannt", "In der Aufnahme wurde keine Sprache erkannt.", ToolTipIcon.Info);
+            Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
             return "";
         }
 
@@ -1449,15 +1551,14 @@ internal sealed class TrayApp : ApplicationContext
         Core.Log.Info($"Prompt via transcript ({_settings.EffectiveTextEngine}): instruction {instruction.Length} chars");
         if (instruction.Length == 0)
         {
-            Notify("Nichts erkannt", "In der Aufnahme wurde keine Anweisung erkannt. Bitte noch einmal sprechen.", ToolTipIcon.Info);
+            Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
             return "";
         }
         if (selection == null && Core.BareEditCommand.Matches(instruction))
         {
             Core.Log.Info("Prompt: bare edit command without selection, refused");
             Sounds.Error();
-            Notify("Bitte erst Text markieren", "Zum Bearbeiten zuerst den Text markieren, dann das Kürzel drücken und die Anweisung sprechen.",
-                ToolTipIcon.Info);
+            Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
             return "";
         }
 
@@ -1471,7 +1572,7 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     /// <summary>
-    /// A quick instruction (Ctrl+1–5 or a click while recording). Whatever was said is transcribed and
+    /// A quick instruction (Ctrl+1–9 or a click while recording). Whatever was said is transcribed and
     /// goes along as text, so this path always has a transcript to check the reply against.
     /// </summary>
     private async Task<string> QuickActionAsync(string quick, byte[] wav, double seconds, string? selection, string systemPrompt, CancellationToken ct)
@@ -1488,7 +1589,7 @@ internal sealed class TrayApp : ApplicationContext
         if (request == null)
         {
             Sounds.Error();
-            Notify("Nichts zum Anwenden", "Erst Text markieren oder etwas diktieren, dann Strg+1 bis Strg+5 drücken.", ToolTipIcon.Info);
+            Notify("Nichts zum Anwenden", $"Erst Text markieren oder etwas diktieren, dann {Core.QuickActionList.KeyRange} drücken.", ToolTipIcon.Info);
             return "";
         }
         var (target, instruction, fromDictation) = request.Value;
@@ -1781,8 +1882,8 @@ internal sealed class TrayApp : ApplicationContext
     // ---------------- UI ----------------
 
     /// <summary>
-    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording or processing,
-    /// Ctrl+1–5 only while a Dictate Prompt recording runs.
+    /// Esc and Ctrl+1–9 belong to the other programs except while we need them: Esc while recording or processing,
+    /// Ctrl+1–9 only while a Dictate Prompt recording runs.
     /// </summary>
     private void SyncSessionHotkeys()
     {
@@ -1844,8 +1945,8 @@ internal sealed class TrayApp : ApplicationContext
         var update = _updates.Available;
         if (update == null) return;
         Notify($"Version {update.Version} ist da",
-            "Hier klicken, um zu sehen, was neu ist, und es zu installieren. Ohne Klick bleibt alles, wie es ist.",
-            ToolTipIcon.Info, _updates.ShowDialog);
+            "Sieh dir an, was neu ist, und installier es. Ohne Klick bleibt alles, wie es ist.",
+            ToolTipIcon.Info, _updates.ShowDialog, "Ansehen");
     }
 
     /// <summary>
@@ -1858,7 +1959,9 @@ internal sealed class TrayApp : ApplicationContext
         // WHY the real foreground and not Form.ActiveForm: a form activated without getting the foreground
         // (focus-steal prevention) stays "active" while the user works elsewhere. Any window of ours in
         // front counts, so the settings dialogs (MessageBox) keep the hotkeys off as well.
-        bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow();
+        // The welcome tour in front is the exception: its „Ausprobieren“ step needs the dictate shortcut.
+        bool tourInFront = _welcomeForm is { IsDisposed: false, Visible: true } tour && ClipboardPaster.ForegroundRoot() == tour.Handle;
+        bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow() && !tourInFront;
         bool wanted = Core.HotkeyPolicy.WantGlobalHotkeys(settingsInFront, _state == State.Idle);
         if (wanted == _globalHotkeysOn) return;
         if (wanted)
@@ -1891,10 +1994,11 @@ internal sealed class TrayApp : ApplicationContext
         _statusItem.Text = status;
     }
 
-    private void Notify(string title, string text, ToolTipIcon icon, Action? onClick = null)
+    /// <summary>Popup like the Mac's; <paramref name="onAction"/> becomes a button labelled <paramref name="actionLabel"/>.</summary>
+    private void Notify(string title, string text, ToolTipIcon icon, Action? onAction = null, string? actionLabel = null)
     {
         Core.Log.Info($"Notify: {title}");  // title only: the text can quote an error message
-        _toast.Present(title, text, icon, onClick);
+        _toast.Present(title, text, icon, onAction, actionLabel);
     }
 
     /// <summary>
@@ -1918,12 +2022,61 @@ internal sealed class TrayApp : ApplicationContext
     public void OpenSettingsOnStart() => _ui.Post(_ => ShowSettings(), null);
 
     /// <summary>
-    /// First start (and <c>--welcome</c> for VM screenshots): the settings window with the "what to do
-    /// now" box, so nobody has to find the tray icon first.
+    /// The welcome tour (Mac WelcomeWindowController): at start until it is finished, from the tray menu, from
+    /// Einstellungen → Über, and <c>--welcome</c>. One window; a second call brings it to the front.
     /// </summary>
-    public void OpenWelcome() => _ui.Post(_ => ShowSettings(welcome: true), null);
+    public void OpenWelcome() => _ui.Post(_ => ShowWelcome(), null);
 
-    private void ShowSettings() => ShowSettings(welcome: false);
+    private void ShowWelcome()
+    {
+        if (_welcomeForm is { IsDisposed: false } open)
+        {
+            open.Reveal();
+            return;
+        }
+        // WHY one at a time: both windows write keys and engines; the settings window would later store its stale fields
+        // over what the tour just saved. Closing applies its pending edits first.
+        _settingsForm?.Close();
+        var form = _welcomeForm = new WelcomeForm(_settings, _offline, _gemini, _openAi);
+        form.Saved += AfterTourSaved;
+        form.Completed += () =>
+        {
+            AfterTourSaved();
+            // Mac: finished, but nothing can transcribe yet → the settings open on „Konten“.
+            if (!Core.WelcomeTour.TranscriptionReady(_settings, OfflineEngine.SpeechInstalled))
+                _ui.Post(_ => ShowSettingsPage(SettingsForm.AccountsPage), null);
+        };
+        // Moving between the tour and the settings window turns the global shortcuts on or off (see SyncGlobalHotkeys).
+        form.Activated += (_, _) => _ui.Post(_ => SyncGlobalHotkeys(), null);
+        form.FormClosed += (_, _) =>
+        {
+            if (_welcomeForm == form) _welcomeForm = null;
+            if (_settingsAfterTour)
+            {
+                _settingsAfterTour = false;
+                _ui.Post(_ => ShowSettings(), null);
+            }
+            ShowTrayHintOnce();
+        };
+        form.Show();
+        form.Reveal();
+    }
+
+    // A key, the offline choice or offline mode changed in the tour: the same follow-ups as a settings save.
+    private void AfterTourSaved()
+    {
+        if (_settings.OfflineMode) _promptMemory.Clear();
+        SetState(_state); // tooltip "Bereit" instead of "Kein API-Schlüssel"
+        _offline.Prewarm();
+        _mcp.SyncOfflineMode();
+    }
+
+    /// <summary>Opens the settings window on <paramref name="page"/> (e.g. „Konten“ from a missing-key popup).</summary>
+    private void ShowSettingsPage(string page)
+    {
+        ShowSettings();
+        _settingsForm?.ShowPage(page);
+    }
 
     /// <summary>
     /// The open-settings hotkey (Mac SettingsManager.toggleSettings): closes the window when it is open, opens it otherwise.
@@ -1940,8 +2093,16 @@ internal sealed class TrayApp : ApplicationContext
         ShowSettings();
     }
 
-    private void ShowSettings(bool welcome)
+    private void ShowSettings()
     {
+        if (_welcomeForm is { IsDisposed: false } tour)
+        {
+            // See ShowWelcome: the tour and the settings window are never open together.
+            tour.Reveal();
+            _settingsAfterTour = true;
+            Notify("Einführung läuft", "Die Einstellungen öffnen sich, sobald du die Einführung schließt oder abschließt.", ToolTipIcon.Info);
+            return;
+        }
         if (_settingsForm != null)
         {
             if (_settingsForm.WindowState == FormWindowState.Minimized) _settingsForm.WindowState = FormWindowState.Normal;
@@ -1958,7 +2119,8 @@ internal sealed class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, welcome, _mcp);
+        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
+        form.WelcomeRequested += () => OpenWelcome();
         // Activation messages can still arrive after FormClosed: only the open window may re-evaluate.
         _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.
@@ -2051,6 +2213,8 @@ internal sealed class TrayApp : ApplicationContext
         _icon.Dispose();
         _keyUpTimer.Dispose();
         _liveRetryTimer.Dispose();
+        _templateReplay.Clear();
+        _replayExpiry.Dispose();
         _snipCts?.Cancel();
         _shotExpiry.Dispose();
         _updateNoticeTimer.Dispose();

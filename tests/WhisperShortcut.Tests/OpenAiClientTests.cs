@@ -41,6 +41,23 @@ public class OpenAiClientTests
         Assert.Contains("Kubernetes, Müller", body);
     }
 
+    [Fact]
+    public async Task Transcribe_Language_SentOnlyWhenChosen()
+    {
+        var (c, h) = Make();
+        h.Responses.Enqueue((HttpStatusCode.OK, Transcript));
+        await c.TranscribeAsync(Wav, Array.Empty<string>());
+        Assert.DoesNotContain("name=language", h.Calls[0].Body); // auto: the model detects it
+
+        var h2 = new FakeHandler();
+        var c2 = new OpenAiClient(() => "sk-test", () => "gpt-transcribe", () => "gpt-6-sol", new HttpClient(h2))
+        { RetryDelay = TimeSpan.Zero, Language = () => "de" };
+        h2.Responses.Enqueue((HttpStatusCode.OK, Transcript));
+        await c2.TranscribeAsync(Wav, Array.Empty<string>());
+        Assert.Contains("name=language", h2.Calls[0].Body);
+        Assert.Matches(@"name=language[\s\S]{0,120}?\r\n\r\nde\r\n", h2.Calls[0].Body);
+    }
+
     private static (OpenAiClient, FakeHandler) MakeModel(string model)
     {
         var h = new FakeHandler();

@@ -15,7 +15,7 @@ public class McpSettingsTests
         using var s = new McpStack();
         var o = s.ToolJson("get_settings", new JsonObject(), McpAccess.Read);
         var list = o["settings"]!.AsArray();
-        Assert.Equal(16, list.Count);
+        Assert.Equal(20, list.Count);
         var engine = list.First(x => x!["id"]!.GetValue<string>() == "dictation.engine")!;
         Assert.Equal("enum", engine["type"]!.GetValue<string>());
         Assert.Equal(3, engine["options"]!.AsArray().Count);
@@ -28,7 +28,7 @@ public class McpSettingsTests
         Assert.True(list.First(x => x!["id"]!.GetValue<string>() == "general.launch_at_login")!["requires_approval"]!.GetValue<bool>());
 
         var models = s.ToolJson("get_settings", A("{\"category\":\"models\"}"), McpAccess.Read)["settings"]!.AsArray();
-        Assert.Equal(8, models.Count);
+        Assert.Equal(11, models.Count);
     }
 
     [Fact]
@@ -39,6 +39,29 @@ public class McpSettingsTests
         Assert.Equal(PunctuationMode.SpokenOnly, s.ReloadSettings().PunctuationMode);
         Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"dictation.punctuation\":\"automatic\"}},{R}}}"))["status"]!.GetValue<string>());
         Assert.Equal(PunctuationMode.Automatic, s.ReloadSettings().PunctuationMode);
+    }
+
+    [Fact]
+    public void LanguageAndTuning_Apply()
+    {
+        using var s = new McpStack();
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"dictation.language\":\"de\",\"dictation.temperature\":\"0.2\",\"dictation.thinking\":\"high\"}},{R}}}"))["status"]!.GetValue<string>());
+        var t = s.ReloadSettings();
+        Assert.Equal("de", t.TranscriptionLanguage);
+        Assert.Equal(0.2, t.TranscriptionTemperature);
+        Assert.Equal("high", t.TranscriptionThinking);
+    }
+
+    [Fact]
+    public void ClipboardAfterPaste_AppliesAllThree()
+    {
+        using var s = new McpStack();
+        foreach (var (name, mode) in new[] { ("clear", ClipboardAfterPaste.Clear), ("restore", ClipboardAfterPaste.RestorePrevious), ("keep", ClipboardAfterPaste.KeepDictation) })
+        {
+            Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"clipboard.after_paste\":\"{name}\"}},{R}}}"))["status"]!.GetValue<string>());
+            Assert.Equal(mode, s.ReloadSettings().ClipboardAfterPaste);
+        }
+        Assert.True(s.Tool("update_settings", A($"{{\"changes\":{{\"clipboard.after_paste\":\"sometimes\"}},{R}}}")).IsError);
     }
 
     [Fact]

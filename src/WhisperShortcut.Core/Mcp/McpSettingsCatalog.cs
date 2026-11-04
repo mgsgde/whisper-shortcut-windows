@@ -233,6 +233,32 @@ public static class McpSettingsCatalog
                 },
                 Write = v => settings.PunctuationMode = Text(v) == "spokenOnly" ? PunctuationMode.SpokenOnly : PunctuationMode.Automatic,
             },
+            new()
+            {
+                Id = "dictation.language", Title = "Sprache (OpenAI-Transkription)", Category = "models", Type = McpSettingType.Enum,
+                Description = "Spoken language for OpenAI transcription (ISO 639-1). auto lets the model detect it. Gemini and offline Parakeet ignore it.",
+                Read = () => JsonValue.Create(TranscriptionLanguages.Normalize(settings.TranscriptionLanguage)),
+                Options = () => TranscriptionLanguages.All.Select(l => new McpSettingOption(l.Code, l.Name, true, null)).ToList(),
+                Write = v => settings.TranscriptionLanguage = TranscriptionLanguages.Normalize(Text(v)),
+            },
+            new()
+            {
+                Id = "dictation.temperature", Title = "Temperatur (Gemini-Transkription)", Category = "models", Type = McpSettingType.Enum,
+                Description = "Sampling temperature for Gemini transcription. 0.0 (default) reproduces what was said; higher values are the most likely source of invented or swapped words. OpenAI and Parakeet ignore it.",
+                Read = () => JsonValue.Create(TranscriptionTuning.Format(settings.TranscriptionTemperature)),
+                Options = () => TranscriptionTuning.Temperatures.Select(t => new McpSettingOption(TranscriptionTuning.Format(t.Value), t.Label, true, null)).ToList(),
+                Write = v => settings.TranscriptionTemperature = double.TryParse(Text(v), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var t) ? TranscriptionTuning.NormalizeTemperature(t)
+                    : throw new McpConfigException("Use 0.0, 0.2, 0.5 or 1.0."),
+            },
+            new()
+            {
+                Id = "dictation.thinking", Title = "Denkaufwand (Gemini-Transkription)", Category = "models", Type = McpSettingType.Enum,
+                Description = "Gemini thinking level before transcribing: minimal (default), low, medium, high. Models that reject minimal (3.7/3.8 Flash, Pro) run at low. OpenAI and Parakeet ignore it.",
+                Read = () => JsonValue.Create(TranscriptionTuning.NormalizeThinking(settings.TranscriptionThinking)),
+                Options = () => TranscriptionTuning.ThinkingLevels.Select(t => new McpSettingOption(t.Value, t.Label, true, null)).ToList(),
+                Write = v => settings.TranscriptionThinking = TranscriptionTuning.NormalizeThinking(Text(v)),
+            },
             ModelSetting("dictate_prompt.model", "Gemini-Modell Text bearbeiten", GeminiModels.Prompt, () => settings.PromptModel, v => settings.PromptModel = v),
             ModelSetting("dictate_prompt.openai_model", "OpenAI-Modell Text bearbeiten", OpenAiModels.Prompt, () => settings.OpenAiPromptModel, v => settings.OpenAiPromptModel = v),
             new()
@@ -247,7 +273,17 @@ public static class McpSettingsCatalog
             HotkeySetting("shortcuts.dictate_prompt", "Tastenkürzel Text bearbeiten", () => settings.PromptHotkey, v => settings.PromptHotkey = v),
             HotkeySetting("shortcuts.add_to_glossary", "Tastenkürzel Glossar", () => settings.GlossaryHotkey, v => settings.GlossaryHotkey = v),
             BoolSetting("clipboard.auto_paste", "Automatisch einfügen", "clipboard", () => settings.AutoPaste, v => settings.AutoPaste = v),
-            BoolSetting("clipboard.restore_after_paste", "Zwischenablage wiederherstellen", "clipboard", () => settings.RestoreClipboard, v => settings.RestoreClipboard = v),
+            new()
+            {
+                Id = "clipboard.after_paste", Title = "Zwischenablage nach dem Einfügen", Category = "clipboard", Type = McpSettingType.Enum,
+                Description = "What happens to the clipboard after auto-paste (no effect while clipboard.auto_paste is off). keep: the dictated text stays (default). restore: the previous clipboard comes back 3 s after pasting. clear: the clipboard is emptied 3 s after pasting, if it still holds the dictation.",
+                Read = () => JsonValue.Create(ClipboardAfterPasteModes.Name(settings.ClipboardAfterPaste)),
+                Options = () => ClipboardAfterPasteModes.All
+                    .Select(m => new McpSettingOption(ClipboardAfterPasteModes.Name(m), ClipboardAfterPasteModes.Label(m), true, null)).ToList(),
+                Write = v => settings.ClipboardAfterPaste = ClipboardAfterPasteModes.Parse(Text(v))
+                    ?? throw new McpConfigException("Use keep, restore or clear."),
+            },
+            BoolSetting("clipboard.restore_after_paste", "Zwischenablage wiederherstellen (alt, siehe clipboard.after_paste)", "clipboard", () => settings.RestoreClipboard, v => settings.RestoreClipboard = v),
             BoolSetting("general.sounds", "Signaltöne", "general", () => settings.Sounds, v => settings.Sounds = v),
             BoolSetting("general.auto_update_check", "Automatisch nach Updates suchen", "general", () => settings.AutoUpdateCheck, v => settings.AutoUpdateCheck = v),
             new()

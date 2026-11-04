@@ -66,6 +66,18 @@ public sealed class Settings
     /// </summary>
     public PunctuationMode PunctuationMode { get; set; } = PunctuationMode.Automatic;
 
+    /// <summary>
+    /// Spoken language for OpenAI transcription (ISO 639-1, or "auto"). Gemini and Parakeet ignore it.
+    /// See <see cref="TranscriptionLanguages"/>.
+    /// </summary>
+    public string TranscriptionLanguage { get; set; } = TranscriptionLanguages.Auto;
+
+    /// <summary>Gemini transcription temperature (Diktieren → Erweitert); see <see cref="TranscriptionTuning"/>.</summary>
+    public double TranscriptionTemperature { get; set; } = TranscriptionTuning.DefaultTemperature;
+
+    /// <summary>Gemini transcription thinking level: minimal, low, medium or high; see <see cref="TranscriptionTuning"/>.</summary>
+    public string TranscriptionThinking { get; set; } = TranscriptionTuning.DefaultThinking;
+
     /// <summary>OpenAI transcription model id.</summary>
     public string OpenAiTranscriptionModel { get; set; } = OpenAiModels.DefaultTranscriptionModel;
 
@@ -267,8 +279,35 @@ public sealed class Settings
     /// <summary>Look for a new version at start and once a day; only shows a notice, installs nothing by itself.</summary>
     public bool AutoUpdateCheck { get; set; } = true;
 
-    /// <summary>Put the previous clipboard text back after pasting (ignored when <see cref="AutoPaste"/> is off).</summary>
-    public bool RestoreClipboard { get; set; } = true;
+    /// <summary>
+    /// What happens to the clipboard after auto-paste (ignored when <see cref="AutoPaste"/> is off). New installs leave
+    /// the dictation there like the Mac; older files map their "restoreClipboard" switch (see <see cref="ClipboardAfterPasteModes.FromFile"/>).
+    /// </summary>
+    public ClipboardAfterPaste ClipboardAfterPaste { get; set; } = ClipboardAfterPaste.KeepDictation;
+
+    /// <summary>
+    /// The old switch, kept as a view of <see cref="ClipboardAfterPaste"/>: true = restore the previous clipboard.
+    /// Setting it false turns "restore" into "keep" and leaves "clear" alone. Still written to the file for older versions.
+    /// </summary>
+    [JsonIgnore]
+    public bool RestoreClipboard
+    {
+        get => ClipboardAfterPaste == ClipboardAfterPaste.RestorePrevious;
+        set
+        {
+            if (value) ClipboardAfterPaste = ClipboardAfterPaste.RestorePrevious;
+            else if (ClipboardAfterPaste == ClipboardAfterPaste.RestorePrevious) ClipboardAfterPaste = ClipboardAfterPaste.KeepDictation;
+        }
+    }
+
+    /// <summary>
+    /// The welcome tour was finished with "Fertig" (Mac hasCompletedOnboarding). Closing the window is not finishing.
+    /// Files from before the tour count as finished when that install was set up (<see cref="WelcomeTour.CompletedForExistingFile"/>).
+    /// </summary>
+    public bool WelcomeCompleted { get; set; }
+
+    /// <summary>The tour step the user last reached, so the next start resumes there (Mac onboardingCurrentStep).</summary>
+    public int WelcomeStep { get; set; }
 
     /// <summary>
     /// "" when <paramref name="text"/> is blank or equals <paramref name="defaultText"/> (ignoring line endings and
@@ -321,6 +360,9 @@ public sealed class Settings
             s.TextEngine = ParseEngine(dto.TextEngine);
             s.PunctuationMode = ParsePunctuationMode(dto.PunctuationMode);
             s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
+            s.TranscriptionLanguage = TranscriptionLanguages.Normalize(dto.TranscriptionLanguage);
+            s.TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(dto.TranscriptionTemperature);
+            s.TranscriptionThinking = TranscriptionTuning.NormalizeThinking(dto.TranscriptionThinking);
             s.OpenAiPromptModel = OpenAiModels.NormalizePrompt(dto.OpenAiPromptModel);
             // JSON null entries (hand-edited or a half-written file) must not stay in the list:
             // GlossaryEdit.TryAdd would then NullRef when the user adds a term.
@@ -357,7 +399,9 @@ public sealed class Settings
             s.AutoPaste = dto.AutoPaste ?? true;
             s.Sounds = dto.Sounds ?? true;
             s.AutoUpdateCheck = dto.AutoUpdateCheck ?? true;
-            s.RestoreClipboard = dto.RestoreClipboard ?? true;
+            s.ClipboardAfterPaste = ClipboardAfterPasteModes.FromFile(dto.ClipboardAfterPaste, dto.RestoreClipboard);
+            s.WelcomeCompleted = dto.WelcomeCompleted ?? WelcomeTour.CompletedForExistingFile(s.ApiKey, s.OpenAiKey, s.OfflineMode);
+            s.WelcomeStep = dto.WelcomeStep ?? 0;
             // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
@@ -474,6 +518,9 @@ public sealed class Settings
             TextEngine = EngineName(TextEngine),
             PunctuationMode = PunctuationModeName(PunctuationMode),
             OpenAiTranscriptionModel = OpenAiTranscriptionModel,
+            TranscriptionLanguage = TranscriptionLanguages.Normalize(TranscriptionLanguage),
+            TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(TranscriptionTemperature),
+            TranscriptionThinking = TranscriptionTuning.NormalizeThinking(TranscriptionThinking),
             OpenAiPromptModel = OpenAiPromptModel,
             Glossary = Glossary,
             DictatePromptTemplate = DictatePromptTemplate,
@@ -514,6 +561,9 @@ public sealed class Settings
             Sounds = Sounds,
             AutoUpdateCheck = AutoUpdateCheck,
             RestoreClipboard = RestoreClipboard,
+            ClipboardAfterPaste = ClipboardAfterPasteModes.Name(ClipboardAfterPaste),
+            WelcomeCompleted = WelcomeCompleted,
+            WelcomeStep = WelcomeStep,
         };
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
@@ -543,6 +593,9 @@ public sealed class Settings
         [JsonPropertyName("textEngine")] public string? TextEngine { get; set; }
         [JsonPropertyName("punctuationMode")] public string? PunctuationMode { get; set; }
         [JsonPropertyName("openAiTranscriptionModel")] public string? OpenAiTranscriptionModel { get; set; }
+        [JsonPropertyName("transcriptionLanguage")] public string? TranscriptionLanguage { get; set; }
+        [JsonPropertyName("transcriptionTemperature")] public double? TranscriptionTemperature { get; set; }
+        [JsonPropertyName("transcriptionThinking")] public string? TranscriptionThinking { get; set; }
         [JsonPropertyName("openAiPromptModel")] public string? OpenAiPromptModel { get; set; }
         [JsonPropertyName("glossary")] public List<string>? Glossary { get; set; }
         [JsonPropertyName("dictatePromptTemplate")] public string? DictatePromptTemplate { get; set; }
@@ -583,5 +636,8 @@ public sealed class Settings
         [JsonPropertyName("sounds")] public bool? Sounds { get; set; }
         [JsonPropertyName("autoUpdateCheck")] public bool? AutoUpdateCheck { get; set; }
         [JsonPropertyName("restoreClipboard")] public bool? RestoreClipboard { get; set; }
+        [JsonPropertyName("clipboardAfterPaste")] public string? ClipboardAfterPaste { get; set; }
+        [JsonPropertyName("welcomeCompleted")] public bool? WelcomeCompleted { get; set; }
+        [JsonPropertyName("welcomeStep")] public int? WelcomeStep { get; set; }
     }
 }

@@ -124,13 +124,15 @@ internal sealed class ClipboardPaster
     }
 
     /// <summary>
-    /// Puts <paramref name="text"/> at the cursor: save the clipboard, set ours, Ctrl+V, and after
-    /// 3 s put the old clipboard back (unless <paramref name="restoreClipboard"/> is off), but only when nobody else wrote it in between.
+    /// Puts <paramref name="text"/> at the cursor: save the clipboard, set ours, Ctrl+V, and then settle the clipboard as
+    /// <paramref name="afterPaste"/> says: leave our text, or after 3 s put the old clipboard back or empty it, but only when
+    /// nobody else wrote it in between.
     /// Pastes only into <paramref name="target"/> (the window in front when the recording began). It is brought
     /// back only when nothing, our own window or the taskbar is in front; with another window in front or the
     /// target closed the text stays on the clipboard. <c>IntPtr.Zero</c> means: no target to check.
     /// </summary>
-    public async Task<PasteOutcome> PasteAsync(string text, IntPtr target, bool restoreClipboard = true, CancellationToken ct = default)
+    public async Task<PasteOutcome> PasteAsync(string text, IntPtr target,
+        Core.ClipboardAfterPaste afterPaste = Core.ClipboardAfterPaste.KeepDictation, CancellationToken ct = default)
     {
         // The user may still hold Ctrl+Alt from the hotkey: Ctrl+V would arrive as Ctrl+Alt+V.
         bool released = await WaitForModifiersReleasedAsync(ct);
@@ -212,9 +214,14 @@ internal sealed class ClipboardPaster
             return PasteOutcome.ClipboardOnlyClipboardChanged;
         }
         SendChord(0x56); // V
-        Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars), restore {(restoreClipboard ? "on" : "off")}");
+        Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars), afterwards {Core.ClipboardAfterPasteModes.Name(afterPaste)}");
 
-        if (restoreClipboard) _ = RestoreLaterAsync(original, ourSequence, restore);
+        if (afterPaste == Core.ClipboardAfterPaste.RestorePrevious) _ = RestoreLaterAsync(original, ourSequence, restore);
+        else if (afterPaste == Core.ClipboardAfterPaste.Clear)
+        {
+            // The user's old text stays gone (as with "keep"), but a later paste may still bring it back if ours is on top.
+            _ = ClearAfterPasteAsync(ourSequence, restore);
+        }
         else
         {
             // No restore wanted: the user's old text stays gone, and a later paste must not bring it back.
@@ -339,6 +346,33 @@ internal sealed class ClipboardPaster
         catch (Exception e)
         {
             Core.Log.Warn($"LIVE-DICTATE: clearing the clipboard failed ({e.GetType().Name})");
+        }
+    }
+
+    // "Leeren": empties the clipboard after the delay, only if it still holds what we wrote and no newer paste took over.
+    private async Task ClearAfterPasteAsync(uint ourSequence, CancellationTokenSource self)
+    {
+        try
+        {
+            try { await Task.Delay(Core.ClipboardPasteGuard.RestoreDelay, self.Token); }
+            catch (OperationCanceledException) { return; } // a newer paste took over
+            if (!Core.ClipboardPasteGuard.RestoreAllowed(ourSequence, GetClipboardSequenceNumber()))
+            {
+                Core.Log.Info("Paste: clipboard changed by someone else, not clearing");
+                return;
+            }
+            Core.Log.Info(Clear() ? "Paste: cleared clipboard after pasting" : "Paste: clearing the clipboard failed");
+            if (_lateWatch != null) _lateBaseline = GetClipboardSequenceNumber();
+            _pendingOriginal = null; // nothing of ours is left on the clipboard to stand in for the user's
+        }
+        catch (Exception e)
+        {
+            Core.Log.Warn($"Paste: clearing the clipboard failed ({e.GetType().Name})");
+        }
+        finally
+        {
+            if (_pendingRestore == self) _pendingRestore = null;
+            self.Dispose();
         }
     }
 

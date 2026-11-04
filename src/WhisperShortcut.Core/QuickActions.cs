@@ -3,8 +3,11 @@ namespace WhisperShortcut.Core;
 /// <summary>The quick instructions offered while recording, and their cleanup.</summary>
 public static class QuickActionList
 {
-    /// <summary>Most quick actions kept (one per number key).</summary>
-    public const int Max = 5;
+    /// <summary>Most quick actions kept (one per number key, Ctrl+1 to Ctrl+9 like the Mac's ⌃1–9).</summary>
+    public const int Max = 9;
+
+    /// <summary>"Strg+1 bis Strg+9", for texts that name the keys.</summary>
+    public static string KeyRange => $"Strg+1 bis Strg+{Max}";
 
     /// <summary>Longest accepted quick action in characters; longer lines are dropped.</summary>
     public const int MaxLength = 80;

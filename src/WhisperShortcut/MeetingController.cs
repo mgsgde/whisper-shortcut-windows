@@ -117,8 +117,7 @@ internal sealed class MeetingController : IDisposable
                 _lastFolder = last.Folder;
                 _notify("Meeting wurde unterbrochen",
                     "WhisperShortcut wurde während eines Meetings beendet. Das bis dahin Transkribierte ist gespeichert"
-                    + (last.PendingAudioChunks > 0 ? ", der restliche Ton wird jetzt nachträglich transkribiert." : ".")
-                    + " Hier klicken, um den Ordner zu öffnen.",
+                    + (last.PendingAudioChunks > 0 ? ", der restliche Ton wird jetzt nachträglich transkribiert." : "."),
                     ToolTipIcon.Warning, () => OpenFolder(last.Folder));
             }
         }
@@ -263,7 +262,7 @@ internal sealed class MeetingController : IDisposable
                 ? "Transkript gespeichert. Die Zusammenfassung konnte nicht erstellt werden."
                 : _settings.MeetingSummary ? "Transkript und Zusammenfassung gespeichert." : "Transkript gespeichert.";
         }
-        _notify("Meeting beendet", text + " Hier klicken, um den Ordner zu öffnen.", icon, () => OpenFolder(folder));
+        _notify("Meeting beendet", text, icon, () => OpenFolder(folder));
     }
 
     /// <summary>Summary as Markdown with a heading, so summary.md reads on its own.</summary>

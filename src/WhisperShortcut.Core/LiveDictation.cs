@@ -67,9 +67,9 @@ public static class LiveDictation
     public static string Message(LiveUnavailable reason) => reason switch
     {
         LiveUnavailable.DuringMeeting => "Live diktieren geht nicht, solange ein Live Meeting läuft.",
-        LiveUnavailable.NotOffline => "Live diktieren funktioniert nur mit der Spracherkennung auf diesem PC (Parakeet). Hier klicken und unter „Allgemein“ → Spracherkennung „Auf diesem PC (Parakeet)“ wählen oder den Offline-Modus einschalten.",
-        LiveUnavailable.NotDownloaded => "Für Live diktieren zuerst die Offline-Spracherkennung laden: hier klicken, dann unter „Offline-Modelle“.",
-        LiveUnavailable.AutoPasteOff => "Live diktieren schreibt direkt an die Cursorstelle. Dafür unter „Allgemein“ „Automatisch einfügen“ einschalten: hier klicken.",
+        LiveUnavailable.NotOffline => "Live diktieren funktioniert nur mit der Spracherkennung auf diesem PC (Parakeet). Unter „Diktieren“ die Spracherkennung „Auf diesem PC (Parakeet)“ wählen oder den Offline-Modus einschalten.",
+        LiveUnavailable.NotDownloaded => "Für Live diktieren zuerst die Offline-Spracherkennung laden, in den Einstellungen unter „Diktieren“ → „Offline-Modelle“.",
+        LiveUnavailable.AutoPasteOff => "Live diktieren schreibt direkt an die Cursorstelle. Dafür unter „Allgemein“ „Automatisch einfügen“ einschalten.",
         _ => "",
     };
 

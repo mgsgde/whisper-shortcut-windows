@@ -6,19 +6,8 @@ namespace WhisperShortcut.Core;
 /// </summary>
 public static class UserCopy
 {
-    /// <summary>Blue box on the first settings page, and again from Über → Einführung.</summary>
-    public static string Welcome(string dictateHotkeyDisplay) =>
-        "Willkommen – so geht’s:\n"
-        + "1. Unter „Konten“ einen Schlüssel von Google (Gemini) oder OpenAI eintragen, oder unter „Datenschutz & "
-        + "Berechtigungen“ offline arbeiten; die Modelle dafür werden unter „Diktieren“ einmal geladen.\n"
-        + $"2. In einem beliebigen Programm {dictateHotkeyDisplay} drücken, sprechen, noch einmal drücken.\n\n"
-        + "WhisperShortcut bleibt danach als Symbol unten rechts im Infobereich (oft hinter dem Pfeil ^). "
-        + "Ein Klick auf das X beendet die App nicht. Mit Strg+Tab lassen sich die Seiten wechseln.";
-
-    public const string WelcomeAccessibleName = "Einführung";
-
     public const string WelcomeTourHint =
-        "Die Schritte vom ersten Start: Schlüssel eintragen oder offline arbeiten, Kürzel drücken. Erklärt auch, wo das Symbol zu finden ist.";
+        "Die Schritte vom ersten Start: offline oder in der Cloud diktieren, das Mikrofon prüfen, einmal ausprobieren, die Kürzel.";
 
     public const string MicTestHint =
         "„Testen“ zeigt den Pegel beim Sprechen. Es wird nichts abgespielt.";
@@ -32,19 +21,34 @@ public static class UserCopy
 
     public const string OverlayAccessibleName = "WhisperShortcut-Anzeige";
 
-    public const string Transcribing = "Sprache wird erkannt …";
-    public const string RecognizingInstruction = "Anweisung wird erkannt …";
-    public const string EditingText = "Text wird bearbeitet …";
+    // Pill labels like the Mac (RecordingIndicatorWindow: "Transcribing", "Thinking"), German from Localizable.xcstrings.
+    public const string Transcribing = "Wird transkribiert …";
+    public const string RecognizingInstruction = "Denkt nach …";
+    public const string EditingText = "Denkt nach …";
     public const string LoadingLlm = "Sprachmodell wird geladen …";
     public const string Processing = "Wird verarbeitet …";
 
     public static string RecordingStatus(string stopKey) => $"Aufnahme läuft – {stopKey} beendet sie";
 
-    public const string OverlayDictateTitle = "Diktat läuft";
+    /// <summary>Mac "Listening".</summary>
+    public const string OverlayDictateTitle = "Hört zu";
     public const string LiveTitle = "Live diktieren";
     public const string LiveFinishing = "Rest wird eingefügt …";
     public const string LiveInserted = "Am Cursor eingefügt";
-    public const string OverlayPromptTitle = "Anweisung sprechen";
+    /// <summary>Mac "Prompting".</summary>
+    public const string OverlayPromptTitle = "Prompt läuft";
+
+    /// <summary>Mac "Reading selection…".</summary>
+    public const string OverlayReadingSelection = "Auswahl wird gelesen …";
+
+    /// <summary>Mac "Nothing selected — writes new text".</summary>
+    public const string OverlayNothingSelected = "Nichts markiert – schreibt neuen Text";
+
+    /// <summary>Mac "Discard recording" (the ✕ of the pill).</summary>
+    public const string OverlayDiscard = "Aufnahme verwerfen";
+
+    /// <summary>The ✕ while a run is being processed (Mac "Cancel processing").</summary>
+    public const string OverlayCancelProcessing = "Verarbeitung abbrechen";
     public static string OverlayTemplateTitle(string templateName) => $"Vorlage „{templateName}“";
     public static string OverlayStopHint(string stopKey) => $"{stopKey} beendet · Esc bricht ab";
     public const string OverlayCancelHint = "Kürzel oder Esc bricht ab";
@@ -65,6 +69,65 @@ public static class UserCopy
         if (count <= 0) return 0;
         return ((current + step) % count + count) % count;
     }
+
+    // ---- Popups (Mac PopupNotificationWindow + SpeechErrorFormatter, German from Localizable.xcstrings, du-form) ----
+
+    /// <summary>Action button: run the failed recording again (Mac "Retry").</summary>
+    public const string ActionRetry = "Erneut versuchen";
+
+    /// <summary>Action button: open the provider's billing page (Mac "Top up").</summary>
+    public const string ActionTopUp = "Aufladen";
+
+    /// <summary>Action button: open the settings window (Mac "Open Settings").</summary>
+    public const string ActionOpenSettings = "Einstellungen öffnen";
+
+    /// <summary>Action button for a finished or interrupted meeting.</summary>
+    public const string ActionOpenFolder = "Ordner öffnen";
+
+    /// <summary>Mac "Didn't catch that".</summary>
+    public const string NoSpeechTitle = "Nichts verstanden";
+
+    /// <summary>Mac "Nothing to transcribe. Check the microphone and try again.", du-form.</summary>
+    public const string NoSpeechText = "Nichts zu transkribieren. Prüf das Mikrofon und versuch es noch einmal.";
+
+    /// <summary>Mac "📝 Nothing Selected".</summary>
+    public const string NothingSelectedTitle = "📝 Nichts markiert";
+
+    /// <summary>Mac noSelectedText, du-form.</summary>
+    public const string NothingSelectedText =
+        "Dictate Prompt bearbeitet markierten Text, und es war nichts markiert. Markiere zuerst den Text, den du ändern "
+        + "möchtest, drück dann das Kürzel und sag, was damit geschehen soll.";
+
+    /// <summary>Mac "⚠️ No Reply".</summary>
+    public const string NoReplyTitle = "⚠️ Keine Antwort";
+
+    /// <summary>Mac "⚠️ Offline Model Error".</summary>
+    public const string OfflineModelErrorTitle = "⚠️ Fehler beim Offline-Modell";
+
+    /// <summary>Mac "📥 Model Not Downloaded".</summary>
+    public const string ModelNotDownloadedTitle = "📥 Modell nicht geladen";
+
+    /// <summary>Mac "❌ Error".</summary>
+    public const string ErrorTitle = "❌ Fehler";
+
+    /// <summary>
+    /// Popup title for a failed cloud call, Mac SpeechErrorFormatter.shortStatus where Windows has the same error.
+    /// <paramref name="message"/> tells the two server cases apart (model gone vs. service busy).
+    /// </summary>
+    public static string ProviderErrorTitle(GeminiErrorKind kind, string provider, string? message = null) => kind switch
+    {
+        GeminiErrorKind.NoKey => provider == "Gemini" ? "⚠️ Kein Google-API-Schlüssel" : $"⚠️ Kein {provider}-API-Schlüssel",
+        GeminiErrorKind.InvalidKey => "❌ Ungültiger API-Schlüssel",
+        GeminiErrorKind.Network => "⏰ Netzwerkfehler",
+        GeminiErrorKind.Timeout => "⏰ Zeitüberschreitung",
+        GeminiErrorKind.Quota => "⏳ Limit erreicht",
+        GeminiErrorKind.Billing => "💳 Abrechnung erforderlich",
+        GeminiErrorKind.Truncated => "⚠️ Antwort abgeschnitten",
+        GeminiErrorKind.Server when message == ModelGone(provider) => "❌ Modell nicht mehr verfügbar",
+        GeminiErrorKind.Server when message == ServerBusy(provider) => "🔄 Dienst nicht erreichbar",
+        GeminiErrorKind.Server => "❌ Serverfehler",
+        _ => ErrorTitle,
+    };
 
     public static string ServerBusy(string provider) =>
         $"{provider} antwortet gerade nicht. Bitte später erneut versuchen.";

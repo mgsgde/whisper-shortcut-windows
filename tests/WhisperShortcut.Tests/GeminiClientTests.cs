@@ -56,6 +56,29 @@ public class GeminiClientTests
     }
 
     [Fact]
+    public async Task Transcribe_SendsTheChosenTemperatureAndThinking()
+    {
+        var h = new FakeHandler();
+        var c = new GeminiClient(() => "k", () => "gemini-3.1-flash-lite", () => "gemini-3.8-flash", new HttpClient(h))
+        { RetryDelay = TimeSpan.Zero, RetryInfoBuffer = TimeSpan.Zero, TranscriptionTemperature = () => 0.5, TranscriptionThinking = () => "high" };
+        h.Responses.Enqueue((HttpStatusCode.OK, Answer));
+        await c.TranscribeAsync(Wav, Array.Empty<string>());
+        var config = h.Json(0)["generationConfig"]!;
+        Assert.Equal(0.5, (double)config["temperature"]!);
+        Assert.Equal("high", (string)config["thinkingConfig"]!["thinkingLevel"]!);
+    }
+
+    [Fact]
+    public void TranscriptionBody_ClampsMinimalForModelsThatRejectIt()
+    {
+        var j = System.Text.Json.Nodes.JsonNode.Parse(GeminiClient.BuildTranscriptionBody("gemini-3.8-flash", Wav, Array.Empty<string>()))!;
+        Assert.Equal("low", (string)j["generationConfig"]!["thinkingConfig"]!["thinkingLevel"]!);
+        Assert.Equal(0.0, (double)j["generationConfig"]!["temperature"]!);
+        var medium = System.Text.Json.Nodes.JsonNode.Parse(GeminiClient.BuildTranscriptionBody("gemini-3.8-flash", Wav, Array.Empty<string>(), null, 0.2, "medium"))!;
+        Assert.Equal("medium", (string)medium["generationConfig"]!["thinkingConfig"]!["thinkingLevel"]!);
+    }
+
+    [Fact]
     public async Task TranscribeWithoutGlossary_HasPlainInstruction()
     {
         var (c, h) = Make();
