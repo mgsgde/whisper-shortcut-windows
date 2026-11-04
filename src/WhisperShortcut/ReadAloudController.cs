@@ -139,6 +139,16 @@ internal sealed class ReadAloudController : IDisposable
             if (model.Provider == Core.TtsProvider.System) await WindowsVoice.SynthesizeAsync(voice, plain, OnAudio, ct);
             else failed = await _tts.SynthesizeAsync(model, voice, plain, OnAudio, ct);
             buffer.MarkComplete();
+            _ui.Post(_ =>
+            {
+                if (run == _run && _player == null && buffer.BufferedSeconds <= 0)
+                {
+                    Core.Log.Error("Read aloud: no audio produced");
+                    Stop();
+                    Sounds.Error();
+                    _notify("Vorlesen fehlgeschlagen", "Der Text konnte nicht vorgelesen werden. Details stehen im Protokoll.", ToolTipIcon.Error, null);
+                }
+            }, null);
             if (failed > 0) Core.Log.Error($"Read aloud: {failed} chunk(s) failed, played with a gap");
         }
         catch (OperationCanceledException) when (run != _run || ct.IsCancellationRequested)
