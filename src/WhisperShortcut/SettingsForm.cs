@@ -176,10 +176,10 @@ internal sealed partial class SettingsForm : Form
         keysCard.AddRow(KeyRow("Dictate Prompt", "Markierten Text per Sprache bearbeiten. Ein Druck während der Verarbeitung bricht ab.", _promptKey));
         keysCard.AddRow(KeyRow("Bildschirmfoto", "Bereich aufziehen; das Bild landet in der Zwischenablage.", _screenshotKey));
         keysCard.AddRow(ReadAloudKeyRow()); // SettingsForm.ReadAloud.cs
-        keysCard.AddRow(ChatKeyRow()); // SettingsForm.Chat.cs
         keysCard.AddRow(KeyRow("Ins Glossar", "Das richtig geschriebene Wort irgendwo markieren und das Kürzel drücken.", _glossaryKey));
         keysCard.AddRow(KeyRow("Live diktieren", "Der Text erscheint schon beim Sprechen, nach jeder kurzen Pause. Nur mit der "
             + "Spracherkennung auf diesem PC (Parakeet).", _liveKey));
+        keysCard.AddRow(ChatKeyRow()); // SettingsForm.Chat.cs; Mac order: after Live diktieren, before Einstellungen
         keysCard.AddRow(KeyRow("Einstellungen öffnen", "Öffnet dieses Fenster, ein zweiter Druck schließt es.", _settingsKey));
         // Mac: „Also dictate with 🌐 Fn“. Windows has no Fn key; the right Ctrl takes its place (same toggle rules).
         _rightCtrl = new ToggleSwitch { Checked = settings.RightCtrlDictation, AccessibleName = "Auch mit der rechten Strg-Taste diktieren" };
@@ -217,7 +217,7 @@ internal sealed partial class SettingsForm : Form
         _meterTimer.Tick += (_, _) => _micMeter.Value = _probe?.Level ?? 0;
 
         // --- clipboard (Mac: Auto-paste, After auto-paste) ---
-        general.Controls.Add(Section("Zwischenablage", subtitle: "Was mit dem Text nach der Aufnahme passiert. Er liegt immer auch in der Zwischenablage."));
+        general.Controls.Add(Section("Zwischenablage", subtitle: "Was passiert, wenn Diktieren oder Dictate Prompt fertig ist. Der Text liegt immer auch in der Zwischenablage."));
         _autoPaste = new ToggleSwitch { Checked = settings.AutoPaste, AccessibleName = "Automatisch einfügen" };
         _afterPaste = new FluentCombo { Width = ComboWidth, AccessibleName = "Zwischenablage nach dem Einfügen" };
         foreach (var mode in Core.ClipboardAfterPasteModes.All) _afterPaste.Items.Add(new AfterPasteItem(mode));
@@ -296,7 +296,7 @@ internal sealed partial class SettingsForm : Form
         dictate.Controls.Add(punctuationSection);
         _punctuation = new FluentCombo { Width = ComboWidth, AccessibleName = "Satzzeichen" };
         _punctuation.Items.Add(new PunctuationItem(Core.PunctuationMode.Automatic, "Automatisch"));
-        _punctuation.Items.Add(new PunctuationItem(Core.PunctuationMode.SpokenOnly, "Nur wenn gesprochen"));
+        _punctuation.Items.Add(new PunctuationItem(Core.PunctuationMode.SpokenOnly, "Nur gesprochen"));
         _punctuation.SelectedItem = _punctuation.Items.Cast<PunctuationItem>().First(i => i.Mode == settings.PunctuationMode);
         var punctuationCard = new Card();
         punctuationCard.AddRow(SettingRow("Satzzeichen", "", _punctuation, ComboWidth, out var punctuationText));
@@ -343,10 +343,10 @@ internal sealed partial class SettingsForm : Form
         glossaryCard.AddRow(glossaryBlock);
         dictate.Controls.Add(glossaryCard);
 
-        dictate.Controls.Add(Section("Anweisungen"));
+        dictate.Controls.Add(Section("System-Prompt"));
         dictate.Controls.Add(Wrap("So soll Gemini transkribieren (gilt nur für Gemini): Füllwörter, Satzzeichen, Formatierung. Namen und Fachwörter gehören "
             + "ins Glossar, nicht hierher. Der Standardtext ist englisch; geschrieben wird trotzdem in der gesprochenen Sprache.", 0));
-        _dictatePrompt = new PromptEditor(Core.Prompts.DefaultTranscriptionSystemPrompt, settings.DictateSystemPrompt, "Anweisungen Diktieren");
+        _dictatePrompt = new PromptEditor(Core.Prompts.DefaultTranscriptionSystemPrompt, settings.DictateSystemPrompt, "System-Prompt Diktieren");
         _dictateHistory = new HistoryLink(_dictatePrompt.Box, _history, Core.PromptField.Dictate);
         dictate.Controls.Add(PromptCard(_dictatePrompt, _dictateHistory));
 
@@ -480,7 +480,7 @@ internal sealed partial class SettingsForm : Form
         templateCard.AddRow(templateBlock);
         prompt.Controls.Add(templateCard);
 
-        prompt.Controls.Add(Section("Anweisungen"));
+        prompt.Controls.Add(Section("System-Prompt"));
         prompt.Controls.Add(Wrap("Grundregeln fürs Bearbeiten und Schreiben. Gelten immer: beim Bearbeiten einer Markierung, bei neuen Texten "
             + "und bei den Schnellanweisungen, online und offline. Hier hinein gehören feste Regeln wie Ton, Rechtschreibung oder "
             + "„nichts erfinden“. Der Standardtext ist englisch; geantwortet wird trotzdem in der Sprache des Textes.", 0));
@@ -495,16 +495,16 @@ internal sealed partial class SettingsForm : Form
             + "drücken, z. B. Strg+Umschalt+V. Entf entfernt das Kürzel."));
         _templateKey.ValueChanged += UpdateTemplateState;
 
-        templatesPage.Controls.Add(Section("Meine Vorlagen"));
+        templatesPage.Controls.Add(Section("Vorlagen"));
         _templateChoice = new FluentCombo { AccessibleName = "Vorlage auswählen" };
-        var templateAdd = new FluentButton("Neue Vorlage");
+        var templateAdd = new FluentButton("Vorlage hinzufügen");
         _templateRemove = new FluentButton("Löschen");
         templateAdd.Click += (_, _) => AddTemplate();
         _templateRemove.Click += (_, _) => RemoveTemplate();
         _templateChoice.SelectedIndexChanged += (_, _) => { if (!_loadingTemplate) LoadTemplate(); };
         var listBlock = Block();
         listBlock.Controls.Add(Row(_templateChoice, templateAdd, _templateRemove));
-        _templateEmpty = Wrap("Noch keine Vorlage. „Neue Vorlage“ legt eine an.", 2 * RowPadding, small: true);
+        _templateEmpty = Wrap("Noch keine Vorlage. „Vorlage hinzufügen“ legt eine an.", 2 * RowPadding, small: true);
         listBlock.Controls.Add(_templateEmpty);
         var listCard = new Card();
         listCard.AddRow(listBlock);
@@ -838,13 +838,13 @@ internal sealed partial class SettingsForm : Form
         info.Controls.Add(headCard);
 
         info.Controls.Add(Section("Einführung", subtitle: "Die geführte Tour durch die Funktionen von WhisperShortcut noch einmal ansehen."));
-        var tour = new FluentButton("Zeigen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Einführung zeigen" };
+        var tour = new FluentButton("Tour anzeigen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Einführung zeigen" };
         tour.Click += (_, _) => WelcomeRequested?.Invoke(); // the tour window (Mac: Settings → About → Welcome Tour)
         var tourCard = new Card();
         tourCard.AddRow(SettingRow("Einführung noch einmal zeigen", Core.UserCopy.WelcomeTourHint, tour, ButtonWidth, out _));
         info.Controls.Add(tourCard);
 
-        info.Controls.Add(Section("Daten und Zurücksetzen"));
+        info.Controls.Add(Section("Daten & Zurücksetzen"));
         // Two folders on disk: %APPDATA% (settings, glossary, key) and %LOCALAPPDATA% (log and the Offline models).
         // Each row names what is really inside, so "Ordner öffnen" never surprises.
         var dataFolder = new FluentButton("Ordner öffnen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Ordner mit Einstellungen öffnen" };
@@ -902,7 +902,7 @@ internal sealed partial class SettingsForm : Form
     private static string AppVersion => Application.ProductVersion.Split('+')[0];
 
     /// <summary>Opens a prefilled GitHub issue; a body too long for the URL goes to the clipboard instead.</summary>
-    private void ReportProblem()
+    internal void ReportProblem()
     {
         var info = new Core.ProblemReportInfo(AppVersion, Environment.OSVersion.Version.ToString(),
             System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(), _settings.OfflineMode,
@@ -1173,9 +1173,9 @@ internal sealed partial class SettingsForm : Form
         ["Tastenkürzel"] = "\uE765", ["Start"] = "\uE7E8", ["Mikrofon"] = "\uE720", ["Zwischenablage"] = "\uE77F",
         ["Töne"] = "\uE767", ["Während einer Aufnahme"] = "\uE916", ["Transkriptionsmodell"] = "\uE8D6",
         ["Offline-Modell"] = "\uE896", ["Offline-Sprachmodell"] = "\uE896", ["Satzzeichen"] = "\uE8D2", ["Glossar"] = "\uE82D",
-        ["Anweisungen"] = "\uE8BD", ["Modell"] = "\uE950", ["Bildschirminhalt"] = "\uE7F4", ["Schnellanweisungen"] = "\uE945",
-        ["Vorlage für neue Texte"] = "\uE8A5", ["Meine Vorlagen"] = "\uE8A5", ["So geht's"] = "\uE897", ["Offline-Modus"] = "\uE839",
-        ["Berechtigungen"] = "\uEA18", ["Einführung"] = "\uE734", ["Daten und Zurücksetzen"] = "\uE7B8",
+        ["System-Prompt"] = "\uE8BD", ["Modell"] = "\uE950", ["Bildschirminhalt"] = "\uE7F4", ["Schnellanweisungen"] = "\uE945",
+        ["Vorlage für neue Texte"] = "\uE8A5", ["Vorlagen"] = "\uE8A5", ["So geht's"] = "\uE897", ["Offline-Modus"] = "\uE839",
+        ["Berechtigungen"] = "\uEA18", ["Einführung"] = "\uE734", ["Daten & Zurücksetzen"] = "\uE7B8",
         ["Hilfe und Entwickler"] = "\uE897", ["Lizenz"] = "\uE8A5", ["Verbindung"] = "\uE71B", ["Was KI-Apps dürfen"] = "\uE72E",
         ["Mit Claude verbinden"] = "\uE8F2", ["Änderungen durch KI-Apps"] = "\uE81C",
         ["Google-API-Schlüssel"] = "\uE8D7", ["OpenAI-API-Schlüssel"] = "\uE8D7",

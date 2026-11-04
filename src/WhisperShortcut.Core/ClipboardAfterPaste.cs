@@ -50,9 +50,9 @@ public static class ClipboardAfterPasteModes
     /// <summary>Label in the settings window (German, from the Mac strings).</summary>
     public static string Label(ClipboardAfterPaste mode) => mode switch
     {
-        ClipboardAfterPaste.RestorePrevious => "Vorherigen Inhalt zurücklegen",
+        ClipboardAfterPaste.RestorePrevious => "Vorherige wiederherstellen",
         ClipboardAfterPaste.Clear => "Leeren",
-        _ => "Diktat stehen lassen",
+        _ => "Diktat behalten",
     };
 
     /// <summary>The explanation line under the choice (Mac wording, du-form, Windows keys).</summary>

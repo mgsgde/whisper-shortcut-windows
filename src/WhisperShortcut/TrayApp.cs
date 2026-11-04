@@ -112,6 +112,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly Core.TemplateReplay _templateReplay = new();
     private readonly System.Windows.Forms.Timer _replayExpiry = new() { Interval = 15_000 };
     private readonly ToolStripMenuItem _cancelledItem, _withoutTemplateItem;
+    private readonly ToolStripMenuItem _welcomeItem;
     private Core.ScreenshotImage? _runShot;
     private CancellationTokenSource? _snipCts;
     private readonly MeetingController _meeting;
@@ -148,7 +149,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _rightCtrl = new Core.RightCtrlDictationToggle(new RightCtrlBridge(this), () => Environment.TickCount64);
         _paster = new ClipboardPaster(_hotkeys.Handle);
 
-        _statusItem = new ToolStripMenuItem("Bereit") { Enabled = false };
+        _statusItem = new ToolStripMenuItem(Core.UserCopy.ReadyStatus) { Enabled = false };
         // Titles are the Mac's German ones (Localizable.xcstrings).
         _stopItem = new ToolStripMenuItem("Stopp", null, (_, _) => StopCurrentOperation()) { Visible = false };
         _stopSeparator = new ToolStripSeparator { Visible = false };
@@ -171,7 +172,7 @@ internal sealed partial class TrayApp : ApplicationContext
             Visible = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold),
         };
         _settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings());
-        var welcomeItem = new ToolStripMenuItem("Einführung …", null, (_, _) => OpenWelcome());
+        _welcomeItem = new ToolStripMenuItem("Einführung …", null, (_, _) => OpenWelcome());
         _finishSetupItem = new ToolStripMenuItem("Einrichtung abschließen …", null, (_, _) => OpenWelcome()) { Visible = false };
         // Mac: „Feedback senden“ with the problem report first. Windows adds the log, which the report points to.
         var feedbackItem = new ToolStripMenuItem("Feedback senden");
@@ -198,7 +199,7 @@ internal sealed partial class TrayApp : ApplicationContext
             _copyLast, _recentMenu, _cancelledItem, _withoutTemplateItem, _retryItem, new ToolStripSeparator(),
             // Mac: „Chat“ above Settings, and the meeting starts from the chat (/meeting); Windows keeps its Meeting row too.
             ChatMenuItem(), _meeting.MenuItem, new ToolStripSeparator(),
-            _settingsItem, welcomeItem, feedbackItem, quitItem,
+            _settingsItem, _welcomeItem, feedbackItem, quitItem,
         });
         menu.Opening += (_, _) =>
         {
@@ -390,6 +391,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _stopItem.Visible = _stopSeparator.Visible = !idle || _readAloud?.IsActive == true;
         _proposalsItem.Visible = _mcp != null && _mcp.Proposals.Pending.Count > 0;
         _finishSetupItem.Visible = !_settings.WelcomeCompleted;
+        _welcomeItem.Visible = _settings.WelcomeCompleted; // Mac: „Einführung …“ hides while „Einrichtung abschließen …“ shows
         bool recording = _state == State.Recording;
         _dictateItem.Text = recording && _mode == Mode.Dictate && _live == null ? "Diktat beenden" : "Diktieren";
         _dictateItem.ShortcutKeyDisplayString = Key(_settings.ActiveDictateHotkey);
@@ -750,8 +752,10 @@ internal sealed partial class TrayApp : ApplicationContext
             Notify(Core.UserCopy.ModelNotDownloadedTitle,
                 (mode == Mode.Dictate || !OfflineEngine.SpeechInstalled
                     ? "Die Offline-Spracherkennung ist noch nicht geladen."
-                    : "Das Sprachmodell für „Text bearbeiten“ ist noch nicht geladen.")
-                + " Du lädst es in den Einstellungen unter „Offline-Modelle“.",
+                    : "Das Sprachmodell für Dictate Prompt ist noch nicht geladen.")
+                + (mode == Mode.Dictate || !OfflineEngine.SpeechInstalled
+                    ? " Du lädst es in den Einstellungen unter Diktieren."
+                    : " Du lädst es in den Einstellungen unter Dictate Prompt."),
                 ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
         }
@@ -1325,7 +1329,7 @@ internal sealed partial class TrayApp : ApplicationContext
                     break;
                 case PasteOutcome.ClipboardOnlyClipboardChanged:
                     Notify("Nicht eingefügt",
-                        "Die Zwischenablage hat sich kurz vor dem Einfügen geändert. Den Text gibt es im Menü am Symbol unter „Letzte Texte“.",
+                        "Die Zwischenablage hat sich kurz vor dem Einfügen geändert. Den Text gibt es im Menü am Symbol unter „Letzte Transkriptionen“.",
                         ToolTipIcon.Info);
                     break;
                 case PasteOutcome.ClipboardOnlyOwnWindow:
@@ -1941,13 +1945,13 @@ internal sealed partial class TrayApp : ApplicationContext
         string key = Hotkey.Display(_stopKey);
         (string status, Icon icon) = state switch
         {
-            State.Recording => (Core.UserCopy.RecordingStatus(key), TrayIcons.Recording),
-            State.Processing => (_busyStatus, TrayIcons.Processing),
+            State.Recording => (Core.UserCopy.RecordingStatus(key, prompt: _mode != Mode.Dictate), TrayIcons.Recording),
+            State.Processing => (TrayProcessingStatus(), TrayIcons.Processing),
             _ when _readAloud?.IsActive == true => (_readAloud.StatusText, _readAloud.IsSpeaking ? TrayIcons.Ready : TrayIcons.Processing),
-            _ when MissingKey => ("Kein API-Schlüssel eingetragen", TrayIcons.Ready),
-            _ when !OfflineModelsReady(Mode.Dictate) => ("Spracherkennung noch nicht geladen", TrayIcons.Ready),
+            _ when MissingKey => ("Kein API-Schlüssel eingetragen", TrayIcons.Warning),
+            _ when !OfflineModelsReady(Mode.Dictate) => ("Spracherkennung noch nicht geladen", TrayIcons.Warning),
             _ when _settings.OfflineMode => ("Bereit (offline, nichts verlässt diesen PC)", TrayIcons.Ready),
-            _ => ("Bereit", TrayIcons.Ready),
+            _ => (Core.UserCopy.ReadyStatus, TrayIcons.Ready),
         };
         _icon.Icon = icon;
         SetStatusText(status);
@@ -2014,10 +2018,15 @@ internal sealed partial class TrayApp : ApplicationContext
         _busyStatus = status;
         if (_state == State.Processing)
         {
-            SetStatusText(status);
+            SetStatusText(TrayProcessingStatus());
             _overlay.ShowProcessing(status);
         }
     }
+
+    /// <summary>Mac AppState processing lines: the tray says what runs, the pill shows the step (<see cref="_busyStatus"/>).</summary>
+    private string TrayProcessingStatus() => _mode == Mode.Dictate && _quickAction == null
+        ? Core.UserCopy.ProcessingDictationStatus
+        : Core.UserCopy.ProcessingPromptStatus;
 
     private void SetStatusText(string status)
     {

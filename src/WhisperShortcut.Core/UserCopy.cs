@@ -28,7 +28,13 @@ public static class UserCopy
     public const string LoadingLlm = "Sprachmodell wird geladen …";
     public const string Processing = "Wird verarbeitet …";
 
-    public static string RecordingStatus(string stopKey) => $"Aufnahme läuft – {stopKey} beendet sie";
+    // Tray status line in the Mac's wording (AppState.statusText, German from Localizable.xcstrings); Windows adds the stop key.
+    public const string ReadyStatus = "Bereit zur Aufnahme";
+    public const string ProcessingDictationStatus = "⏳ Audio wird transkribiert …";
+    public const string ProcessingPromptStatus = "⏳ Dictate Prompt wird verarbeitet …";
+
+    public static string RecordingStatus(string stopKey, bool prompt = false) =>
+        (prompt ? "🔴 Dictate Prompt wird aufgenommen …" : "🔴 Diktat läuft …") + $" ({stopKey} beendet)";
 
     /// <summary>Mac "Listening".</summary>
     public const string OverlayDictateTitle = "Hört zu";
@@ -137,7 +143,7 @@ public static class UserCopy
 
     public const string UnsupportedCpu =
         "Der Prozessor dieses PCs kann das Offline-Sprachmodell nicht ausführen. Diktieren geht offline weiter; "
-        + "für „Text bearbeiten“ bitte in den Einstellungen unter Anbieter Gemini oder OpenAI wählen.";
+        + "für Dictate Prompt bitte in den Einstellungen unter Dictate Prompt ein Modell von Gemini oder OpenAI wählen.";
 
     /// <summary>
     /// Keep a German detail, drop .NET/Win32 noise. Always ends with a next step when the detail is unusable.

@@ -642,7 +642,7 @@ public class QuickActionRequestTests
             Assert.False(string.IsNullOrWhiteSpace(ClipboardAfterPasteModes.Label(m)));
             Assert.DoesNotContain("Sie ", ClipboardAfterPasteModes.Explanation(m)); // du-form
         }
-        Assert.Equal("Diktat stehen lassen", ClipboardAfterPasteModes.Label(ClipboardAfterPaste.KeepDictation));
+        Assert.Equal("Diktat behalten", ClipboardAfterPasteModes.Label(ClipboardAfterPaste.KeepDictation));
         Assert.Null(ClipboardAfterPasteModes.Parse(null));
         Assert.Null(ClipboardAfterPasteModes.Parse("x"));
     }

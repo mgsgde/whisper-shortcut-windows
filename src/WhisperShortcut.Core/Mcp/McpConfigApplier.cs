@@ -107,7 +107,7 @@ public sealed class McpConfigApplier
         SetPrompt(section, stored);
         SaveOrRestore(() => SetPrompt(section, previous));
         RecordHistory(section, previous, stored);
-        var title = section == "dictation" ? "Anweisungen Diktieren geändert" : "Anweisungen „Text bearbeiten“ geändert";
+        var title = section == "dictation" ? "System-Prompt Diktieren geändert" : "System-Prompt Dictate Prompt geändert";
         var change = _log.Record(McpChangeKind.SystemPrompt, section, title, previous, stored, rationale, viaProposal);
         AfterApply();
         return change.Id;

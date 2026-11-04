@@ -86,7 +86,7 @@ public class McpUndoTests
         s.Settings.DictateSystemPrompt = "Alt";
         var p = s.ToolJson("update_system_prompt", A($"{{\"section\":\"dictation\",\"content\":\"Neu\",{R}}}"));
         var id = s.Proposals.Accept(p["id"]!.GetValue<string>());
-        Assert.Equal("Anweisungen Diktieren geändert", s.Changes.Changes[0].Title);
+        Assert.Equal("System-Prompt Diktieren geändert", s.Changes.Changes[0].Title);
         Assert.Equal(McpUndoOutcome.Undone, s.Applier.Undo(id).Outcome);
         Assert.Equal("Alt", s.ReloadSettings().DictateSystemPrompt);
 

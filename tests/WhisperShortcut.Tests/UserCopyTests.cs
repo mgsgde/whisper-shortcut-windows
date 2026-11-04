@@ -7,7 +7,8 @@ public class UserCopyTests
     [Fact]
     public void StatusLines_StayGermanAndSpecific()
     {
-        Assert.Equal("Aufnahme läuft – Strg+Umschalt+D beendet sie", UserCopy.RecordingStatus("Strg+Umschalt+D"));
+        Assert.Equal("🔴 Diktat läuft … (Strg+Umschalt+D beendet)", UserCopy.RecordingStatus("Strg+Umschalt+D"));
+        Assert.Equal("🔴 Dictate Prompt wird aufgenommen … (Alt+2 beendet)", UserCopy.RecordingStatus("Alt+2", prompt: true));
         // The Mac pill labels (Transcribing, Thinking, Listening, Prompting).
         Assert.Equal("Wird transkribiert …", UserCopy.Transcribing);
         Assert.Equal("Denkt nach …", UserCopy.RecognizingInstruction);
@@ -47,7 +48,7 @@ public class UserCopyTests
             UserCopy.ModelGone("OpenAI"));
         Assert.DoesNotContain("HTTP", UserCopy.ServerBusy("Gemini"));
         Assert.DoesNotContain("HTTP", UserCopy.ModelGone("Gemini"));
-        Assert.Contains("Anbieter", UserCopy.UnsupportedCpu);
+        Assert.Contains("unter Dictate Prompt", UserCopy.UnsupportedCpu);
         Assert.DoesNotContain("Online mit Gemini", UserCopy.UnsupportedCpu);
     }
 

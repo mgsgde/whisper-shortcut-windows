@@ -81,7 +81,7 @@ internal sealed partial class SettingsForm
         levelCard.AddRow(OptionRow(_mcpApply, "Glossar, Schnellanweisungen und Einstellungen ändern sich sofort. Alles steht unten in der Liste "
             + "und lässt sich rückgängig machen."));
         page.Controls.Add(levelCard);
-        page.Controls.Add(Wrap("Neue Anweisungen fürs Diktieren und für „Text bearbeiten“ und „Mit Windows starten“ warten immer auf deine Bestätigung.", 0));
+        page.Controls.Add(Wrap("Neue System-Prompts für Diktieren und Dictate Prompt und „Mit Windows starten“ warten immer auf deine Bestätigung.", 0));
 
         // --- connect ---
         page.Controls.Add(Section("Mit Claude verbinden"));
