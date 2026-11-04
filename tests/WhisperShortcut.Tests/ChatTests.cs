@@ -309,8 +309,18 @@ public class ChatTests : IDisposable
     [Fact]
     public void Commands_are_listed_in_the_mac_order()
     {
-        Assert.Equal(new[] { "/new", "/model", "/gemini", "/gpt", "/settings", "/pin", "/unpin", "/meeting", "/copy" },
+        Assert.Equal(new[]
+            {
+                "/new", "/screenshot", "/attach", "/model", "/gemini",
+                "/gemini35flashlite", "/gemini31flashlite", "/gemini4argon",
+                "/gpt", "/gpt6luna", "/gpt54mini",
+                "/think", "/settings", "/pin", "/unpin", "/meeting", "/copy", "/feedback",
+            },
             ChatCommands.All.Select(c => c.Command));
+        Assert.Equal("Zu Gemini 3.5 Flash-Lite wechseln", ChatCommands.All.Single(c => c.Command == "/gemini35flashlite").Description);
+        Assert.Equal("Zu GPT-6 Luna wechseln", ChatCommands.All.Single(c => c.Command == "/gpt6luna").Description);
+        Assert.Equal("Denktiefe für diesen Chat festlegen: minimal | low | medium | high | default",
+            ChatCommands.All.Single(c => c.Command == "/think").Description);
         Assert.All(ChatCommands.All, c => Assert.False(string.IsNullOrWhiteSpace(c.Description)));
     }
 
@@ -321,6 +331,67 @@ public class ChatTests : IDisposable
         Assert.Equal(new[] { "/pin" }, ChatCommands.Suggestions("/pi").Select(c => c.Command));
         Assert.Equal(new[] { "/model", "/meeting" }, ChatCommands.Suggestions("/M").Select(c => c.Command));
         Assert.Equal(new[] { "/unpin" }, ChatCommands.Suggestions("/UN").Select(c => c.Command));
+    }
+
+    [Fact]
+    public void Suggestions_list_custom_commands_first()
+    {
+        var custom = new[]
+        {
+            new UserCommand("protokoll", "Protokoll", "Das Protokoll", UserCommandScope.Meeting, "b", "p"),
+            new UserCommand("neu-x", "Neu x", "Eigener", UserCommandScope.Both, "b", "p"),
+        };
+        Assert.Equal(ChatCommands.All.Count + 2, ChatCommands.Suggestions("/", custom).Count);
+        var n = ChatCommands.Suggestions("/n", custom);
+        Assert.Equal(new[] { "/neu-x", "/new" }, n.Select(c => c.Command));
+        Assert.Equal("Eigener", n[0].Description);
+        Assert.Equal("/protokoll", ChatCommands.Suggestions("/", custom)[0].Command);
+        Assert.Equal(ChatCommands.All.Count, ChatCommands.Suggestions("/", null).Count);
+    }
+
+    [Fact]
+    public void ReservedNames_cover_all_built_ins_and_the_silent_alias()
+    {
+        Assert.All(ChatCommands.All, c => Assert.Contains(c.Command[1..], ChatCommands.ReservedNames));
+        Assert.Contains("openai", ChatCommands.ReservedNames);
+        Assert.Contains("gpt6luna", ChatCommands.ReservedNames);
+        Assert.DoesNotContain("protokoll", ChatCommands.ReservedNames);
+    }
+
+    [Theory]
+    [InlineData("/gpt6luna", "gpt-6-luna")]
+    [InlineData("/GPT54MINI ignoriert", "gpt-5.4-mini")]
+    [InlineData("/gemini35flashlite", "gemini-3.5-flash-lite")]
+    [InlineData("/gemini4argon", "gemini-4-argon")]
+    public void TryParse_model_aliases_carry_the_model_id(string input, string modelId)
+    {
+        Assert.True(ChatCommands.TryParse(input, out var kind, out var arg));
+        Assert.Equal(ChatCommandKind.ModelAlias, kind);
+        Assert.Equal(modelId, arg);
+    }
+
+    [Theory]
+    [InlineData("/screenshot", ChatCommandKind.Screenshot, "")]
+    [InlineData("/attach", ChatCommandKind.Attach, "")]
+    [InlineData("/think high", ChatCommandKind.Think, "high")]
+    [InlineData("/feedback", ChatCommandKind.Feedback, "")]
+    public void TryParse_new_commands(string input, ChatCommandKind kind, string argument)
+    {
+        Assert.True(ChatCommands.TryParse(input, out var k, out var arg));
+        Assert.Equal(kind, k);
+        Assert.Equal(argument, arg);
+    }
+
+    [Fact]
+    public void TryParseUser_finds_custom_commands_case_insensitively_with_arguments()
+    {
+        var custom = new[] { new UserCommand("protokoll", "Protokoll", "d", UserCommandScope.Meeting, "b", "p") };
+        Assert.True(ChatCommands.TryParseUser(" /Protokoll  kurz bitte ", custom, out var cmd, out var args));
+        Assert.Equal("protokoll", cmd.Name);
+        Assert.Equal("kurz bitte", args);
+        Assert.False(ChatCommands.TryParseUser("/protokollx", custom, out _, out _));
+        Assert.False(ChatCommands.TryParseUser("protokoll", custom, out _, out _));
+        Assert.False(ChatCommands.TryParseUser("/new", custom, out _, out _));
     }
 
     [Theory]

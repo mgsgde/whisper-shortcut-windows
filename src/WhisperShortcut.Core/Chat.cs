@@ -288,53 +288,86 @@ public enum ChatCommandKind
     Meeting,
     /// <summary>Copy the whole chat as Markdown.</summary>
     Copy,
+    /// <summary>Attach a screenshot to the next message.</summary>
+    Screenshot,
+    /// <summary>Open the file dialog to attach files.</summary>
+    Attach,
+    /// <summary>Set the thinking depth of this chat (argument: a <see cref="ChatThinking.Levels"/> entry).</summary>
+    Think,
+    /// <summary>Write to the developer (<see cref="FeedbackLinks"/>).</summary>
+    Feedback,
+    /// <summary>Switch straight to one model, e.g. /gpt6luna; the argument is the model id.</summary>
+    ModelAlias,
 }
 
 /// <summary>Slash commands of the chat input (Mac ChatView command menu).</summary>
 public static class ChatCommands
 {
-    /// <summary>Menu entries in the Mac's order, with the German descriptions from its Localizable.xcstrings.</summary>
-    public static IReadOnlyList<(string Command, string Description)> All { get; } = new[]
-    {
-        ("/new", "Neuen Chat beginnen (der bisherige bleibt im Verlauf)"),
-        ("/model", "Modell wechseln …"),
-        ("/gemini", "Zu Gemini wechseln"),
-        ("/gpt", "Zu GPT wechseln"),
-        ("/settings", "Einstellungen öffnen"),
-        ("/pin", "Festlegen, ob das Fenster offen bleibt, wenn es in den Hintergrund rückt"),
-        ("/unpin", "Fenster schließen, wenn es in den Hintergrund rückt"),
-        ("/meeting", "Live-Meeting-Aufnahme starten oder beenden"),
-        ("/copy", "Den ganzen Chatverlauf als Markdown in die Zwischenablage kopieren"),
-    };
+    // Menu order of the Mac; each model's alias follows its provider command.
+    private static readonly List<(string Command, string Description, ChatCommandKind Kind, string? ModelId)> Entries = BuildEntries();
 
-    private static readonly Dictionary<string, ChatCommandKind> Kinds = new(StringComparer.OrdinalIgnoreCase)
+    private static List<(string, string, ChatCommandKind, string?)> BuildEntries()
     {
-        ["/new"] = ChatCommandKind.New,
-        ["/model"] = ChatCommandKind.Model,
-        ["/gemini"] = ChatCommandKind.Gemini,
-        ["/gpt"] = ChatCommandKind.Gpt,
-        ["/openai"] = ChatCommandKind.Gpt, // silent alias, like on the Mac
-        ["/settings"] = ChatCommandKind.Settings,
-        ["/pin"] = ChatCommandKind.Pin,
-        ["/unpin"] = ChatCommandKind.Unpin,
-        ["/meeting"] = ChatCommandKind.Meeting,
-        ["/copy"] = ChatCommandKind.Copy,
-    };
+        var list = new List<(string, string, ChatCommandKind, string?)>
+        {
+            ("/new", "Neuen Chat beginnen (der bisherige bleibt im Verlauf)", ChatCommandKind.New, null),
+            ("/screenshot", "Bildschirmfoto an die nächste Nachricht anhängen (mehrere möglich)", ChatCommandKind.Screenshot, null),
+            ("/attach", "Dateiauswahl öffnen, um Dateien anzuhängen (PDF, Bilder, Text)", ChatCommandKind.Attach, null),
+            ("/model", "Modell wechseln …", ChatCommandKind.Model, null),
+            ("/gemini", "Zu Gemini wechseln", ChatCommandKind.Gemini, null),
+        };
+        foreach (var m in GeminiModels.Prompt.Where(m => m.Id != Settings.DefaultPromptModel))
+            list.Add((AliasOf(m.Id), $"Zu {m.Name} wechseln", ChatCommandKind.ModelAlias, m.Id));
+        list.Add(("/gpt", "Zu GPT wechseln", ChatCommandKind.Gpt, null));
+        foreach (var m in OpenAiModels.Prompt.Where(m => m.Id != OpenAiModels.DefaultPromptModel))
+            list.Add((AliasOf(m.Id), $"Zu {m.Name} wechseln", ChatCommandKind.ModelAlias, m.Id));
+        list.Add(("/think", "Denktiefe für diesen Chat festlegen: " + ChatThinking.LevelList, ChatCommandKind.Think, null));
+        list.Add(("/settings", "Einstellungen öffnen", ChatCommandKind.Settings, null));
+        list.Add(("/pin", "Festlegen, ob das Fenster offen bleibt, wenn es in den Hintergrund rückt", ChatCommandKind.Pin, null));
+        list.Add(("/unpin", "Fenster schließen, wenn es in den Hintergrund rückt", ChatCommandKind.Unpin, null));
+        list.Add(("/meeting", "Live-Meeting-Aufnahme starten oder beenden", ChatCommandKind.Meeting, null));
+        list.Add(("/copy", "Den ganzen Chatverlauf als Markdown in die Zwischenablage kopieren", ChatCommandKind.Copy, null));
+        list.Add(("/feedback", "Dem Entwickler schreiben, mit dem Ende dieses Chats im Anhang", ChatCommandKind.Feedback, null));
+        return list;
+    }
+
+    // "/" + the model id without everything that is not [a-z0-9]: gpt-6-luna -> /gpt6luna.
+    private static string AliasOf(string modelId) => "/" + new string(modelId.Where(c => c is (>= 'a' and <= 'z') or (>= '0' and <= '9')).ToArray());
+
+    /// <summary>Menu entries in the Mac's order, with the German descriptions from its Localizable.xcstrings, incl. per-model aliases.</summary>
+    public static IReadOnlyList<(string Command, string Description)> All { get; } =
+        Entries.Select(e => (e.Command, e.Description)).ToList();
+
+    private static readonly Dictionary<string, (ChatCommandKind Kind, string? ModelId)> Kinds = BuildKinds();
+
+    private static Dictionary<string, (ChatCommandKind, string?)> BuildKinds()
+    {
+        var map = new Dictionary<string, (ChatCommandKind, string?)>(StringComparer.OrdinalIgnoreCase);
+        foreach (var e in Entries) map[e.Command] = (e.Kind, e.ModelId);
+        map["/openai"] = (ChatCommandKind.Gpt, null); // silent alias, like on the Mac
+        return map;
+    }
+
+    /// <summary>All built-in command names without the slash (incl. aliases and "openai"); custom commands may not use them.</summary>
+    public static IReadOnlySet<string> ReservedNames { get; } =
+        new HashSet<string>(Kinds.Keys.Select(k => k[1..]), StringComparer.OrdinalIgnoreCase);
 
     /// <summary>
     /// The menu entries to show while typing: input that starts with "/" and has no whitespace yet
-    /// filters by prefix (case-insensitive); anything else shows nothing.
+    /// filters by prefix (case-insensitive); anything else shows nothing. Custom commands come first.
     /// </summary>
-    public static IReadOnlyList<(string Command, string Description)> Suggestions(string? input)
+    public static IReadOnlyList<(string Command, string Description)> Suggestions(
+        string? input, IReadOnlyList<UserCommand>? userCommands = null)
     {
         if (string.IsNullOrEmpty(input) || input[0] != '/' || input.Any(char.IsWhiteSpace))
             return Array.Empty<(string, string)>();
-        return All.Where(c => c.Command.StartsWith(input, StringComparison.OrdinalIgnoreCase)).ToList();
+        var user = (userCommands ?? Array.Empty<UserCommand>()).Select(c => (c.Slash, c.Description));
+        return user.Concat(All).Where(c => c.Item1.StartsWith(input, StringComparison.OrdinalIgnoreCase)).ToList();
     }
 
     /// <summary>
-    /// True when the first word of <paramref name="input"/> is a known command; <paramref name="argument"/> is the rest, trimmed.
-    /// An unknown "/xyz" is no command and goes to the model as normal text.
+    /// True when the first word of <paramref name="input"/> is a known command; <paramref name="argument"/> is the rest, trimmed
+    /// (for a <see cref="ChatCommandKind.ModelAlias"/> the model id instead). An unknown "/xyz" is no command and goes to the model as normal text.
     /// </summary>
     public static bool TryParse(string? input, out ChatCommandKind kind, out string argument)
     {
@@ -344,8 +377,28 @@ public static class ChatCommands
         if (text.Length == 0 || text[0] != '/') return false;
         var end = 0;
         while (end < text.Length && !char.IsWhiteSpace(text[end])) end++;
-        if (!Kinds.TryGetValue(text[..end], out kind)) return false;
-        argument = text[end..].Trim();
+        if (!Kinds.TryGetValue(text[..end], out var found)) return false;
+        kind = found.Kind;
+        argument = found.ModelId ?? text[end..].Trim();
+        return true;
+    }
+
+    /// <summary>
+    /// True when the first word of <paramref name="input"/> is one of the custom <paramref name="commands"/>;
+    /// <paramref name="args"/> is the rest, trimmed.
+    /// </summary>
+    public static bool TryParseUser(string? input, IReadOnlyList<UserCommand> commands, out UserCommand cmd, out string args)
+    {
+        cmd = null!;
+        args = "";
+        var text = (input ?? "").Trim();
+        if (text.Length == 0 || text[0] != '/') return false;
+        var end = 0;
+        while (end < text.Length && !char.IsWhiteSpace(text[end])) end++;
+        var found = UserCommandStore.Find(commands, text[..end]);
+        if (found == null) return false;
+        cmd = found;
+        args = text[end..].Trim();
         return true;
     }
 }
