@@ -366,15 +366,39 @@ public static class McpSettingsCatalog
     /// <summary>Equal values (a hotkey in any accepted spelling equals its normalized form).</summary>
     public static bool SameValue(JsonNode? a, JsonNode? b) => JsonNode.DeepEquals(Canonical(a), Canonical(b));
 
-    /// <summary>Validates the state the whole batch would leave: the hotkeys must stay distinct (also against the unchanged ones). Null = ok.</summary>
-    public static string? ValidateBatch(IReadOnlyList<McpSetting> catalog, IReadOnlyList<(string Id, JsonNode? Value)> items)
+    /// <summary>The active keys of features AI apps cannot change (empty ones are skipped by the caller).</summary>
+    public static IReadOnlyList<(string Owner, string Key)> FixedHotkeys(Settings s)
     {
+        var list = new List<(string, string)>
+        {
+            ("Tastenkürzel Bildschirmfoto", s.ActiveScreenshotHotkey),
+            ("Tastenkürzel Live diktieren", s.ActiveLiveDictateHotkey),
+            ("Tastenkürzel Einstellungen öffnen", s.ActiveOpenSettingsHotkey),
+            ("Tastenkürzel Chat", s.ActiveChatHotkey),
+            ("Tastenkürzel Live Meeting", s.MeetingHotkey),
+            ("Tastenkürzel Vorlagen", s.TemplateHotkey),
+        };
+        // Like TemplateHotkeys.ActiveBindings: a template without instructions owns no key.
+        foreach (var t in s.Templates.Where(t => t.IsUsable)) list.Add(("Tastenkürzel einer Vorlage", t.Hotkey));
+        list.Add(("Rechte Strg-Taste (Diktieren)", s.RightCtrlDictation ? "RightCtrl" : ""));
+        return list;
+    }
+
+    /// <summary>Validates the state the whole batch would leave: the hotkeys must stay distinct (also against the unchanged ones). Null = ok.</summary>
+    public static string? ValidateBatch(IReadOnlyList<McpSetting> catalog, IReadOnlyList<(string Id, JsonNode? Value)> items,
+        IEnumerable<(string Owner, string Key)>? fixedKeys = null)
+    {
+        var fixedOwners = new Dictionary<string, string>();
+        foreach (var (owner, raw) in fixedKeys ?? Array.Empty<(string, string)>())
+            if (HotkeyRules.TryNormalize(raw, out var fk)) fixedOwners.TryAdd(fk, owner);
         var seen = new Dictionary<string, McpSetting>();
         foreach (var s in catalog.Where(c => c.Type == McpSettingType.Hotkey))
         {
             var value = items.Where(i => i.Id == s.Id).Select(i => i.Value).FirstOrDefault(_ => true);
             var overridden = items.Any(i => i.Id == s.Id);
             if (!TryHotkey(overridden ? value : s.Read(), out var key)) continue;
+            if (fixedOwners.TryGetValue(key, out var fixedOwner))
+                return $"{s.Title} would be {HotkeyRules.Display(key)}, which {fixedOwner} already uses. Each shortcut must be different.";
             if (seen.TryGetValue(key, out var other))
                 return $"{other.Title} and {s.Title} would both be {HotkeyRules.Display(key)}. Each shortcut must be different.";
             seen[key] = s;

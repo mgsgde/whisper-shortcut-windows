@@ -204,7 +204,7 @@ public sealed class McpProposalStore
                     if (problem != null) throw new McpConfigException($"„{item.Title}“ ist jetzt nicht mehr möglich: {problem}");
                     batch.Add((item.Id, value));
                 }
-                var batchProblem = McpSettingsCatalog.ValidateBatch(applier.Catalog, batch);
+                var batchProblem = McpSettingsCatalog.ValidateBatch(applier.Catalog, batch, McpSettingsCatalog.FixedHotkeys(applier.Settings));
                 if (batchProblem != null) throw new McpConfigException("Die Änderungen passen jetzt nicht mehr zusammen: " + batchProblem);
                 changeId = applier.ApplySettings(items, p.Rationale, true);
                 break;
