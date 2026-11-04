@@ -58,6 +58,16 @@ internal sealed partial class SettingsForm
         return card;
     }
 
+    /// <summary>For the UI tests: the tiles currently shown, all pickers (top rows and „Weitere Modelle“).</summary>
+    internal IReadOnlyList<Control> PickerTilesForTests =>
+        _pickers.SelectMany(p => p.Tiles.Controls.Cast<Control>().Concat(p.More.Controls.Cast<Control>())).ToList();
+
+    /// <summary>For the UI tests: the names of all settings pages.</summary>
+    internal IReadOnlyList<string> PageNamesForTests => _pages.Keys.ToList();
+
+    /// <summary>For the UI tests: what a download progress tick does (OfflineEngine.DownloadChanged).</summary>
+    internal void DownloadTickForTests() => UpdateModelRows();
+
     private void RefreshPickers()
     {
         if (IsDisposed) return;

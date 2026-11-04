@@ -17,6 +17,8 @@ CSPROJ_VERSION=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/WhisperShortc
 [ -z "$(git status --porcelain)" ] || { echo "Working tree is not clean" >&2; exit 1; }
 
 dotnet test tests/WhisperShortcut.Tests
+# The settings window for real: a frozen or slow window does not show in the Core tests.
+dotnet test tests/WhisperShortcut.UiTests
 
 PUB="$(mktemp)"
 openssl ec -in "$KEY" -pubout -out "$PUB" 2>/dev/null

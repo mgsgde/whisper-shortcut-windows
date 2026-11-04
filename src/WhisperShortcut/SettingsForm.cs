@@ -591,7 +591,7 @@ internal sealed partial class SettingsForm : Form
         privacy.Controls.Add(_offlineState);
         _onlineMode.CheckedChanged += (_, _) =>
         {
-            UpdateMode();
+        UpdateMode();
             RefreshPickers();
             // Switching to online: say right away whether the stored keys work.
             if (_onlineMode.Checked && IsHandleCreated) CheckVisibleKeys();
@@ -667,8 +667,7 @@ internal sealed partial class SettingsForm : Form
         content.Controls.Add(buttons);
         Controls.Add(content);
         Controls.Add(nav);
-        foreach (var page in _building) page.ResumeLayout(false);
-        _building.Clear();
+        // Pages stay suspended until first shown (ShowPage): laying out all twelve up front cost seconds on open.
         ResumeLayout(false);
         PerformLayout();
 
@@ -760,6 +759,7 @@ internal sealed partial class SettingsForm : Form
     {
         if (!_pages.TryGetValue(name, out var page)) return;
         Core.Log.Info($"Settings page {name}");
+        if (page.Controls.Count > 0 && page.Controls[0] is TableLayoutPanel root && _building.Remove(root)) root.ResumeLayout(false);
         foreach (var p in _pages.Values) p.Visible = p == page;
         foreach (var n in _nav) n.Selected = n.Text == name;
         if (name != General) StopMicTest();
@@ -1697,6 +1697,11 @@ internal sealed partial class SettingsForm : Form
     {
         bool mine = download?.Id == id;
         string? error = download == null && _offline.LastFinished is { Error: { } e } last && last.Id == id ? e : null;
+        // WHY: this runs on every download tick. On a page that is not in front, setting Visible = true lays out the
+        // whole page each time even when nothing changed (about 120 ms), so the window froze during a download.
+        var state = (installed, mine, busy: download != null, error, size, percent: mine ? (int)Math.Round(download!.Fraction * 100) : -1);
+        if (Equals(row.Shown, state)) return;
+        row.Shown = state;
         row.Progress.Visible = mine;
         row.Remove.Visible = installed && !mine;
         row.Action.Visible = !installed || mine;
@@ -1743,6 +1748,9 @@ internal sealed partial class SettingsForm : Form
     {
         private readonly ThemedLabel _status;
         public FluentButton Action { get; }
+        /// <summary>The state last drawn (UpdateRow skips identical ticks).</summary>
+        [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
+        public object? Shown { get; set; }
         public LinkLabel Remove { get; }
         public Bar Progress { get; }
 

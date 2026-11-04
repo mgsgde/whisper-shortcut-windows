@@ -16,6 +16,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="WhisperShortcut.UiTests" />
     <!-- Built by tools/make_icon.py from the macOS app icon. -->
     <EmbeddedResource Include="app.ico" LogicalName="WhisperShortcut.app.ico" />
     <EmbeddedResource Include="recording.ico" LogicalName="WhisperShortcut.recording.ico" />
