@@ -314,6 +314,7 @@ internal sealed class ReadAloudController : IDisposable
 
     public void Dispose()
     {
+        StateChanged = null;
         Stop();
         _overlay.Dispose();
     }
