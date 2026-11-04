@@ -42,6 +42,9 @@ internal sealed class MeetingController : IDisposable
     private DateTime _startedUtc;
     private bool _mixes;
     private bool _stopping;
+    // The running session.StopAsync and its token, so Shutdown can wait for it instead of stopping a second time.
+    private Task<Core.MeetingStopResult>? _stopTask;
+    private CancellationTokenSource? _stopCts;
     private bool _retrying;
     private bool _failureShown;
     private string? _lastFolder;
@@ -229,8 +232,9 @@ internal sealed class MeetingController : IDisposable
         try
         {
             // Five minutes for the last chunks; whatever is not through by then stays as audio for a later retry.
-            using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
-            result = await session.StopAsync(_settings.MeetingSummary ? SummarizeAsync : null, cts.Token);
+            _stopCts = new CancellationTokenSource(TimeSpan.FromMinutes(5));
+            _stopTask = session.StopAsync(_settings.MeetingSummary ? SummarizeAsync : null, _stopCts.Token);
+            result = await _stopTask;
         }
         catch (Exception e)
         {
@@ -241,6 +245,9 @@ internal sealed class MeetingController : IDisposable
             session.Dispose();
             _session = null;
             _stopping = false;
+            _stopTask = null;
+            _stopCts?.Dispose();
+            _stopCts = null;
             _overlay.HideOverlay();
             RefreshMenu();
         }
@@ -337,6 +344,30 @@ internal sealed class MeetingController : IDisposable
         var session = _session;
         StopAudio();
         if (session == null) return;
+        if (_stopping)
+        {
+            // A stop is already running (tray or hotkey). Stopping again would throw and Dispose would cancel the
+            // draining worker. Cancel its summary and wait bounded for the same task. The wait is on the inner
+            // session task (its awaits do not resume on the UI thread) and bounded, so it cannot hang the UI.
+            Core.Log.Info("Meeting: quit while a stop is running, waiting for it");
+            var running = _stopTask;
+            try { _stopCts?.Cancel(); }
+            catch (ObjectDisposedException) { }
+            try
+            {
+                if (running != null && !running.Wait(TimeSpan.FromSeconds(5)))
+                {
+                    Core.Log.Warn("Meeting: running stop did not finish at quit, audio kept");
+                    return; // do not dispose a session whose stop is still running
+                }
+            }
+            catch (Exception e)
+            {
+                Core.Log.Warn($"Meeting: running stop ended with an error at quit ({e.GetType().Name})");
+            }
+            if (running != null) session.Dispose(); // finished: StopAsync's finally may not get to run before exit
+            return;
+        }
         try
         {
             using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
