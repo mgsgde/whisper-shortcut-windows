@@ -233,6 +233,32 @@ public static class McpSettingsCatalog
                 },
                 Write = v => settings.PunctuationMode = Text(v) == "spokenOnly" ? PunctuationMode.SpokenOnly : PunctuationMode.Automatic,
             },
+            new()
+            {
+                Id = "dictation.language", Title = "Sprache (OpenAI-Transkription)", Category = "models", Type = McpSettingType.Enum,
+                Description = "Spoken language for OpenAI transcription (ISO 639-1). auto lets the model detect it. Gemini and offline Parakeet ignore it.",
+                Read = () => JsonValue.Create(TranscriptionLanguages.Normalize(settings.TranscriptionLanguage)),
+                Options = () => TranscriptionLanguages.All.Select(l => new McpSettingOption(l.Code, l.Name, true, null)).ToList(),
+                Write = v => settings.TranscriptionLanguage = TranscriptionLanguages.Normalize(Text(v)),
+            },
+            new()
+            {
+                Id = "dictation.temperature", Title = "Temperatur (Gemini-Transkription)", Category = "models", Type = McpSettingType.Enum,
+                Description = "Sampling temperature for Gemini transcription. 0.0 (default) reproduces what was said; higher values are the most likely source of invented or swapped words. OpenAI and Parakeet ignore it.",
+                Read = () => JsonValue.Create(TranscriptionTuning.Format(settings.TranscriptionTemperature)),
+                Options = () => TranscriptionTuning.Temperatures.Select(t => new McpSettingOption(TranscriptionTuning.Format(t.Value), t.Label, true, null)).ToList(),
+                Write = v => settings.TranscriptionTemperature = double.TryParse(Text(v), System.Globalization.NumberStyles.Float,
+                    System.Globalization.CultureInfo.InvariantCulture, out var t) ? TranscriptionTuning.NormalizeTemperature(t)
+                    : throw new McpConfigException("Use 0.0, 0.2, 0.5 or 1.0."),
+            },
+            new()
+            {
+                Id = "dictation.thinking", Title = "Denkaufwand (Gemini-Transkription)", Category = "models", Type = McpSettingType.Enum,
+                Description = "Gemini thinking level before transcribing: minimal (default), low, medium, high. Models that reject minimal (3.7/3.8 Flash, Pro) run at low. OpenAI and Parakeet ignore it.",
+                Read = () => JsonValue.Create(TranscriptionTuning.NormalizeThinking(settings.TranscriptionThinking)),
+                Options = () => TranscriptionTuning.ThinkingLevels.Select(t => new McpSettingOption(t.Value, t.Label, true, null)).ToList(),
+                Write = v => settings.TranscriptionThinking = TranscriptionTuning.NormalizeThinking(Text(v)),
+            },
             ModelSetting("dictate_prompt.model", "Gemini-Modell Text bearbeiten", GeminiModels.Prompt, () => settings.PromptModel, v => settings.PromptModel = v),
             ModelSetting("dictate_prompt.openai_model", "OpenAI-Modell Text bearbeiten", OpenAiModels.Prompt, () => settings.OpenAiPromptModel, v => settings.OpenAiPromptModel = v),
             new()

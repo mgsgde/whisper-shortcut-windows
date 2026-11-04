@@ -99,12 +99,22 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// </summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(1.5);
 
+    /// <summary>Transcription temperature (Diktieren → Erweitert), read on every call. Default 0.0.</summary>
+    public Func<double> TranscriptionTemperature { get; init; } = () => TranscriptionTuning.DefaultTemperature;
+
+    /// <summary>Transcription thinking level (Diktieren → Erweitert), read on every call. Default "minimal".</summary>
+    public Func<string> TranscriptionThinking { get; init; } = () => TranscriptionTuning.DefaultThinking;
+
     /// <summary>Safety margin added to a Google RetryInfo delay (2 s; tests set it to zero).</summary>
     public TimeSpan RetryInfoBuffer { get; set; } = TimeSpan.FromSeconds(2);
 
     /// <summary>Creates a client reading key and models from <paramref name="settings"/> on every call.</summary>
     public GeminiClient(Settings settings, HttpClient? http = null)
-        : this(() => settings.ApiKey, () => settings.TranscriptionModel, () => settings.PromptModel, http, () => settings.DictateSystemPrompt) { }
+        : this(() => settings.ApiKey, () => settings.TranscriptionModel, () => settings.PromptModel, http, () => settings.DictateSystemPrompt)
+    {
+        TranscriptionTemperature = () => settings.TranscriptionTemperature;
+        TranscriptionThinking = () => settings.TranscriptionThinking;
+    }
 
     /// <summary>Creates a client with explicit providers (evaluated on every call).</summary>
     public GeminiClient(Func<string?> apiKeyProvider, Func<string> transcriptionModel,
@@ -129,7 +139,9 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         var model = _transcriptionModel();
         var prompt = _transcriptionPrompt?.Invoke();
         // Base64+JSON of a dictation is megabytes: keep it off the UI thread that called us.
-        var body = await Task.Run(() => BuildTranscriptionBodyUtf8(model, wav, glossary, prompt), ct).ConfigureAwait(false);
+        var temperature = TranscriptionTuning.NormalizeTemperature(TranscriptionTemperature());
+        var thinking = TranscriptionThinking();
+        var body = await Task.Run(() => BuildTranscriptionBodyUtf8(model, wav, glossary, prompt, temperature, thinking), ct).ConfigureAwait(false);
         return await SendAsync(model, body, ct).ConfigureAwait(false);
     }
 
@@ -237,8 +249,9 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     internal static string BuildCompleteBody(string systemPrompt, string userText, ScreenshotImage? image = null) =>
         Encoding.UTF8.GetString(BuildCompleteBodyUtf8(systemPrompt, userText, image));
 
-    internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null) =>
-        Encoding.UTF8.GetString(BuildTranscriptionBodyUtf8(model, wav, glossary, customPrompt));
+    internal static string BuildTranscriptionBody(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null,
+        double temperature = TranscriptionTuning.DefaultTemperature, string thinking = TranscriptionTuning.DefaultThinking) =>
+        Encoding.UTF8.GetString(BuildTranscriptionBodyUtf8(model, wav, glossary, customPrompt, temperature, thinking));
 
     internal static string BuildPromptBody(byte[] wav, string? selection, string? customSystemPrompt, ScreenshotImage? image = null) =>
         Encoding.UTF8.GetString(BuildPromptBodyUtf8(wav, selection, customSystemPrompt, null, image));
@@ -250,7 +263,8 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// Writes the generateContent body with <see cref="Utf8JsonWriter.WriteBase64String(string, ReadOnlySpan{byte})"/>
     /// so a 2-minute chunk is not first turned into a base64 string, then a JsonObject, then a JSON string.
     /// </summary>
-    internal static byte[] BuildTranscriptionBodyUtf8(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null)
+    internal static byte[] BuildTranscriptionBodyUtf8(string model, byte[] wav, IReadOnlyList<string> glossary, string? customPrompt = null,
+        double temperature = TranscriptionTuning.DefaultTemperature, string thinking = TranscriptionTuning.DefaultThinking)
     {
         var instruction = string.IsNullOrWhiteSpace(customPrompt) ? Prompts.DefaultTranscriptionSystemPrompt : customPrompt.Trim();
         // Notes like `Bachata (not "Batchata")` become tie-breakers; the rejected spelling never goes out as vocabulary.
@@ -258,7 +272,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         if (hint.Length > 0) instruction += "\n\n" + hint;
 
         // 3.7 / 3.8 Flash and Pro reject "minimal" (HTTP 400): clamp to "low" like TranscriptionModels.swift.
-        var level = RejectsMinimal(model) ? "low" : "minimal";
+        var level = TranscriptionTuning.ThinkingFor(thinking, RejectsMinimal(model));
         var writer = new ArrayBufferWriter<byte>(JsonCapacity(wav.Length, instruction.Length));
         using (var w = new Utf8JsonWriter(writer))
         {
@@ -277,8 +291,8 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
             w.WriteEndArray();
             w.WritePropertyName("generationConfig");
             w.WriteStartObject();
-            // Like TranscriptionModels.swift: no sampling noise in a transcript.
-            w.WriteNumber("temperature", 0.0);
+            // Like TranscriptionModels.swift: 0.0 by default, no sampling noise in a transcript (Diktieren → Erweitert).
+            w.WriteNumber("temperature", temperature);
             w.WritePropertyName("thinkingConfig");
             w.WriteStartObject();
             w.WriteString("thinkingLevel", level);

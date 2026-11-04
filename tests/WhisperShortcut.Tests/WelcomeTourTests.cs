@@ -101,3 +101,106 @@ public class WelcomeTourTests
         Assert.Equal(DictationChoice.Offline, WelcomeTour.Inferred(s, false));
     }
 }
+
+public class TranscriptionLanguageTests
+{
+    [Fact]
+    public void Normalize_KeepsKnownCodes_ElseAuto()
+    {
+        Assert.Equal("de", TranscriptionLanguages.Normalize(" DE "));
+        Assert.Equal("auto", TranscriptionLanguages.Normalize(null));
+        Assert.Equal("auto", TranscriptionLanguages.Normalize("klingonisch"));
+        Assert.Null(TranscriptionLanguages.ForRequest("auto"));
+        Assert.Equal("fr", TranscriptionLanguages.ForRequest("fr"));
+        Assert.Equal("Automatisch erkennen", TranscriptionLanguages.Name("x"));
+        Assert.Equal(24, TranscriptionLanguages.All.Count); // auto + 23 like the Mac
+    }
+
+    [Fact]
+    public void Setting_RoundTrips_AndOldFilesAreAuto()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("auto", s.TranscriptionLanguage);
+        s.TranscriptionLanguage = "it";
+        s.Save();
+        Assert.Equal("it", Settings.Load(path, new PlainSecretProtector()).TranscriptionLanguage);
+        File.WriteAllText(path, "{\"glossary\":[]}");
+        Assert.Equal("auto", Settings.Load(path, new PlainSecretProtector()).TranscriptionLanguage);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+}
+
+public class TranscriptionTuningTests
+{
+    [Fact]
+    public void Defaults_AreTheMacs()
+    {
+        var s = Settings.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json"), new PlainSecretProtector());
+        Assert.Equal(0.0, s.TranscriptionTemperature);
+        Assert.Equal("minimal", s.TranscriptionThinking);
+    }
+
+    [Fact]
+    public void Normalize_SnapsToOfferedValues()
+    {
+        Assert.Equal(0.2, TranscriptionTuning.NormalizeTemperature(0.25));
+        Assert.Equal(1.0, TranscriptionTuning.NormalizeTemperature(2.0));
+        Assert.Equal(0.0, TranscriptionTuning.NormalizeTemperature(null));
+        Assert.Equal(0.0, TranscriptionTuning.NormalizeTemperature(double.NaN));
+        Assert.Equal("medium", TranscriptionTuning.NormalizeThinking(" Medium "));
+        Assert.Equal("minimal", TranscriptionTuning.NormalizeThinking("maximal"));
+        Assert.Equal("low", TranscriptionTuning.ThinkingFor("minimal", modelRejectsMinimal: true));
+        Assert.Equal("high", TranscriptionTuning.ThinkingFor("high", modelRejectsMinimal: true));
+        Assert.Equal("minimal", TranscriptionTuning.ThinkingFor("minimal", modelRejectsMinimal: false));
+    }
+
+    [Fact]
+    public void Settings_RoundTrip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.TranscriptionTemperature = 0.5;
+        s.TranscriptionThinking = "high";
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(0.5, t.TranscriptionTemperature);
+        Assert.Equal("high", t.TranscriptionThinking);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+}
+
+public class RecordingReplayTests
+{
+    [Fact]
+    public void TemplateReplay_StaysTenMinutes_ThenIsGone()
+    {
+        var r = new TemplateReplay();
+        var t0 = new DateTime(2026, 11, 4, 9, 0, 0, DateTimeKind.Utc);
+        Assert.Null(r.Current(t0));
+        r.Keep(new byte[] { 1, 2 }, 3.5, " Befund ", t0);
+        Assert.Equal("Befund", r.Current(t0.AddMinutes(9))!.Value.TemplateName);
+        Assert.False(r.DropIfExpired(t0.AddMinutes(9.9)));
+        Assert.True(r.DropIfExpired(t0.AddMinutes(10)));
+        Assert.Null(r.Current(t0.AddMinutes(10)));
+        r.Keep(new byte[] { 3 }, 1, "", t0);
+        Assert.Equal("Vorlage", r.Current(t0)!.Value.TemplateName);
+        r.Clear();
+        Assert.Null(r.Current(t0));
+    }
+
+    [Fact]
+    public void CancelledRecording_KeepsOnlyOne_AndTakeEmptiesIt()
+    {
+        var c = new CancelledRecording();
+        c.Keep(Array.Empty<byte>(), 0);
+        Assert.False(c.HasRecording);
+        c.Keep(new byte[] { 1 }, 1);
+        c.Keep(new byte[] { 2, 2 }, 2);
+        Assert.True(c.HasRecording);
+        var taken = c.Take();
+        Assert.Equal(new byte[] { 2, 2 }, taken!.Value.Wav);
+        Assert.False(c.HasRecording);
+        Assert.Null(c.Take());
+    }
+}

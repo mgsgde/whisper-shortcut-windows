@@ -147,7 +147,7 @@ internal sealed class RecordingOverlay : Form
     // ---------------- API for TrayApp ----------------
 
     /// <param name="level">Live level 0..1 (null for a test WAV: no bars, no silence warning).</param>
-    /// <param name="quickActions">Dictate Prompt: the instructions offered as Ctrl+1–5 rows (empty: plain pill).</param>
+    /// <param name="quickActions">Dictate Prompt: the instructions offered as Ctrl+1–9 rows (empty: plain pill).</param>
     /// <param name="templateName">A template recording: its name is the title, and no quick instructions are offered.</param>
     /// <param name="screenshot">A held screenshot is sent with this run: shown as its own line.</param>
     public void ShowRecording(Mode mode, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar,
@@ -561,7 +561,7 @@ internal sealed class RecordingOverlay : Form
         y += 30 * s;
 
         _rowRects.Clear();
-        float chipW = MeasureWidth(g, "Strg+5", _smallFont!) + 14 * s;
+        float chipW = MeasureWidth(g, $"Strg+{Core.QuickActionList.Max}", _smallFont!) + 14 * s;
         for (int i = 0; i < _quick.Count; i++)
         {
             var row = new RectangleF(card.X + 14 * s, y, card.Width - 28 * s, RowH * s - 2 * s);

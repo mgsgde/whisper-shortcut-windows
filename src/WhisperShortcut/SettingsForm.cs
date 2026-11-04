@@ -29,6 +29,8 @@ internal sealed partial class SettingsForm : Form
     private readonly Control[] _engineOnly;
     private readonly Card _dictateGeminiCard, _dictateOpenAiCard, _promptGeminiCard, _promptOpenAiCard;
     private readonly FluentCombo _punctuation;
+    // Diktieren → Sprache (OpenAI only) and Erweitert → Genauigkeit (Gemini only), like the Mac.
+    private readonly FluentCombo _language, _temperature, _thinking;
     /// <summary>Diktieren → Satzzeichen: only offline speech recognition writes spoken marks out as words.</summary>
     private readonly Control[] _punctuationOnly;
     private readonly FluentCombo _mic;
@@ -238,7 +240,7 @@ internal sealed partial class SettingsForm : Form
             + "Aus: Nur das Symbol und die Anzeige am Bildschirm zeigen, was gerade passiert.", _sounds, ToggleWidth, out _));
         var fixedCard = new Card();
         fixedCard.AddRow(SettingRow("Aufnahme verwerfen oder Verarbeitung abbrechen", null, KeyCap("Esc"), ButtonWidth + 40, out _));
-        fixedCard.AddRow(SettingRow("Schnellanweisung anwenden (nur bei Dictate Prompt)", null, KeyCap("Strg+1 bis Strg+5"), ButtonWidth + 40, out _));
+        fixedCard.AddRow(SettingRow("Schnellanweisung anwenden (nur bei Dictate Prompt)", null, KeyCap(Core.QuickActionList.KeyRange), ButtonWidth + 40, out _));
         AddAdvanced(general,
             Section("Töne", first: true), soundCard,
             Section("Während einer Aufnahme", subtitle: "Diese Tasten sind nur belegt, solange die Anzeige unten zu sehen ist. "
@@ -309,6 +311,16 @@ internal sealed partial class SettingsForm : Form
         dictate.Controls.Add(punctuationCard);
         _punctuationOnly = new Control[] { punctuationSection, punctuationCard };
 
+        // Mac Diktieren → Sprache (languageSection, WhisperLanguage). Only the OpenAI API takes a language.
+        dictate.Controls.Add(Section("Sprache", subtitle: "In welcher Sprache du diktierst."));
+        _language = new FluentCombo { Width = ComboWidth, AccessibleName = "Sprache" };
+        foreach (var (code, name) in Core.TranscriptionLanguages.All) _language.Items.Add(new ChoiceItem<string>(code, name));
+        _language.SelectedItem = _language.Items.Cast<ChoiceItem<string>>().First(i => i.Value == Core.TranscriptionLanguages.Normalize(settings.TranscriptionLanguage));
+        var languageCard = new Card();
+        languageCard.AddRow(SettingRow("Sprache", "Gilt nur für OpenAI: Bei „Automatisch erkennen“ bestimmt das Modell die Sprache selbst. "
+            + "Gemini und Parakeet auf diesem PC erkennen die Sprache immer selbst und ignorieren diese Wahl.", _language, ComboWidth, out _));
+        dictate.Controls.Add(languageCard);
+
         // --- glossary (Mac: in the Dictate tab) ---
         dictate.Controls.Add(Section("Glossar"));
         dictate.Controls.Add(Wrap("Ein Begriff pro Zeile: Namen, Medikamente, Fachwörter, die richtig geschrieben werden sollen. "
@@ -335,6 +347,25 @@ internal sealed partial class SettingsForm : Form
         _dictatePrompt = new PromptEditor(Core.Prompts.DefaultTranscriptionSystemPrompt, settings.DictateSystemPrompt, "Anweisungen Diktieren");
         _dictateHistory = new HistoryLink(_dictatePrompt.Box, _history, Core.PromptField.Dictate);
         dictate.Controls.Add(PromptCard(_dictatePrompt, _dictateHistory));
+
+        // Mac Diktieren → Advanced → „Genauigkeit“ (tuningSection): temperature and thinking for Gemini.
+        _temperature = new FluentCombo { Width = ComboWidth, AccessibleName = "Temperatur" };
+        foreach (var (value, label) in Core.TranscriptionTuning.Temperatures) _temperature.Items.Add(new ChoiceItem<double>(value, label));
+        _temperature.SelectedItem = _temperature.Items.Cast<ChoiceItem<double>>()
+            .First(i => i.Value == Core.TranscriptionTuning.NormalizeTemperature(settings.TranscriptionTemperature));
+        _thinking = new FluentCombo { Width = ComboWidth, AccessibleName = "Denkaufwand" };
+        foreach (var (value, label) in Core.TranscriptionTuning.ThinkingLevels) _thinking.Items.Add(new ChoiceItem<string>(value, label));
+        _thinking.SelectedItem = _thinking.Items.Cast<ChoiceItem<string>>()
+            .First(i => i.Value == Core.TranscriptionTuning.NormalizeThinking(settings.TranscriptionThinking));
+        var tuningCard = new Card();
+        tuningCard.AddRow(SettingRow("Temperatur", "Niedriger heißt wörtlicher. WhisperShortcut nutzt 0,0, das gibt wieder, was gesagt wurde. "
+            + "Höhere Werte sind die häufigste Ursache für erfundene oder vertauschte Wörter.", _temperature, ComboWidth, out _));
+        tuningCard.AddRow(SettingRow("Denkaufwand", "Mehr Denkaufwand hilft bei schwierigem Ton, Akzenten und ungewöhnlichem Vokabular, "
+            + "kostet aber Zeit: bei Flash-Lite fast nichts, bei Pro etwa das Doppelte. Gemini 3.7/3.8 Flash und Pro laufen nicht unter "
+            + "„Niedrig“ und werden darauf angehoben.", _thinking, ComboWidth, out _));
+        AddAdvanced(dictate,
+            Section("Genauigkeit", subtitle: "Wie frei das Modell vom Gehörten abweichen darf und wie lange es vorher nachdenken darf. "
+                + "Gilt nur für Gemini; OpenAI und Parakeet nehmen diese Werte nicht.", first: true), tuningCard);
 
         // ================= page: Dictate Prompt =================
         prompt.Controls.Add(Section("Modell", subtitle: "Das Modell, das deine gesprochene Anweisung hört und auf den markierten Text anwendet."));
@@ -392,7 +423,7 @@ internal sealed partial class SettingsForm : Form
 
         prompt.Controls.Add(Section("Schnellanweisungen"));
         prompt.Controls.Add(Wrap($"Erscheinen bei Dictate Prompt ({Hotkey.Display(settings.PromptHotkey)}) unten in der Anzeige. "
-            + "Strg+1 bis Strg+5 oder ein Klick wendet sie sofort an: auf die Markierung oder, ohne Markierung, auf das gerade "
+            + $"{Core.QuickActionList.KeyRange} oder ein Klick wendet sie sofort an: auf die Markierung oder, ohne Markierung, auf das gerade "
             + "Diktierte. Beispiel: Text markieren, Strg+3, schon kürzer. Leere Felder werden ausgelassen.", 0));
         var quickTable = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0) };
         quickTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
@@ -661,7 +692,7 @@ internal sealed partial class SettingsForm : Form
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
         var dirtyTimer = new System.Windows.Forms.Timer { Interval = 150 };
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
-        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation, _afterPaste };
+        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation, _afterPaste, _language, _temperature, _thinking };
         dirtyTimer.Tick += (_, _) =>
         {
             if (_snapshot.Length == 0 || combos.Any(c => c.DroppedDown)) return;
@@ -1468,6 +1499,16 @@ internal sealed partial class SettingsForm : Form
         public override string ToString() => Label;
     }
 
+    /// <summary>A combo entry: the stored value and its German label.</summary>
+    private sealed record ChoiceItem<T>(T Value, string Label)
+    {
+        public override string ToString() => Label;
+    }
+
+    private string SelectedLanguage => ((ChoiceItem<string>)_language.SelectedItem!).Value;
+    private double SelectedTemperature => ((ChoiceItem<double>)_temperature.SelectedItem!).Value;
+    private string SelectedThinking => ((ChoiceItem<string>)_thinking.SelectedItem!).Value;
+
     private sealed record AfterPasteItem(Core.ClipboardAfterPaste Mode)
     {
         public override string ToString() => Core.ClipboardAfterPasteModes.Label(Mode);
@@ -1770,6 +1811,7 @@ internal sealed partial class SettingsForm : Form
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), SelectedAfterPaste.ToString(), _sounds.Checked.ToString(),
         _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value, _liveKey.Value,
         SelectedPunctuation.ToString(), _settingsKey.Value, _rightCtrl.Checked.ToString(),
+        SelectedLanguage, Core.TranscriptionTuning.Format(SelectedTemperature), SelectedThinking,
     }.Concat(_quick.Select(q => q.Text))
      .Concat(_templates.Select(t => string.Join("\u0002", t.Id, t.Name, t.Instructions, t.Hotkey))));
 
@@ -1918,7 +1960,8 @@ internal sealed partial class SettingsForm : Form
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
             _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
-            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation);
+            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
+            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _geminiKey.Value;
@@ -1953,6 +1996,9 @@ internal sealed partial class SettingsForm : Form
         _settings.AutoPaste = _autoPaste.Checked;
         _settings.ClipboardAfterPaste = SelectedAfterPaste;
         _settings.PunctuationMode = SelectedPunctuation;
+        _settings.TranscriptionLanguage = SelectedLanguage;
+        _settings.TranscriptionTemperature = SelectedTemperature;
+        _settings.TranscriptionThinking = SelectedThinking;
         _settings.Sounds = _sounds.Checked;
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
         _settings.SendScreenshots = _sendScreenshots.Checked;
@@ -1972,7 +2018,8 @@ internal sealed partial class SettingsForm : Form
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
             _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
-            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation) = before;
+            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
+            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking) = before;
             // Said once, then in the status line: this runs after every edit.
             var error = Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message);
             if (error != _lastSaveError) Warn(error);

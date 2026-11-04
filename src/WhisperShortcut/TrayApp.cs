@@ -51,7 +51,7 @@ internal sealed class TrayApp : ApplicationContext
     // In memory only: in a practice a dictation must not stay behind in a file.
     private readonly Core.RecentTexts _recent = new();
     private static readonly Hotkey Escape = new(0, Keys.Escape);
-    // Ctrl+1–5 while a Dictate Prompt recording runs: apply a quick instruction (Settings.QuickActions).
+    // Ctrl+1–9 while a Dictate Prompt recording runs: apply a quick instruction (Settings.QuickActions).
     private static readonly Hotkey[] QuickKeys =
         Enumerable.Range(0, Core.QuickActionList.Max).Select(i => new Hotkey(NativeMethods.MOD_CONTROL, Keys.D1 + i)).ToArray();
 
@@ -104,6 +104,11 @@ internal sealed class TrayApp : ApplicationContext
     // Screenshot hotkey: the image waits here for the next Dictate Prompt or template run (memory only, 5 min).
     private readonly Core.ScreenshotHold _heldShot = new(() => DateTime.UtcNow);
     private readonly System.Windows.Forms.Timer _shotExpiry = new() { Interval = 15_000 };
+    // Mac transcribeCancelledRecording / runAgainWithoutTemplate: audio kept in memory only.
+    private readonly Core.CancelledRecording _cancelled = new();
+    private readonly Core.TemplateReplay _templateReplay = new();
+    private readonly System.Windows.Forms.Timer _replayExpiry = new() { Interval = 15_000 };
+    private readonly ToolStripMenuItem _cancelledItem, _withoutTemplateItem;
     private Core.ScreenshotImage? _runShot;
     private CancellationTokenSource? _snipCts;
     private readonly MeetingController _meeting;
@@ -152,6 +157,8 @@ internal sealed class TrayApp : ApplicationContext
         _copyLast = new ToolStripMenuItem("Letzte Transkription kopieren", null, (_, _) => CopyRecent(_recent.Latest));
         _recentMenu = new ToolStripMenuItem("Letzte Transkriptionen");
         _retryItem = new ToolStripMenuItem("Letzte Aufnahme erneut verarbeiten", null, (_, _) => RetryLast()) { Visible = false };
+        _cancelledItem = new ToolStripMenuItem("Abgebrochene Aufnahme transkribieren", null, (_, _) => TranscribeCancelledRecording()) { Visible = false };
+        _withoutTemplateItem = new ToolStripMenuItem("Nochmal ohne Vorlage", null, (_, _) => RunAgainWithoutTemplate()) { Visible = false };
         // An update restarts the app: not in the middle of a dictation or a meeting.
         _updates = new UpdateService(_settings, () => _state == State.Idle && _meeting?.IsActive != true, Quit);
         _updateItem = new ToolStripMenuItem("Update installieren …", null, (_, _) => _updates.ShowDialog())
@@ -182,7 +189,8 @@ internal sealed class TrayApp : ApplicationContext
             _statusItem, _updateItem, new ToolStripSeparator(),
             _finishSetupItem, _proposalsItem, _stopItem, _stopSeparator,
             _dictateItem, _promptItem, _screenshotItem, _glossaryItem, _liveItem, new ToolStripSeparator(),
-            _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
+            // Mac order: Copy Last, Recent, Transcribe Cancelled Recording, Run Again Without Template; then Windows' retry.
+            _copyLast, _recentMenu, _cancelledItem, _withoutTemplateItem, _retryItem, new ToolStripSeparator(),
             // Mac: the meeting starts from the Chat window, which Windows does not have; its row sits where Chat is.
             _meeting.MenuItem, new ToolStripSeparator(),
             _settingsItem, welcomeItem, feedbackItem, quitItem,
@@ -205,6 +213,14 @@ internal sealed class TrayApp : ApplicationContext
         _liveRetryTimer.Tick += (_, _) =>
         {
             if (_live is { HasHeldText: true } session && ClipboardPaster.ForegroundRoot() == _liveTarget) session.RetryHeld();
+        };
+        _replayExpiry.Tick += (_, _) =>
+        {
+            if (_templateReplay.DropIfExpired(DateTime.UtcNow))
+            {
+                Core.Log.Info("Template replay dropped: unused for 10 minutes");
+                _replayExpiry.Stop();
+            }
         };
         _shotExpiry.Tick += (_, _) =>
         {
@@ -372,6 +388,12 @@ internal sealed class TrayApp : ApplicationContext
         _copyLast.Visible = _recent.Latest != null;
         _recentMenu.Visible = _recent.Items.Count > 0;
         _retryItem.Visible = _lastFailed != null && idle;
+        _cancelledItem.Visible = _cancelled.HasRecording;
+        var replay = _templateReplay.Current(DateTime.UtcNow);
+        _withoutTemplateItem.Visible = replay != null;
+        if (replay != null)
+            _withoutTemplateItem.ToolTipText = $"Führt dein letztes Diktat noch einmal mit dem System-Prompt von Dictate Prompt aus statt mit „{replay.Value.TemplateName}“. "
+                + "Das Ergebnis kommt in die Zwischenablage.";
     }
 
     /// <summary>The menu's „Stopp“ (Mac stopCurrentOperation): stops a recording, cancels the processing.</summary>
@@ -1046,6 +1068,46 @@ internal sealed class TrayApp : ApplicationContext
         if (_state != State.Idle || _lastFailed == null) return;
         var run = _lastFailed;
         Core.Log.Info($"{run.Mode}: retrying the last recording ({run.Seconds:0.0} s)");
+        RunAgain(run);
+    }
+
+    // Mac: „Beschäftigt“ when a menu row needs the pipeline while a recording or a run is going.
+    private bool NotIdleSayBusy()
+    {
+        if (_state == State.Idle) return false;
+        Notify("Beschäftigt", "Beende zuerst die laufende Aufnahme und versuch es dann erneut.", ToolTipIcon.Info);
+        return true;
+    }
+
+    /// <summary>
+    /// Tray „Abgebrochene Aufnahme transkribieren“ (Mac transcribeCancelledRecording): the dictation cancelled while it was
+    /// processed runs again. Started from idle, so the result is copied, never pasted.
+    /// </summary>
+    private void TranscribeCancelledRecording()
+    {
+        if (NotIdleSayBusy()) return;
+        if (_cancelled.Take() is not { } kept) return;
+        Core.Log.Info($"Dictate: transcribing the cancelled recording ({kept.Seconds:0.0} s)");
+        RunAgain(new FailedRun(kept.Wav, Mode.Dictate, kept.Seconds, null, null, IntPtr.Zero,
+            StopKey: _settings.DictateHotkey, ClipboardOnly: true));
+    }
+
+    /// <summary>
+    /// Tray „Nochmal ohne Vorlage“ (Mac runAgainWithoutTemplate): the last template dictation's audio goes through
+    /// Dictate Prompt with its own system prompt, no template and no selection, and the result is only copied.
+    /// </summary>
+    private void RunAgainWithoutTemplate()
+    {
+        if (NotIdleSayBusy()) return;
+        if (_templateReplay.Current(DateTime.UtcNow) is not { } kept) return;
+        Core.Log.Info($"Prompt: running the last template dictation again without its template ({kept.Seconds:0.0} s)");
+        RunAgain(new FailedRun(kept.Wav, Mode.Prompt, kept.Seconds, null, null, IntPtr.Zero,
+            StopKey: _settings.PromptHotkey, ClipboardOnly: true));
+    }
+
+    /// <summary>Runs kept audio through the pipeline from idle (retry, cancelled recording, without template).</summary>
+    private void RunAgain(FailedRun run)
+    {
         _mode = run.Mode;
         _template = run.Template;
         _stopKey = run.StopKey;
@@ -1130,6 +1192,12 @@ internal sealed class TrayApp : ApplicationContext
             _lastFailed = null; // this run worked; the old failure is history
             Core.RecordingCheckpoint.DiscardAll();
             _recent.Add(text);
+            // Mac: a template shaped this dictation; for 10 minutes the same audio can run without it.
+            if (_mode == Mode.Template && wav is { Length: > 0 } && _template != null)
+            {
+                _templateReplay.Keep(wav, seconds, _template.DisplayName, DateTime.UtcNow);
+                _replayExpiry.Start();
+            }
 
             // The tour's „Ausprobieren“ step started this dictation in its own window: show the text there.
             if (_mode == Mode.Dictate && retry == null && _welcomeForm is { TakesTryResult: true } tour
@@ -1234,6 +1302,13 @@ internal sealed class TrayApp : ApplicationContext
         {
             // The pill disappearing is the feedback; a balloon on top of it would be noise.
             Core.Log.Info($"{_mode}: cancelled by user");
+            // Mac: a cancel is one keystroke and can be an accident; keep a dictation for the tray menu (only dictation:
+            // an instruction run again as dictation would paste the instruction).
+            if (_mode == Mode.Dictate && wav is { Length: > 0 })
+            {
+                _cancelled.Keep(wav, seconds);
+                Core.Log.Info($"Dictate: kept the cancelled recording ({seconds:0.0} s) for the tray menu");
+            }
             Core.RecordingCheckpoint.DiscardAll();
         }
         catch (SelectionUnreadableException)
@@ -1495,7 +1570,7 @@ internal sealed class TrayApp : ApplicationContext
     }
 
     /// <summary>
-    /// A quick instruction (Ctrl+1–5 or a click while recording). Whatever was said is transcribed and
+    /// A quick instruction (Ctrl+1–9 or a click while recording). Whatever was said is transcribed and
     /// goes along as text, so this path always has a transcript to check the reply against.
     /// </summary>
     private async Task<string> QuickActionAsync(string quick, byte[] wav, double seconds, string? selection, string systemPrompt, CancellationToken ct)
@@ -1512,7 +1587,7 @@ internal sealed class TrayApp : ApplicationContext
         if (request == null)
         {
             Sounds.Error();
-            Notify("Nichts zum Anwenden", "Erst Text markieren oder etwas diktieren, dann Strg+1 bis Strg+5 drücken.", ToolTipIcon.Info);
+            Notify("Nichts zum Anwenden", $"Erst Text markieren oder etwas diktieren, dann {Core.QuickActionList.KeyRange} drücken.", ToolTipIcon.Info);
             return "";
         }
         var (target, instruction, fromDictation) = request.Value;
@@ -1805,8 +1880,8 @@ internal sealed class TrayApp : ApplicationContext
     // ---------------- UI ----------------
 
     /// <summary>
-    /// Esc and Ctrl+1–5 belong to the other programs except while we need them: Esc while recording or processing,
-    /// Ctrl+1–5 only while a Dictate Prompt recording runs.
+    /// Esc and Ctrl+1–9 belong to the other programs except while we need them: Esc while recording or processing,
+    /// Ctrl+1–9 only while a Dictate Prompt recording runs.
     /// </summary>
     private void SyncSessionHotkeys()
     {
@@ -2120,6 +2195,8 @@ internal sealed class TrayApp : ApplicationContext
         _icon.Dispose();
         _keyUpTimer.Dispose();
         _liveRetryTimer.Dispose();
+        _templateReplay.Clear();
+        _replayExpiry.Dispose();
         _snipCts?.Cancel();
         _shotExpiry.Dispose();
         _updateNoticeTimer.Dispose();

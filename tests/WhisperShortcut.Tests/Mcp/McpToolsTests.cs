@@ -200,7 +200,7 @@ public class McpToolsTests
         Assert.Equal("no_change", same["status"]!.GetValue<string>());
 
         Assert.True(s.Tool("update_quick_instructions", A($"{{\"instructions\":[\"{new string('x', 81)}\"],{R}}}")).IsError);
-        Assert.True(s.Tool("update_quick_instructions", A($"{{\"instructions\":[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\"],{R}}}")).IsError);
+        Assert.True(s.Tool("update_quick_instructions", A($"{{\"instructions\":[\"1\",\"2\",\"3\",\"4\",\"5\",\"6\",\"7\",\"8\",\"9\",\"10\"],{R}}}")).IsError);
         Assert.Equal(2, s.ReloadSettings().QuickActions.Count);
     }
 

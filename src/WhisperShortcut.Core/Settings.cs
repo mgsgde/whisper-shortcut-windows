@@ -66,6 +66,18 @@ public sealed class Settings
     /// </summary>
     public PunctuationMode PunctuationMode { get; set; } = PunctuationMode.Automatic;
 
+    /// <summary>
+    /// Spoken language for OpenAI transcription (ISO 639-1, or "auto"). Gemini and Parakeet ignore it.
+    /// See <see cref="TranscriptionLanguages"/>.
+    /// </summary>
+    public string TranscriptionLanguage { get; set; } = TranscriptionLanguages.Auto;
+
+    /// <summary>Gemini transcription temperature (Diktieren → Erweitert); see <see cref="TranscriptionTuning"/>.</summary>
+    public double TranscriptionTemperature { get; set; } = TranscriptionTuning.DefaultTemperature;
+
+    /// <summary>Gemini transcription thinking level: minimal, low, medium or high; see <see cref="TranscriptionTuning"/>.</summary>
+    public string TranscriptionThinking { get; set; } = TranscriptionTuning.DefaultThinking;
+
     /// <summary>OpenAI transcription model id.</summary>
     public string OpenAiTranscriptionModel { get; set; } = OpenAiModels.DefaultTranscriptionModel;
 
@@ -348,6 +360,9 @@ public sealed class Settings
             s.TextEngine = ParseEngine(dto.TextEngine);
             s.PunctuationMode = ParsePunctuationMode(dto.PunctuationMode);
             s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
+            s.TranscriptionLanguage = TranscriptionLanguages.Normalize(dto.TranscriptionLanguage);
+            s.TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(dto.TranscriptionTemperature);
+            s.TranscriptionThinking = TranscriptionTuning.NormalizeThinking(dto.TranscriptionThinking);
             s.OpenAiPromptModel = OpenAiModels.NormalizePrompt(dto.OpenAiPromptModel);
             // JSON null entries (hand-edited or a half-written file) must not stay in the list:
             // GlossaryEdit.TryAdd would then NullRef when the user adds a term.
@@ -503,6 +518,9 @@ public sealed class Settings
             TextEngine = EngineName(TextEngine),
             PunctuationMode = PunctuationModeName(PunctuationMode),
             OpenAiTranscriptionModel = OpenAiTranscriptionModel,
+            TranscriptionLanguage = TranscriptionLanguages.Normalize(TranscriptionLanguage),
+            TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(TranscriptionTemperature),
+            TranscriptionThinking = TranscriptionTuning.NormalizeThinking(TranscriptionThinking),
             OpenAiPromptModel = OpenAiPromptModel,
             Glossary = Glossary,
             DictatePromptTemplate = DictatePromptTemplate,
@@ -575,6 +593,9 @@ public sealed class Settings
         [JsonPropertyName("textEngine")] public string? TextEngine { get; set; }
         [JsonPropertyName("punctuationMode")] public string? PunctuationMode { get; set; }
         [JsonPropertyName("openAiTranscriptionModel")] public string? OpenAiTranscriptionModel { get; set; }
+        [JsonPropertyName("transcriptionLanguage")] public string? TranscriptionLanguage { get; set; }
+        [JsonPropertyName("transcriptionTemperature")] public double? TranscriptionTemperature { get; set; }
+        [JsonPropertyName("transcriptionThinking")] public string? TranscriptionThinking { get; set; }
         [JsonPropertyName("openAiPromptModel")] public string? OpenAiPromptModel { get; set; }
         [JsonPropertyName("glossary")] public List<string>? Glossary { get; set; }
         [JsonPropertyName("dictatePromptTemplate")] public string? DictatePromptTemplate { get; set; }

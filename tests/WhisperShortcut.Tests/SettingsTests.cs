@@ -514,9 +514,10 @@ public class QuickActionTests
         var cleaned = QuickActionList.Clean(new string?[]
         {
             "  Kürzer   fassen ", "", "   ", null, "kürzer fassen", new string('x', 81), new string('y', 80),
-            "A", "B", "C", "D",
+            "A", "B", "C", "D", "E", "F", "G", "H", "I",
         });
-        Assert.Equal(new[] { "Kürzer fassen", new string('y', 80), "A", "B", "C" }, cleaned);
+        Assert.Equal(QuickActionList.Max, cleaned.Count);
+        Assert.Equal(new[] { "Kürzer fassen", new string('y', 80), "A", "B", "C", "D", "E", "F", "G" }, cleaned);
     }
 }
 

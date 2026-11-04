@@ -27,11 +27,11 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | Live diktieren (#324) | 8.75 | – | **PR #33** |
 | Lange Diktate: Stücke schon während der Aufnahme | `ChunkedDictateRecorder` | Stücke erst nach Stopp (ab 150 s) | offen (mittel) |
 | Ein fehlgeschlagenes Stück | Rest wird trotzdem eingefügt | ganzer Lauf scheitert, bleibt wiederholbar | bewusst anders (nichts fehlt still in der Mitte) |
-| Abgebrochene Aufnahme transkribieren | Menüeintrag, nur Diktat | Esc verwirft | offen (UI, braucht echtes Windows) |
+| Abgebrochene Aufnahme transkribieren | Menüeintrag, nur Diktat | Tray-Eintrag nach Abbruch beim Verarbeiten (Plan Schritt 9) | erledigt |
 | Rückfrage bei langen Aufnahmen | Kostenhinweis ab 5 min, nur Cloud | 30 min Limit, verarbeitet automatisch | bewusst anders (kein Verlust, keine Kostenfrage) |
 | Upload-Format (#235) | FLAC | WAV | bewusst anders (gleiche Qualität, doppelte Größe) |
 | Timeout nach Länge (#285) | nur eigener Server | 60 s + Größe/40 KB, Gemini und OpenAI | erledigt |
-| Sprache wählbar | Auswahl, ab Werk Auto | keine Einstellung, immer Auto | offen (klein; Mac-Queue #64 zur Vorbelegung auch offen) |
+| Sprache wählbar | Auswahl, ab Werk Auto | Diktieren → Sprache, nur OpenAI (Plan Schritt 9) | erledigt |
 | Spill-Datei nach Mikrofonfehler / nicht wiederholbarem API-Fehler | – | bleibt liegen, kommt beim nächsten Start als „Aufnahme unterbrochen“ | offen (klein, Windows-eigen) |
 | Template-Aufnahme nach Absturz | – | kommt als Diktat zurück (`TrayApp` Recovery) | offen (klein, Windows-eigen) |
 
@@ -49,7 +49,7 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | OpenAI-Standard für Diktieren | `gpt-transcribe` (Audit 03.11.: 4o 9/9 Echos, Abschaltung 26.02.2027) | `gpt-4o-transcribe` | offen — **Entscheidung Magnus** (Standard + Migration) |
 | Gemini-IDs migrieren | `migrateLegacy*RawValue` | `GeminiModels.Renamed` | erledigt; `gemini-2.0-flash` → 3.1 Flash-Lite **PR #37** |
 | OpenAI-IDs migrieren | gpt-5 / 5.x → GPT-6 | `OpenAiModels.Renamed` | erledigt |
-| Temperatur / Thinking wählbar | Diktieren → Erweitert | fest 0 / low | offen (UI) |
+| Temperatur / Thinking wählbar | Diktieren → Erweitert | Diktieren → Erweitert → Genauigkeit (Plan Schritt 9) | erledigt |
 
 ## 3. Text bearbeiten (Dictate Prompt), Schnellanweisungen, Vorlagen, Screenshot
 
@@ -61,12 +61,12 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | Leere Antwort ist wiederholbar, Aufnahme bleibt | `emptyModelReply` | „Nichts erkannt“, Aufnahme gelöscht | **PR #36** |
 | Bare-Edit-Befehl ohne Markierung | `isBareEditCommand` | `BareEditCommand` | erledigt |
 | Eigene Schnellanweisungen ohne Markierung (R119) | wurden abgelehnt (Bug) | wirken auf das Diktierte | bewusst anders (Bug kann nicht auftreten) |
-| Anzahl Schnellanweisungen | bis 9 | 5 (Strg+1–5) | offen (UI) |
+| Anzahl Schnellanweisungen | bis 9 | bis 9 (Strg+1–9) | erledigt |
 | Getippte Anweisung in der Overlay-Karte | Textfeld, Return | nur Sprache / Strg+Zahl | offen (UI, Fokus, braucht echtes Windows) |
 | Gelernte Schnellanweisungen aus dem Nutzungslog | ja | kein Log | bewusst anders (keine Diktate gespeichert) |
 | Vorlagen als eigener Durchlauf (#275, #290) | ja | ja | erledigt |
 | Vorlage + Screenshot | nie | Schnipsel geht mit | bewusst anders (Nutzer hat ihn gezielt ausgewählt) |
-| Vorlage: Tab = einmal ohne Vorlage, „Erneut ohne Vorlage“ (10 min) | ja | – | offen (UI) |
+| Vorlage: Tab = einmal ohne Vorlage, „Erneut ohne Vorlage“ (10 min) | ja | „Nochmal ohne Vorlage“ im Tray (10 min); Tab während der Aufnahme fehlt | teilweise |
 | Vorlage während der Aufnahme mit 1–9 wählen | ja | Kürzel nimmt die zuletzt benutzte | bewusst anders |
 | Screenshot | automatisch oder Auswahl | nur eigene Auswahl, einmalig, 5 min, ab Werk aus | bewusst anders (Patientendaten) |
 | Geleerter System-Prompt bleibt leer (#267) | Fix | kein Autosave, leer = Standard | erledigt |
