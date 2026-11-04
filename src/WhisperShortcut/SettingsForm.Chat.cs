@@ -54,6 +54,9 @@ internal sealed partial class SettingsForm
         _chatPrompt = new PromptEditor(Core.ChatPrompts.DefaultSystemPrompt, _settings.ChatSystemPrompt, "System-Prompt Chat");
         page.Controls.Add(PlainPromptCard(_chatPrompt));
 
+        // --- own commands (Mac UserCommandsSection; SettingsForm.Commands.cs) ---
+        BuildCommandsSection(page);
+
         // --- how to use ---
         page.Controls.Add(Section("So geht's"));
         var keyShown = new ThemedLabel { AutoSize = true, Font = Theme.Strong, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 12, 0) };
@@ -69,7 +72,10 @@ internal sealed partial class SettingsForm
         howCard.AddRow(SettingRow("Tastenkürzel", null, keyLine, ComboWidth, out _));
         var how = Block();
         how.Controls.Add(Wrap("Öffne das Chatfenster mit dem Tastenkürzel oder dem Eintrag „Chat“ im Menü des Symbols unten rechts.", 2 * RowPadding));
-        how.Controls.Add(Wrap("Tippe / im Chat, um die Befehle zu sehen. Meetings richtest du unter Einstellungen → Meetings ein.", 2 * RowPadding));
+        how.Controls.Add(Wrap("Tippe / im Chat, um die Befehle zu sehen. Dateien hängst du mit /attach an, Bilder auch mit Strg+V, den "
+            + "Bildschirm mit /screenshot. /think stellt die Denktiefe für den Chat ein.", 2 * RowPadding));
+        how.Controls.Add(Wrap("Mit /meeting startest du ein Live-Meeting; der Chat, aus dem es startet, kennt das Transkript, und du kannst "
+            + "jederzeit dazu fragen. Meetings richtest du unter Einstellungen → Meetings ein.", 2 * RowPadding));
         how.Controls.Add(Wrap("Die Chats bleiben auf diesem PC gespeichert, links in der Liste. Im Offline-Modus antwortet das Sprachmodell "
             + "auf diesem PC, ohne Internet.", 2 * RowPadding, small: true));
         howCard.AddRow(how);

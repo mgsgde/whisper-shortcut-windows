@@ -55,10 +55,13 @@ public sealed class ChatSession
     public static ChatSession New(DateTimeOffset now) =>
         new() { Id = Guid.NewGuid(), Created = now, Updated = now };
 
-    /// <summary>Appends <paramref name="m"/>, bumps <see cref="Updated"/>; the first user message names the chat.</summary>
+    /// <summary>
+    /// Appends <paramref name="m"/>, bumps <see cref="Updated"/>; the first user message names the chat, unless it was named
+    /// before (a meeting chat keeps the meeting's name).
+    /// </summary>
     public void Add(ChatMessage m)
     {
-        if (m.Role == ChatRole.User && !Messages.Any(x => x.Role == ChatRole.User))
+        if (m.Role == ChatRole.User && Title == ChatText.EmptyTitle && !Messages.Any(x => x.Role == ChatRole.User))
             Title = ChatText.TitleFrom(m.Text);
         Messages.Add(m);
         Updated = m.At;

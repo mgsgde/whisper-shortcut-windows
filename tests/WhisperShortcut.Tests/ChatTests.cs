@@ -459,4 +459,18 @@ public class ChatTests : IDisposable
         Assert.Contains("offline on the user's PC", ChatPrompts.DefaultOfflineSystemPrompt);
         Assert.DoesNotContain("Mac", ChatPrompts.DefaultOfflineSystemPrompt);
     }
+
+    [Fact]
+    public void A_named_chat_keeps_its_name_after_the_first_question()
+    {
+        var session = ChatSession.New(DateTimeOffset.Now);
+        session.MeetingId = "m1";
+        session.Title = "📝 Meeting 04.11.";
+        session.Add(new ChatMessage(ChatRole.User, "Was wurde entschieden?", DateTimeOffset.Now));
+        Assert.Equal("📝 Meeting 04.11.", session.Title);
+
+        var plain = ChatSession.New(DateTimeOffset.Now);
+        plain.Add(new ChatMessage(ChatRole.User, "Hallo Welt", DateTimeOffset.Now));
+        Assert.Equal("Hallo Welt", plain.Title);
+    }
 }
