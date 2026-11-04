@@ -10,7 +10,7 @@ namespace WhisperShortcut;
 /// settings window's look (SettingsUi: cards, buttons, theme). Closing the window is not finishing: the step is stored
 /// and the next start resumes there. „Fertig“ marks the tour completed and raises <see cref="Completed"/>.
 /// </summary>
-internal sealed class WelcomeForm : Form
+internal sealed class WelcomeForm : FastShowForm
 {
     private const int ContentWidth = 680, PagePadX = 40;
 
@@ -322,9 +322,8 @@ internal sealed class WelcomeForm : Form
     {
         if (step != Core.WelcomeStep.Permissions) StopMicTest();
         _step = step;
-        _host.SuspendLayout();
-        for (int i = 0; i < _pages.Length; i++) _pages[i].Visible = i == (int)step;
-        _host.ResumeLayout(true);
+        // Batched: a page becoming visible otherwise lays out each of its nested auto-size tables (see FastShowForm).
+        LayoutBatch.Run(_host, () => { for (int i = 0; i < _pages.Length; i++) _pages[i].Visible = i == (int)step; });
         _host.AutoScrollPosition = Point.Empty;
         _dots.Current = (int)step;
         _index.Text = Core.WelcomeTour.IndexLabel(step);
@@ -403,8 +402,11 @@ internal sealed class WelcomeForm : Form
     {
         _offlineCard.Selected = _choice == Core.DictationChoice.Offline;
         _cloudCard.Selected = _choice == Core.DictationChoice.Cloud;
-        _offlineDetails.Visible = _choice == Core.DictationChoice.Offline;
-        _cloudDetails.Visible = _choice == Core.DictationChoice.Cloud;
+        LayoutBatch.Run(_host, () =>
+        {
+            _offlineDetails.Visible = _choice == Core.DictationChoice.Offline;
+            _cloudDetails.Visible = _choice == Core.DictationChoice.Cloud;
+        });
         UpdateSpeechRow();
         bool ready = TranscriptionReady;
         _setupStatus.Text = ready ? "✓ Bereit zum Weitermachen." : _choice switch
@@ -747,11 +749,19 @@ internal sealed class WelcomeForm : Form
         return label;
     }
 
+    private int _wrapWidth;
+
     private void FitWraps()
     {
         int width = _host.ClientSize.Width - _host.Padding.Horizontal - SystemInformation.VerticalScrollBarWidth;
-        if (width <= 100) return;
-        foreach (var (label, inset) in _wraps) label.MaximumSize = new Size(Math.Max(120, width - LogicalToDeviceUnits(inset)), 0);
+        // Resize also fires for height changes and while the user drags the frame: only a new width re-wraps.
+        if (width <= 100 || width == _wrapWidth) return;
+        _wrapWidth = width;
+        // Batched: each new MaximumSize otherwise re-lays out the nested auto-size tables of every page.
+        LayoutBatch.Run(_host, () =>
+        {
+            foreach (var (label, inset) in _wraps) label.MaximumSize = new Size(Math.Max(120, width - LogicalToDeviceUnits(inset)), 0);
+        });
     }
 
     private static void SetStatus(ThemedLabel label, string text, Tone tone)
