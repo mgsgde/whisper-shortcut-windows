@@ -645,6 +645,8 @@ internal sealed partial class TrayApp : ApplicationContext
     private void OnEscape()
     {
         Core.Log.Info($"Esc in state {_state}");
+        // Esc in the screenshot picker cancels the picker, not the recording behind it.
+        if (_snipCts != null) { _snipCts.Cancel(); return; }
         if (_state == State.Processing)
         {
             _cts?.Cancel(); // same path as a hotkey press during processing
@@ -718,8 +720,9 @@ internal sealed partial class TrayApp : ApplicationContext
     // ---------------- screenshot ----------------
 
     /// <summary>
-    /// Screenshot hotkey: opens the Windows snip UI and holds the image for the next Dictate Prompt or template run.
-    /// A second press while the snip UI is open stops waiting. Only when idle: a running recording has its input already.
+    /// Screenshot hotkey: opens the area picker and holds the image for the next Dictate Prompt or template run.
+    /// A second press while the picker is open stops it. Like the Mac also while recording: during a Dictate Prompt
+    /// or template recording the image goes with that very instruction.
     /// </summary>
     private void OnScreenshotHotkey()
     {
@@ -729,7 +732,7 @@ internal sealed partial class TrayApp : ApplicationContext
             _snipCts.Cancel();
             return;
         }
-        if (_state != State.Idle) return;
+        if (_state == State.Processing) return; // the request is already on its way
         // Like the Mac the screenshot always lands on the clipboard; only sending it with the next instruction
         // depends on „Screenshots mitsenden“ (and never offline).
         _ = CaptureScreenshotAsync();
@@ -745,6 +748,13 @@ internal sealed partial class TrayApp : ApplicationContext
             if (!Core.ScreenshotPolicy.Allowed(_settings))
             {
                 ShowDoneIfFree("Bildschirmfoto in der Zwischenablage");
+                return;
+            }
+            // Recording a Dictate Prompt or template right now: the picture belongs to this instruction.
+            if (_state == State.Recording && _mode != Mode.Dictate && _runShot == null)
+            {
+                _runShot = image;
+                Core.Log.Info($"Screenshot attached to the running {_mode} ({image.Data.Length / 1024} KB)");
                 return;
             }
             _heldShot.Hold(image);
