@@ -260,6 +260,18 @@ public static class McpSettingsCatalog
             },
             new()
             {
+                Id = "dictation.mode", Title = "Modus", Category = "models", Type = McpSettingType.Enum,
+                Description = "What the Dictate shortcut and right Ctrl start. dictate: the text is inserted when the recording stops. live: Live diktieren, the text appears at the cursor after each pause (offline Parakeet only; without it the key starts nothing and says why). The Live diktieren shortcut always starts Live diktieren. During a live meeting the Dictate shortcut records a meeting segment either way.",
+                Read = () => JsonValue.Create(Settings.DictateModeName(settings.DictateMode)),
+                Options = () => new[]
+                {
+                    new McpSettingOption("dictate", "Diktieren", true, null),
+                    new McpSettingOption("live", "Live diktieren", true, null),
+                },
+                Write = v => settings.DictateMode = Settings.ParseDictateMode(Text(v)),
+            },
+            new()
+            {
                 Id = "dictation.language", Title = "Sprache (OpenAI-Transkription)", Category = "models", Type = McpSettingType.Enum,
                 Description = "Spoken language for OpenAI transcription (ISO 639-1). auto lets the model detect it. Gemini and offline Parakeet ignore it.",
                 Read = () => JsonValue.Create(TranscriptionLanguages.Normalize(settings.TranscriptionLanguage)),

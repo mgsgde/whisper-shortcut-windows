@@ -29,6 +29,13 @@ internal sealed partial class SettingsForm : Form
     private readonly Control[] _engineOnly;
     private readonly Card _dictateGeminiCard, _dictateOpenAiCard, _promptGeminiCard, _promptOpenAiCard;
     private readonly FluentCombo _punctuation;
+    /// <summary>Diktieren → Modus (Mac Dictate → Mode): what the Diktieren shortcut and right Ctrl start.</summary>
+    private readonly FluentCombo _dictateMode;
+    private readonly ThemedLabel _dictateModeText;
+    /// <summary>The orange note under Modus when Live is chosen but cannot start, with its one-click fix.</summary>
+    private readonly TableLayoutPanel _liveWarning;
+    private readonly Label _liveWarningText;
+    private readonly FluentButton _useParakeet;
     // Diktieren → Sprache (OpenAI only) and Erweitert → Genauigkeit (Gemini only), like the Mac.
     private readonly FluentCombo _language, _temperature, _thinking;
     /// <summary>Diktieren → Satzzeichen: only offline speech recognition writes spoken marks out as words.</summary>
@@ -259,6 +266,37 @@ internal sealed partial class SettingsForm : Form
             "Schlüssel bei OpenAI erstellen", "https://platform.openai.com/api-keys");
 
         // ================= page: Diktieren =================
+        // --- Modus (Mac SpeechToTextSettingsTab.dictateModeSection): above the model, because Live depends on it ---
+        dictate.Controls.Add(Section("Modus", first: true,
+            subtitle: "Was das Diktieren-Kürzel und die rechte Strg-Taste tun. Das Kürzel für Live diktieren startet immer Live diktieren."));
+        _dictateMode = new FluentCombo { Width = ComboWidth, AccessibleName = "Modus" };
+        _dictateMode.Items.Add(new ChoiceItem<Core.DictateMode>(Core.DictateMode.Dictate, "Diktieren"));
+        _dictateMode.Items.Add(new ChoiceItem<Core.DictateMode>(Core.DictateMode.Live, "Live diktieren"));
+        _dictateMode.SelectedItem = _dictateMode.Items.Cast<ChoiceItem<Core.DictateMode>>().First(i => i.Value == settings.DictateMode);
+        var dictateModeCard = new Card();
+        dictateModeCard.AddRow(SettingRow("Modus", "", _dictateMode, ComboWidth, out _dictateModeText));
+        // Selectable anyway (Mac): refusing the choice silently looked like a broken control. The note says why instead.
+        _liveWarning = Block();
+        var warningHead = new ThemedLabel { Text = "⚠", AutoSize = true, Tone = Tone.Caution, Margin = new Padding(0, 2, 0, 0) };
+        _liveWarningText = Wrap("", 2 * RowPadding, small: false);
+        _liveWarningText.Margin = new Padding(0, 2, 0, 2);
+        ((ThemedLabel)_liveWarningText).Tone = Tone.Caution;
+        var warningFoot = Wrap("Bis dahin starten das Diktieren-Kürzel und die rechte Strg-Taste nichts.", 2 * RowPadding, small: true);
+        _useParakeet = new FluentButton("Parakeet verwenden") { AutoSize = true, Margin = new Padding(0, 4, 0, 4), AccessibleName = "Parakeet für Diktieren verwenden" };
+        _useParakeet.Click += (_, _) =>
+        {
+            Core.Log.Info("SETTINGS: Live diktieren note — switched speech recognition to Parakeet on this PC");
+            _speechEngine.SelectedItem = _speechEngine.Items.Cast<EngineItem>().First(i => i.Engine == Core.Engine.Local);
+            RefreshPickers();
+        };
+        _liveWarning.Controls.Add(warningHead);
+        _liveWarning.Controls.Add(_liveWarningText);
+        _liveWarning.Controls.Add(warningFoot);
+        _liveWarning.Controls.Add(_useParakeet);
+        dictateModeCard.AddRow(_liveWarning);
+        _dictateMode.SelectedIndexChanged += (_, _) => UpdateDictateMode();
+        dictate.Controls.Add(dictateModeCard);
+
         // --- transcription model: provider per step (Mac: one model picker that includes the offline models) ---
         dictate.Controls.Add(Section("Transkriptionsmodell", subtitle: "Welches Modell deine Aufnahme in Text verwandelt."));
         _speechEngine = EngineChoice(settings.SpeechEngine, "Spracherkennung", "Auf diesem PC (Parakeet)");
@@ -702,7 +740,7 @@ internal sealed partial class SettingsForm : Form
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
         var dirtyTimer = new System.Windows.Forms.Timer { Interval = 150 };
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
-        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation, _afterPaste, _language, _temperature, _thinking };
+        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation, _dictateMode, _afterPaste, _language, _temperature, _thinking };
         dirtyTimer.Tick += (_, _) =>
         {
             if (_snapshot.Length == 0 || combos.Any(c => c.DroppedDown)) return;
@@ -1171,7 +1209,7 @@ internal sealed partial class SettingsForm : Form
     private static readonly Dictionary<string, string> SectionIcons = new()
     {
         ["Tastenkürzel"] = "\uE765", ["Start"] = "\uE7E8", ["Mikrofon"] = "\uE720", ["Zwischenablage"] = "\uE77F",
-        ["Töne"] = "\uE767", ["Während einer Aufnahme"] = "\uE916", ["Transkriptionsmodell"] = "\uE8D6",
+        ["Töne"] = "\uE767", ["Modus"] = "\uE8AC", ["Während einer Aufnahme"] = "\uE916", ["Transkriptionsmodell"] = "\uE8D6",
         ["Offline-Modell"] = "\uE896", ["Offline-Sprachmodell"] = "\uE896", ["Satzzeichen"] = "\uE8D2", ["Glossar"] = "\uE82D",
         ["System-Prompt"] = "\uE8BD", ["Modell"] = "\uE950", ["Bildschirminhalt"] = "\uE7F4", ["Schnellanweisungen"] = "\uE945",
         ["Vorlage für neue Texte"] = "\uE8A5", ["Vorlagen"] = "\uE8A5", ["So geht's"] = "\uE897", ["Offline-Modus"] = "\uE839",
@@ -1529,6 +1567,35 @@ internal sealed partial class SettingsForm : Form
 
     private Core.PunctuationMode SelectedPunctuation => ((PunctuationItem)_punctuation.SelectedItem!).Mode;
 
+    private Core.DictateMode SelectedDictateMode => ((ChoiceItem<Core.DictateMode>)_dictateMode.SelectedItem!).Value;
+
+    /// <summary>
+    /// Modus caption, or the orange note when Live is chosen but cannot start (Mac liveUnavailableWarning). Recomputed on
+    /// every model, provider, offline or download change, so switching the model below updates it at once.
+    /// </summary>
+    private void UpdateDictateMode()
+    {
+        if (IsDisposed) return;
+        bool offlineSpeech = !_onlineMode.Checked || SelectedEngine(_speechEngine) == Core.Engine.Local;
+        var reason = SelectedDictateMode == Core.DictateMode.Live
+            ? Core.LiveDictation.UnavailableReason(duringMeeting: false, offlineSpeech, OfflineEngine.SpeechInstalled)
+            : null;
+        string caption = SelectedDictateMode == Core.DictateMode.Dictate
+            ? "Der Text wird eingefügt, wenn du stoppst."
+            : reason == null ? "Der Text erscheint nach jeder Pause am Cursor, offline transkribiert von Parakeet." : "";
+        if (_dictateModeText.Text != caption) _dictateModeText.Text = caption;
+        _dictateModeText.Visible = caption.Length > 0;
+        if (reason is { } why)
+        {
+            // The message points to Einstellungen → Diktieren, which is this page (Mac: "Select it below").
+            _liveWarningText.Text = why == Core.LiveUnavailable.NotParakeet
+                ? "Live diktieren funktioniert mit dem Offline-Modell Parakeet. Wähle es unten aus."
+                : Core.LiveDictation.Message(why);
+            _useParakeet.Visible = why == Core.LiveUnavailable.NotParakeet && OfflineEngine.SpeechInstalled;
+        }
+        _liveWarning.Visible = reason != null;
+    }
+
     // ---------------- microphone ----------------
 
     private sealed record MicItem(string Value, string Label)
@@ -1632,6 +1699,7 @@ internal sealed partial class SettingsForm : Form
         foreach (var c in _engineOnly) c.Visible = online;
         bool offlineSpeech = !online || SelectedEngine(_speechEngine) == Core.Engine.Local;
         foreach (var c in _punctuationOnly) c.Visible = offlineSpeech;
+        UpdateDictateMode();
         bool openAiSpeech = online && SelectedEngine(_speechEngine) == Core.Engine.OpenAI;
         bool openAiText = online && SelectedEngine(_textEngine) == Core.Engine.OpenAI;
         (_dictateGeminiCard.Visible, _dictateOpenAiCard.Visible) = (!openAiSpeech, openAiSpeech);
@@ -1689,6 +1757,7 @@ internal sealed partial class SettingsForm : Form
         {
             _pickerModelState = pickerState;
             RefreshPickers();
+            UpdateDictateMode(); // "Parakeet verwenden" appears once Parakeet is on this PC
         }
         _llmChoice.Enabled = download?.Id != "llm";
     }
@@ -1836,7 +1905,7 @@ internal sealed partial class SettingsForm : Form
         _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), SelectedAfterPaste.ToString(), _sounds.Checked.ToString(),
         _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value, _liveKey.Value,
-        SelectedPunctuation.ToString(), _settingsKey.Value, _rightCtrl.Checked.ToString(), ReadAloudSnapshot(), ChatSnapshot(), MeetingsSnapshot(),
+        SelectedPunctuation.ToString(), SelectedDictateMode.ToString(), _settingsKey.Value, _rightCtrl.Checked.ToString(), ReadAloudSnapshot(), ChatSnapshot(), MeetingsSnapshot(),
         SelectedLanguage, Core.TranscriptionTuning.Format(SelectedTemperature), SelectedThinking,
     }.Concat(_quick.Select(q => q.Text))
      .Concat(_templates.Select(t => string.Join("\u0002", t.Id, t.Name, t.Instructions, t.Hotkey))));
@@ -1987,7 +2056,7 @@ internal sealed partial class SettingsForm : Form
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
             _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
             _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
-            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking);
+            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking, _settings.DictateMode);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _geminiKey.Value;
@@ -2022,6 +2091,7 @@ internal sealed partial class SettingsForm : Form
         _settings.AutoPaste = _autoPaste.Checked;
         _settings.ClipboardAfterPaste = SelectedAfterPaste;
         _settings.PunctuationMode = SelectedPunctuation;
+        _settings.DictateMode = SelectedDictateMode;
         _settings.TranscriptionLanguage = SelectedLanguage;
         _settings.TranscriptionTemperature = SelectedTemperature;
         _settings.TranscriptionThinking = SelectedThinking;
@@ -2048,7 +2118,7 @@ internal sealed partial class SettingsForm : Form
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
             _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
             _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
-            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking) = before;
+            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking, _settings.DictateMode) = before;
             RestoreReadAloud(readAloudBefore);
             RestoreMeetings(meetingsBefore);
             RestoreChat(chatBefore);
@@ -2066,7 +2136,7 @@ internal sealed partial class SettingsForm : Form
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode}, dictate mode {_settings.DictateMode})");
         // Also with a key problem: the same state is not written again until the user edits something.
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;

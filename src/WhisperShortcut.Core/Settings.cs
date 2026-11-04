@@ -67,6 +67,12 @@ public sealed partial class Settings
     public PunctuationMode PunctuationMode { get; set; } = PunctuationMode.Automatic;
 
     /// <summary>
+    /// What the Diktieren shortcut and right Ctrl start (Mac Settings → Dictate → Mode, <c>DictateMode</c>):
+    /// a normal Diktat (default; also for old files without the key) or Live diktieren. The Live shortcut always starts Live.
+    /// </summary>
+    public DictateMode DictateMode { get; set; } = DictateMode.Dictate;
+
+    /// <summary>
     /// Spoken language for OpenAI transcription (ISO 639-1, or "auto"). Gemini and Parakeet ignore it.
     /// See <see cref="TranscriptionLanguages"/>.
     /// </summary>
@@ -401,6 +407,7 @@ public sealed partial class Settings
             s.SpeechEngine = ParseEngine(dto.SpeechEngine);
             s.TextEngine = ParseEngine(dto.TextEngine);
             s.PunctuationMode = ParsePunctuationMode(dto.PunctuationMode);
+            s.DictateMode = ParseDictateMode(dto.DictateMode);
             s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
             s.TranscriptionLanguage = TranscriptionLanguages.Normalize(dto.TranscriptionLanguage);
             s.TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(dto.TranscriptionTemperature);
@@ -566,6 +573,13 @@ public sealed partial class Settings
     private static string PunctuationModeName(PunctuationMode m) =>
         m == PunctuationMode.SpokenOnly ? "spokenOnly" : "automatic";
 
+    /// <summary>Mac raw values "dictate" / "live"; anything else (or a missing key) is the default.</summary>
+    public static DictateMode ParseDictateMode(string? v) =>
+        v?.Trim().ToLowerInvariant() == "live" ? DictateMode.Live : DictateMode.Dictate;
+
+    /// <summary>The stored name, the Mac's raw value.</summary>
+    public static string DictateModeName(DictateMode m) => m == DictateMode.Live ? "live" : "dictate";
+
     private static string EngineName(Engine e) => e switch
     {
         Engine.Local => "local",
@@ -598,6 +612,7 @@ public sealed partial class Settings
             SpeechEngine = EngineName(SpeechEngine),
             TextEngine = EngineName(TextEngine),
             PunctuationMode = PunctuationModeName(PunctuationMode),
+            DictateMode = DictateModeName(DictateMode),
             OpenAiTranscriptionModel = OpenAiTranscriptionModel,
             TranscriptionLanguage = TranscriptionLanguages.Normalize(TranscriptionLanguage),
             TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(TranscriptionTemperature),
@@ -681,6 +696,7 @@ public sealed partial class Settings
         [JsonPropertyName("speechEngine")] public string? SpeechEngine { get; set; }
         [JsonPropertyName("textEngine")] public string? TextEngine { get; set; }
         [JsonPropertyName("punctuationMode")] public string? PunctuationMode { get; set; }
+        [JsonPropertyName("dictateMode")] public string? DictateMode { get; set; }
         [JsonPropertyName("openAiTranscriptionModel")] public string? OpenAiTranscriptionModel { get; set; }
         [JsonPropertyName("transcriptionLanguage")] public string? TranscriptionLanguage { get; set; }
         [JsonPropertyName("transcriptionTemperature")] public double? TranscriptionTemperature { get; set; }

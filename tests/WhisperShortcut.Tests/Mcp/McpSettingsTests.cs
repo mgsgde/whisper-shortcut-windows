@@ -15,7 +15,7 @@ public class McpSettingsTests
         using var s = new McpStack();
         var o = s.ToolJson("get_settings", new JsonObject(), McpAccess.Read);
         var list = o["settings"]!.AsArray();
-        Assert.Equal(26, list.Count);
+        Assert.Equal(27, list.Count);
         var engine = list.First(x => x!["id"]!.GetValue<string>() == "dictation.engine")!;
         Assert.Equal("enum", engine["type"]!.GetValue<string>());
         Assert.Equal(3, engine["options"]!.AsArray().Count);
@@ -28,7 +28,7 @@ public class McpSettingsTests
         Assert.True(list.First(x => x!["id"]!.GetValue<string>() == "general.launch_at_login")!["requires_approval"]!.GetValue<bool>());
 
         var models = s.ToolJson("get_settings", A("{\"category\":\"models\"}"), McpAccess.Read)["settings"]!.AsArray();
-        Assert.Equal(12, models.Count);
+        Assert.Equal(13, models.Count);
     }
 
     [Fact]
@@ -39,6 +39,16 @@ public class McpSettingsTests
         Assert.Equal(PunctuationMode.SpokenOnly, s.ReloadSettings().PunctuationMode);
         Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"dictation.punctuation\":\"automatic\"}},{R}}}"))["status"]!.GetValue<string>());
         Assert.Equal(PunctuationMode.Automatic, s.ReloadSettings().PunctuationMode);
+    }
+
+    [Fact]
+    public void DictateMode_Applies()
+    {
+        using var s = new McpStack();
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"dictation.mode\":\"live\"}},{R}}}"))["status"]!.GetValue<string>());
+        Assert.Equal(DictateMode.Live, s.ReloadSettings().DictateMode);
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"dictation.mode\":\"dictate\"}},{R}}}"))["status"]!.GetValue<string>());
+        Assert.Equal(DictateMode.Dictate, s.ReloadSettings().DictateMode);
     }
 
     [Fact]

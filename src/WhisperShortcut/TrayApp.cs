@@ -79,6 +79,9 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly System.Windows.Forms.Timer _liveRetryTimer = new() { Interval = 500 };
     // The window the live dictation types into; set once the recording runs.
     private IntPtr _liveTarget;
+    /// <summary>Bumped by every recording that starts; right Ctrl remembers the one it started (Mac fnStartedRecordingID).</summary>
+    private long _recordingSerial;
+    private long _rightCtrlRecording = -1;
     private IReadOnlyList<string> _unsupported = Array.Empty<string>();
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
@@ -427,12 +430,47 @@ internal sealed partial class TrayApp : ApplicationContext
     private void OnHotkey(Mode mode)
     {
         var stored = mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey;
-        HandleHotkeyPress(mode, stored, canStopOrCancel: true, () => StartRecording(mode, stored));
+        // Stop, cancel and busy stay as they are: the Diktieren key ends whichever recording runs, Live included (Mac).
+        HandleHotkeyPress(mode, stored, canStopOrCancel: true,
+            () => { if (mode == Mode.Dictate) StartDictateByMode(stored, "Diktieren shortcut"); else StartRecording(mode, stored); });
     }
 
     /// <summary>
-    /// What the right Ctrl toggle drives (Mac: MenuBarController as FnDictationToggleDelegate). Only a plain Diktat
-    /// started this way is its own: a Prompt, template or Live recording is never stopped by right Ctrl.
+    /// The Diktieren key and right Ctrl start what Diktieren → Modus says (Mac toggleDictation / fnDictationStart with
+    /// LiveDictation.startDecision). Live that cannot start says why and starts nothing: no silent fallback. During a
+    /// live meeting the decision falls back to a normal Diktat, as on the Mac.
+    /// </summary>
+    private void StartDictateByMode(string stored, string source)
+    {
+        var (decision, reason) = Core.LiveDictation.StartDecision(_settings.DictateMode, LiveUnavailable());
+        switch (decision)
+        {
+            case Core.LiveStartDecision.StartDictate:
+                StartRecording(Mode.Dictate, stored);
+                break;
+            case Core.LiveStartDecision.StartLive:
+                Core.Log.Info($"SHORTCUTS: {source} starts Live diktieren (mode)");
+                StartLiveDictation(stored);
+                break;
+            default:
+                PresentLiveUnavailable(reason!.Value);
+                break;
+        }
+    }
+
+    private Core.LiveUnavailable? LiveUnavailable() => Core.LiveDictation.UnavailableReason(_meeting.IsActive,
+        _settings.EffectiveSpeechEngine == Core.Engine.Local, OfflineEngine.SpeechInstalled);
+
+    private void PresentLiveUnavailable(Core.LiveUnavailable why)
+    {
+        Core.Log.Info($"LIVE-DICTATE: not started ({why})");
+        Sounds.Error();
+        Notify(Core.UserCopy.LiveTitle, Core.LiveDictation.Message(why), ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
+    }
+
+    /// <summary>
+    /// What the right Ctrl toggle drives (Mac: MenuBarController as FnDictationToggleDelegate). It starts what Diktieren →
+    /// Modus says and ends only the recording it started itself (Diktat or Live).
     /// </summary>
     private sealed class RightCtrlBridge(TrayApp app) : Core.IRightCtrlDictationDelegate
     {
@@ -440,7 +478,9 @@ internal sealed partial class TrayApp : ApplicationContext
         {
             if (app._state != State.Idle) return false;
             Core.Log.Info("Hotkey RightCtrl in state Idle");
-            app.StartRecording(Mode.Dictate, Core.HotkeyText.RightCtrl);
+            app.StartDictateByMode(Core.HotkeyText.RightCtrl, "Right Ctrl");
+            // Right Ctrl ends only the recording it started, never one another shortcut began, even of the same kind.
+            app._rightCtrlRecording = app._state == State.Recording ? app._recordingSerial : -1;
             return IsRecording();
         }
 
@@ -454,7 +494,8 @@ internal sealed partial class TrayApp : ApplicationContext
             if (IsRecording()) app.OnEscape();
         }
 
-        public bool IsRecording() => app._state == State.Recording && app._mode == Mode.Dictate && app._live == null;
+        public bool IsRecording() => app._state == State.Recording && app._mode == Mode.Dictate
+            && app._recordingSerial == app._rightCtrlRecording;
 
         public bool IsProcessing() => app._state == State.Processing && app._mode == Mode.Dictate;
 
@@ -842,6 +883,7 @@ internal sealed partial class TrayApp : ApplicationContext
             return;
         }
         Sounds.Start();
+        _recordingSerial++;
         SetState(State.Recording);
         // One turn only: a Dictate run leaves the image for the next Dictate Prompt or template run.
         _runShot = mode != Mode.Dictate && Core.ScreenshotPolicy.Allowed(_settings) ? _heldShot.Take() : null;
@@ -869,13 +911,9 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void StartLiveDictation(string stored)
     {
-        var reason = Core.LiveDictation.UnavailableReason(_meeting.IsActive,
-            _settings.EffectiveSpeechEngine == Core.Engine.Local, OfflineEngine.SpeechInstalled);
-        if (reason is { } why)
+        if (LiveUnavailable() is { } why)
         {
-            Core.Log.Info($"LIVE-DICTATE: not started ({why})");
-            Sounds.Error();
-            Notify(Core.UserCopy.LiveTitle, Core.LiveDictation.Message(why), ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
+            PresentLiveUnavailable(why);
             return;
         }
         // The session exists before the recording starts, so a failed start finds it and discards it.
