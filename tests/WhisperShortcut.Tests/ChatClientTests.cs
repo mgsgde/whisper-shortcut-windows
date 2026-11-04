@@ -390,4 +390,43 @@ public class ChatClientTests
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => Gemini(Client(h), ct: new CancellationToken(true)));
         Assert.Equal(0, h.CallCount);
     }
+
+    // ---- thinking depth ----
+
+    [Fact]
+    public async Task Gemini_sends_the_chosen_thinking_level()
+    {
+        var h = new Handler((_, _, _, _) => Sse(GeminiObject("ok")));
+        await Client(h).SendAsync(Engine.Gemini, "gemini-3.5-flash-lite", "S", Conversation, null, false,
+            CancellationToken.None, "high");
+        Assert.Equal("high", (string?)JsonNode.Parse(h.Calls[0].Body)!["generationConfig"]!["thinkingConfig"]!["thinkingLevel"]);
+    }
+
+    [Fact]
+    public async Task Gemini_minimal_on_3_8_flash_is_sent_as_low()
+    {
+        var h = new Handler((_, _, _, _) => Sse(GeminiObject("ok")));
+        await Client(h).SendAsync(Engine.Gemini, "gemini-3.8-flash", "S", Conversation, null, false,
+            CancellationToken.None, "minimal");
+        Assert.Equal("low", (string?)JsonNode.Parse(h.Calls[0].Body)!["generationConfig"]!["thinkingConfig"]!["thinkingLevel"]);
+    }
+
+    [Fact]
+    public void Gemini_image_model_has_no_generation_config()
+    {
+        var body = ChatClient.BuildGeminiBody("gemini-3-pro-image", "S", Conversation, false, null);
+        Assert.Null(JsonNode.Parse(body)!["generationConfig"]);
+    }
+
+    [Fact]
+    public async Task OpenAi_sends_reasoning_effort_only_when_there_is_one()
+    {
+        var h = new Handler((_, _, _, _) => Sse("data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}]}\n\ndata: [DONE]\n\n"));
+        await Client(h).SendAsync(Engine.OpenAI, "gpt-6-sol", "S", Conversation, null, false, CancellationToken.None, "minimal");
+        await Client(h).SendAsync(Engine.OpenAI, "gpt-6-sol", "S", Conversation, null, false, CancellationToken.None);
+        await Client(h).SendAsync(Engine.OpenAI, "gpt-4o", "S", Conversation, null, false, CancellationToken.None);
+        Assert.Equal("none", (string?)JsonNode.Parse(h.Calls[0].Body)!["reasoning_effort"]);
+        Assert.Equal("low", (string?)JsonNode.Parse(h.Calls[1].Body)!["reasoning_effort"]);
+        Assert.Null(JsonNode.Parse(h.Calls[2].Body)!["reasoning_effort"]);
+    }
 }

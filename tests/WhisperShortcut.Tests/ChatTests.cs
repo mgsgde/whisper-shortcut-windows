@@ -159,6 +159,25 @@ public class ChatTests : IDisposable
     }
 
     [Fact]
+    public void Store_round_trips_the_thinking_level_and_old_files_load_as_default()
+    {
+        var s = Session("Hallo", T0);
+        s.ThinkingLevel = "high";
+        _store.Save(s);
+        Assert.Equal("high", _store.Load(s.Id)!.ThinkingLevel);
+        var path = Path.Combine(_root, s.Id.ToString("D") + ".json");
+        Assert.Equal("high", (string?)JsonNode.Parse(File.ReadAllText(path))!["thinkingLevel"]);
+
+        var old = Session("alt", T0);
+        _store.Save(old);
+        var oldPath = Path.Combine(_root, old.Id.ToString("D") + ".json");
+        var node = JsonNode.Parse(File.ReadAllText(oldPath))!.AsObject();
+        node.Remove("thinkingLevel");
+        File.WriteAllText(oldPath, node.ToJsonString());
+        Assert.Equal("default", _store.Load(old.Id)!.ThinkingLevel);
+    }
+
+    [Fact]
     public void Store_writes_camelCase_json_named_after_the_id()
     {
         var s = Session("Hallo", T0);

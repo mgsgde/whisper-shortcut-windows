@@ -41,6 +41,9 @@ public sealed class ChatSession
     /// <summary>All turns, oldest first.</summary>
     public List<ChatMessage> Messages { get; set; } = new();
 
+    /// <summary>Thinking depth of this chat (<c>/think</c>), a <see cref="ChatThinking.Levels"/> entry; old files load as "default".</summary>
+    public string ThinkingLevel { get; set; } = ChatThinking.Default;
+
     /// <summary>A new, empty chat.</summary>
     public static ChatSession New(DateTimeOffset now) =>
         new() { Id = Guid.NewGuid(), Created = now, Updated = now };
