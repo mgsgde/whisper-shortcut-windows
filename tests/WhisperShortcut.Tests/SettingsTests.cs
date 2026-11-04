@@ -751,4 +751,94 @@ public class QuickActionRequestTests
         Assert.Equal("Ctrl+Alt+L", t.LiveDictateHotkey);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
+    [Fact]
+    public void ReadAloud_WindowsVoiceAndRewritePrompt_DefaultsAndRoundTrip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("", s.ReadAloudVoiceSystem);
+        Assert.Equal("", s.ReadAloudRewritePrompt);
+        Assert.Equal(ReadAloud.DefaultRewritePrompt, s.EffectiveReadAloudRewritePrompt);
+        Assert.Equal(ReadAloud.DefaultModel, s.EffectiveReadAloudModel.Id);
+        s.OfflineMode = true;
+        Assert.Equal(TtsProvider.System, s.EffectiveReadAloudModel.Provider);
+
+        s.ReadAloudVoiceSystem = "Microsoft Hedda Desktop";
+        s.ReadAloudRewritePrompt = "Lies es kurz vor.";
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Microsoft Hedda Desktop", t.ReadAloudVoiceFor(TtsProvider.System));
+        Assert.Equal("Lies es kurz vor.", t.EffectiveReadAloudRewritePrompt);
+
+        // Saving the default text stores "", so a later improvement of the default reaches the user.
+        t.ReadAloudRewritePrompt = ReadAloud.DefaultRewritePrompt;
+        t.Save();
+        Assert.Equal("", Settings.Load(path, new PlainSecretProtector()).ReadAloudRewritePrompt);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void ReadAloud_Defaults()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(ReadAloud.DefaultModel, s.ReadAloudModel);
+        Assert.Equal("gemini-3.8-flash-lite-tts", s.ReadAloudTtsModel.Id);
+        Assert.Equal("Charon", s.ReadAloudVoiceGemini);
+        Assert.Equal("alloy", s.ReadAloudVoiceOpenAi);
+        Assert.Equal("Charon", s.ReadAloudVoiceFor(TtsProvider.Gemini));
+        Assert.Equal("alloy", s.ReadAloudVoiceFor(TtsProvider.OpenAI));
+        Assert.Equal(1.0, s.ReadAloudSpeed);
+        Assert.True(s.ReadAloudSmartRewrite);
+    }
+
+    [Fact]
+    public void ReadAloud_AllFieldsRoundTrip()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.ReadAloudHotkey = "Alt+8";
+        s.ReadAloudHotkeyEnabled = false;
+        s.ReadAloudModel = "gpt-4o-mini-tts";
+        s.ReadAloudVoiceGemini = "Kore";
+        s.ReadAloudVoiceOpenAi = "marin";
+        s.ReadAloudSpeed = 1.5;
+        s.ReadAloudSmartRewrite = false;
+        s.Save();
+
+        var json = File.ReadAllText(path);
+        foreach (var name in new[] { "readAloudHotkey", "readAloudHotkeyEnabled", "readAloudModel", "readAloudVoiceGemini",
+                     "readAloudVoiceOpenAi", "readAloudSpeed", "readAloudSmartRewrite" })
+            Assert.Contains($"\"{name}\":", json);
+
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal("Alt+8", t.ReadAloudHotkey);
+        Assert.False(t.ReadAloudHotkeyEnabled);
+        Assert.Equal("gpt-4o-mini-tts", t.ReadAloudModel);
+        Assert.Equal(TtsProvider.OpenAI, t.ReadAloudTtsModel.Provider);
+        Assert.Equal("Kore", t.ReadAloudVoiceGemini);
+        Assert.Equal("marin", t.ReadAloudVoiceOpenAi);
+        Assert.Equal(1.5, t.ReadAloudSpeed);
+        Assert.False(t.ReadAloudSmartRewrite);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void ReadAloud_BadValuesFallBackToDefaults()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, "{\"readAloudModel\":\"nope\",\"readAloudVoiceGemini\":\"charon\",\"readAloudVoiceOpenAi\":\"Kore\","
+            + "\"readAloudSpeed\":3.3}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(ReadAloud.DefaultModel, s.ReadAloudModel);
+        Assert.Equal("Charon", s.ReadAloudVoiceGemini);   // ids are case-sensitive
+        Assert.Equal("alloy", s.ReadAloudVoiceOpenAi);
+        Assert.Equal(1.0, s.ReadAloudSpeed);
+
+        File.WriteAllText(path, "{\"readAloudModel\":\"gemini-3.1-flash-tts-preview\"}");
+        Assert.Equal(ReadAloud.DefaultModel, Settings.Load(path, new PlainSecretProtector()).ReadAloudModel);
+        Directory.Delete(dir, true);
+    }
 }
