@@ -2275,7 +2275,10 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private const long SpareBuildIdleMs = 4000;
 
-    /// <summary>A few seconds from now, when nothing else runs, build the next settings window (Mac: opens instantly).</summary>
+    /// <summary>
+    /// A few seconds from now, when nothing else runs, build the next settings window, and once the chat window
+    /// (Mac: both open instantly). One window per tick: each build holds the UI thread for a moment.
+    /// </summary>
     private void ScheduleSpareSettings(int delayMs = 3000)
     {
         _spareTimer?.Dispose();
@@ -2285,15 +2288,22 @@ internal sealed partial class TrayApp : ApplicationContext
             // Busy (recording, a window open): try again later; the build blocks the UI thread for a moment.
             if (_state != State.Idle || _settingsForm != null || _welcomeForm is { IsDisposed: false }) return;
             if (NativeMethods.IdleMilliseconds() < SpareBuildIdleMs) return;
+            var watch = System.Diagnostics.Stopwatch.StartNew();
+            if (_spareSettings is not { IsDisposed: false } || _spareFingerprint != _settings.Fingerprint())
+            {
+                _spareSettings?.Dispose();
+                _spareSettings = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
+                _spareSettings.Prewarm();
+                _spareFingerprint = _settings.Fingerprint();
+                Core.Log.Info($"Settings window built in advance in {watch.ElapsedMilliseconds} ms");
+                return; // the chat, if still needed, on the next tick
+            }
             _spareTimer!.Dispose();
             _spareTimer = null;
-            if (_spareSettings is { IsDisposed: false } && _spareFingerprint == _settings.Fingerprint()) return;
-            _spareSettings?.Dispose();
-            var watch = System.Diagnostics.Stopwatch.StartNew();
-            _spareSettings = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
-            _spareSettings.Prewarm();
-            _spareFingerprint = _settings.Fingerprint();
-            Core.Log.Info($"Settings window built in advance in {watch.ElapsedMilliseconds} ms");
+            if (_chatWindow is { IsDisposed: false }) return;
+            // The chat lives until the app quits (TrayApp.Chat.cs): built once, its first Alt+6 only makes it visible.
+            ChatWindow().Prewarm();
+            Core.Log.Info($"Chat window built in advance in {watch.ElapsedMilliseconds} ms");
         };
         _spareTimer.Start();
     }

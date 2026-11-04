@@ -7,7 +7,7 @@ namespace WhisperShortcut;
 /// tray row „Chat“; like the Mac it closes when another app comes to the front, unless pinned with /pin.
 /// Everything runs on the UI thread; stream pieces are posted back to it.
 /// </summary>
-internal sealed partial class ChatWindow : Form
+internal sealed partial class ChatWindow : FastShowForm
 {
     private readonly Core.Settings _settings;
     private readonly Core.ChatClient _client;
