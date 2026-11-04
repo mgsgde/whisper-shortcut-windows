@@ -364,6 +364,7 @@ public sealed class LiveMeetingSession : IDisposable
         for (var attempt = 0; attempt <= RetryDelays.Length; attempt++)
         {
             if (attempt > 0) await Task.Delay(RetryDelays[attempt - 1], ct).ConfigureAwait(false);
+            var stored = false;
             try
             {
                 var text = ((await _transcribe(chunk.Wav, ct).ConfigureAwait(false)) ?? "").Trim();
@@ -374,8 +375,7 @@ public sealed class LiveMeetingSession : IDisposable
                 }
                 _store.RemovePendingAudio(id, chunk.StartSeconds);
                 Log.Info($"Meeting: chunk at {chunk.StartSeconds:0} s ({chunk.DurationSeconds:0.#} s audio) done, {text.Length} chars");
-                await HealAsync(ct).ConfigureAwait(false);
-                return;
+                stored = true;
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested)
             {
@@ -386,6 +386,13 @@ public sealed class LiveMeetingSession : IDisposable
                 error = ex;
                 Log.Warn($"Meeting: chunk at {chunk.StartSeconds:0} s attempt {attempt + 1} failed ({ex.GetType().Name})");
             }
+
+            if (!stored) continue;
+            // Healing earlier failed chunks is separate work: its errors must not retry or fail this stored chunk.
+            try { await HealAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex) { Log.Warn($"Meeting: healing kept chunks failed ({ex.GetType().Name})"); }
+            return;
         }
 
         _failed.Add(MillisOf(chunk.StartSeconds));
