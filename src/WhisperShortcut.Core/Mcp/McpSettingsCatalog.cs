@@ -96,6 +96,7 @@ public sealed class McpSetting
                 return hit?.Label ?? text ?? "Unbekannt";
             }
             default:
+                if (value is JsonValue off && off.TryGetValue<string>(out var offText) && offText.Trim().Length == 0) return "Aus";
                 return McpSettingsCatalog.TryHotkey(value, out var n) ? HotkeyRules.Display(n)
                     : value is JsonValue v && v.TryGetValue<string>(out var raw) ? raw : "Unbekannt";
         }
@@ -184,14 +185,25 @@ public static class McpSettingsCatalog
         Write = v => set(v is JsonValue b && b.TryGetValue<bool>(out var on) && on),
     };
 
-    private static McpSetting HotkeySetting(string id, string title, Func<string> get, Action<string> set) => new()
+    // enabled/setEnabled: shortcuts with an on switch. Off reads as "" (the stored key is only a suggestion);
+    // Write("") switches off (needed by undo and the applier's rollback), a real key switches on.
+    private static McpSetting HotkeySetting(string id, string title, Func<string> get, Action<string> set,
+        Func<bool>? enabled = null, Action<bool>? setEnabled = null) => new()
     {
         Id = id, Title = title, Category = "shortcuts", Type = McpSettingType.Hotkey,
-        Read = () => JsonValue.Create(HotkeyRules.TryNormalize(get(), out var n) ? n : get()),
+        Read = () => enabled != null && !enabled()
+            ? JsonValue.Create("")
+            : JsonValue.Create(HotkeyRules.TryNormalize(get(), out var n) ? n : get()),
         Write = v =>
         {
+            if (setEnabled != null && v is JsonValue j && j.TryGetValue<string>(out var text) && text.Trim().Length == 0)
+            {
+                setEnabled(false);
+                return;
+            }
             if (!TryHotkey(v, out var n)) throw new McpConfigException("Not a valid shortcut.");
             set(n);
+            setEnabled?.Invoke(true);
         },
     };
 
@@ -284,8 +296,10 @@ public static class McpSettingsCatalog
             },
             HotkeySetting("shortcuts.dictate", "Tastenkürzel Diktieren", () => settings.DictateHotkey, v => settings.DictateHotkey = v),
             HotkeySetting("shortcuts.dictate_prompt", "Tastenkürzel Text bearbeiten", () => settings.PromptHotkey, v => settings.PromptHotkey = v),
-            HotkeySetting("shortcuts.add_to_glossary", "Tastenkürzel Glossar", () => settings.GlossaryHotkey, v => settings.GlossaryHotkey = v),
-            HotkeySetting("shortcuts.read_aloud", "Tastenkürzel Vorlesen", () => settings.ReadAloudHotkey, v => settings.ReadAloudHotkey = v),
+            HotkeySetting("shortcuts.add_to_glossary", "Tastenkürzel Glossar", () => settings.GlossaryHotkey, v => settings.GlossaryHotkey = v,
+                () => settings.GlossaryHotkeyEnabled, v => settings.GlossaryHotkeyEnabled = v),
+            HotkeySetting("shortcuts.read_aloud", "Tastenkürzel Vorlesen", () => settings.ReadAloudHotkey, v => settings.ReadAloudHotkey = v,
+                () => settings.ReadAloudHotkeyEnabled, v => settings.ReadAloudHotkeyEnabled = v),
             new()
             {
                 Id = "read_aloud.model", Title = "Vorlesen: Modell", Category = "models", Type = McpSettingType.Enum,

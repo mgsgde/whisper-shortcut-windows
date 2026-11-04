@@ -271,4 +271,35 @@ public class McpSettingsTests
         Assert.True(clash.IsError);
         Assert.Contains("Tastenkürzel Vorlesen", clash.Text);
     }
+
+    private static JsonNode? Value(McpStack s, string id) =>
+        s.ToolJson("get_settings", new JsonObject(), McpAccess.Read)["settings"]!.AsArray()
+            .First(x => x!["id"]!.GetValue<string>() == id)!["value"];
+
+    [Fact]
+    public void SwitchedOffGlossaryShortcut_ReadsAsEmpty_AndTurnsOnWhenSet_AndUndoTurnsItOff()
+    {
+        using var s = new McpStack();
+        s.Settings.GlossaryHotkeyEnabled = false; // a new install (the stack loads like an older one)
+        Assert.Equal("", Value(s, "shortcuts.add_to_glossary")!.GetValue<string>());
+
+        var o = s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.add_to_glossary\":\"Ctrl+Shift+G\"}},{R}}}"));
+        Assert.Equal("applied", o["status"]!.GetValue<string>());
+        var t = s.ReloadSettings();
+        Assert.Equal("Ctrl+Shift+G", t.GlossaryHotkey);
+        Assert.True(t.GlossaryHotkeyEnabled);
+
+        Assert.Equal(McpUndoOutcome.Undone, s.Applier.Undo(o["change_id"]!.GetValue<string>()).Outcome);
+        Assert.False(s.ReloadSettings().GlossaryHotkeyEnabled);
+    }
+
+    [Fact]
+    public void SwitchedOffShortcut_IsNotTaken()
+    {
+        using var s = new McpStack();
+        s.Settings.GlossaryHotkey = "Alt+7";
+        s.Settings.GlossaryHotkeyEnabled = false;
+        var o = s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.read_aloud\":\"Alt+7\"}},{R}}}"));
+        Assert.Equal("applied", o["status"]!.GetValue<string>());
+    }
 }
