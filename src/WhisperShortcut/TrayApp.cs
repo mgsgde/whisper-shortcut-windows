@@ -81,6 +81,9 @@ internal sealed class TrayApp : ApplicationContext
     private IReadOnlyList<string> _unsupported = Array.Empty<string>();
     private CancellationTokenSource? _cts;
     private SettingsForm? _settingsForm;
+    private WelcomeForm? _welcomeForm;
+    // Mac „Einrichtung abschließen …“: shown while the welcome tour is not finished.
+    private readonly ToolStripMenuItem _finishSetupItem;
     private readonly Toast _toast = new();
     private readonly UpdateService _updates;
     private readonly ToolStripMenuItem _updateItem;
@@ -156,7 +159,8 @@ internal sealed class TrayApp : ApplicationContext
             Visible = false, Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold),
         };
         _settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings());
-        var welcomeItem = new ToolStripMenuItem("Einführung …", null, (_, _) => ShowSettings(welcome: true));
+        var welcomeItem = new ToolStripMenuItem("Einführung …", null, (_, _) => OpenWelcome());
+        _finishSetupItem = new ToolStripMenuItem("Einrichtung abschließen …", null, (_, _) => OpenWelcome()) { Visible = false };
         // Mac: „Feedback senden“ with the problem report first. Windows adds the log, which the report points to.
         var feedbackItem = new ToolStripMenuItem("Feedback senden");
         feedbackItem.DropDownItems.Add(new ToolStripMenuItem("Problem melden …", null, (_, _) => ShowSettings()));
@@ -176,7 +180,7 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.AddRange(new ToolStripItem[]
         {
             _statusItem, _updateItem, new ToolStripSeparator(),
-            _proposalsItem, _stopItem, _stopSeparator,
+            _finishSetupItem, _proposalsItem, _stopItem, _stopSeparator,
             _dictateItem, _promptItem, _screenshotItem, _glossaryItem, _liveItem, new ToolStripSeparator(),
             _copyLast, _recentMenu, _retryItem, new ToolStripSeparator(),
             // Mac: the meeting starts from the Chat window, which Windows does not have; its row sits where Chat is.
@@ -224,7 +228,8 @@ internal sealed class TrayApp : ApplicationContext
         if (!testRun) _updates.Start();
         _ui.Post(_ => _meeting.OnStartup(), null);
 
-        if (firstRun && !testRun)
+        // Mac: the tour opens at every start until it was finished with „Fertig“ (closing it is not finishing).
+        if (!testRun && !_settings.WelcomeCompleted)
         {
             OpenWelcome();
         }
@@ -353,6 +358,7 @@ internal sealed class TrayApp : ApplicationContext
         bool idle = _state == State.Idle;
         _stopItem.Visible = _stopSeparator.Visible = !idle;
         _proposalsItem.Visible = _mcp != null && _mcp.Proposals.Pending.Count > 0;
+        _finishSetupItem.Visible = !_settings.WelcomeCompleted;
         bool recording = _state == State.Recording;
         _dictateItem.Text = recording && _mode == Mode.Dictate && _live == null ? "Diktat beenden" : "Diktieren";
         _dictateItem.ShortcutKeyDisplayString = Key(_settings.ActiveDictateHotkey);
@@ -772,6 +778,8 @@ internal sealed class TrayApp : ApplicationContext
             mode == Mode.Prompt ? _settings.QuickActions : null,
             templateName: mode == Mode.Template ? _template!.DisplayName : null, screenshot: _runShot != null,
             title: _live != null ? Core.UserCopy.LiveTitle : null);
+        if (mode == Mode.Dictate && _live == null && _welcomeForm is { TakesTryResult: true } tour && _pasteTarget == tour.Handle)
+            tour.ShowTryListening();
         if (_selection != null)
         {
             var pending = _selection;
@@ -1116,11 +1124,23 @@ internal sealed class TrayApp : ApplicationContext
             if (text.Length == 0)
             {
                 Core.RecordingCheckpoint.DiscardAll();
+                if (_mode == Mode.Dictate && _welcomeForm is { TakesTryResult: true } silentTour && _pasteTarget == silentTour.Handle) silentTour.ShowTryResult("");
                 return; // already reported
             }
             _lastFailed = null; // this run worked; the old failure is history
             Core.RecordingCheckpoint.DiscardAll();
             _recent.Add(text);
+
+            // The tour's „Ausprobieren“ step started this dictation in its own window: show the text there.
+            if (_mode == Mode.Dictate && retry == null && _welcomeForm is { TakesTryResult: true } tour
+                && _pasteTarget != IntPtr.Zero && _pasteTarget == tour.Handle)
+            {
+                _paster.KeepOnClipboard(text);
+                tour.ShowTryResult(text);
+                _overlay.ShowDone("Es funktioniert");
+                done = true;
+                return;
+            }
 
             // A quick-action rewrite that lost most of a long selection must not silently replace it. Spoken
             // instructions are unknown here (Gemini hears them) and "fass zusammen" is a normal request, so
@@ -1862,7 +1882,9 @@ internal sealed class TrayApp : ApplicationContext
         // WHY the real foreground and not Form.ActiveForm: a form activated without getting the foreground
         // (focus-steal prevention) stays "active" while the user works elsewhere. Any window of ours in
         // front counts, so the settings dialogs (MessageBox) keep the hotkeys off as well.
-        bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow();
+        // The welcome tour in front is the exception: its „Ausprobieren“ step needs the dictate shortcut.
+        bool tourInFront = _welcomeForm is { IsDisposed: false, Visible: true } tour && ClipboardPaster.ForegroundRoot() == tour.Handle;
+        bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow() && !tourInFront;
         bool wanted = Core.HotkeyPolicy.WantGlobalHotkeys(settingsInFront, _state == State.Idle);
         if (wanted == _globalHotkeysOn) return;
         if (wanted)
@@ -1923,12 +1945,46 @@ internal sealed class TrayApp : ApplicationContext
     public void OpenSettingsOnStart() => _ui.Post(_ => ShowSettings(), null);
 
     /// <summary>
-    /// First start (and <c>--welcome</c> for VM screenshots): the settings window with the "what to do
-    /// now" box, so nobody has to find the tray icon first.
+    /// The welcome tour (Mac WelcomeWindowController): at start until it is finished, from the tray menu, from
+    /// Einstellungen → Über, and <c>--welcome</c>. One window; a second call brings it to the front.
     /// </summary>
-    public void OpenWelcome() => _ui.Post(_ => ShowSettings(welcome: true), null);
+    public void OpenWelcome() => _ui.Post(_ => ShowWelcome(), null);
 
-    private void ShowSettings() => ShowSettings(welcome: false);
+    private void ShowWelcome()
+    {
+        if (_welcomeForm is { IsDisposed: false } open)
+        {
+            open.Reveal();
+            return;
+        }
+        var form = _welcomeForm = new WelcomeForm(_settings, _offline, _gemini, _openAi);
+        form.Saved += AfterTourSaved;
+        form.Completed += () =>
+        {
+            AfterTourSaved();
+            // Mac: finished, but nothing can transcribe yet → the settings open on „Konten“.
+            if (!Core.WelcomeTour.TranscriptionReady(_settings, OfflineEngine.SpeechInstalled))
+                _ui.Post(_ => ShowSettingsPage(SettingsForm.AccountsPage), null);
+        };
+        // Moving between the tour and the settings window turns the global shortcuts on or off (see SyncGlobalHotkeys).
+        form.Activated += (_, _) => _ui.Post(_ => SyncGlobalHotkeys(), null);
+        form.FormClosed += (_, _) =>
+        {
+            if (_welcomeForm == form) _welcomeForm = null;
+            ShowTrayHintOnce();
+        };
+        form.Show();
+        form.Reveal();
+    }
+
+    // A key, the offline choice or offline mode changed in the tour: the same follow-ups as a settings save.
+    private void AfterTourSaved()
+    {
+        if (_settings.OfflineMode) _promptMemory.Clear();
+        SetState(_state); // tooltip "Bereit" instead of "Kein API-Schlüssel"
+        _offline.Prewarm();
+        _mcp.SyncOfflineMode();
+    }
 
     /// <summary>Opens the settings window on <paramref name="page"/> (e.g. „Konten“ from a missing-key popup).</summary>
     private void ShowSettingsPage(string page)
@@ -1952,7 +2008,7 @@ internal sealed class TrayApp : ApplicationContext
         ShowSettings();
     }
 
-    private void ShowSettings(bool welcome)
+    private void ShowSettings()
     {
         if (_settingsForm != null)
         {
@@ -1970,7 +2026,8 @@ internal sealed class TrayApp : ApplicationContext
 
         // While the window is in front the global hotkeys are off, so the hotkey field can record
         // Ctrl+Shift+D itself. Behind Word or minimized, they work as usual.
-        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, welcome, _mcp);
+        var form = _settingsForm = new SettingsForm(_settings, _offline, _gemini, _openAi, _updates, _mcp);
+        form.WelcomeRequested += () => OpenWelcome();
         // Activation messages can still arrive after FormClosed: only the open window may re-evaluate.
         _settingsForm.Activated += (_, _) => { if (_settingsForm == form) SyncGlobalHotkeys(); };
         // Posted: while Deactivate runs the new foreground window is not set yet.

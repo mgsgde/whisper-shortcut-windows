@@ -5,21 +5,6 @@ namespace WhisperShortcut.Tests;
 public class UserCopyTests
 {
     [Fact]
-    public void Welcome_NamesTheFirstStepsAndTheTray()
-    {
-        var text = UserCopy.Welcome("Strg+Umschalt+D");
-        Assert.Contains("Willkommen", text);
-        Assert.Contains("Konten", text);
-        Assert.DoesNotContain("Speichern", text); // edits apply by themselves, like the Mac
-        Assert.Contains("Strg+Umschalt+D", text);
-        Assert.Contains("Infobereich", text);
-        Assert.Contains("^", text);
-        Assert.Contains("X beendet die App nicht", text);
-        Assert.Contains("Strg+Tab", text);
-        Assert.DoesNotContain("Dictate Prompt", text);
-    }
-
-    [Fact]
     public void StatusLines_StayGermanAndSpecific()
     {
         Assert.Equal("Aufnahme läuft – Strg+Umschalt+D beendet sie", UserCopy.RecordingStatus("Strg+Umschalt+D"));

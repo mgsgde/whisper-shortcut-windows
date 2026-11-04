@@ -6,19 +6,8 @@ namespace WhisperShortcut.Core;
 /// </summary>
 public static class UserCopy
 {
-    /// <summary>Blue box on the first settings page, and again from Über → Einführung.</summary>
-    public static string Welcome(string dictateHotkeyDisplay) =>
-        "Willkommen – so geht’s:\n"
-        + "1. Unter „Konten“ einen Schlüssel von Google (Gemini) oder OpenAI eintragen, oder unter „Datenschutz & "
-        + "Berechtigungen“ offline arbeiten; die Modelle dafür werden unter „Diktieren“ einmal geladen.\n"
-        + $"2. In einem beliebigen Programm {dictateHotkeyDisplay} drücken, sprechen, noch einmal drücken.\n\n"
-        + "WhisperShortcut bleibt danach als Symbol unten rechts im Infobereich (oft hinter dem Pfeil ^). "
-        + "Ein Klick auf das X beendet die App nicht. Mit Strg+Tab lassen sich die Seiten wechseln.";
-
-    public const string WelcomeAccessibleName = "Einführung";
-
     public const string WelcomeTourHint =
-        "Die Schritte vom ersten Start: Schlüssel eintragen oder offline arbeiten, Kürzel drücken. Erklärt auch, wo das Symbol zu finden ist.";
+        "Die Schritte vom ersten Start: offline oder in der Cloud diktieren, das Mikrofon prüfen, einmal ausprobieren, die Kürzel.";
 
     public const string MicTestHint =
         "„Testen“ zeigt den Pegel beim Sprechen. Es wird nichts abgespielt.";

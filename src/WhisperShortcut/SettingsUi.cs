@@ -63,8 +63,6 @@ internal static class Theme
     public static Color Good => HighContrast ? SystemColors.WindowText : Pick(0x0F7B0F, 0x6CCB5F);
     public static Color Bad => HighContrast ? SystemColors.WindowText : Pick(0xC42B1C, 0xFF99A4);
     public static Color Caution => HighContrast ? SystemColors.WindowText : Pick(0x9D5D00, 0xFCE100);
-    public static Color BannerBack => HighContrast ? SystemColors.Info : Pick(0xE6F0FA, 0x1E3246);
-    public static Color BannerText => HighContrast ? SystemColors.InfoText : Pick(0x003E73, 0xCDE6FF);
     public static Color OnSelected => HighContrast ? SystemColors.HighlightText : Text;
 
     public static Color Fore(Tone tone) => tone switch
@@ -214,16 +212,6 @@ internal class ThemedLabel : Label
         get => Theme.Fore(_tone);
         set { }
     }
-}
-
-/// <summary>The blue "what to do now" box on top of the first page at first start.</summary>
-internal sealed class Banner : Label
-{
-    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-    public override Color ForeColor { get => Theme.BannerText; set { } }
-
-    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
-    public override Color BackColor { get => Theme.BannerBack; set { } }
 }
 
 /// <summary>

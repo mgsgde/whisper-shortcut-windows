@@ -47,7 +47,6 @@ internal sealed partial class SettingsForm : Form
     private readonly ToggleSwitch _autoPaste;
     private readonly FluentCombo _afterPaste;
     private readonly ToggleSwitch _sounds;
-    private readonly Banner _welcome;
     private ThemedLabel _updateStatus = null!;
     private FluentButton _updateButton = null!;
     private readonly UpdateService _updates;
@@ -100,6 +99,9 @@ internal sealed partial class SettingsForm : Form
 
     /// <summary>Raised after the settings were written; the window stays open.</summary>
     public event Action? Saved;
+
+    /// <summary>Über → Einführung → „Zeigen“: open the welcome tour.</summary>
+    public event Action? WelcomeRequested;
     private bool _discard;
 
     public const string General = "Allgemein", AccountsPage = "Konten", DictatePage = "Diktieren", PromptPage = "Dictate Prompt",
@@ -116,8 +118,7 @@ internal sealed partial class SettingsForm : Form
     private const int RowPadding = 16, RowGap = 24;
     private const int KeyWidth = 200, ComboWidth = 300, ToggleWidth = 88, ButtonWidth = 120;
 
-    /// <param name="welcome">First start: a short "what to do now" box on top of the first page.</param>
-    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, UpdateService updates, bool welcome = false, McpService? mcp = null)
+    public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, UpdateService updates, McpService? mcp = null)
     {
         _settings = settings;
         _updates = updates;
@@ -155,17 +156,6 @@ internal sealed partial class SettingsForm : Form
         var privacy = NewPage(PrivacyPage, "Ob etwas diesen PC verlassen darf und worauf WhisperShortcut hier zugreifen kann.");
 
         // ================= page: Allgemein =================
-        {
-            _welcome = new Banner
-            {
-                Text = Core.UserCopy.Welcome(Hotkey.Display(settings.DictateHotkey)),
-                AccessibleName = Core.UserCopy.WelcomeAccessibleName,
-                AutoSize = true, Padding = new Padding(14, 12, 14, 12), Margin = new Padding(0, 4, 0, 4), Visible = welcome,
-            };
-            Fit(_welcome, 0);
-            general.Controls.Add(_welcome);
-        }
-
         // --- shortcuts: all in one list, like the Mac's General → Keyboard Shortcuts ---
         general.Controls.Add(Section("Tastenkürzel", first: true));
         general.Controls.Add(Wrap("Globale Tastenkürzel – sie funktionieren in jeder App. Einmal drücken zum Starten, noch einmal zum Beenden. "
@@ -255,25 +245,11 @@ internal sealed partial class SettingsForm : Form
                 + "Sonst gehören sie wie gewohnt den anderen Programmen."), fixedCard);
 
         // ================= page: Konten (Mac Accounts: one section per provider key) =================
-        _geminiKey = new KeyField(settings.ApiKey ?? "", (k, ct) => _gemini.CheckKeyAsync(k, ct), result => result switch
-        {
-            Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
-            Core.KeyCheck.Invalid => ("✗ Google kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
-            Core.KeyCheck.Forbidden => ("✗ Google kennt den Schlüssel, lässt ihn aber nicht an Gemini. In Google AI Studio einen neuen Schlüssel erstellen.", Tone.Bad),
-            Core.KeyCheck.NoConnection => ("Keine Verbindung zu Google. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
-            _ => ("Google hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
-        }, k => SaveCheckedKey(k, gemini: true));
+        _geminiKey = new KeyField(settings.ApiKey ?? "", (k, ct) => _gemini.CheckKeyAsync(k, ct), GeminiKeyMessage, k => SaveCheckedKey(k, gemini: true));
         AddKeyCard(accounts, _geminiKey, "Google-API-Schlüssel", "Für Gemini: Diktieren und Dictate Prompt. Bitte einen Schlüssel aus einem "
             + "Google-Projekt mit Abrechnung verwenden: Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen.",
             "Schlüssel in Google AI Studio erstellen", "https://aistudio.google.com/apikey");
-        _openAiKey = new KeyField(settings.OpenAiKey ?? "", (k, ct) => _openAi.CheckKeyAsync(k, ct), result => result switch
-        {
-            Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
-            Core.KeyCheck.Invalid => ("✗ OpenAI kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
-            Core.KeyCheck.Forbidden => ("✗ OpenAI kennt den Schlüssel, er darf aber keine Modelle benutzen. Rechte des Projekts prüfen.", Tone.Bad),
-            Core.KeyCheck.NoConnection => ("Keine Verbindung zu OpenAI. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
-            _ => ("OpenAI hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
-        }, k => SaveCheckedKey(k, gemini: false));
+        _openAiKey = new KeyField(settings.OpenAiKey ?? "", (k, ct) => _openAi.CheckKeyAsync(k, ct), OpenAiKeyMessage, k => SaveCheckedKey(k, gemini: false));
         AddKeyCard(accounts, _openAiKey, "OpenAI-API-Schlüssel", "Für die Transkriptions- und Textmodelle von OpenAI. Ein API-Schlüssel mit "
             + "Guthaben auf platform.openai.com; ein ChatGPT-Abo zählt dafür nicht.",
             "Schlüssel bei OpenAI erstellen", "https://platform.openai.com/api-keys");
@@ -821,12 +797,7 @@ internal sealed partial class SettingsForm : Form
 
         info.Controls.Add(Section("Einführung", subtitle: "Die geführte Tour durch die Funktionen von WhisperShortcut noch einmal ansehen."));
         var tour = new FluentButton("Zeigen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Einführung zeigen" };
-        tour.Click += (_, _) =>
-        {
-            _welcome.Visible = true;
-            ShowPage(General);
-            ((ScrollableControl)_pages[General]).AutoScrollPosition = Point.Empty;
-        };
+        tour.Click += (_, _) => WelcomeRequested?.Invoke(); // the tour window (Mac: Settings → About → Welcome Tour)
         var tourCard = new Card();
         tourCard.AddRow(SettingRow("Einführung noch einmal zeigen", Core.UserCopy.WelcomeTourHint, tour, ButtonWidth, out _));
         info.Controls.Add(tourCard);
@@ -1356,8 +1327,28 @@ internal sealed partial class SettingsForm : Form
         return true;
     }
 
-    /// <summary>One API key: the field, Anzeigen / Prüfen, and a check that runs while the key is pasted.</summary>
-    private sealed class KeyField : IDisposable
+    /// <summary>What the Google key check says (also used by the welcome tour).</summary>
+    internal static (string Text, Tone Tone) GeminiKeyMessage(Core.KeyCheck result) => result switch
+    {
+        Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
+        Core.KeyCheck.Invalid => ("✗ Google kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
+        Core.KeyCheck.Forbidden => ("✗ Google kennt den Schlüssel, lässt ihn aber nicht an Gemini. In Google AI Studio einen neuen Schlüssel erstellen.", Tone.Bad),
+        Core.KeyCheck.NoConnection => ("Keine Verbindung zu Google. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
+        _ => ("Google hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
+    };
+
+    /// <summary>What the OpenAI key check says (also used by the welcome tour).</summary>
+    internal static (string Text, Tone Tone) OpenAiKeyMessage(Core.KeyCheck result) => result switch
+    {
+        Core.KeyCheck.Ok => ("✓ Schlüssel funktioniert", Tone.Good),
+        Core.KeyCheck.Invalid => ("✗ OpenAI kennt diesen Schlüssel nicht. Bitte noch einmal kopieren, ohne Leerzeichen.", Tone.Bad),
+        Core.KeyCheck.Forbidden => ("✗ OpenAI kennt den Schlüssel, er darf aber keine Modelle benutzen. Rechte des Projekts prüfen.", Tone.Bad),
+        Core.KeyCheck.NoConnection => ("Keine Verbindung zu OpenAI. Internet prüfen; gespeichert werden kann trotzdem.", Tone.Caution),
+        _ => ("OpenAI hat nicht eindeutig geantwortet. Später noch einmal prüfen.", Tone.Caution),
+    };
+
+    /// <summary>One API key: the field, Anzeigen / Prüfen, and a check that runs while the key is pasted. Also used by the welcome tour.</summary>
+    internal sealed class KeyField : IDisposable
     {
         public TextBox Box { get; }
         public ThemedLabel Status { get; } = new() { AutoSize = true, Margin = new Padding(0, 4, 0, 0), Text = "" };

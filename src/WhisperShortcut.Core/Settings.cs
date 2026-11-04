@@ -289,6 +289,15 @@ public sealed class Settings
     }
 
     /// <summary>
+    /// The welcome tour was finished with "Fertig" (Mac hasCompletedOnboarding). Closing the window is not finishing.
+    /// Files from before the tour count as finished when that install was set up (<see cref="WelcomeTour.CompletedForExistingFile"/>).
+    /// </summary>
+    public bool WelcomeCompleted { get; set; }
+
+    /// <summary>The tour step the user last reached, so the next start resumes there (Mac onboardingCurrentStep).</summary>
+    public int WelcomeStep { get; set; }
+
+    /// <summary>
     /// "" when <paramref name="text"/> is blank or equals <paramref name="defaultText"/> (ignoring line endings and
     /// surrounding whitespace), otherwise the text trimmed with "\n" line endings. Keeps "default" stored as empty.
     /// </summary>
@@ -376,6 +385,8 @@ public sealed class Settings
             s.Sounds = dto.Sounds ?? true;
             s.AutoUpdateCheck = dto.AutoUpdateCheck ?? true;
             s.ClipboardAfterPaste = ClipboardAfterPasteModes.FromFile(dto.ClipboardAfterPaste, dto.RestoreClipboard);
+            s.WelcomeCompleted = dto.WelcomeCompleted ?? WelcomeTour.CompletedForExistingFile(s.ApiKey, s.OpenAiKey, s.OfflineMode);
+            s.WelcomeStep = dto.WelcomeStep ?? 0;
             // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
@@ -533,6 +544,8 @@ public sealed class Settings
             AutoUpdateCheck = AutoUpdateCheck,
             RestoreClipboard = RestoreClipboard,
             ClipboardAfterPaste = ClipboardAfterPasteModes.Name(ClipboardAfterPaste),
+            WelcomeCompleted = WelcomeCompleted,
+            WelcomeStep = WelcomeStep,
         };
         var tmp = _path + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
@@ -603,5 +616,7 @@ public sealed class Settings
         [JsonPropertyName("autoUpdateCheck")] public bool? AutoUpdateCheck { get; set; }
         [JsonPropertyName("restoreClipboard")] public bool? RestoreClipboard { get; set; }
         [JsonPropertyName("clipboardAfterPaste")] public string? ClipboardAfterPaste { get; set; }
+        [JsonPropertyName("welcomeCompleted")] public bool? WelcomeCompleted { get; set; }
+        [JsonPropertyName("welcomeStep")] public int? WelcomeStep { get; set; }
     }
 }

@@ -86,7 +86,7 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | Telemetrie (#288) | Zähler | keine | bewusst anders (Praxis, Patientendaten) |
 | Problem melden mit letztem Diktat (#240) | Text, Modell, Echo | Version, Modelle, Log, ohne Diktat | bewusst anders (Datenschutz); optional „Letzten Text beilegen“ |
 | Benachrichtigungen / englische UI | Sprache, Popup-Einstellungen | fest Deutsch | offen (groß) |
-| Welcome-Tour | mehrere Schritte | Banner beim ersten Start | offen (UI) |
+| Welcome-Tour | mehrere Schritte | `WelcomeForm`, fünf Schritte wie der Mac (Plan Schritt 8) | erledigt |
 
 ## 5. Live-Meeting und MCP
 
