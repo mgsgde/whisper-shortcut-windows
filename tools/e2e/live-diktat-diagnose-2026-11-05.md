@@ -1,127 +1,168 @@
 # Live diktieren: Diagnose Windows gegen Mac, 2026-11-05
 
 Auftrag: `C:\Users\Admin\benchmark-audio\PROMPT-live-diktat-diagnose.md`. Nur Diagnose, keine Fixes.
-Branch `diag/live-diktat`. Rohdaten (nur Zahlen, kein diktierter Text): `live-diktat-diagnose-2026-11-05-daten/`.
-Werkzeug: `tools/LiveBench` (Audio aus Datei; ruft `ParakeetTranscriber`, `MeetingChunker` mit `LiveDictation.ChunkPolicy`,
-`LiveChunkJoiner` und `LiveDictation.FinishPiece` im Modus „Nur gesprochen“ auf, wie `TrayApp.DecodeLivePieceAsync`).
-Die 46 Aufnahmen bleiben außerhalb des Repos.
+Branch `diag/live-diktat`. Rohdaten (nur Zahlen): `live-diktat-diagnose-2026-11-05-daten/`.
+Werkzeug: `tools/LiveBench` (Audio aus Datei statt Mikro). Die 46 Aufnahmen bleiben außerhalb des Repos.
+
+**Stand: zweite Fassung.** Die erste Fassung (Sonnet, Commit `7fa1380`) wurde mit Opus 5.5 nachgeprüft und korrigiert:
+siehe „Was an der ersten Fassung falsch war“ am Ende.
 
 ## Kurzfassung
 
-- Auf den Mac-Aufnahmen ist die Windows-Engine **nicht schlechter** als die Mac-Referenz und **nicht zu langsam**
-  (am Stück 6,2 % WER, Echtzeitfaktor 0,11; live 7,6 % WER, Text steht beim Stoppen sofort da).
-  A ist ausgeschlossen. C zeigt keinen Nachteil, ein direkter Gegentest mit Ultra/fp32 fehlt. E ist für den Ruhepegel ausgeschlossen.
-- Der Schaden durch die Live-Logik ist messbar, aber klein: +1,4 Prozentpunkte WER (3 Wörter von 210) und 3 verlorene
-  exakte Treffer. Ursachen: Stück ohne Kontext dekodiert, Satzpunkt an einer Denkpause, Tastenklick am Ende als „Yeah“.
-- **Eine Hauptursache für „schlechter als auf dem Mac“ lässt sich aus den Dateien nicht belegen.** Schritt 5
-  (echtes Mikro, Notepad/Chrome) ging nicht: dafür muss jemand sprechen. Hinweise auf Schäden im echten Betrieb stehen nur in
-  `wsw.log` vom 2026-11-04 (B und D unten) und stammen aus Builds **vor** 0.7.3.
-  Wahrscheinlichste Hauptursache dort: **B, Schnitte mitten im Satz bei -40 dB** (1–2-Zeichen-Stücke), seit
-  `ab3c29c`/0.7.3 auf -45 dB wie auf dem Mac. Das ist Hypothese, kein Beleg. Nachprüfen mit dem Diag-Build (Abschnitt 6).
+- **Engine und Tempo sind nicht das Problem.** Auf Magnus' Aufnahmen: normales Diktieren 7,1 % WER, live 7,6 %,
+  Echtzeitfaktor 0,10–0,11 mit den 3 Threads der App.
+- **Hauptursache (belegt als Mechanismus, am echten Mikro noch nicht gemessen): der feste Pegel von -45 dB im Live-Schnitt.**
+  Leiser gemacht, bleibt normales Diktieren stabil (8,1 % bei −20 dB). Live bricht ab etwa −17 dB ein:
+  10,0 % → 14,8 % → 26,2 % → **31,9 %** bei −17/−18/−19/−20 dB. Leise Sprache gilt dann als Pause:
+  Stücke werden mitten im Wort geschnitten („Akten|lage“) oder ganz als „still“ verworfen, dann fehlen ganze Wörter
+  („Gangbild“, „Leistungsfähigkeit auf dem allgemeinen“). Das ist genau die Art Fehler, die nur Live macht.
+- Ob Magnus' Headset im Alltag in diese Zone kommt, ist **offen**. Die Live-Sitzungen im Log hatten Spitzenpegel 29 % und 67 %
+  (unkritisch). Einzelne normale Diktate hatten nur 8–9 % (etwa 5 dB vor dem Einbruch). Prüfen mit dem Diag-Build, Abschnitt 6.
+- Die erste Fassung hatte „Schnitte bei -40 dB“ als Hauptverdacht. Das stützte sich auf Stücke mit 1 Zeichen im Log. Die sind
+  aber sehr wahrscheinlich ein gesprochenes „Punkt“/„Komma“ nach einer Pause, also korrekt. Dieser Beleg fällt weg.
 
 ## 1. System
 
 | | |
 |---|---|
-| CPU | Intel Core i5-9400T @ 1,8 GHz, 6 Kerne / 6 Threads (kein SMT) |
+| CPU | Intel Core i5-9400T @ 1,8 GHz, 6 Kerne / 6 Threads |
 | RAM | 15,9 GB |
 | Windows | 11 Pro 10.0.26100 |
-| App | 0.7.3 (`WhisperShortcut.csproj`), Diag-Build auf `diag/live-diktat` |
-| Mikro | Windows-Standard (`microphone = ""`), einziges Gerät: „Mikrofon (Logi USB Headset)“ |
-| Einstellungen | Parakeet v3 int8 (`parakeet-tdt-0.6b-v3-int8`), Satzzeichen „Nur gesprochen“, Modus zuletzt Live (04.11. 22:12), Glossar leer |
-| NumThreads | `OfflineEngine.LoadParakeetAsync`: `ProcessorCount / 2` = **3** (Log: „Parakeet loaded … 3 threads“) |
-| Ladezeit | 2,8–3,2 s |
+| App | 0.7.3, Diag-Build auf `diag/live-diktat` |
+| Mikro | Windows-Standard (`microphone = ""`), einziges Gerät „Mikrofon (Logi USB Headset)“ |
+| Einstellungen | Parakeet v3 int8 (`parakeet-tdt-0.6b-v3-int8`), Satzzeichen „Nur gesprochen“, Glossar leer |
+| NumThreads | `ProcessorCount / 2` = **3** (`OfflineEngine.LoadParakeetAsync`, Log „Parakeet loaded … 3 threads“) |
 
-## 2. Tabelle a/b (46 Dateien, 42 Fälle, 221 s Audio, 3 Threads wie in der App, ohne Glossar)
+## 2. Tabelle a/b (46 Dateien, 42 Fälle, 221 s Audio, 3 Threads, Glossar leer)
 
-| | a) am Stück | b) live (Pausen-Schnitt, Joiner) | Mac (local-asr-Benchmark, anderes Set) |
+a) Normales Diktieren wie `TrayApp.TranscribeOfflineAsync` + `DictateAsync` („Nur gesprochen“: Satzzeichen per Token-Zeit, `SpokenPunctuation.Apply`,
+`TextCleanup.ForDictation` ohne Schlusspunkt). b) Live wie `TrayApp.FeedLive`/`DecodeLivePieceAsync`: 100-ms-Puffer in den `MeetingChunker` mit
+`LiveDictation.ChunkPolicy`, Stücke einzeln dekodiert, `LiveDictation.FinishPiece`, `LiveChunkJoiner`. Mehrteilige Fälle (`-1`, `-2`) werden aneinandergehängt.
+
+| | a) am Stück | b) live | Mac (Zahlen aus dem Auftrag) |
 |---|---|---|---|
-| WER (Wörter, ohne Satzzeichen und Groß-/Kleinschreibung, bester Treffer aus expected/alternatives) | **6,2 %** (13/210) | **7,6 %** (16/210) | v3 10,8 %, Ultra 8,1 % |
-| exakte Treffer inkl. Satzzeichen | 26/42 | 23/42 | – |
-| Dekodierzeit gesamt | 23,6 s | 22,1 s | – |
-| Echtzeitfaktor | 0,107 | 0,100 | Ultra ~0,1 s je Clip < 5 s |
-| Stücke | 46 | 65 (44 Pause, 21 Stopp, 0 Max, davon 15 still übersprungen) | – |
-| Stücke mit 1–2 Zeichen | – | 0 | – |
-| Text nach dem Stoppen | Median 0,53 s, max 1,04 s | Median 0,00 s, p90 0,29 s, max 0,45 s | – |
-| größter Rückstand eines Stücks | – | 0,93 s | – |
+| WER (Wörter; Satzzeichen und Groß-/Kleinschreibung ignoriert; bester Treffer aus expected/alternatives) | **7,1 %** (15/210) | **7,6 %** (16/210) | v3 10,8 %, Ultra 8,1 % |
+| exakte Treffer inkl. Satzzeichen | 25/42 | 26/42 | – |
+| Echtzeitfaktor | 0,110 | 0,104 | – |
+| Stücke | 46 | 65 (44 Pause, 21 Stopp, 0 Max; 15 still verworfen) | – |
+| Stücke ≤ 2 Zeichen mit Buchstaben | – | 0 | – |
+| Wartezeit nach dem Stoppen | Median 0,52 s, max 1,02 s | Median 0,22 s, p90 0,51 s, max 0,73 s | – |
+| größter Rückstand eines Stücks | – | 0,93–1,06 s | – |
 
-Vorsicht beim Mac-Vergleich: anderes Set, andere Normalisierung. Die Mac-Zahlen sagen nur, dass 6–8 % für Parakeet v3 kein schlechter Wert sind.
-Die Fehler am Stück sind überwiegend Glossarwörter (GdB, VersMedV; in der App wären das Hotwords, hier ist das Glossar leer),
-„Nur gesprochen“-Fehlgriffe (Fragezeichen oder Komma bleiben) und Zahlen als Ziffern. Ein Nicht-int8- oder Ultra-Modell habe ich **nicht getestet**
-(Download > 1 GB, nur mit deiner Freigabe). C ist deshalb nicht direkt bewiesen, nur „nicht auffällig“.
+Zwei Läufe je Modus. Die WER war gleich, a) war Wort für Wort gleich, b) wich an einer Stelle ab („Yeah“ gegen „Yeah.“).
+Exakte Treffer schwanken deshalb um ±1–3 und taugen nicht als Vergleich.
+Mac-Vergleich: Welches Set und welche Normalisierung der Mac-Benchmark nutzt, ist hier nicht prüfbar (Mac-Quellcode liegt nicht auf diesem PC). Windows ist auf diesen Aufnahmen nicht schlechter.
 
-Unterschiede a → b, Fall für Fall:
-- `doppelpunkt-diagnose`: +2 Fehler. Das 2,6-s-Stück nach „Diagnose:“ wird ohne Kontext schlechter erkannt (Schnitt lag auf einer echten Pause, nicht im Wort).
-- `semikolon`: +1. Der Tastenklick beim Beenden (1,1 s Tail, nicht still, -21 dB) wird zu „Yeah“.
-- `pause-weiter` (1 s Pause mitten im Satz): Wörter gleich, aber „mal. Weiter“ statt „mal weiter“. Der Punkt des Stücks überlebt die Filterung.
-- `ohne-nebensatz`, `ohne-weil`, `zahl-blutdruck`: Wörter richtig, exakter Treffer verloren (ein Komma bleibt nach dem Zuschnitt des Stücks).
-- `wort-kommas`, `anschluss-komma`: je +1 (Erkennungsvarianz an Stückgrenzen).
-- `schraegstrich-wirbel`: live besser (−2).
+Unterschied a → b (netto +1 Wort):
+- live schlechter: `doppelpunkt-diagnose` +2 (2,6-s-Stück ohne Kontext: „beid Salz“), `semikolon` +1 (Tastenklick beim Beenden, 1,1 s Tail mit -21 dB → „Yeah“), `wort-kommas` +1, `anschluss-komma` +1.
+- live besser: `schraegstrich-wirbel` −2, `fuellwort-hm` −1, `fuellwort-aeh` −1. Live entfernt Füllwörter (`FinishPiece`), normales Diktieren nicht.
+- Satzzeichen an der Naht: `pause-weiter` ergibt live „mal. Weiter“ statt „mal weiter“, `ohne-nebensatz` behält ein Komma.
+- Nebenbefund normales Diktieren: Füllwörter bleiben stehen („Basistherapie, äh …“, „Hm, Gangbild …“), und in „Nur gesprochen“ bleibt oft ein nicht gesprochener Schlusspunkt.
 
-Schwelle des Pausen-Schnitts: -45 dB 7,6 % / 0 kurze Stücke · -40 dB 7,6 % / 0 · -35 dB 7,6 % / 1 · -30 dB 7,6 % / 2.
-Bei diesen Mac-Aufnahmen (Ruhepegel -63 dB, Sprache -24 dB) ist die Schwelle fast egal. Das alte -40-dB-Problem zeigt sich hier nicht.
+## 3. Pegel: wo Live einbricht (neu)
 
-## 3. NumThreads (kurze Datei 2,2 s, längste 10,0 s, Median von 5)
+Dieselben 46 Aufnahmen, digital leiser gemacht (`LIVEBENCH_GAIN_DB`). Magnus' Aufnahmen haben unverändert Spitzen um -10,6 dBFS (≈ 30 %),
+Sprache (p90 der 0,2-s-Fenster) -24 dB, Ruhe -63 dB.
+
+| Dämpfung | Spitze ≈ | a) WER | b) WER | b) Stücke / still verworfen |
+|---|---|---|---|---|
+| 0 dB | 30 % | 7,1 % | 7,6 % | 65 / 15 |
+| −10 dB | 9 % | 5,7 % | 5,7 % | 70 / 19 |
+| −15 dB | 5 % | 8,6 % | 8,1 % | 84 / 29 |
+| −17 dB | 4 % | – | 10,0 % | 98 / 33 |
+| −18 dB | 3,7 % | – | 14,8 % | 106 / 36 |
+| −19 dB | 3,3 % | – | 26,2 % | 116 / 46 |
+| −20 dB | 3 % | 8,1 % | **31,9 %** | 127 / 53 |
+
+Mechanismus (`MeetingChunker.Write`/`Complete`, `LiveDictation.ChunkPolicy` -45 dB): Ein 0,2-s-Fenster unter -45 dB zählt als still. Drei stille Fenster
+schneiden, auch mitten im Wort. Ein Stück ohne ein einziges Fenster über -45 dB gilt als `Silent` und wird **gar nicht dekodiert**. Normales Diktieren
+dekodiert immer alles, deshalb bleibt es stabil. Parakeet selbst ist pegelunabhängig (a bleibt bei ~8 %).
+
+Mit der Schwelle allein (Aufnahmen in Originallautstärke, -45/-40/-35/-30 dB) ändert sich die WER nicht (7,6 % in allen vier Läufen).
+Die Schwelle ist also nur dann schädlich, wenn die Sprache leise ist.
+
+Was im Log über die echten Pegel steht (`Mic: … peak N %`, Spitzenwert, nicht Sprachpegel): Live-Sitzungen 04.11. 22:12 **29 %**, 22:14 **67 %**.
+Normale Diktate am 04.11. zwischen 8 % und 96 %, die leisesten (14:49–14:50) **8–9 %**. Das liegt etwa 5 dB vor dem Einbruch.
+Ein Headset, das etwas weiter vom Mund weg sitzt, reicht dafür.
+
+## 4. NumThreads (kurze Datei 2,2 s, längste 10,0 s, Median von 5; zweiter Lauf)
 
 | Threads | kurz s | kurz RTF | lang s | lang RTF |
 |---|---|---|---|---|
-| 1 | 0,49 | 0,22 | 2,05 | 0,20 |
-| 2 | 0,30 | 0,14 | 1,19 | 0,12 |
-| **3 (App)** | 0,28 | 0,13 | 0,97 | 0,10 |
-| 4 | 0,30 | 0,14 | 0,89 | 0,09 |
-| 6 | 0,38 | 0,18 | 1,00 | 0,10 |
+| 1 | 0,56 | 0,26 | 2,30 | 0,23 |
+| 2 | 0,34 | 0,16 | 1,28 | 0,13 |
+| **3 (App)** | 0,34 | 0,16 | 1,08 | 0,11 |
+| 4 | 0,38 | 0,18 | 1,00 | 0,10 |
+| 6 | 0,51 | 0,23 | 1,15 | 0,11 |
 
-Der RTF liegt überall unter 0,3, auch mit 1 Thread. Mehr Threads helfen kaum, 6 sind langsamer als 3.
+Der erste Lauf war 10–20 % schneller (im selben Checkout baute gleichzeitig eine andere Session). Das Bild ist gleich: Alle Werte liegen klar unter 0,3, und mehr als 3–4 Threads bringen nichts.
 Die echten Logwerte passen dazu: 170–770 ms je Stück.
 
-## 4. Beobachtungen aus `wsw.log` (Sitzungen 2026-11-04 22:12–22:14, Builds vor 0.7.3)
+## 5. Beobachtungen aus `wsw.log` (Sitzungen 04.11. 22:12–22:14, vor 0.7.3)
 
-- Von 14 echten Stücken in zwei Sitzungen hatten 4 nur 1–2 Zeichen (22:12:45, 22:12:49, 22:14:45, 22:14:48). Das ist das Bild von Schnitten
-  mitten im Satz. Die Aufnahme lief vermutlich noch mit -40 dB; `ab3c29c` (22:27) hat auf -45 dB geändert.
-- Eine Sitzung (22:14:10, 3 Stücke, 83 Zeichen) hat **nichts eingefügt**: „holding … the dictated-into window is not in front“,
-  `heldChars=83` am Ende. Damals fehlte noch die Logzeile mit dem Zielfenster; warum es nicht vorn war, ist nicht zu sehen.
-- Lange Stille erzeugt alle 1,6 s ein „silent piece skipped“ (22:13:06–22:13:46). Harmlos.
-- Das Log hatte weder Audiolänge noch Pegel noch Schnittgrund noch Zeit Sprechende → Einfügen. Das ist jetzt drin (Abschnitt 5).
+- **Stücke mit 1–2 Zeichen** (4 von 14): Der Joiner setzt vor jedes Wort ein Leerzeichen, also hat ein Wortstück mindestens 2 Zeichen.
+  Ein Stück mit 1 Zeichen ist damit fast sicher ein einzelnes Satzzeichen, zum Beispiel ein „Punkt“ nach einer Pause. Das ist korrekt und kein Zerhacken.
+  Die 2 Zeichen können ein Ein-Buchstaben-Wort sein. Ohne Text im Log ist das nicht zu klären. Die erste Fassung hat das als Beleg für B gewertet; das hält nicht.
+- **Sitzung 22:14:10, alles gehalten (83 Zeichen):** Die App war 4 s vorher neu gestartet (22:14:06). Um 22:14:10.095 öffnete sich die Einstellungsseite „Allgemein“,
+  370 ms später startete Live. Das Ziel war also vermutlich das eigene Einstellungsfenster. Ein Testartefakt, keine verlorenen Einfügungen.
+  `ab3c29c` („no start inside a window build“) zielt genau darauf.
+- Die Sitzungen um 22:12 und 22:14:25 endeten mit Esc (Abbruch durch den Nutzer); eingefügter Text bleibt stehen.
+- Verloren gegangenes Strg+V zeigt das Log nicht (jedes Stück hat „inserted N chars“).
 
-## 5. Instrumentierung (nur Zahlen, nie Text)
+## 6. Messung am echten Mikro (vorbereitet, noch nicht ausgeführt: dafür muss jemand sprechen)
 
-`LiveDictation.cs`/`TrayApp.cs`: je Stück eine Zeile
-`LIVE-DIAG: piece N reason=Pause|Max|Stop audioS=… rmsDb=… quietWindowDb=… loudWindowDb=… waitedForChainMs=… decodeMs=… insertMs=… cutToInsertedMs=… rawChars=… pieceChars=… heldBefore=… inserted=true|false`,
-dazu `LIVE-DIAG: silent piece …`. `cutToInsertedMs` zählt ab dem Moment, in dem der Chunker das Stück abgibt (bei Pause 0,6 s nach Sprechende,
-bei Stopp ab Stopp) bis zum Einfügen. Beispiel: `live-diktat-diagnose-2026-11-05-daten/beispiel-live-diag-log.txt`
-(echte `LiveDictationSession`, Einfügen simuliert). Alle 1528 Tests grün. Im echten App-Lauf mit Mikro noch nicht gesehen.
+Das Ruhegeräusch des Headsets habe ich gemessen (6 s, gleicher Aufnahmepfad WaveIn 16 kHz): Median **-69 dB**, max -52 dB, 0 von 29 Fenstern über -45.
+Störgeräusche können also keine Pause verdecken. Offen ist nur der **Sprechpegel**.
 
-## 6. Schritt 5 (echtes Mikro, Notepad/Chrome): nicht ausgeführt
-
-Dafür muss jemand sprechen. Gemessen habe ich nur das Rauschen des echten Geräts im Ruhezustand (6 s, gleicher Aufnahmepfad
-WaveIn 16 kHz): Median **-69 dB**, lautestes 0,2-s-Fenster -52 dB, **0 von 29 Fenstern über -45 dB**. Rauschen verhindert also keine Schnitte.
-Offen ist der **Sprechpegel** des Logi-Headsets (die Mac-Aufnahmen liegen bei -24 dB; leise Sprache unter -45 dB würde als Pause mitten im Satz gelten).
-
-Zum Nachholen mit dem Diag-Build: je ein Lauf in Notepad und in einem Chrome-Textfeld mit „Wirbelsäule Komma Hüfte beidseits Komma Knie rechts Punkt“
-und drei kurzen Sätzen mit Pausen, danach `wsw.log` nach `LIVE-DIAG` durchsuchen. Auffällig wären `audioS` < 1,5 (nur bei Stopp erlaubt),
-`pieceChars` ≤ 2, `loudWindowDb` < -35, `inserted=false`, `insertMs` > 600.
+Ablauf:
+1. Diag-Build starten. Der Branch ist im Checkout gerade mit unfertiger Arbeit einer anderen Session gemischt, darum in einem eigenen Worktree:
+   `git worktree add ..\wsw-diag diag/live-diktat` und darin `dotnet run --project src/WhisperShortcut -c Release`.
+   Achtung: Der Branch enthält auch `b6aea52` (Startmenü-Eintrag), ein Release-Start legt also den Startmenü-Eintrag an.
+2. Live diktieren in Notepad: „Wirbelsäule Komma Hüfte beidseits Komma Knie rechts Punkt“, dann drei kurze Sätze mit deutlichen Pausen.
+   Dasselbe in einem Chrome-Textfeld. Einmal normal laut, einmal leise mit dem Mikro etwas weiter weg.
+3. Auswerten: `powershell -NoProfile -ExecutionPolicy Bypass -File tools/e2e/live-diag-auswerten.ps1 -Minutes 15`.
+   Das Skript zeigt je Stück Länge, Pegel, Dekodier- und Einfügezeit. Es meldet stille Stücke, deren lautestes Fenster über -48 dB liegt (vermutlich verlorene
+   leise Sprache), Stücke ≤ 2 Zeichen, Sprache leiser als -35 dB, nicht eingefügte Stücke und Einfügen über 600 ms.
+   Entscheidend: Liegt `loudWindowDb` der echten Stücke näher an -45 als an -25, ist die Hauptursache bestätigt.
 
 ## 7. Bewertung A–E
 
 | | Urteil | Beleg |
 |---|---|---|
-| A Rechenzeit | **ausgeschlossen** | RTF 0,10–0,11 mit 3 Threads (0,20 mit 1), größter Rückstand 0,93 s, Text beim Stoppen sofort; Log 170–770 ms je Stück. |
-| B Schnitte | **teilweise belegt, Hauptverdacht** | Mit -45 dB auf den Dateien keine 1–2-Zeichen-Stücke, Schnitte an echten Pausen, nicht im Wort. Im Log vom 04.11. (vor 0.7.3) 4 von 14 Stücken mit 1–2 Zeichen. Echtes Mikro mit 0.7.3 nicht geprüft. |
-| C Modell | **kein Nachteil sichtbar, Gegentest fehlt** | Am Stück 6,2 % WER auf Magnus' Stimme; Ultra/fp32 nicht getestet. |
-| D Einfügen und Nähte | **teilweise belegt** | Nähte: Punkt am Pausen-Stück („mal. Weiter“), Kommas nach Zuschnitt (3 exakte Treffer verloren). Einfügen: eine Sitzung im Log hat alles gehalten (Fenster nicht vorn). Strg+V-Verlust nicht gemessen. |
-| E Mikro/Pegel | **Ruhepegel ausgeschlossen, Sprechpegel unklar** | Ruhe -69 dB (max -52) gegen -45; Sprechpegel des Headsets nicht gemessen. |
+| A Rechenzeit | **ausgeschlossen** | RTF 0,10–0,11 (3 Threads), auch mit 1 Thread 0,23; Wartezeit nach Stopp max 0,73 s; Log 170–770 ms je Stück. |
+| B Schnitte | **belegt als Mechanismus bei leiser Sprache**, bei normalem Pegel ausgeschlossen | Originalpegel: keine Wortstücke ≤ 2 Zeichen, Schnitte an echten Pausen, WER live ≈ am Stück. Ab −17 dB: Schnitte im Wort und verworfene Sprachstücke, WER bis 31,9 %. |
+| C Modell | **kein Nachteil sichtbar**, direkter Gegentest fehlt | Am Stück 7,1 % auf Magnus' Stimme. Ultra/fp32 nicht getestet (Download > 1 GB nur mit Freigabe). |
+| D Einfügen und Nähte | **Nähte: kleiner Schaden belegt; Einfügen: kein Beleg für Verluste** | „mal. Weiter“, Komma nach Zuschnitt, „Yeah“ aus dem Tastenklick. Die gehaltene Sitzung im Log war ein Start im eigenen Einstellungsfenster. |
+| E Mikro/Pegel | **Rauschen ausgeschlossen; Sprechpegel = Hauptverdacht, unbelegt** | Ruhe -69 dB. Einbruch ab Spitze ≈ 4 %; im Log einzelne Diktate mit 8–9 %, Live-Sitzungen 29 % und 67 %. |
 
-**Hauptursache:** aus diesem Material nicht eindeutig. Belegt ist: Engine und Tempo sind in Ordnung, die Live-Logik kostet etwa 1,4 Prozentpunkte WER.
-Was als „schlechter als Mac“ erlebt wurde, passt am besten zu B (-40-dB-Schnitte, in 0.7.3 behoben) und zu D (Stück gehalten, weil das Zielfenster nicht vorn war).
-Beides gehört mit dem Diag-Build am echten Mikro bestätigt oder widerlegt.
+**Hauptursache:** der feste Schwellwert von -45 dB im Live-Schnitt zusammen mit dem Sprechpegel des Headsets (B über E). Als Mechanismus ist das belegt: Live bricht bei
+leiser Sprache ein, normales Diktieren nicht. Ob Magnus' Alltagspegel dort liegt, zeigt erst Abschnitt 6. Alles andere (Rechenzeit, Modell, Einfügen) ist
+ausgeschlossen oder kostet höchstens ein Wort von 210.
 
 ## 8. Fix-Vorschläge (nicht umgesetzt), nach Wirkung
 
-1. **Erst messen, ob 0.7.3 reicht** (zwei echte Live-Diktate mit dem Diag-Build, Abschnitt 6). Zeigt `loudWindowDb` Sprache über -35 dB und keine Stücke ≤ 2 Zeichen, ist B erledigt.
-   Sonst die Schwelle relativ zum Ruhepegel setzen (z. B. Ruhepegel + 15 dB statt fix -45), in `MeetingChunker.Write`
-   (`src/WhisperShortcut.Core/MeetingChunker.cs`, Vergleich `db >= _policy.SilenceThresholdDb`). Mac-Parität prüfen: dort ist -45 fest.
-2. **Satzpunkt und Komma an der Naht in „Nur gesprochen“:** das vom Modell gesetzte Satzende eines durch Pause beendeten Stücks darf nicht überleben, wenn nicht „Punkt“ gesprochen wurde.
-   Stelle: `LiveDictation.FinishPiece` (`src/WhisperShortcut.Core/LiveDictation.cs:155`) und `ParakeetPunctuationTiming.KeepSpokenMarks` (`Offline/ParakeetPunctuationTiming.cs:189`).
-   Erst die Swift-Logik (`LivePieceSplitter`) lesen: Der Mac-Korpus erwartet „Ich arbeite mal weiter damit.“.
-3. **Tastenklick am Ende:** ein Stopp-Stück unter etwa 1,2 s, dessen laute Fenster zusammen < 0,3 s sind, nicht dekodieren.
-   Stelle: `TrayApp.ProcessLiveAsync` (`tail`) oder `MeetingChunker.Complete`/`Silent`.
+1. **Stille nicht absolut, sondern relativ messen:** Schwelle = gemessener Ruhepegel + etwa 10–15 dB, nach unten bei -45 begrenzt; dazu `Silent` erst setzen, wenn das Stück
+   auch relativ still ist. Stelle: `MeetingChunker.Write`/`Complete` (`src/WhisperShortcut.Core/MeetingChunker.cs`, Vergleich `db >= _policy.SilenceThresholdDb`),
+   die Policy in `LiveDictation.ChunkPolicy` (`src/WhisperShortcut.Core/LiveDictation.cs:123`). Absicherung: der Pegeltest aus Abschnitt 3 als Unit-Test
+   (gedämpfte Aufnahme darf keine Sprachstücke verwerfen). Vorher den Mac prüfen (`ChunkedDictateRecorder.silenceThresholdDB`): Er hat dieselben -45 dB,
+   bekommt aber vom eingebauten Mac-Mikro mit automatischer Verstärkung vermutlich lautere Sprache.
+2. **Kein Sprachstück still verwerfen:** Ein `Silent`-Stück, dessen lautestes Fenster nur knapp unter der Schwelle liegt (z. B. über -55 dB), trotzdem dekodieren.
+   Parakeet liefert für echte Stille "" zurück. Stelle: `LiveDictationSession.Add` (`LiveDictation.cs`, Zweig `if (silent)`) bzw. `TrayApp.DrainLivePieces`.
+   Das wirkt sofort und unabhängig von Fix 1 gegen die fehlenden Wörter.
+3. **Nähte in „Nur gesprochen“:** Ein vom Modell gesetzter Satzpunkt am Ende eines Pausen-Stücks soll nicht stehen bleiben, wenn „Punkt“ nicht gesprochen wurde („mal. Weiter“).
+   Ebenso ein kurzes Stopp-Stück, das nur ein Tastenklick ist („Yeah“). Stellen: `LiveDictation.FinishPiece` (`LiveDictation.cs:162`),
+   `ParakeetPunctuationTiming.KeepSpokenMarks` (`Offline/ParakeetPunctuationTiming.cs:189`), `TrayApp.ProcessLiveAsync` (`tail`). Wirkung klein (1–2 exakte Treffer).
+
+## Was an der ersten Fassung falsch war
+
+1. **a) war nicht der Pfad fürs normale Diktieren**, sondern der Live-Pfad auf die ganze Datei. Damit kam 6,2 % statt 7,1 % heraus, und die Live-Logik wirkte
+   um 1,4 Prozentpunkte schädlicher, als sie ist (richtig: +0,5, ein Wort).
+2. **„Text beim Stoppen sofort, Median 0,00 s“** war ein Messfehler: Lief nach dem Stoppen noch ein Pausen-Stück, wurde das nicht gezählt. Richtig: Median 0,22 s, max 0,73 s.
+3. **Stücke mit 1 Zeichen im Log als „zerhackt“ gedeutet:** Das sind fast sicher gesprochene Satzzeichen. Damit fiel der einzige Beleg für B im Alltag weg.
+4. **Die gehaltene Sitzung als Einfügeproblem (D) gewertet:** Sie startete 0,4 s nach dem Öffnen des eigenen Einstellungsfensters.
+5. **„Mac-Werte aus anderem Set“** war eine Behauptung ohne Beleg. Das Set ist von hier aus nicht bestimmbar.
+6. **Logzeile `waitedForChainMs`** war falsch berechnet (Dekodierzeit abgezogen); korrigiert. Stille Stücke loggen jetzt auch ihren Pegel.
+7. **Exakte Treffer als Vergleich:** Sie schwanken zwischen zwei Läufen um ±1–3, weil Parakeet mit mehreren Threads nicht ganz deterministisch ist.
+8. **Nicht geprüft** hatte die erste Fassung die Pegel-Abhängigkeit. Die ist jetzt die Hauptursache.
+9. **Branch:** Eine andere Session hat `b6aea52` (Startmenü-Eintrag) auf `diag/live-diktat` committet und dabei die Live-Instrumentierung in `TrayApp.cs` mitgenommen.
+   Die Startmenü-Arbeit liegt also nur auf diesem Branch, nicht auf `main`. Dieselbe Session arbeitet weiter im Checkout (Installer-Dateien, nicht committet).

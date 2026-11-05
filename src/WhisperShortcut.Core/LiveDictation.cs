@@ -479,7 +479,7 @@ public sealed class LiveDictationSession
         if (silent)
         {
             Log.Info("LIVE-DICTATE: silent piece skipped");
-            if (info != null) Log.Info($"LIVE-DIAG: silent piece reason={info.Reason} audioS={AudioSeconds(wav)}");
+            if (info != null) Log.Info($"LIVE-DIAG: silent piece reason={info.Reason} audioS={AudioSeconds(wav)} {LevelSummary(wav)}");
             return;
         }
         Enqueue(() => ProcessAsync(wav, info));
@@ -616,7 +616,7 @@ public sealed class LiveDictationSession
         await FlushAsync();
         if (info != null)
             Log.Info($"LIVE-DIAG: piece {index} reason={info.Reason} audioS={AudioSeconds(wav)} {LevelSummary(wav)} "
-                + $"waitedForChainMs={Math.Max(0, queuedMs - decodeMs)} decodeMs={decodeMs} insertMs={insertWatch.ElapsedMilliseconds} "
+                + $"waitedForChainMs={queuedMs} decodeMs={decodeMs} insertMs={insertWatch.ElapsedMilliseconds} "
                 + $"cutToInsertedMs={(long)Stopwatch.GetElapsedTime(info.CutTimestamp).TotalMilliseconds} "
                 + $"rawChars={text.Length} pieceChars={piece.Length} heldBefore={Math.Max(0, heldBefore)} "
                 + $"inserted={(_pending.Length == 0).ToString().ToLowerInvariant()}");

@@ -1,52 +1,48 @@
 cases=42 files=46 mode=whole threads=3
-model loaded in 3227 ms
+model loaded in 2968 ms
 
 id	werr	words	exact	audioS	decodeS	rtf	pieces	pause	max	stop	silent	tiny	stopLatS	maxLagS
-komma-gangbild	0	3	1	4.39	0.50	0.11	1	0	0	1	0	0	0.50	0.00
-komma-kizomba	0	3	1	5.27	0.53	0.10	1	0	0	1	0	0	0.53	0.00
-komma-gelenke	0	6	1	6.94	0.70	0.10	1	0	0	1	0	0	0.70	0.00
-komma-befund	0	4	1	5.72	0.57	0.10	1	0	0	1	0	0	0.57	0.00
-komma-gdb-merkzeichen	0	7	0	7.01	0.72	0.10	1	0	0	1	0	0	0.72	0.00
-punkt-doppelpunkt-widerspruch	0	9	1	8.86	0.88	0.10	1	0	0	1	0	0	0.88	0.00
-doppelpunkt-diagnose	1	3	0	6.99	0.69	0.10	1	0	0	1	0	0	0.69	0.00
-schraegstrich-adl	0	9	1	9.23	0.96	0.10	1	0	0	1	0	0	0.96	0.00
-schraegstrich-bewegung	0	3	1	5.77	0.62	0.11	1	0	0	1	0	0	0.62	0.00
-schraegstrich-wirbel	2	4	0	5.27	0.54	0.10	1	0	0	1	0	0	0.54	0.00
-puenktchen-aufzaehlung	0	8	1	10.01	1.04	0.10	1	0	0	1	0	0	1.04	0.00
-puenktchen-gdb	0	5	0	5.39	0.54	0.10	1	0	0	1	0	0	0.54	0.00
-fragezeichen-gesprochen	2	4	0	4.50	0.47	0.10	1	0	0	1	0	0	0.47	0.00
-ausrufezeichen-gesprochen	0	3	0	4.15	0.48	0.12	1	0	0	1	0	0	0.48	0.00
-semikolon	0	6	1	6.27	0.66	0.11	1	0	0	1	0	0	0.66	0.00
-absatz	0	3	1	8.06	0.77	0.10	1	0	0	1	0	0	0.77	0.00
-ohne-uhrzeit	0	6	0	3.57	0.37	0.10	1	0	0	1	0	0	0.37	0.00
-ohne-nebensatz	0	8	1	4.02	0.45	0.11	1	0	0	1	0	0	0.45	0.00
-ohne-aufzaehlung	2	6	0	4.94	0.56	0.11	1	0	0	1	0	0	0.56	0.00
-ohne-weil	0	7	1	3.19	0.36	0.11	1	0	0	1	0	0	0.36	0.00
+komma-gangbild	0	3	1	4.39	0.49	0.11	1	0	0	1	0	0	0.49	0.00
+komma-kizomba	0	3	1	5.27	0.56	0.11	1	0	0	1	0	0	0.56	0.00
+komma-gelenke	0	6	1	6.94	0.75	0.11	1	0	0	1	0	0	0.75	0.00
+komma-befund	0	4	1	5.72	0.61	0.11	1	0	0	1	0	0	0.61	0.00
+komma-gdb-merkzeichen	0	7	0	7.01	0.71	0.10	1	0	0	1	0	0	0.71	0.00
+punkt-doppelpunkt-widerspruch	0	9	1	8.86	0.87	0.10	1	0	0	1	0	0	0.87	0.00
+doppelpunkt-diagnose	1	3	0	6.99	0.75	0.11	1	0	0	1	0	0	0.75	0.00
+schraegstrich-adl	0	9	1	9.23	0.90	0.10	1	0	0	1	0	0	0.90	0.00
+schraegstrich-bewegung	0	3	1	5.77	0.68	0.12	1	0	0	1	0	0	0.68	0.00
+schraegstrich-wirbel	2	4	0	5.27	0.57	0.11	1	0	0	1	0	0	0.57	0.00
+puenktchen-aufzaehlung	0	8	1	10.01	1.02	0.10	1	0	0	1	0	0	1.02	0.00
+puenktchen-gdb	0	5	0	5.39	0.57	0.11	1	0	0	1	0	0	0.57	0.00
+fragezeichen-gesprochen	2	4	0	4.50	0.50	0.11	1	0	0	1	0	0	0.50	0.00
+ausrufezeichen-gesprochen	0	3	0	4.15	0.47	0.11	1	0	0	1	0	0	0.47	0.00
+semikolon	0	6	1	6.27	0.65	0.10	1	0	0	1	0	0	0.65	0.00
+absatz	0	3	1	8.06	0.80	0.10	1	0	0	1	0	0	0.80	0.00
+ohne-uhrzeit	0	6	0	3.57	0.41	0.11	1	0	0	1	0	0	0.41	0.00
+ohne-nebensatz	0	8	1	4.02	0.47	0.12	1	0	0	1	0	0	0.47	0.00
+ohne-aufzaehlung	2	6	0	4.94	0.53	0.11	1	0	0	1	0	0	0.53	0.00
+ohne-weil	0	7	1	3.19	0.39	0.12	1	0	0	1	0	0	0.39	0.00
 ohne-dosis	0	3	1	2.71	0.32	0.12	1	0	0	1	0	0	0.32	0.00
-ohne-frage	0	5	0	3.58	0.41	0.11	1	0	0	1	0	0	0.41	0.00
-ohne-ausruf	0	4	0	2.70	0.33	0.12	1	0	0	1	0	0	0.33	0.00
-zahl-gehstrecke	0	6	1	5.80	0.57	0.10	1	0	0	1	0	0	0.57	0.00
-zahl-einzel-gdb	0	4	0	5.91	0.62	0.10	1	0	0	1	0	0	0.62	0.00
-zahl-blutdruck	0	4	1	4.91	0.56	0.11	1	0	0	1	0	0	0.56	0.00
-glossar-versmedv	2	8	0	8.95	0.83	0.09	1	0	0	1	0	0	0.83	0.00
-glossar-adl	0	5	1	4.50	0.49	0.11	1	0	0	1	0	0	0.49	0.00
-glossar-merkzeichen	0	4	1	4.02	0.44	0.11	1	0	0	1	0	0	0.44	0.00
-glossar-erreicht	0	5	1	4.07	0.42	0.10	1	0	0	1	0	0	0.42	0.00
-glossar-ah	1	4	0	3.13	0.36	0.11	1	0	0	1	0	0	0.36	0.00
-fuellwort-hm	0	2	1	4.03	0.45	0.11	1	0	0	1	0	0	0.45	0.00
-fuellwort-aeh	1	2	0	5.81	0.56	0.10	1	0	0	1	0	0	0.56	0.00
-wort-kommas	0	5	0	3.55	0.59	0.16	1	0	0	1	0	0	0.59	0.00
-wort-schraegstriche	0	3	1	2.18	0.30	0.14	1	0	0	1	0	0	0.30	0.00
+ohne-frage	0	5	0	3.58	0.42	0.12	1	0	0	1	0	0	0.42	0.00
+ohne-ausruf	0	4	0	2.70	0.32	0.12	1	0	0	1	0	0	0.32	0.00
+zahl-gehstrecke	0	6	1	5.80	0.60	0.10	1	0	0	1	0	0	0.60	0.00
+zahl-einzel-gdb	0	4	0	5.91	0.60	0.10	1	0	0	1	0	0	0.60	0.00
+zahl-blutdruck	0	4	1	4.91	0.66	0.13	1	0	0	1	0	0	0.66	0.00
+glossar-versmedv	2	8	0	8.95	0.86	0.10	1	0	0	1	0	0	0.86	0.00
+glossar-adl	0	5	1	4.50	0.51	0.11	1	0	0	1	0	0	0.51	0.00
+glossar-merkzeichen	0	4	1	4.02	0.45	0.11	1	0	0	1	0	0	0.45	0.00
+glossar-erreicht	0	5	1	4.07	0.43	0.11	1	0	0	1	0	0	0.43	0.00
+glossar-ah	1	4	0	3.13	0.36	0.12	1	0	0	1	0	0	0.36	0.00
+fuellwort-hm	1	2	0	4.03	0.45	0.11	1	0	0	1	0	0	0.45	0.00
+fuellwort-aeh	2	2	0	5.81	0.57	0.10	1	0	0	1	0	0	0.57	0.00
+wort-kommas	0	5	0	3.55	0.38	0.11	1	0	0	1	0	0	0.38	0.00
+wort-schraegstriche	0	3	1	2.18	0.25	0.12	1	0	0	1	0	0	0.25	0.00
 wort-doppelpunkte	0	5	1	2.65	0.33	0.12	1	0	0	1	0	0	0.33	0.00
-anschluss-komma	2	7	0	8.05	0.86	0.11	2	0	0	2	0	0	0.50	0.00
-anschluss-klein	0	7	1	3.97	0.50	0.13	2	0	0	2	0	0	0.27	0.00
-anschluss-punkt	0	5	1	4.92	0.61	0.12	2	0	0	2	0	0	0.30	0.00
-anschluss-schraegstrich	0	5	1	6.24	0.69	0.11	2	0	0	2	0	0	0.33	0.00
-glossar-seiter	0	5	1	3.11	0.33	0.11	1	0	0	1	0	0	0.33	0.00
-pause-weiter	0	5	1	6.61	0.67	0.10	1	0	0	1	0	0	0.67	0.00
+anschluss-komma	2	7	0	8.05	0.88	0.11	2	0	0	2	0	0	0.52	0.00
+anschluss-klein	0	7	1	3.97	0.57	0.14	2	0	0	2	0	0	0.27	0.00
+anschluss-punkt	0	5	1	4.92	0.74	0.15	2	0	0	2	0	0	0.34	0.00
+anschluss-schraegstrich	0	5	1	6.24	0.76	0.12	2	0	0	2	0	0	0.37	0.00
+glossar-seiter	0	5	1	3.11	0.42	0.14	1	0	0	1	0	0	0.42	0.00
+pause-weiter	0	5	1	6.61	0.76	0.11	1	0	0	1	0	0	0.76	0.00
 
-SUMMARY whole: WER=6,2% (13/210) exact=26/42 audio=221,0s decode=23,6s RTF=0,107 pieces=46 pause=0 max=0 stop=46 silent=0 tiny=0 stopLatency median=0,53s p90=0,77s max=1,04s maxLag=0,00s
-
-real	0m27.386s
-user	0m0.000s
-sys	0m0.015s
+SUMMARY whole: WER=7,1% (15/210) exact=25/42 audio=221,0s decode=24,4s RTF=0,110 pieces=46 pause=0 max=0 stop=46 silent=0 tinyLetters=0 tinyMarksOnly=0 stopLatency median=0,52s p90=0,80s max=1,02s maxLag=0,00s

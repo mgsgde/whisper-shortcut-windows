@@ -22,6 +22,10 @@ internal static class Program
         ? LiveDictation.ChunkPolicy with { SilenceThresholdDb = db }
         : LiveDictation.ChunkPolicy;
 
+    // LIVEBENCH_GAIN_DB scales the recordings (e.g. -12 = a quieter microphone), to see where the -45 dB cut starts to chop.
+    private static readonly float Gain = float.TryParse(Environment.GetEnvironmentVariable("LIVEBENCH_GAIN_DB"), NumberStyles.Float, Inv, out var g)
+        ? MathF.Pow(10, g / 20) : 1f;
+
     private static int Main(string[] args)
     {
         if (args.Length < 4) { Console.Error.WriteLine("LiveBench <audioDir> <corpus.json> <modelDir> <whole|live|threads|levels> [threads]"); return 2; }
@@ -92,14 +96,35 @@ internal static class Program
         var sw = Stopwatch.StartNew();
         var d = p.TranscribeDetailed(wav);
         decodeSeconds = sw.Elapsed.TotalSeconds;
-        var text = ParakeetPunctuationTiming.SpacingGluedCommas(d.Text);
         // As TrayApp.DecodeLivePieceAsync: marks kept by token timing, then FinishPiece.
         var kept = ParakeetPunctuationTiming.KeepSpokenMarks(d.Text, d.Tokens, d.AudioSeconds, out var timed);
         return LiveDictation.FinishPiece(kept, mode, timedMarks: timed);
     }
 
+    // Normal Diktieren with Parakeet in "Nur gesprochen", as TrayApp.TranscribeOfflineAsync + DictateAsync
+    // (glossary empty, so GlossaryBackstops changes nothing).
+    private static string DecodeWhole(ParakeetTranscriber p, byte[] wav, out double decodeSeconds)
+    {
+        decodeSeconds = 0;
+        var parts = new List<string>();
+        foreach (var chunk in WavChunker.SplitForLocal(wav))
+        {
+            var sw = Stopwatch.StartNew();
+            var d = p.TranscribeDetailed(chunk);
+            decodeSeconds += sw.Elapsed.TotalSeconds;
+            var kept = ParakeetPunctuationTiming.KeepSpokenMarks(d.Text, d.Tokens, d.AudioSeconds, out var timed);
+            var piece = timed ? kept : SpokenPunctuation.StripModelPunctuation(kept);
+            if (piece.Trim().Length > 0) parts.Add(piece.Trim());
+        }
+        var spoken = string.Join(" ", parts);
+        var raw = SpokenPunctuation.Apply(SpokenPunctuation.StripModelPunctuation(spoken, timedMarks: true), PunctuationMode.SpokenOnly);
+        return TextCleanup.DiscardImplausible(TextCleanup.ForDictation(raw, addTrailingPeriod: false), Wav.DurationSeconds(wav));
+    }
+
+    private static bool OnlyPunctuation(string s) => s.Trim().Length > 0 && s.Trim().All(ch => !char.IsLetterOrDigit(ch));
+
     private sealed record Row(string Id, int Errors, int Words, bool Exact, double Audio, double Decode, int Pieces,
-        int Pause, int Max, int Stop, int Silent, double StopLatency, double MaxLag, int Tiny);
+        int Pause, int Max, int Stop, int Silent, double StopLatency, double MaxLag, int Tiny, int TinyMarks);
 
     private static void Run(List<Case> cases, string modelDir, int threads, bool live)
     {
@@ -114,16 +139,17 @@ internal static class Program
         {
             var joiner = new LiveChunkJoiner { HoldsPeriods = false };
             double audio = 0, decode = 0, stopLatency = 0, maxLag = 0;
-            int pieces = 0, pause = 0, max = 0, stop = 0, silent = 0, tiny = 0;
+            int pieces = 0, pause = 0, max = 0, stop = 0, silent = 0, tiny = 0, tinyMarks = 0;
             foreach (var file in c.Files)
             {
                 var wavBytes = File.ReadAllBytes(file);
                 var samples = Wav.ReadMonoFloat(wavBytes, out var rate);
-                var pcm = samples.Select(s => (short)Math.Clamp((int)Math.Round(s * 32768f), short.MinValue, short.MaxValue)).ToArray();
+                var pcm = samples.Select(s => (short)Math.Clamp((int)Math.Round(s * Gain * 32768f), short.MinValue, short.MaxValue)).ToArray();
+                if (Gain != 1f) wavBytes = Wav.Encode16(pcm, rate);
                 audio += pcm.Length / (double)rate;
                 if (!live)
                 {
-                    var text = DecodePiece(parakeet, wavBytes, mode, out var t);
+                    var text = DecodeWhole(parakeet, wavBytes, out var t);
                     decode += t; pieces++; stop++;
                     joiner.Next(text);
                     stopLatency = t;
@@ -154,19 +180,22 @@ internal static class Program
                     var start = Math.Max(chain, at);
                     chain = start + t;
                     maxLag = Math.Max(maxLag, chain - at);
-                    if (reason == "Stop") stopLatency = chain - end;
-                    // pieces of one or two characters are the "zerhackt" symptom
-                    if (text.Trim().Length is > 0 and <= 2) tiny++;
+                    // Short pieces with letters are the "zerhackt" symptom; a lone "." or "," is a spoken mark after a pause.
+                    if (text.Trim().Length is > 0 and <= 2)
+                    {
+                        if (OnlyPunctuation(text)) tinyMarks++; else tiny++;
+                    }
                     joiner.Next(text);
                 }
-                if (tail == null) stopLatency = 0;
+                // Whatever is still decoding when the speaker stops: the wait after Stop.
+                stopLatency = Math.Max(0, chain - end);
             }
             joiner.Finish();
             var result = joiner.Inserted.Trim();
             var (e, w) = Wer(result, c);
             if (Environment.GetEnvironmentVariable("LIVEBENCH_SHOW") == "1" && !Exact(result, c))
                 Console.WriteLine("DIFF " + c.Id + ": got [" + result.Replace("\n", "\\n") + "] want [" + c.Expected.Replace("\n", "\\n") + "]");
-            rows.Add(new Row(c.Id, e, w, Exact(result, c), audio, decode, pieces, pause, max, stop, silent, stopLatency, maxLag, tiny));
+            rows.Add(new Row(c.Id, e, w, Exact(result, c), audio, decode, pieces, pause, max, stop, silent, stopLatency, maxLag, tiny, tinyMarks));
         }
         Print(rows, live);
     }
@@ -184,7 +213,7 @@ internal static class Program
         Console.WriteLine();
         Console.WriteLine($"SUMMARY {(live ? "live" : "whole")}: WER={100 * errors / words:0.0}% ({errors}/{words}) exact={rows.Count(r => r.Exact)}/{rows.Count} "
             + $"audio={audio:0.0}s decode={decode:0.0}s RTF={decode / audio:0.000} pieces={rows.Sum(r => r.Pieces)} "
-            + $"pause={rows.Sum(r => r.Pause)} max={rows.Sum(r => r.Max)} stop={rows.Sum(r => r.Stop)} silent={rows.Sum(r => r.Silent)} tiny={rows.Sum(r => r.Tiny)} "
+            + $"pause={rows.Sum(r => r.Pause)} max={rows.Sum(r => r.Max)} stop={rows.Sum(r => r.Stop)} silent={rows.Sum(r => r.Silent)} tinyLetters={rows.Sum(r => r.Tiny)} tinyMarksOnly={rows.Sum(r => r.TinyMarks)} "
             + $"stopLatency median={lat[lat.Length / 2]:0.00}s p90={lat[(int)(lat.Length * 0.9)]:0.00}s max={lat[^1]:0.00}s maxLag={rows.Max(r => r.MaxLag):0.00}s");
     }
 
