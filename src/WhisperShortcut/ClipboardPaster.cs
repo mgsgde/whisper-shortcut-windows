@@ -285,14 +285,15 @@ internal sealed class ClipboardPaster
     public async Task<bool> PasteLivePieceAsync(string text, IntPtr target, CancellationToken ct)
     {
         int generation = _liveGeneration;
-        if (target == IntPtr.Zero) return false;
-        if (!await WaitForModifiersReleasedAsync(ct)) return false;
+        // Each refusal says why in the log: "holding … not in front" alone hid a failing clipboard write for a release.
+        if (target == IntPtr.Zero) return Refused("no target window");
+        if (!await WaitForModifiersReleasedAsync(ct)) return Refused("keys still held");
         ct.ThrowIfCancellationRequested();
-        if (ForegroundRoot() != target) return false;
-        if (ForegroundIsOwnWindow()) return false;
-        if (ForegroundIsElevated()) return false;
+        if (ForegroundRoot() != target) return Refused("another window is in front");
+        if (ForegroundIsOwnWindow()) return Refused("a window of this app is in front");
+        if (ForegroundIsElevated()) return Refused("the window in front runs as administrator");
         // The dictation ended (Esc) while this piece waited for the modifiers: write and paste nothing.
-        if (generation != _liveGeneration) return false;
+        if (generation != _liveGeneration) return Refused("the dictation ended");
         CancelLateWatch(); // our own write below would look like a late copy
         string? processName = FocusedTextContext.ProcessName(target);
         if (Core.LiveTextTyping.IsChromium(processName))
@@ -306,7 +307,7 @@ internal sealed class ClipboardPaster
             await Task.Delay(Core.LiveDictation.PieceGap, ct);
             return true;
         }
-        if (!WriteLiveText(text)) return false;
+        if (!WriteLiveText(text)) return Refused("the clipboard write failed");
         uint mine = GetClipboardSequenceNumber();
         await Task.Delay(Core.LiveDictation.PrePasteDelay, ct);
         // An Alt+Tab in those 50 ms must not send the piece elsewhere.
@@ -351,6 +352,12 @@ internal sealed class ClipboardPaster
     /// Like <see cref="WriteText"/>, but the text is only handed over when a program reads it (WM_RENDERFORMAT):
     /// the first read tells <see cref="WaitForLiveReadAsync"/> that the target really took the piece (Mac: lazy pasteboard provider).
     /// </summary>
+    private static bool Refused(string why)
+    {
+        Core.Log.Info($"LIVE-DICTATE: piece not inserted: {why}");
+        return false;
+    }
+
     private bool WriteLiveText(string text)
     {
         if (!Open()) return false;
@@ -360,8 +367,12 @@ internal sealed class ClipboardPaster
             EmptyClipboard(); // WM_DESTROYCLIPBOARD to ourselves clears the previous promise
             Interlocked.Exchange(ref _liveReadTimestamp, 0);
             _lazyText = text;
-            if (SetClipboardData(CF_UNICODETEXT, IntPtr.Zero) == IntPtr.Zero)
+            // Delayed rendering: SetClipboardData(format, NULL) returns NULL on success too (it returns the hMem passed
+            // in), so its result says nothing. The promise counts when the format is now listed on the clipboard.
+            SetClipboardData(CF_UNICODETEXT, IntPtr.Zero);
+            if (!IsClipboardFormatAvailable(CF_UNICODETEXT))
             {
+                Core.Log.Warn($"LIVE-DICTATE: text promise not on the clipboard (win32 error {Marshal.GetLastWin32Error()})");
                 _lazyText = null;
                 return false;
             }
