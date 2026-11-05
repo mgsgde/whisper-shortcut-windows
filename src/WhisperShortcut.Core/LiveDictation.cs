@@ -84,6 +84,13 @@ public enum LiveClipboardEnd
     LeaveAsIs,
 }
 
+/// <summary>
+/// DIAG (branch diag/live-diktat): how a piece was cut. <paramref name="Reason"/> is "Pause", "Max" or "Stop";
+/// <paramref name="CutTimestamp"/> is <see cref="Stopwatch.GetTimestamp"/> when the piece left the chunker.
+/// Numbers only, never text.
+/// </summary>
+public sealed record LivePieceInfo(string Reason, long CutTimestamp);
+
 /// <summary>What a live dictation produced.</summary>
 /// <param name="Text">Everything the dictation produced, joined: what the document should now contain.</param>
 /// <param name="HeldText">The part that could not be inserted because another window was in front.</param>
@@ -465,16 +472,40 @@ public sealed class LiveDictationSession
     public bool HasHeldText => _pending.Length > 0;
 
     /// <summary>A cut chunk (mid-recording) or the tail chunk (at stop). Silent chunks are skipped.</summary>
-    public void Add(byte[] wav, bool silent)
+    public void Add(byte[] wav, bool silent, LivePieceInfo? info = null)
     {
         if (IsCancelled) return;
         _anyPieceAdded = true;
         if (silent)
         {
             Log.Info("LIVE-DICTATE: silent piece skipped");
+            if (info != null) Log.Info($"LIVE-DIAG: silent piece reason={info.Reason} audioS={AudioSeconds(wav)}");
             return;
         }
-        Enqueue(() => ProcessAsync(wav));
+        Enqueue(() => ProcessAsync(wav, info));
+    }
+
+    private static string AudioSeconds(byte[] wav) =>
+        Wav.DurationSeconds(wav).ToString("0.00", CultureInfo.InvariantCulture);
+
+    // DIAG: RMS level of the whole piece in dBFS and the quietest/loudest 0.2 s window.
+    private static string LevelSummary(byte[] wav)
+    {
+        if (!Wav.TryGetPcm16(wav, out var pcm) || pcm.Channels != 1) return "n/a";
+        var samples = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, short>(wav.AsSpan(pcm.DataOffset, pcm.DataLength & ~1));
+        var win = Math.Max(1, pcm.SampleRate / 5);
+        float lo = 0, hi = -160;
+        bool any = false;
+        for (int i = 0; i + win <= samples.Length; i += win)
+        {
+            var db = MeetingAudioMixer.RmsDb(samples.Slice(i, win));
+            if (!any || db < lo) lo = db;
+            if (db > hi) hi = db;
+            any = true;
+        }
+        var all = MeetingAudioMixer.RmsDb(samples);
+        string F(float v) => v.ToString("0.0", CultureInfo.InvariantCulture);
+        return any ? $"rmsDb={F(all)} quietWindowDb={F(lo)} loudWindowDb={F(hi)}" : $"rmsDb={F(all)}";
     }
 
     /// <summary>The window the user dictated into may be in front again: try to insert held text.</summary>
@@ -498,7 +529,7 @@ public sealed class LiveDictationSession
     /// </summary>
     public async Task<LiveDictationOutcome> FinishAsync(byte[] deliveredWav)
     {
-        if (!_anyPieceAdded) Add(deliveredWav, false);
+        if (!_anyPieceAdded) Add(deliveredWav, false, new LivePieceInfo("Stop", Stopwatch.GetTimestamp()));
         // The held-back period goes through the same chain as everything else, so a RetryHeld from a
         // window switch can never flush the same text a second time.
         Enqueue(async () =>
@@ -557,11 +588,12 @@ public sealed class LiveDictationSession
         }
     }
 
-    private async Task ProcessAsync(byte[] wav)
+    private async Task ProcessAsync(byte[] wav, LivePieceInfo? info)
     {
         _pieces++;
         int index = _pieces;
         var started = Stopwatch.StartNew();
+        long queuedMs = info == null ? -1 : (long)Stopwatch.GetElapsedTime(info.CutTimestamp).TotalMilliseconds;
         string text;
         try
         {
@@ -577,8 +609,17 @@ public sealed class LiveDictationSession
         if (IsCancelled) return;
         var piece = _joiner.Next(text);
         _pending += piece;
-        Log.Info($"LIVE-DICTATE: piece {index} decodeMs={started.ElapsedMilliseconds} chars={piece.Length}");
+        long decodeMs = started.ElapsedMilliseconds;
+        Log.Info($"LIVE-DICTATE: piece {index} decodeMs={decodeMs} chars={piece.Length}");
+        var insertWatch = Stopwatch.StartNew();
+        int heldBefore = _pending.Length - piece.Length;
         await FlushAsync();
+        if (info != null)
+            Log.Info($"LIVE-DIAG: piece {index} reason={info.Reason} audioS={AudioSeconds(wav)} {LevelSummary(wav)} "
+                + $"waitedForChainMs={Math.Max(0, queuedMs - decodeMs)} decodeMs={decodeMs} insertMs={insertWatch.ElapsedMilliseconds} "
+                + $"cutToInsertedMs={(long)Stopwatch.GetElapsedTime(info.CutTimestamp).TotalMilliseconds} "
+                + $"rawChars={text.Length} pieceChars={piece.Length} heldBefore={Math.Max(0, heldBefore)} "
+                + $"inserted={(_pending.Length == 0).ToString().ToLowerInvariant()}");
     }
 
     private async Task FlushAsync()
