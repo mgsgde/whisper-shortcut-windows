@@ -6,8 +6,15 @@ namespace WhisperShortcut.Core;
 /// <param name="SilenceDuration">How long the level must stay below the threshold for an early end.</param>
 /// <param name="SilenceThresholdDb">RMS level (dBFS) below which a meter window counts as silent.</param>
 /// <param name="MeterWindow">Length of one level measurement.</param>
+/// <param name="NoiseFloorMarginDb">
+/// Null: the threshold is always <paramref name="SilenceThresholdDb"/>. Otherwise the threshold follows the measured
+/// noise floor (a low percentile of every window fed so far): floor + this margin, never above
+/// <paramref name="SilenceThresholdDb"/> and never below <paramref name="LowestThresholdDb"/>. A quiet microphone in a
+/// quiet room then still tells its quiet speech from its pauses.
+/// </param>
+/// <param name="LowestThresholdDb">Lower bound of the relative threshold.</param>
 public sealed record MeetingChunkPolicy(TimeSpan MaxChunk, TimeSpan MinChunk, TimeSpan SilenceDuration,
-    float SilenceThresholdDb, TimeSpan MeterWindow)
+    float SilenceThresholdDb, TimeSpan MeterWindow, float? NoiseFloorMarginDb = null, float LowestThresholdDb = -60f)
 {
     /// <summary>60 s max, 10 s min, 1.5 s of silence below -40 dB, 0.3 s windows.</summary>
     public static MeetingChunkPolicy Default { get; } = new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10),
@@ -20,16 +27,28 @@ public sealed record MeetingChunkPolicy(TimeSpan MaxChunk, TimeSpan MinChunk, Ti
 /// <param name="DurationSeconds">Length of the audio.</param>
 /// <param name="Wav">16-bit mono WAV bytes.</param>
 /// <param name="Silent">No meter window of the chunk ever reached the threshold, so there is nothing to transcribe.</param>
-public sealed record MeetingAudioChunk(int Index, double StartSeconds, double DurationSeconds, byte[] Wav, bool Silent);
+/// <param name="LoudestWindowDb">RMS level (dBFS) of the chunk's loudest meter window.</param>
+public sealed record MeetingAudioChunk(int Index, double StartSeconds, double DurationSeconds, byte[] Wav, bool Silent,
+    float LoudestWindowDb = MeetingChunker.FloorDb);
 
 /// <summary>
 /// Cuts a continuous 16-bit mono stream into chunks, deterministically by sample count (not wall clock).
 /// Level is measured per meter window (RMS dB). A chunk ends when it reaches the max length, or when it is at
 /// least the min length and the last windows were silent for the silence duration in a row.
 /// Silent = no window of the chunk ever reached the threshold. Single-threaded: the caller serializes Write/Flush.
+/// The threshold is fixed unless the policy sets <see cref="MeetingChunkPolicy.NoiseFloorMarginDb"/>.
 /// </summary>
 public sealed class MeetingChunker
 {
+    /// <summary>Lowest level the chunker tells apart; digital silence counts as this.</summary>
+    public const float FloorDb = -100f;
+
+    /// <summary>Percentile of all windows so far taken as the noise floor (pauses make up more than this in speech).</summary>
+    public const double NoiseFloorPercentile = 0.10;
+
+    /// <summary>Windows needed before the noise floor is trusted (1 s at 0.2 s windows).</summary>
+    public const int NoiseFloorMinWindows = 5;
+
     private readonly MeetingChunkPolicy _policy;
     private readonly double _startOffset;
     private readonly int _maxSamples;
@@ -44,8 +63,11 @@ public sealed class MeetingChunker
     private long _totalSamples;
     private int _windowFill;
     private int _silentRun;
-    private bool _everLoud;
+    private float _chunkLoudestDb = FloorDb;
     private int _nextIndex;
+    // 1 dB bins from FloorDb to 0 dBFS over every full window fed: the noise floor without keeping the windows.
+    private readonly int[] _levelBins = new int[(int)-FloorDb + 1];
+    private int _levelWindows;
 
     /// <summary>Creates a chunker for <paramref name="sampleRate"/> Hz mono input.</summary>
     /// <param name="sampleRate">Samples per second.</param>
@@ -75,6 +97,49 @@ public sealed class MeetingChunker
     /// <summary>Seconds (incl. start offset) where the chunk being filled began.</summary>
     public double CurrentChunkStartSeconds => _startOffset + (double)_chunkStartSamples / SampleRate;
 
+    /// <summary>
+    /// The level (dBFS) below which a window counts as silent right now: the policy's fixed threshold, or with
+    /// <see cref="MeetingChunkPolicy.NoiseFloorMarginDb"/> the noise floor plus that margin within the policy's bounds.
+    /// </summary>
+    public float SilenceThresholdDb
+    {
+        get
+        {
+            if (_policy.NoiseFloorMarginDb is not { } margin || _levelWindows < NoiseFloorMinWindows)
+                return _policy.SilenceThresholdDb;
+            var relative = NoiseFloorDb + margin;
+            return Math.Min(_policy.SilenceThresholdDb, Math.Max(_policy.LowestThresholdDb, relative));
+        }
+    }
+
+    /// <summary>
+    /// The quiet level of the stream so far: the <see cref="NoiseFloorPercentile"/> of every full window, in whole dB.
+    /// <see cref="FloorDb"/> before the first window.
+    /// </summary>
+    public float NoiseFloorDb
+    {
+        get
+        {
+            if (_levelWindows == 0) return FloorDb;
+            var target = Math.Max(1, (int)Math.Ceiling(_levelWindows * NoiseFloorPercentile));
+            var seen = 0;
+            for (var i = 0; i < _levelBins.Length; i++)
+            {
+                seen += _levelBins[i];
+                if (seen >= target) return FloorDb + i;
+            }
+            return 0f;
+        }
+    }
+
+    private void RecordLevel(float db)
+    {
+        _levelBins[(int)Math.Floor(db - FloorDb)]++;
+        _levelWindows++;
+    }
+
+    private static float Clamp(float db) => float.IsNaN(db) ? FloorDb : Math.Clamp(db, FloorDb, 0f);
+
     /// <summary>Total seconds fed, incl. start offset.</summary>
     public double ElapsedSeconds => _startOffset + (double)_totalSamples / SampleRate;
 
@@ -99,11 +164,12 @@ public sealed class MeetingChunker
             }
             else if (_windowFill >= _windowSamples)
             {
-                var db = MeetingAudioMixer.RmsDb(_buffer.AsSpan(_chunkSamples - _windowFill, _windowFill));
+                var db = Clamp(MeetingAudioMixer.RmsDb(_buffer.AsSpan(_chunkSamples - _windowFill, _windowFill)));
                 _windowFill = 0;
-                if (db >= _policy.SilenceThresholdDb)
+                RecordLevel(db);
+                if (db > _chunkLoudestDb) _chunkLoudestDb = db;
+                if (db >= SilenceThresholdDb)
                 {
-                    _everLoud = true;
                     _silentRun = 0;
                 }
                 else
@@ -142,13 +208,16 @@ public sealed class MeetingChunker
     private MeetingAudioChunk Complete()
     {
         // A partial last window still counts as sound if it is loud.
-        if (!_everLoud && _windowFill > 0
-            && MeetingAudioMixer.RmsDb(_buffer.AsSpan(_chunkSamples - _windowFill, _windowFill)) >= _policy.SilenceThresholdDb)
-            _everLoud = true;
+        if (_windowFill > 0)
+        {
+            var partial = Clamp(MeetingAudioMixer.RmsDb(_buffer.AsSpan(_chunkSamples - _windowFill, _windowFill)));
+            if (partial > _chunkLoudestDb) _chunkLoudestDb = partial;
+        }
 
+        // Judged with the threshold at the end: a relative threshold may only have settled after the chunk began.
         var span = _buffer.AsSpan(0, _chunkSamples);
         var chunk = new MeetingAudioChunk(_nextIndex++, CurrentChunkStartSeconds, (double)_chunkSamples / SampleRate,
-            Wav.Encode16(span, SampleRate), !_everLoud);
+            Wav.Encode16(span, SampleRate), _chunkLoudestDb < SilenceThresholdDb, _chunkLoudestDb);
         ResetChunk();
         return chunk;
     }
@@ -159,6 +228,6 @@ public sealed class MeetingChunker
         _chunkSamples = 0;
         _windowFill = 0;
         _silentRun = 0;
-        _everLoud = false;
+        _chunkLoudestDb = FloorDb;
     }
 }

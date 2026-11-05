@@ -119,9 +119,33 @@ public static class LiveDictation
     /// ours (the Mac has none; it keeps a piece decodable when someone talks without a pause).
     /// The -45 dB threshold is the Mac's ChunkedDictateRecorder.silenceThresholdDB; -40 counted quiet speech as a pause
     /// and cut pieces mid-sentence (1-2 character pieces).
+    /// Windows difference: the threshold follows the noise floor (floor + 12 dB, between -60 and -45 dB). A quiet
+    /// headset (speech 17-20 dB below the Mac recordings) otherwise had its quiet speech cut and dropped as silence.
     /// </summary>
     public static MeetingChunkPolicy ChunkPolicy { get; } = new(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1.5),
-        TimeSpan.FromSeconds(0.6), -45f, TimeSpan.FromSeconds(0.2));
+        TimeSpan.FromSeconds(0.6), -45f, TimeSpan.FromSeconds(0.2), NoiseFloorMarginDb: 12f, LowestThresholdDb: -60f);
+
+    /// <summary>
+    /// A piece the chunker calls silent is still decoded when its loudest 0.2 s window reaches this level: that is quiet
+    /// speech just under the pause threshold, not silence. Parakeet returns "" for real silence. Windows difference
+    /// (the Mac skips every silent piece).
+    /// </summary>
+    public const float DecodeQuietPieceAboveDb = -55f;
+
+    /// <summary>Whether a cut piece goes to the decoder: every sounding piece, and a "silent" one that is only nearly silent.</summary>
+    public static bool ShouldDecode(bool silent, float loudestWindowDb) => !silent || loudestWindowDb >= DecodeQuietPieceAboveDb;
+
+    /// <summary>RMS level (dBFS) of the loudest 0.2 s window of a 16-bit mono WAV; -160 when it cannot be read or is empty.</summary>
+    public static float LoudestWindowDb(byte[] wav)
+    {
+        if (!Wav.TryGetPcm16(wav, out var pcm) || pcm.Channels != 1) return -160f;
+        var samples = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, short>(wav.AsSpan(pcm.DataOffset, pcm.DataLength & ~1));
+        var win = Math.Max(1, pcm.SampleRate / 5);
+        float loudest = -160f;
+        for (int i = 0; i < samples.Length; i += win)
+            loudest = Math.Max(loudest, MeetingAudioMixer.RmsDb(samples.Slice(i, Math.Min(win, samples.Length - i))));
+        return loudest;
+    }
 
     /// <summary>Null when Live diktieren may start; otherwise the first thing the user has to fix.</summary>
     public static LiveUnavailable? UnavailableReason(bool duringMeeting, bool speechIsLocal, bool speechInstalled)
@@ -471,16 +495,24 @@ public sealed class LiveDictationSession
     /// <summary>Text decoded but not inserted yet (another window was in front).</summary>
     public bool HasHeldText => _pending.Length > 0;
 
-    /// <summary>A cut chunk (mid-recording) or the tail chunk (at stop). Silent chunks are skipped.</summary>
+    /// <summary>
+    /// A cut chunk (mid-recording) or the tail chunk (at stop). Silent chunks are skipped, unless their loudest window
+    /// is only just under the pause threshold (<see cref="LiveDictation.ShouldDecode"/>).
+    /// </summary>
     public void Add(byte[] wav, bool silent, LivePieceInfo? info = null)
     {
         if (IsCancelled) return;
         _anyPieceAdded = true;
         if (silent)
         {
-            Log.Info("LIVE-DICTATE: silent piece skipped");
-            if (info != null) Log.Info($"LIVE-DIAG: silent piece reason={info.Reason} audioS={AudioSeconds(wav)} {LevelSummary(wav)}");
-            return;
+            var loudest = LiveDictation.LoudestWindowDb(wav);
+            if (!LiveDictation.ShouldDecode(silent, loudest))
+            {
+                Log.Info("LIVE-DICTATE: silent piece skipped");
+                if (info != null) Log.Info($"LIVE-DIAG: silent piece reason={info.Reason} audioS={AudioSeconds(wav)} {LevelSummary(wav)}");
+                return;
+            }
+            Log.Info($"LIVE-DICTATE: quiet piece decoded anyway (loudest window {loudest.ToString("0.0", CultureInfo.InvariantCulture)} dB)");
         }
         Enqueue(() => ProcessAsync(wav, info));
     }

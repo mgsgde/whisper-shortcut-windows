@@ -18,9 +18,22 @@ internal static class Program
     private static readonly CultureInfo Inv = CultureInfo.InvariantCulture;
 
     // LIVEBENCH_DB overrides the silence threshold (the app uses -45; -40 was the value before 0.7.3).
-    private static readonly MeetingChunkPolicy Policy = float.TryParse(Environment.GetEnvironmentVariable("LIVEBENCH_DB"), NumberStyles.Float, Inv, out var db)
-        ? LiveDictation.ChunkPolicy with { SilenceThresholdDb = db }
-        : LiveDictation.ChunkPolicy;
+    // LIVEBENCH_MARGIN overrides the noise-floor margin; "off" = fixed threshold (the app before 0.7.6).
+    private static readonly MeetingChunkPolicy Policy = MakePolicy();
+
+    // LIVEBENCH_DROP_QUIET=1 skips every silent piece (before 0.7.6) instead of decoding nearly silent ones.
+    private static readonly bool DropQuiet = Environment.GetEnvironmentVariable("LIVEBENCH_DROP_QUIET") == "1";
+
+    private static MeetingChunkPolicy MakePolicy()
+    {
+        var p = LiveDictation.ChunkPolicy;
+        if (float.TryParse(Environment.GetEnvironmentVariable("LIVEBENCH_DB"), NumberStyles.Float, Inv, out var db))
+            p = p with { SilenceThresholdDb = db };
+        var margin = Environment.GetEnvironmentVariable("LIVEBENCH_MARGIN");
+        if (margin == "off") p = p with { NoiseFloorMarginDb = null };
+        else if (float.TryParse(margin, NumberStyles.Float, Inv, out var m)) p = p with { NoiseFloorMarginDb = m };
+        return p;
+    }
 
     // LIVEBENCH_GAIN_DB scales the recordings (e.g. -12 = a quieter microphone), to see where the -45 dB cut starts to chop.
     private static readonly float Gain = float.TryParse(Environment.GetEnvironmentVariable("LIVEBENCH_GAIN_DB"), NumberStyles.Float, Inv, out var g)
@@ -174,7 +187,7 @@ internal static class Program
                 {
                     pieces++;
                     if (reason == "Pause") pause++; else if (reason == "Max") max++; else stop++;
-                    if (ch.Silent) { silent++; continue; }
+                    if (DropQuiet ? ch.Silent : !LiveDictation.ShouldDecode(ch.Silent, LiveDictation.LoudestWindowDb(ch.Wav))) { silent++; continue; }
                     var text = DecodePiece(parakeet, ch.Wav, mode, out var t);
                     decode += t;
                     var start = Math.Max(chain, at);
