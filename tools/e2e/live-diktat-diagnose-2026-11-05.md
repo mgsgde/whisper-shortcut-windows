@@ -166,3 +166,21 @@ ausgeschlossen oder kostet höchstens ein Wort von 210.
 8. **Nicht geprüft** hatte die erste Fassung die Pegel-Abhängigkeit. Die ist jetzt die Hauptursache.
 9. **Branch:** Eine andere Session hat `b6aea52` (Startmenü-Eintrag) auf `diag/live-diktat` committet und dabei die Live-Instrumentierung in `TrayApp.cs` mitgenommen.
    Die Startmenü-Arbeit liegt also nur auf diesem Branch, nicht auf `main`. Dieselbe Session arbeitet weiter im Checkout (Installer-Dateien, nicht committet).
+
+## Nachtrag: Fix 1 und 2 umgesetzt (0.7.6)
+
+Relative Pausen-Schwelle (Ruhepegel + 12 dB, zwischen -60 und -45 dB) und Dekodieren „stiller“ Stücke ab -55 dB.
+`tools/LiveBench … live`, 46 Aufnahmen, 3 Threads. `LIVEBENCH_MARGIN=off` / `LIVEBENCH_DROP_QUIET=1` schalten das alte Verhalten zurück.
+
+| Dämpfung | alt | nur Fix 1 | nur Fix 2 | beide | a) am Stück (Abschnitt 3) |
+|---|---|---|---|---|---|
+| 0 dB | 7,6 % (65 / 15 still) | 7,6 % | 7,1 % | **7,1 %** (61 / 2) | 7,1 % |
+| −10 dB | 5,7 % | – | – | 4,8 % | 5,7 % |
+| −15 dB | 8,1 % | – | – | 5,7 % | 8,6 % |
+| −17 dB | 10,0 % | – | – | 6,7 % | – |
+| −18 dB | 14,8 % | – | – | 6,2 % | – |
+| −19 dB | 26,2 % | – | – | 8,1 % | – |
+| −20 dB | 31,9 % (127 / 53) | 26,2 % | 7,6 % | **7,6 %** (67 / 17) | 8,1 % |
+
+Fix 2 trägt fast die ganze Wirkung; Fix 1 ist das Sicherheitsnetz, falls die Schwelle bei -45 bleibt (laute Umgebung).
+Wartezeit nach dem Stoppen unverändert (0 dB: Median 0,30 s, max 0,73 s).
