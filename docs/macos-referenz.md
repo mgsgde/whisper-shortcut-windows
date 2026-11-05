@@ -335,6 +335,12 @@ Nicht „angleichen“, ohne Magnus zu fragen:
 - **Meeting** startet zusätzlich über das Tray-Menü „Meeting“ (Mac nur im Chat mit /meeting).
 - **Meeting-Chat:** Meetings sind auf Windows keine eigenen Chat-Tabs. Der Chat, aus dem `/meeting` startet, wird der
   Meeting-Chat; ein Meeting aus dem Tray bietet im Chat „Fragen zum laufenden Meeting“ an.
+- **Live diktieren bei leisem Mikro:** Der Mac schneidet fest bei -45 dB (`ChunkedDictateRecorder.silenceThresholdDB`)
+  und verwirft jedes Stück ohne Fenster über -45 dB. Windows misst den Ruhepegel (10.-Perzentil der 0,2-s-Fenster) und
+  schneidet bei Ruhepegel + 12 dB, höchstens -45, mindestens -60 dB; ein „stilles“ Stück mit einem Fenster ab -55 dB wird
+  trotzdem dekodiert. Grund: Headsets ohne automatische Verstärkung liegen 10–20 dB unter dem Mac-Mikro, leise Sprache
+  wurde sonst mitten im Wort geschnitten oder ganz verworfen (`tools/e2e/live-diktat-diagnose-2026-11-05.md`).
+  Live-Meetings bleiben bei festen -40 dB wie auf dem Mac.
 - **Anrede:** Windows duzt durchgehend, der Mac siezt. Wortlaut sonst aus `Localizable.xcstrings`.
 - **Bewusst noch nicht da:** Was Windows absichtlich nicht hat (Smart Improvement, Schreibstil,
   weitere Anbieter, im Chat Ordner, Gedächtnis und verbundene Dienste), steht in Abschnitt C der Paritätsliste.
