@@ -354,6 +354,9 @@ public sealed partial class Settings
     /// </summary>
     public bool WelcomeCompleted { get; set; }
 
+    /// <summary>Exe paths for which the user declined "an seinen festen Platz legen": asked once per path.</summary>
+    public List<string> MoveOfferDismissed { get; set; } = new();
+
     /// <summary>The tour step the user last reached, so the next start resumes there (Mac onboardingCurrentStep).</summary>
     public int WelcomeStep { get; set; }
 
@@ -458,6 +461,7 @@ public sealed partial class Settings
             s.ClipboardAfterPaste = ClipboardAfterPasteModes.FromFile(dto.ClipboardAfterPaste, dto.RestoreClipboard);
             s.WelcomeCompleted = dto.WelcomeCompleted ?? WelcomeTour.CompletedForExistingFile(s.ApiKey, s.OpenAiKey, s.OfflineMode);
             s.WelcomeStep = dto.WelcomeStep ?? 0;
+            s.MoveOfferDismissed = (dto.MoveOfferDismissed ?? new()).Where(t => t != null).ToList()!;
             // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
             s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
                 ? new(QuickActionList.Defaults)
@@ -682,6 +686,7 @@ public sealed partial class Settings
             ClipboardAfterPaste = ClipboardAfterPasteModes.Name(ClipboardAfterPaste),
             WelcomeCompleted = WelcomeCompleted,
             WelcomeStep = WelcomeStep,
+            MoveOfferDismissed = MoveOfferDismissed,
         };
         SaveFeatures(dto);
         return dto;
@@ -764,5 +769,6 @@ public sealed partial class Settings
         [JsonPropertyName("clipboardAfterPaste")] public string? ClipboardAfterPaste { get; set; }
         [JsonPropertyName("welcomeCompleted")] public bool? WelcomeCompleted { get; set; }
         [JsonPropertyName("welcomeStep")] public int? WelcomeStep { get; set; }
+        [JsonPropertyName("moveOfferDismissed")] public List<string>? MoveOfferDismissed { get; set; }
     }
 }

@@ -264,6 +264,10 @@ internal sealed class WelcomeForm : FastShowForm
         _doneHint = Wrap("", 80);
         _doneHint.TextAlign = ContentAlignment.MiddleCenter;
         done.Controls.Add(Centered(_doneHint));
+        // Windows hides new tray icons behind the arrow; the taskbar page is where "always show" is switched on.
+        var pinButton = new FluentButton("Symbol immer anzeigen …") { MinimumSize = new Size(120, 32), Margin = new Padding(0, 8, 0, 0) };
+        pinButton.Click += (_, _) => OpenUri("ms-settings:taskbar");
+        done.Controls.Add(Centered(pinButton));
         done.Controls.Add(Wrap("Deine Tastenkürzel:", 0, small: true, top: 18));
         _shortcutCard = new Card { Anchor = AnchorStyles.Left | AnchorStyles.Right, Margin = new Padding(0, 6, 0, 4) };
         _shortcutList = Block();

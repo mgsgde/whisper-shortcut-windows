@@ -91,6 +91,20 @@ public static class McpClientSetup
             ["headers"] = new JsonObject { ["Authorization"] = "Bearer " + token },
         }));
 
+    /// <summary>
+    /// The config without mcpServers.whisper-shortcut (uninstall), everything else untouched. Null when there is nothing
+    /// to remove or the file is not a JSON object: then the caller must not write.
+    /// </summary>
+    public static string? RemoveServer(string? existingJson)
+    {
+        if (string.IsNullOrWhiteSpace(existingJson)) return null;
+        JsonObject? root;
+        try { root = JsonNode.Parse(existingJson, null, ReadOptions) as JsonObject; }
+        catch (JsonException) { return null; }
+        if (root?["mcpServers"] is not JsonObject servers || !servers.Remove(ServerName)) return null;
+        return Render(root);
+    }
+
     /// <summary>Arguments for `claude mcp add` (user scope).</summary>
     public static IReadOnlyList<string> ClaudeCodeAddArguments(string url, string token) =>
         new[] { "mcp", "add", "--transport", "http", "--scope", "user", ServerName, url, "--header", "Authorization: Bearer " + token };

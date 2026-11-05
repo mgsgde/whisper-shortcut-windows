@@ -6,7 +6,13 @@
     <UseWindowsForms>true</UseWindowsForms>
     <EnableWindowsTargeting>true</EnableWindowsTargeting>
     <!-- Shown in the settings window and compared with the latest GitHub release: keep in step with the git tag. -->
-    <Version>0.7.3</Version>
+    <Version>0.7.4</Version>
+    <!-- Shown in the file's Properties and in Windows Settings → Apps (Publisher comes from Company). -->
+    <Company>Magnus Gödde</Company>
+    <Product>WhisperShortcut</Product>
+    <Description>Diktieren und Texte bearbeiten per Tastenkürzel</Description>
+    <Copyright>© 2026 Magnus Gödde</Copyright>
+    <Authors>Magnus Gödde</Authors>
     <ApplicationIcon>app.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <!-- sherpa-onnx ships native DLLs (onnxruntime, sherpa-onnx-c-api); a single-file exe must carry them. -->

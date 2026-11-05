@@ -13,6 +13,22 @@ public class UpdateInstallPathTests
     }
 
     [Theory]
+    [InlineData("WhisperShortcut-Windows-x64.exe")]
+    [InlineData("WhisperShortcut-Windows-arm64.exe")]
+    [InlineData("WhisperShortcut (1).exe")]
+    [InlineData("whispershortcut_2.EXE")]
+    public void AcceptsDownloadNames(string name) =>
+        Assert.True(UpdateInstallPath.IsAllowedTarget(Path.Combine(Path.GetTempPath(), name)));
+
+    [Theory]
+    [InlineData("OtherWhisperShortcut.exe")]
+    [InlineData("WhisperShortcut.exe.txt")]
+    [InlineData("WhisperShortcut&calc.exe")]
+    [InlineData("WhisperShortcut.dll")]
+    public void RejectsOtherNames(string name) =>
+        Assert.False(UpdateInstallPath.IsAllowedTarget(Path.Combine(Path.GetTempPath(), name)));
+
+    [Theory]
     [InlineData(null)]
     [InlineData("")]
     [InlineData("C:\\Windows\\System32\\cmd.exe")]

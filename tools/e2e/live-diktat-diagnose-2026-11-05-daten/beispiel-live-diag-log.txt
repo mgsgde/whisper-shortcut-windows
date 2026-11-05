@@ -1,0 +1,9 @@
+﻿2026-11-05 09:31:20.109 INFO LIVE-DICTATE: silent piece skipped
+2026-11-05 09:31:20.151 INFO LIVE-DIAG: silent piece reason=Pause audioS=1.60 rmsDb=-57.7 quietWindowDb=-66.2 loudWindowDb=-50.2
+2026-11-05 09:31:20.158 INFO LIVE-DICTATE: silent piece skipped
+2026-11-05 09:31:20.159 INFO LIVE-DIAG: silent piece reason=Stop audioS=0.81 rmsDb=-55.9 quietWindowDb=-65.3 loudWindowDb=-52.7
+2026-11-05 09:31:20.470 INFO LIVE-DICTATE: piece 1 decodeMs=445 chars=16
+2026-11-05 09:31:20.545 INFO LIVE-DIAG: piece 1 reason=Pause audioS=2.60 rmsDb=-31.3 quietWindowDb=-64.9 loudWindowDb=-24.6 waitedForChainMs=5 decodeMs=445 insertMs=74 cutToInsertedMs=525 rawChars=16 pieceChars=16 heldBefore=0 inserted=true
+2026-11-05 09:31:20.771 INFO LIVE-DICTATE: piece 2 decodeMs=223 chars=14
+2026-11-05 09:31:20.842 INFO LIVE-DIAG: piece 2 reason=Pause audioS=1.60 rmsDb=-28.9 quietWindowDb=-60.9 loudWindowDb=-24.1 waitedForChainMs=394 decodeMs=223 insertMs=70 cutToInsertedMs=689 rawChars=13 pieceChars=14 heldBefore=0 inserted=true
+2026-11-05 09:31:20.844 INFO LIVE-DICTATE: finished pieces=2 failed=0 chars=30 heldChars=0 durationS=0.9

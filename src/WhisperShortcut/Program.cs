@@ -2,6 +2,9 @@ namespace WhisperShortcut;
 
 internal static class Program
 {
+    /// <summary>The single-instance mutex; <c>--uninstall</c> takes it too.</summary>
+    internal const string MutexName = @"Local\WhisperShortcut.Windows";
+
     [STAThread]
     static void Main(string[] args)
     {
@@ -15,23 +18,36 @@ internal static class Program
         if (install >= 0 && install + 1 < args.Length)
             Environment.Exit(UpdateInstaller.RunInstall(args[install + 1]));
 
+        // The uninstaller (the Apps entry and the settings button start it): its own flow, no tray app.
+        if (args.Contains("--uninstall"))
+            Environment.Exit(Uninstaller.Run());
+
         // One instance only: a second one could not register the hotkeys anyway.
-        // After an update the old process may still be shutting down, so wait for it.
+        // After an update (or a move to the fixed place) the old process may still be shutting down, so wait for it.
         bool afterUpdate = args.Contains("--after-update");
-        using var mutex = new Mutex(false, @"Local\WhisperShortcut.Windows");
+        bool moved = args.Contains("--moved");
+        using var mutex = new Mutex(false, MutexName);
         bool first;
-        try { first = mutex.WaitOne(afterUpdate ? TimeSpan.FromSeconds(15) : TimeSpan.Zero); }
+        try { first = mutex.WaitOne(afterUpdate || moved ? TimeSpan.FromSeconds(15) : TimeSpan.Zero); }
         catch (AbandonedMutexException) { first = true; }
-        if (afterUpdate) Core.Log.Info(first ? "Started after update" : "Started after update, but the old instance is still running");
+        if (afterUpdate || moved)
+            Core.Log.Info((moved ? "Started after the move" : "Started after update") + (first ? "" : ", but the old instance is still running"));
         if (!first)
         {
             Core.Log.Info("Second instance started, exiting");
+            // Like the Mac's reopen: starting the app again (Start menu, search) opens its settings. The MessageBox is only
+            // for when the running instance cannot be reached.
+            InstanceSignals.AllowForeground();
+            if (InstanceSignals.Signal(InstanceSignals.ShowName)) return;
             MessageBox.Show("WhisperShortcut läuft bereits. Das Symbol ist unten rechts im Infobereich der Taskleiste.",
                 "WhisperShortcut", MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
+        // Before the slow TrayApp constructor, so a second start during startup is not lost.
+        using var signals = new InstanceSignals();
 
         UpdateInstaller.CleanupAfterStart();
+        SelfExtractCleanup.CleanupStaleInBackground();
         int feedArg = Array.IndexOf(args, "--update-feed");
         if (feedArg >= 0 && feedArg + 1 < args.Length)
         {
@@ -59,6 +75,7 @@ internal static class Program
         var app = new TrayApp(testWav, fakeGemini);
         if (args.Contains("--settings")) app.OpenSettingsOnStart();
         if (args.Contains("--welcome")) app.OpenWelcome();
+        signals.Listen(app.ShowSettingsFromSecondStart, app.QuitFromUninstall);
         Application.Run(app);
     }
 

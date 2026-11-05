@@ -75,7 +75,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private volatile Core.LiveDictationSession? _live;
     private Core.MeetingChunker? _liveChunker;
     private readonly object _liveGate = new();
-    private readonly System.Collections.Concurrent.ConcurrentQueue<Core.MeetingAudioChunk> _livePieces = new();
+    private readonly System.Collections.Concurrent.ConcurrentQueue<(Core.MeetingAudioChunk Chunk, long Cut)> _livePieces = new();
     private readonly System.Windows.Forms.Timer _liveRetryTimer = new() { Interval = 500 };
     // The window the live dictation types into; set once the recording runs.
     private IntPtr _liveTarget;
@@ -138,6 +138,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _settings = Core.Settings.Load(Core.Settings.DefaultPath, new DpapiProtector());
         Sounds.Enabled = _settings.Sounds;
         bool testRun = testWav != null || fakeGemini;
+        InstallState.TestRun = testRun; // before anything registers itself: the one "may register" rule reads it
         if (firstRun)
         {
             _settings.DictatePromptTemplate = QuoteTemplate.Default;
@@ -150,6 +151,8 @@ internal sealed partial class TrayApp : ApplicationContext
         {
             AutoStart.RefreshPathIfEnabled(); // the .exe may have been moved out of Downloads
         }
+        StartMenu.EnsureEntry(testRun); // Windows search finds the app (Mac: Spotlight finds /Applications)
+        UninstallEntry.Ensure(); // Windows Settings → Apps lists it with a working Deinstallieren
         _gemini = new Core.GeminiClient(_settings);
         _openAi = new Core.OpenAiClient(_settings);
         _offline = new OfflineEngine(_settings);
@@ -285,6 +288,8 @@ internal sealed partial class TrayApp : ApplicationContext
                 "Trag zuerst einen API-Schlüssel ein oder schalte den Offline-Modus ein.",
                 ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
         }
+        // Posted after OpenWelcome's own post: the tour window is up first, the question comes on top of it.
+        if (!testRun) _ui.Post(_ => OfferMoveToFixedPlace(), null);
     }
 
     /// <summary>
@@ -1002,7 +1007,7 @@ internal sealed partial class TrayApp : ApplicationContext
             if (_live != session || _liveChunker == null) return;
             foreach (var chunk in _liveChunker.Write(MemoryMarshal.Cast<byte, short>(buffer.AsSpan(0, count & ~1))))
             {
-                _livePieces.Enqueue(chunk);
+                _livePieces.Enqueue((chunk, System.Diagnostics.Stopwatch.GetTimestamp()));
                 any = true;
             }
         }
@@ -1012,8 +1017,12 @@ internal sealed partial class TrayApp : ApplicationContext
     /// <summary>UI thread: hands the finished pieces to the session, in order.</summary>
     private void DrainLivePieces(Core.LiveDictationSession session)
     {
-        while (_live == session && _livePieces.TryDequeue(out var chunk))
-            session.Add(chunk.Wav, chunk.Silent);
+        while (_live == session && _livePieces.TryDequeue(out var cut))
+        {
+            var chunk = cut.Chunk;
+            var reason = chunk.DurationSeconds >= Core.LiveDictation.ChunkPolicy.MaxChunk.TotalSeconds - 0.01 ? "Max" : "Pause";
+            session.Add(chunk.Wav, chunk.Silent, new Core.LivePieceInfo(reason, cut.Cut));
+        }
     }
 
     private async Task<string> DecodeLivePieceAsync(byte[] wav, CancellationToken ct)
@@ -1072,7 +1081,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 {
                     if (_liveChunker != null)
                         foreach (var chunk in _liveChunker.Write(MemoryMarshal.Cast<byte, short>(wav.AsSpan(pcm.DataOffset, pcm.DataLength & ~1))))
-                            _livePieces.Enqueue(chunk);
+                            _livePieces.Enqueue((chunk, System.Diagnostics.Stopwatch.GetTimestamp()));
                 }
             }
             Core.MeetingAudioChunk? tail;
@@ -1082,7 +1091,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 _liveChunker = null;
             }
             DrainLivePieces(session); // earlier pieces before the tail
-            if (tail != null) session.Add(tail.Wav, tail.Silent);
+            if (tail != null) session.Add(tail.Wav, tail.Silent, new Core.LivePieceInfo("Stop", System.Diagnostics.Stopwatch.GetTimestamp()));
 
             using var registration = ct.Register(session.Cancel);
             var outcome = await session.FinishAsync(wav);

@@ -8,10 +8,11 @@ sprechen, der Text steht dort, wo der Cursor blinkt. Läuft als Symbol im Infobe
 
 ## Was es kann
 
-- **Diktieren** (Strg+Umschalt+D): Sprache wird zu Text und direkt eingefügt.
-- **Text bearbeiten oder schreiben lassen** (Strg+Umschalt+P): Text markieren und sagen, was damit passieren
+- **Diktieren** (Alt+1 oder rechte Strg-Taste): Sprache wird zu Text und direkt eingefügt.
+- **Text bearbeiten oder schreiben lassen** (Dictate Prompt, Alt+2): Text markieren und sagen, was damit passieren
   soll („freundlicher“, „ins Englische“), oder ohne Markierung einen Text nach einer Vorlage schreiben lassen.
-- **Glossar** (Strg+Umschalt+K): ein markiertes Wort wird ab dann immer so geschrieben.
+- **Bildschirmfoto** (Alt+3), **Vorlesen** (Alt+4), **Chat** (Alt+6) und **Einstellungen** (Alt+0): dieselben Ziffern wie auf dem Mac, mit Alt statt Ctrl+Option.
+- **Glossar** („Ins Glossar“, Vorschlag Alt+7, ab Werk aus): ein markiertes Wort wird ab dann immer so geschrieben.
 - **Meeting** (Symbol → Meeting → Meeting starten, Kürzel wählbar): nimmt Mikrofon und, mit Kopfhörern,
   auch den Ton des PCs auf (Teams, Zoom), transkribiert jede Minute und speichert Transkript und
   Zusammenfassung pro Meeting unter `%LOCALAPPDATA%\WhisperShortcut\Meetings`. Geht auch offline.
@@ -29,15 +30,25 @@ sprechen, der Text steht dort, wo der Cursor blinkt. Läuft als Symbol im Infobe
 ## Download
 
 Fertige Builds unter [Releases](https://github.com/mgsgde/whisper-shortcut-windows/releases/latest).
-Für die meisten PCs `WhisperShortcut-Windows-x64.exe`, für Windows auf ARM `-arm64.exe`. Keine Installation, kein Entpacken:
+Für die meisten PCs `WhisperShortcut-Windows-x64.exe`, für Windows auf ARM `-arm64.exe`. Keine Installation, kein Entpacken
+(wer die ZIP nimmt: „Alle extrahieren“, nicht aus der geöffneten ZIP starten):
 
 1. Rechtsklick auf die exe → Eigenschaften → „Zulassen“ ankreuzen → OK.
-2. In einen festen Ordner legen, z. B. `%LOCALAPPDATA%\Programs\WhisperShortcut\`, und doppelklicken.
-   Meldet Windows „Der Computer wurde durch Windows geschützt“: „Weitere Informationen“ → „Trotzdem ausführen“
-   (die App ist noch nicht signiert).
-3. Im Windows-Konto des Nutzers starten, nicht als Administrator. Beim ersten Start öffnen sich die Einstellungen.
+2. Doppelklicken. Meldet Windows „Der Computer wurde durch Windows geschützt“: „Weitere Informationen“ → „Trotzdem
+   ausführen“ (die App ist noch nicht signiert).
+3. Im Windows-Konto des Nutzers starten, nicht als Administrator. Beim ersten Start öffnet sich die Einführung.
 
-Updates kommen danach über die App selbst. Ausführliche Einrichtung: [`dist/ANLEITUNG.txt`](dist/ANLEITUNG.txt).
+**Fester Platz:** `%LOCALAPPDATA%\Programs\WhisperShortcut\` (nicht „Program Files“: dort braucht jedes Update einen
+Administrator). Startest du die exe aus „Downloads“, vom Desktop oder aus einer geöffneten ZIP, bietet die App einmal an,
+sich dorthin zu kopieren und von dort neu zu starten („Verschieben“); sonst funktionieren Autostart, Startmenü und
+Updates nur, bis dort aufgeräumt wird. Danach findet die Windows-Suche die App im Startmenü; ist sie schon gestartet,
+öffnet ein zweiter Start die Einstellungen.
+
+Updates kommen über die App selbst (Einstellungen → Allgemein → Updates).
+**Deinstallieren:** Einstellungen → Allgemein → „Deinstallieren …“ oder Windows-Einstellungen → Apps → WhisperShortcut.
+Das entfernt Autostart, Startmenü, Einstellungen, Schlüssel, Modelle und, im festen Ordner, die exe selbst.
+Meldungen der App erscheinen als eigene Karte am unteren Bildschirmrand, nicht als Windows-Benachrichtigung.
+Ausführliche Einrichtung: [`dist/ANLEITUNG.txt`](dist/ANLEITUNG.txt).
 
 ## Bauen
 

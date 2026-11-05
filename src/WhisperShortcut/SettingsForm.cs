@@ -203,6 +203,11 @@ internal sealed partial class SettingsForm : FastShowForm
         var startCard = new Card();
         startCard.AddRow(SettingRow("Mit Windows starten", "Dann ist WhisperShortcut nach jedem Neustart gleich unten rechts im Infobereich da.",
             _autoStart, ToggleWidth, out _));
+        // Windows tucks new tray icons behind the arrow ^; "always show" is a switch on the taskbar page of Windows Settings.
+        var pinIcon = new FluentButton("Symbol immer anzeigen …") { MinimumSize = new Size(ButtonWidth + 56, 32), AccessibleName = "Taskleisten-Einstellungen von Windows öffnen" };
+        pinIcon.Click += (_, _) => OpenLocal("ms-settings:taskbar");
+        startCard.AddRow(SettingRow("Symbol immer anzeigen", "Windows versteckt das Symbol oft hinter dem Pfeil ^. In den Taskleisten-Einstellungen "
+            + "unter „Weitere Taskleistensymbole“ WhisperShortcut einschalten, dann bleibt es sichtbar.", pinIcon, ButtonWidth + 56, out _));
         general.Controls.Add(startCard);
 
         // --- updates (Mac #346: General → Updates, right after Startup; Über holds information only) ---
@@ -959,6 +964,8 @@ internal sealed partial class SettingsForm : FastShowForm
         logButtons.Controls.Add(logFolder);
         var reset = new FluentButton("Zurücksetzen …") { MinimumSize = new Size(ButtonWidth, 32), Danger = true, AccessibleName = "App zurücksetzen" };
         reset.Click += (_, _) => ResetApp();
+        var uninstall = new FluentButton("Deinstallieren …") { MinimumSize = new Size(ButtonWidth, 32), Danger = true, AccessibleName = "WhisperShortcut deinstallieren" };
+        uninstall.Click += (_, _) => StartUninstall();
         var dataCard = new Card();
         dataCard.AddRow(SettingRow("Einstellungen und Glossar", "Einstellungen, Glossar, eigene Anweisungen und der Schlüssel (verschlüsselt).",
             dataFolder, ButtonWidth, out _));
@@ -966,6 +973,8 @@ internal sealed partial class SettingsForm : FastShowForm
             + "Das Protokoll hilft bei Fehlermeldungen und enthält keine diktierten Texte und keinen Schlüssel.", logButtons, ButtonWidth + 104, out _));
         dataCard.AddRow(SettingRow("App zurücksetzen", "Löscht alles, auch den API-Schlüssel, das Glossar und die Offline-Modelle. "
             + "Danach beendet sich WhisperShortcut und startet beim nächsten Mal wie neu installiert.", reset, ButtonWidth, out _));
+        dataCard.AddRow(SettingRow("WhisperShortcut deinstallieren", "Entfernt die App ganz: Start mit Windows, Startmenü, Einstellungen, Schlüssel, "
+            + "Glossar, Offline-Modelle und den Eintrag in Claude. Vorher fragt ein eigenes Fenster noch einmal nach.", uninstall, ButtonWidth, out _));
         page.Controls.Add(dataCard);
     }
 
@@ -1053,6 +1062,23 @@ internal sealed partial class SettingsForm : FastShowForm
         }
         _discard = true;
         Application.Exit();
+    }
+
+    /// <summary>
+    /// Starts <c>"&lt;exe&gt;" --uninstall</c>, which asks, quits this app and removes everything. Nothing is closed here:
+    /// cancelling in its dialog leaves the app as it is.
+    /// </summary>
+    private void StartUninstall()
+    {
+        try
+        {
+            Process.Start(new ProcessStartInfo(Environment.ProcessPath!, "--uninstall") { UseShellExecute = false })?.Dispose();
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error("Starting the uninstaller failed", e);
+            Warn("Das Deinstallieren konnte nicht starten. Du findest WhisperShortcut auch unter Windows → Einstellungen → Apps.");
+        }
     }
 
     private static void OpenFolder(string path)

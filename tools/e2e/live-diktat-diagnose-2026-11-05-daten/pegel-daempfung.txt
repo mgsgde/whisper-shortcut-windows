@@ -1,0 +1,9 @@
+SUMMARY live: WER=5,7% (12/210) exact=28/42 audio=221,0s decode=22,8s RTF=0,103 pieces=70 pause=47 max=0 stop=23 silent=19 tinyLetters=0 tinyMarksOnly=1 stopLatency median=0,05s p90=0,47s max=0,58s maxLag=0,95s
+SUMMARY live: WER=8,1% (17/210) exact=25/42 audio=221,0s decode=25,8s RTF=0,117 pieces=84 pause=55 max=0 stop=29 silent=29 tinyLetters=0 tinyMarksOnly=1 stopLatency median=0,00s p90=0,39s max=0,97s maxLag=1,18s
+SUMMARY live: WER=10,0% (21/210) exact=18/42 audio=221,0s decode=22,8s RTF=0,103 pieces=98 pause=66 max=0 stop=32 silent=33 tinyLetters=0 tinyMarksOnly=1 stopLatency median=0,00s p90=0,23s max=0,50s maxLag=0,59s
+SUMMARY live: WER=14,8% (31/210) exact=17/42 audio=221,0s decode=22,8s RTF=0,103 pieces=106 pause=76 max=0 stop=30 silent=36 tinyLetters=0 tinyMarksOnly=5 stopLatency median=0,00s p90=0,20s max=0,41s maxLag=0,57s
+SUMMARY live: WER=26,2% (55/210) exact=12/42 audio=221,0s decode=20,6s RTF=0,093 pieces=116 pause=82 max=0 stop=34 silent=46 tinyLetters=0 tinyMarksOnly=6 stopLatency median=0,00s p90=0,20s max=0,28s maxLag=0,55s
+SUMMARY live: WER=31,9% (67/210) exact=10/42 audio=221,0s decode=22,2s RTF=0,101 pieces=127 pause=93 max=0 stop=34 silent=53 tinyLetters=1 tinyMarksOnly=4 stopLatency median=0,00s p90=0,16s max=0,36s maxLag=0,60s
+SUMMARY whole: WER=5,7% (12/210) exact=24/42 audio=221,0s decode=24,4s RTF=0,111 pieces=46 pause=0 max=0 stop=46 silent=0 tinyLetters=0 tinyMarksOnly=0 stopLatency median=0,53s p90=0,85s max=0,99s maxLag=0,00s
+SUMMARY whole: WER=8,6% (18/210) exact=22/42 audio=221,0s decode=24,3s RTF=0,110 pieces=46 pause=0 max=0 stop=46 silent=0 tinyLetters=0 tinyMarksOnly=0 stopLatency median=0,53s p90=0,83s max=1,01s maxLag=0,00s
+SUMMARY whole: WER=8,1% (17/210) exact=19/42 audio=221,0s decode=28,4s RTF=0,129 pieces=46 pause=0 max=0 stop=46 silent=0 tinyLetters=0 tinyMarksOnly=0 stopLatency median=0,63s p90=0,99s max=1,09s maxLag=0,00s
