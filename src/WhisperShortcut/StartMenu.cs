@@ -17,15 +17,14 @@ internal static class StartMenu
         Environment.GetFolderPath(Environment.SpecialFolder.Programs), Name + ".lnk");
 
     /// <summary>
-    /// Creates the entry, or points it at this exe when it targets another path. Never throws. Skipped for test
-    /// runs and debug builds, which would otherwise send the user's Start menu to a build folder.
+    /// Creates the entry, or points it at this exe when it targets another path. Never throws. Skipped where
+    /// <see cref="InstallState.MayRegister"/> is false (test runs, debug builds, temporary copies), which would
+    /// otherwise send the user's Start menu to a build folder or a vanishing path.
     /// </summary>
     public static void EnsureEntry(bool testRun)
     {
-#if DEBUG
-        return;
-#else
-        if (testRun) return;
+        InstallState.TestRun = testRun;
+        if (!InstallState.MayRegister) return;
         var exe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(exe)) return;
         try
@@ -36,7 +35,13 @@ internal static class StartMenu
         {
             Core.Log.Error("Start menu entry failed", ex);
         }
-#endif
+    }
+
+    /// <summary>Removes the entry (uninstall). Never throws.</summary>
+    public static void Remove()
+    {
+        try { File.Delete(ShortcutPath); }
+        catch (Exception ex) { Core.Log.Error("Start menu entry removal failed", ex); }
     }
 
     /// <summary>Writes <paramref name="lnk"/> pointing at <paramref name="exe"/> unless it already does. True when written.</summary>

@@ -138,6 +138,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _settings = Core.Settings.Load(Core.Settings.DefaultPath, new DpapiProtector());
         Sounds.Enabled = _settings.Sounds;
         bool testRun = testWav != null || fakeGemini;
+        InstallState.TestRun = testRun; // before anything registers itself: the one "may register" rule reads it
         if (firstRun)
         {
             _settings.DictatePromptTemplate = QuoteTemplate.Default;
@@ -151,6 +152,7 @@ internal sealed partial class TrayApp : ApplicationContext
             AutoStart.RefreshPathIfEnabled(); // the .exe may have been moved out of Downloads
         }
         StartMenu.EnsureEntry(testRun); // Windows search finds the app (Mac: Spotlight finds /Applications)
+        UninstallEntry.Ensure(); // Windows Settings → Apps lists it with a working Deinstallieren
         _gemini = new Core.GeminiClient(_settings);
         _openAi = new Core.OpenAiClient(_settings);
         _offline = new OfflineEngine(_settings);
@@ -286,6 +288,8 @@ internal sealed partial class TrayApp : ApplicationContext
                 "Trag zuerst einen API-Schlüssel ein oder schalte den Offline-Modus ein.",
                 ToolTipIcon.Info, ShowSettings, Core.UserCopy.ActionOpenSettings);
         }
+        // Posted after OpenWelcome's own post: the tour window is up first, the question comes on top of it.
+        if (!testRun) _ui.Post(_ => OfferMoveToFixedPlace(), null);
     }
 
     /// <summary>

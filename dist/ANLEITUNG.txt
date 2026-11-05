@@ -1,35 +1,49 @@
-WhisperShortcut für Windows – Einrichtung (Testversion, Stand 27.10.2026)
+WhisperShortcut für Windows – Einrichtung (Testversion, Stand 05.11.2026)
 ========================================================================
 
 Was es kann
 -----------
-1. Diktieren: Strg+Umschalt+D drücken, sprechen, nochmal Strg+Umschalt+D.
-   Der Text steht dort, wo der Cursor blinkt (Word, Outlook, Browser, Notepad …).
-2. Text bearbeiten oder schreiben lassen: Strg+Umschalt+P.
-   - Mit Markierung: Text markieren, Strg+Umschalt+P, Anweisung sprechen
-     („mach das freundlicher“, „übersetze ins Englische“), Strg+Umschalt+P.
+1. Diktieren: Alt+1 drücken, sprechen, nochmal Alt+1. Geht auch mit der rechten Strg-Taste
+   (einmal drücken, sprechen, noch einmal drücken). Der Text steht dort, wo der Cursor blinkt
+   (Word, Outlook, Browser, Notepad …).
+2. Text bearbeiten oder schreiben lassen („Dictate Prompt“): Alt+2.
+   - Mit Markierung: Text markieren, Alt+2, Anweisung sprechen
+     („mach das freundlicher“, „übersetze ins Englische“), Alt+2.
      Die Markierung wird ersetzt.
-   - Ohne Markierung: Strg+Umschalt+P, z. B. „Schreib Herrn Meier ein Angebot für zwei
-     Heizkörper inklusive Montage, Termin nächste Woche Dienstag“, Strg+Umschalt+P.
-     Ein fertiger Text nach der Vorlage (Einstellungen → Text bearbeiten → Vorlage) wird eingefügt.
+   - Ohne Markierung: Alt+2, z. B. „Schreib Herrn Meier ein Angebot für zwei
+     Heizkörper inklusive Montage, Termin nächste Woche Dienstag“, Alt+2.
+     Ein fertiger Text nach der Vorlage (Einstellungen → Dictate Prompt → Vorlage für neue Texte) wird eingefügt.
    Ein Druck während der Verarbeitung bricht ab.
    - Schnellanweisungen: Während dieser Aufnahme zeigt die Anzeige fünf fertige Anweisungen,
      z. B. „Kürzer fassen“. Strg+1 bis Strg+5 oder ein Klick darauf
      wendet sie sofort an: auf die Markierung, oder ohne Markierung auf das gerade Diktierte.
-     Beispiel: Strg+Umschalt+P, einen Satz diktieren, Strg+3 → kürzere Fassung.
+     Beispiel: Alt+2, einen Satz diktieren, Strg+3 → kürzere Fassung.
      Text markieren und gleich Strg+1 drücken geht auch, ganz ohne Sprechen.
    - „Nicht in deinem Diktat“: Schreibt das Sprachmodell Wörter, die so nicht diktiert wurden
      (z. B. ein Medikament), zeigt die Anzeige sie nach dem Einfügen 20 Sekunden lang an. Der Text
      ist trotzdem eingefügt; diese Stellen vor dem Speichern prüfen. Ein Klick schließt den Hinweis.
    Antworten kommen als reiner Text, ohne Sternchen oder Rauten.
-3. Wort ins Glossar: ein Wort markieren (z. B. einen Namen, der falsch erkannt wurde),
-   Strg+Umschalt+K. Ab dann wird es so geschrieben, auch offline.
-4. Letzte Texte: Rechtsklick auf das Symbol → „Letzten Text kopieren“ oder „Letzte Texte“
-   (die letzten fünf). Praktisch, wenn der Text im falschen Fenster gelandet ist.
-   Die Liste steht nur im Arbeitsspeicher und ist nach dem Beenden weg.
+3. Bildschirmfoto: Alt+3, einen Bereich aufziehen. Das Bild liegt in der Zwischenablage (Strg+V).
+   Drückst du es während einer Dictate-Prompt-Aufnahme, geht das Bild mit deiner Anweisung ans
+   Sprachmodell.
+4. Vorlesen: Text markieren, Alt+4, zuhören.
+5. Chat: Alt+6 öffnet und schließt das Chat-Fenster (Fragen an das Sprachmodell, auch zu Meetings).
+6. Einstellungen: Alt+0 öffnet das Fenster, ein zweiter Druck schließt es.
+7. Wort ins Glossar: ein Wort markieren (z. B. einen Namen, der falsch erkannt wurde) und das
+   Kürzel „Ins Glossar“ drücken. Ab dann wird es so geschrieben, auch offline. Das Kürzel ist
+   ab Werk aus (Vorschlag Alt+7): Einstellungen → Allgemein → Tastenkürzel → „Ins Glossar“.
+   Ebenfalls ab Werk aus: „Live diktieren“ (Vorschlag Alt+5), der Text erscheint schon beim Sprechen.
+8. Letzte Texte: Rechtsklick auf das Symbol → „Letzte Transkription kopieren“ oder
+   „Letzte Transkriptionen“ (die letzten fünf). Praktisch, wenn der Text im falschen Fenster
+   gelandet ist. Die Liste steht nur im Arbeitsspeicher und ist nach dem Beenden weg.
+
+Die Kürzel lassen sich unter Einstellungen → Allgemein → Tastenkürzel ändern.
 
 Während der Aufnahme zeigt unten in der Mitte ein kleines Fenster, dass die App zuhört
 (Pegel, Zeit). Esc bricht ab. Zeigen die Pegelbalken nichts, kommt kein Ton vom Mikrofon.
+Meldungen der App (fertig, Fehler, Hinweise) erscheinen als eigene Karte unten in der Mitte des
+Bildschirms, nicht als Windows-Benachrichtigung. „Nicht stören“ und die Windows-Einstellungen
+für Benachrichtigungen ändern daran nichts.
 
 Einrichtung (ca. 5 Minuten)
 ---------------------------
@@ -39,10 +53,15 @@ Die exe nicht „als Administrator ausführen“.
 
 1. Herunterladen: WhisperShortcut-Windows-x64.exe (für Windows auf ARM die -arm64.exe).
    Rechtsklick auf die Datei → Eigenschaften → unten „Zulassen“ ankreuzen → OK.
-   Dann in einen festen Ordner legen, z. B. C:\Program Files\WhisperShortcut\ (oder, nur für
-   einen Nutzer, %LOCALAPPDATA%\Programs\WhisperShortcut\). Nicht aus „Downloads“ starten,
-   dort wird gern aufgeräumt. Keine Installation nötig.
-   (Wer die ZIP genommen hat: Rechtsklick → „Alle extrahieren“, dann wie oben mit der exe.)
+   Keine Installation nötig; die Datei darf auch „WhisperShortcut-Windows-x64 (1).exe“ heißen.
+   Fester Platz: %LOCALAPPDATA%\Programs\WhisperShortcut\ (in der Adresszeile des Explorers
+   einfügen). Nicht nach „Program Files“ legen: dort braucht jedes Update einen Administrator.
+   Du musst das nicht von Hand machen: Startest du die exe aus „Downloads“ oder vom Desktop,
+   fragt die App einmal „WhisperShortcut an seinen festen Platz legen?“. „Verschieben“ kopiert sie
+   in den Ordner oben und startet sie von dort neu; die Datei in Downloads bleibt liegen und kann
+   gelöscht werden. Wichtig, wenn du die ZIP nimmst: Rechtsklick → „Alle extrahieren“ und dann die
+   exe starten. Aus der geöffneten ZIP heraus läuft die App nur aus einem Temp-Ordner und wäre
+   bald weg; die App merkt das und bietet dasselbe Verschieben an.
 2. Doppelklick. Windows zeigt „Der Computer wurde durch Windows geschützt“ (Programm ist noch
    nicht signiert): „Weitere Informationen“ → „Trotzdem ausführen“.
    (Mit „Zulassen“ aus Schritt 1 kommt die Meldung meist gar nicht.)
@@ -53,40 +72,52 @@ Die exe nicht „als Administrator ausführen“.
    Der erste Start dauert 10–20 Sekunden (Virenscanner prüft die Datei).
 3. Unten rechts im Infobereich (ggf. hinter dem kleinen Pfeil ^) erscheint ein blaues Symbol
    (Schallwellen und Klemmbrett). Rot mit Punkt = Aufnahme läuft, orange mit drei Punkten =
-   Text wird verarbeitet. Bitte anheften, damit man das sieht: Einstellungen → Personalisierung →
-   Taskleiste → Andere Taskleistensymbole (Windows 10: „Symbole für die Anzeige auf der
-   Taskleiste auswählen“) → WhisperShortcut an.
+   Text wird verarbeitet. Bitte anheften, damit man das sieht: Am Ende der Einführung und unter
+   Einstellungen → Allgemein → Start gibt es den Knopf „Symbol immer anzeigen …“; er öffnet die
+   Taskleisten-Einstellungen von Windows (Personalisierung → Taskleiste → Andere Taskleistensymbole;
+   Windows 10: „Symbole für die Anzeige auf der Taskleiste auswählen“). Dort WhisperShortcut an.
    Ein Klick auf das Symbol öffnet die Einstellungen (Rechtsklick zeigt das Menü).
-   Beim ersten Start öffnen sich die Einstellungen von selbst.
-4. Arbeitsweise wählen: „Online“ (schnell, braucht einen Schlüssel) oder „Offline auf diesem PC“
-   (für Patientendaten, siehe unten). Online unter „Anbieter“ wählen, wer die Spracherkennung und
-   wer das Bearbeiten von Texten übernimmt: Gemini (Google), OpenAI oder dieser PC. Dann den
-   passenden Schlüssel eintragen (Gemini-Schlüssel bekommst du separat von Magnus, ein eigener
-   OpenAI-Schlüssel geht auch). Die App prüft ihn sofort: grüner Haken = Schlüssel funktioniert.
+   Beim ersten Start öffnet sich die Einführung von selbst; sie führt durch die Schritte 4 und 5.
+   Läuft die App schon und du startest sie noch einmal (Doppelklick auf die exe oder über das
+   Startmenü), öffnet sich einfach das Einstellungsfenster.
+4. Arbeitsweise wählen: online (schnell, braucht einen Schlüssel) oder „Offline-Modus“
+   (für Patientendaten, siehe unten; Schalter unter Einstellungen → Datenschutz & Berechtigungen).
+   Online unter „Konten“ den passenden Schlüssel eintragen (Gemini-Schlüssel bekommst du separat
+   von Magnus, ein eigener OpenAI-Schlüssel geht auch). Die App prüft ihn sofort: grüner Haken =
+   Schlüssel funktioniert. Unter „Diktieren“ und „Dictate Prompt“ wählst du, welches Modell die
+   Spracherkennung und das Bearbeiten von Texten übernimmt: Gemini (Google), OpenAI oder dieser PC.
    Wenig Platz auf der Festplatte: Spracherkennung „Auf diesem PC“ (klein, sehr schnell) und
    Texte online, dann muss das große Sprachmodell nicht geladen werden.
    Solange das Einstellungsfenster im Vordergrund ist, sind die Tastenkürzel aus.
-5. Mikrofon: Unter „Mikrofon“ das Gerät wählen (Headset ist am besten, sonst „Windows-Standard“)
-   und auf „Testen“ klicken: Beim Sprechen muss der grüne Balken ausschlagen. Bleibt er leer:
-   Windows-Einstellungen → Datenschutz (Windows 11: Datenschutz und Sicherheit) → Mikrofon →
-   „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ muss AN sein. Dann „Speichern“.
-   Benachrichtigungen für WhisperShortcut an lassen, „Nicht stören“ aus: Alle Meldungen der App
-   kommen als Windows-Benachrichtigung.
-6. Test: Notepad öffnen, Strg+Umschalt+D, einen Satz sagen, Strg+Umschalt+D.
+5. Mikrofon: Unter Allgemein → „Mikrofon“ das Gerät wählen (Headset ist am besten, sonst
+   „Windows-Standard“) und auf „Testen“ klicken: Beim Sprechen muss der grüne Balken ausschlagen.
+   Bleibt er leer: Windows-Einstellungen → Datenschutz (Windows 11: Datenschutz und Sicherheit) →
+   Mikrofon → „Desktop-Apps den Zugriff auf das Mikrofon erlauben“ muss AN sein. Dann „Speichern“.
+6. Test: Notepad öffnen, Alt+1, einen Satz sagen, Alt+1.
 7. Die App startet ab jetzt automatisch mit Windows (abschaltbar in den Einstellungen unter
-   „Start“). Wird die exe später verschoben, einmal von Hand starten, dann stimmt es wieder.
+   „Start“) und steht im Startmenü: Windows-Taste drücken, „WhisperShortcut“ tippen, Enter.
+   Wird die exe später verschoben, einmal von Hand starten (die Startmenü-Suche geht dann
+   auch), dann stimmt es wieder. Aus einem Temp-Ordner (geöffnete ZIP) trägt sich die App
+   bewusst nicht ein.
 8. Updates: Gibt es eine neue Version, erscheint unten rechts ein Hinweis (auch im Menü des
    Symbols). Ein Klick zeigt, was neu ist; erst „Jetzt installieren“ lädt sie, prüft die
-   Signatur und startet die App neu. Einstellungen und Schlüssel bleiben. Liegt die exe unter
-   C:\Program Files, fragt Windows dabei nach einem Administrator. Abschaltbar unter Info.
+   Signatur und startet die App neu. Einstellungen und Schlüssel bleiben. Liegt die exe in einem
+   geschützten Ordner wie C:\Program Files, fragt Windows dabei nach einem Administrator.
+   Abschaltbar unter Einstellungen → Allgemein → Updates.
+9. Deinstallieren: Einstellungen → Allgemein → ganz unten „Daten & Zurücksetzen“ → „Deinstallieren …“,
+   oder Windows-Einstellungen → Apps → Installierte Apps → WhisperShortcut → Deinstallieren.
+   Nach einer Rückfrage entfernt es den Start mit Windows, den Startmenü-Eintrag, alle
+   Einstellungen und Schlüssel, das Glossar, die Offline-Modelle, den Eintrag in Claude Desktop
+   und Claude Code und, wenn die exe im festen Ordner liegt, auch die exe selbst. Liegt sie
+   woanders, bleibt die Datei liegen und kann von Hand gelöscht werden.
 
 Offline-Modus (nichts verlässt den PC)
 --------------------------------------
-Für Patientendaten und andere geschützte Inhalte: Einstellungen → Allgemein → Arbeitsweise →
-„Offline auf diesem PC“. Dann braucht es keinen API-Schlüssel und kein Internet. Umschalten geht
-auch schnell über Rechtsklick auf das Symbol → „Offline: nichts verlässt den PC“ (Haken = offline).
-1. Unter Einstellungen → Offline einmal die Spracherkennung laden (ca. 670 MB) und das Sprachmodell
-   für „Text bearbeiten“ (ca. 2,5 GB, mit 16 GB Arbeitsspeicher besser das größere, ca. 5,7 GB).
+Für Patientendaten und andere geschützte Inhalte: Einstellungen → Datenschutz & Berechtigungen →
+„Offline-Modus“. Dann braucht es keinen API-Schlüssel und kein Internet.
+1. Einmal die Modelle laden: unter „Diktieren“ → Offline-Modell die Spracherkennung (ca. 670 MB)
+   und unter „Dictate Prompt“ → Offline-Sprachmodell das Sprachmodell für „Text bearbeiten“
+   (ca. 2,5 GB, mit 16 GB Arbeitsspeicher besser das größere, ca. 5,7 GB).
    Das Laden läuft weiter, wenn das Fenster zu ist. Danach „Speichern“.
 2. Diktieren geht offline genauso schnell wie online. „Neuer Absatz“, „neue Zeile“ und
    „Doppelpunkt“ werden als Zeichen gesetzt.
@@ -97,46 +128,49 @@ auch schnell über Rechtsklick auf das Symbol → „Offline: nichts verlässt d
    im Hintergrund einige Sekunden, bis sie die neuen Wörter kennt. Bisher greifen nur
    einzelne Wörter zuverlässig, Namen aus zwei Wörtern noch nicht.
 Die Modelle liegen unter %LOCALAPPDATA%\WhisperShortcut\Offline (in den Einstellungen per
-„Entfernen“ auf der Seite Offline löschbar).
+„Entfernen“ bei dem jeweiligen Modell löschbar).
 
 Einstellungen
 -------------
 Links stehen die Bereiche, rechts die Inhalte. Unten „Speichern“. Mit ungespeicherten Änderungen
 heißt der zweite Knopf „Abbrechen“ und verwirft sie; das X oben rechts (oder Esc) fragt nach.
-- Allgemein: Arbeitsweise (online/offline), Anbieter und Schlüssel, Mikrofon mit Pegeltest, Einfügen, Töne, Autostart.
+- Allgemein: Tastenkürzel (auch rechte Strg-Taste), Start mit Windows und „Symbol immer anzeigen …“,
+  Updates, Mikrofon mit Pegeltest, Zwischenablage, Töne und ganz unten „Daten & Zurücksetzen“
+  (Ordner mit Einstellungen und Glossar, Ordner mit Offline-Modellen und Protokoll,
+  „Zurücksetzen“ löscht alles inklusive API-Schlüssel, Glossar und Offline-Modellen und beendet
+  die App, „Deinstallieren …“ entfernt die App ganz).
   „Automatisch einfügen“ aus: Der Text liegt nur in der Zwischenablage (Hinweis „In der
-  Zwischenablage“) und wird mit Strg+V selbst eingefügt. „Zwischenablage wiederherstellen“: nach
-  dem Einfügen kommt zurück, was vorher in der Zwischenablage war.
-- Diktieren: Tastenkürzel, Modell (Gemini oder OpenAI, je nach Anbieter) und Anweisungen fürs
-  Diktieren (nur Gemini). Die
-  Anweisungen sagen, wie transkribiert wird; Namen und Fachwörter gehören ins Glossar.
-  „Standard wiederherstellen“ setzt sie zurück.
-- Text bearbeiten: Tastenkürzel, Modell (Gemini oder OpenAI), „Anweisungen“ (Grundregeln; gelten immer, auch
-  für Markierungen und Schnellanweisungen, online und offline: hier gehören feste Regeln hin wie
-  Ton oder „nichts erfinden“), die Vorlage für neue Texte und die fünf Schnellanweisungen für Strg+1 bis Strg+5
-  (z. B. „Als Arztbrief formulieren“; „Vorschläge wiederherstellen“ setzt sie zurück).
-  Vorlage: wie neue Texte aussehen sollen; sie gilt nur, wenn nichts markiert ist. Über „Beispiel
-  einsetzen“ gibt es eine Praxis-Vorlage (Anamnese, Befund, Therapie, Briefe in Sie-Form), eine
-  Werkstatt-Vorlage (Auftragsbericht) und eine Handwerks-Vorlage (Angebot). Am besten
+  Zwischenablage“) und wird mit Strg+V selbst eingefügt. „Nach dem Einfügen“ regelt, was danach
+  in der Zwischenablage liegt, z. B. wieder das, was vorher darin war.
+- Konten: Schlüssel für Gemini und OpenAI; die App prüft sie sofort.
+- Diktieren: Modell (Gemini oder OpenAI, je nach Konto) oder Spracherkennung auf diesem PC,
+  Satzzeichen, Sprache, Glossar (eine Zeile pro Begriff, damit Namen, Fachwörter und Firmennamen
+  richtig geschrieben werden) und „System-Prompt“ (Anweisungen fürs Diktieren). Namen und Fachwörter
+  gehören ins Glossar. „Standard wiederherstellen“ setzt die Anweisungen zurück.
+- Dictate Prompt: Modell, „Bildschirmfoto mitschicken“, die Schnellanweisungen für Strg+1 bis
+  Strg+5 (z. B. „Als Arztbrief formulieren“; „Vorschläge wiederherstellen“ setzt sie zurück), die
+  Vorlage für neue Texte (sie gilt nur, wenn nichts markiert ist) und der System-Prompt
+  (Grundregeln; gelten immer, auch für Markierungen und Schnellanweisungen, online und offline:
+  hier gehören feste Regeln hin wie Ton oder „nichts erfinden“).
+  Über „Beispiel einsetzen“ gibt es eine Praxis-Vorlage (Anamnese, Befund, Therapie, Briefe in
+  Sie-Form), eine Werkstatt-Vorlage (Auftragsbericht) und eine Handwerks-Vorlage (Angebot). Am besten
   mit 1–2 echten Texten des Nutzers anpassen (Praxisname, Stundensatz, Zahlungsbedingungen).
 - Frühere Fassungen: Unter den Anweisungen und der Vorlage erscheint „Frühere
   Fassungen ▾“, sobald ein eigener Text ersetzt wurde: die letzten 10, ein Klick setzt einen wieder ein.
-- Glossar: Tastenkürzel und die Liste der Namen, Fachbegriffe, Firmennamen (eine Zeile pro
-  Begriff), damit sie richtig geschrieben werden. Strg+Umschalt+K fügt ein markiertes Wort
-  direkt hinzu.
-- Offline: Spracherkennung und Sprachmodell laden oder entfernen, Sprachmodell wählen.
-- Info: Version und „Nach Updates suchen“ (fragt GitHub, installiert wird erst nach einem Klick),
-  Einführung, Daten und Zurücksetzen (Ordner mit Einstellungen und Glossar, Ordner mit
-  Offline-Modellen und Protokoll, „App zurücksetzen“ löscht
-  alles inklusive API-Schlüssel, Glossar und Offline-Modellen und beendet die App).
+- Vorlagen: eigene Formate zum direkt Hineindiktieren (z. B. eine Behandlungsdokumentation).
+- Bildschirmfoto, Vorlesen, Chat, Meetings: Kürzel, Modelle und Optionen der jeweiligen Funktion.
+  Meetings nehmen Mikrofon und, mit Kopfhörern, den Ton des PCs auf (Teams, Zoom): Rechtsklick auf
+  das Symbol → Meeting → Meeting starten.
+- Claude & KI-Apps: Claude Desktop oder Claude Code kann WhisperShortcut für dich einrichten.
+- Datenschutz & Berechtigungen: Offline-Modus und was die App auf dem PC darf.
+- Über: Version, Einführung, Hilfe und Entwickler, Lizenz.
   „Problem melden“ öffnet ein ausgefülltes GitHub-Issue (Version, Windows, Modelle, letzte
   Protokollzeilen, keine diktierten Texte): oben eintragen, was passiert ist, durchsehen,
   absenden. Ist der Bericht zu lang, liegt er in der Zwischenablage (Strg+V ins Issue).
-Tastenkürzel sind immer mit zwei Zusatztasten (z. B. Strg+Umschalt+…). Kombinationen mit Alt
-besser meiden (dann öffnen viele Programme ihr Menü). Solange die App läuft, gehen in Word
-Strg+Umschalt+D (doppelt unterstreichen) und Strg+Umschalt+P (Schriftgrad) nicht. In Excel gilt
-bei Strg+Umschalt+P die aktuelle Zelle immer als Markierung. Esc und Strg+1 bis Strg+5 gelten
-nur während einer Aufnahme.
+Die Tastenkürzel nutzen Alt plus eine Ziffer (so wie auf dem Mac Ctrl+Option plus Ziffer); mit
+Strg+Alt würden deutsche Tastaturen AltGr treffen. Hat ein Programm für dieselbe Kombination
+etwas vor, lässt sich unter Einstellungen → Allgemein → Tastenkürzel eine andere wählen. Esc und
+Strg+1 bis Strg+5 gelten nur während einer Aufnahme.
 
 Gut zu wissen
 -------------
@@ -147,12 +181,12 @@ Gut zu wissen
 - Diktate enden automatisch nach 30 Minuten, „Text bearbeiten“ nach 5 Minuten. Eine Minute
   vorher zeigt die Anzeige die Restzeit.
 - Diktate landen nicht im Zwischenablage-Verlauf (Win+V). Markierter Text, den die App für
-  Strg+Umschalt+P oder Strg+Umschalt+K kopiert, landet dort aber schon. Bei Patientendaten den
+  Dictate Prompt oder „Ins Glossar“ kopiert, landet dort aber schon. Bei Patientendaten den
   Verlauf ausgeschaltet lassen (Windows-Einstellungen → System → Zwischenablage).
 - Setzt ein Admin das Windows-Passwort zurück, ist der gespeicherte Schlüssel nicht mehr lesbar.
   Dann den Schlüssel einfach neu eintragen.
-- Nach dem Einfügen stellt die App die Zwischenablage wieder her, aber nur reinen Text:
-  Ein vorher kopiertes Bild oder kopierte Dateien sind danach weg.
+- Nach dem Einfügen stellt die App die Zwischenablage wieder her (je nach Einstellung), aber nur
+  reinen Text: Ein vorher kopiertes Bild oder kopierte Dateien sind danach weg.
 - Probleme: Die Protokolldatei liegt unter %LOCALAPPDATA%\WhisperShortcut\wsw.log
-  (Rechtsklick auf das Symbol → „Protokoll öffnen“ zeigt sie an). Datei an Magnus schicken.
+  (Rechtsklick auf das Symbol → Feedback senden → „Protokoll öffnen“ zeigt sie an). Datei an Magnus schicken.
   Sie enthält keine diktierten Texte und keinen Schlüssel.

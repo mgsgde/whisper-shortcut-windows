@@ -42,6 +42,13 @@ internal static class AutoStart
     /// <summary>Writes the Run value as the quoted path of this exe. False on failure; never throws.</summary>
     public static bool Enable()
     {
+        // WHY: the same "may register" rule as the Start menu and the Uninstall entry. An exe in %TEMP% (opened inside
+        // a ZIP) or a debug build would leave a Run value that points nowhere or at a bin folder.
+        if (!InstallState.MayRegister)
+        {
+            Core.Log.Info($"Autostart: not registering from this location ({InstallState.Place})");
+            return false;
+        }
         try
         {
             using var key = Registry.CurrentUser.CreateSubKey(RunKey);
@@ -66,6 +73,9 @@ internal static class AutoStart
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
             key?.DeleteValue(ValueName, throwOnMissingValue: false);
+            // The switch state would otherwise outlive the Run value and show up as a ghost entry in Task Manager.
+            using var approved = Registry.CurrentUser.OpenSubKey(ApprovedKey, writable: true);
+            approved?.DeleteValue(ValueName, throwOnMissingValue: false);
             return true;
         }
         catch (Exception ex)
@@ -82,6 +92,7 @@ internal static class AutoStart
     /// </summary>
     public static void RefreshPathIfEnabled()
     {
+        if (!InstallState.MayRegister) return; // a debug build or a temporary copy must not rewrite the real entry
         try
         {
             using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
