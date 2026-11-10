@@ -292,34 +292,28 @@ public sealed class TtsClient
         if (string.IsNullOrEmpty(key)) throw api.NoKey(KeyHint.Accounts);
 
         var started = Stopwatch.StartNew();
-        // One token for the whole request: the watchdog (CancelAfter, re-armed on every audio object) cancels it when the
-        // stream stalls, the caller's Stop cancels it through the link.
-        using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        watchdog.CancelAfter(FirstAudioTimeout);
+        // The watchdog is re-armed on audio only (not on keep-alive lines): a stream that sends no sound is stalled.
+        using var watchdog = new IdleWatchdog(ct, FirstAudioTimeout);
         Log.Info($"TTS {model.Id}: request ({text.Length} chars, voice {voice})");
         return await CloudHttp.SendAsync(_http, api, $"{api.ApiBase}{model.Id}:streamGenerateContent?alt=sse", key,
             new StringContent(BuildGeminiBody(text, voice), Encoding.UTF8, "application/json"), $"TTS {model.Id}",
             watchdog.Token, ct, async response =>
             {
                 using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
-                using var reader = new StreamReader(stream, Encoding.UTF8);
                 var batcher = new PcmStreamBatcher();
                 using var audio = new MemoryStream();
                 var objects = 0;
                 var audioObjects = 0;
                 var loggedFirst = false;
-                while (await reader.ReadLineAsync(watchdog.Token).ConfigureAwait(false) is { } line)
+                await foreach (var json in Sse.DataPayloads(stream, watchdog.Token).ConfigureAwait(false))
                 {
-                    // Server-sent events: one JSON object per "data:" line.
-                    if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
-                    var json = line.Substring(5).Trim();
-                    if (json.Length == 0 || json == "[DONE]") continue;
+                    if (json == "[DONE]") continue;
                     objects++;
                     var (pcm, finish) = ParseGeminiStreamObject(json);
                     if (finish != null && finish != "STOP") Log.Info($"TTS {model.Id}: finishReason {finish}");
                     if (pcm == null) continue;
                     audioObjects++;
-                    watchdog.CancelAfter(StallTimeout);
+                    watchdog.Rearm(StallTimeout);
                     audio.Write(pcm, 0, pcm.Length);
                     if (onPartial == null) continue;
                     await batcher.AddAsync(pcm, async slice =>
@@ -353,8 +347,7 @@ public sealed class TtsClient
         if (string.IsNullOrEmpty(key)) throw api.NoKey(KeyHint.Accounts);
 
         var started = Stopwatch.StartNew();
-        using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        watchdog.CancelAfter(FirstAudioTimeout);
+        using var watchdog = new IdleWatchdog(ct, FirstAudioTimeout);
         Log.Info($"TTS {model.Id}: request ({text.Length} chars, voice {voice})");
         return await CloudHttp.SendAsync(_http, api, api.ApiBase + "audio/speech", key,
             new StringContent(BuildOpenAiBody(model.Id, text, voice), Encoding.UTF8, "application/json"), $"TTS {model.Id}",
@@ -368,7 +361,7 @@ public sealed class TtsClient
                 int read;
                 while ((read = await stream.ReadAsync(buffer.AsMemory(), watchdog.Token).ConfigureAwait(false)) > 0)
                 {
-                    watchdog.CancelAfter(StallTimeout);
+                    watchdog.Rearm(StallTimeout);
                     audio.Write(buffer, 0, read);
                     if (onPartial == null) continue;
                     await batcher.AddAsync(buffer.AsMemory(0, read), async slice =>

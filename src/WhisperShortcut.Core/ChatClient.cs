@@ -171,8 +171,7 @@ public sealed class ChatClient
 
     private async Task<ChatReply> StreamGeminiAsync(string model, string key, string body, Action<string> deliver, CancellationToken ct)
     {
-        using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        watchdog.CancelAfter(IdleTimeout);
+        using var watchdog = new IdleWatchdog(ct, IdleTimeout);
         return await CloudHttp.SendAsync(_http, CloudApi.Gemini, $"{CloudApi.Gemini.ApiBase}{model}:streamGenerateContent?alt=sse", key,
             new StringContent(body, Encoding.UTF8, "application/json"), $"Chat Gemini {model}", watchdog.Token, ct,
             async response =>
@@ -180,13 +179,10 @@ public sealed class ChatClient
                 var reply = new StringBuilder();
                 var sources = new List<ChatSource>();
                 using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                while (await reader.ReadLineAsync(watchdog.Token).ConfigureAwait(false) is { } line)
+                // Chat re-arms on every line, comments and keep-alives included: any sign of life counts.
+                await foreach (var json in Sse.DataPayloads(stream, watchdog.Token, () => watchdog.Rearm(IdleTimeout)).ConfigureAwait(false))
                 {
-                    watchdog.CancelAfter(IdleTimeout);
-                    if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
-                    var json = line.Substring(5).Trim();
-                    if (json.Length == 0 || json == "[DONE]") continue;
+                    if (json == "[DONE]") continue;
                     var piece = ParseGeminiChunk(json, sources);
                     if (piece.Length == 0) continue;
                     reply.Append(piece);
@@ -257,22 +253,16 @@ public sealed class ChatClient
 
     private async Task<ChatReply> StreamOpenAiAsync(string model, string key, string body, Action<string> deliver, CancellationToken ct)
     {
-        using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        watchdog.CancelAfter(IdleTimeout);
+        using var watchdog = new IdleWatchdog(ct, IdleTimeout);
         return await CloudHttp.SendAsync(_http, CloudApi.OpenAi, CloudApi.OpenAi.ApiBase + "chat/completions", key,
             new StringContent(body, Encoding.UTF8, "application/json"), $"Chat OpenAI {model}", watchdog.Token, ct,
             async response =>
             {
                 var reply = new StringBuilder();
                 using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
-                using var reader = new StreamReader(stream, Encoding.UTF8);
-                while (await reader.ReadLineAsync(watchdog.Token).ConfigureAwait(false) is { } line)
+                await foreach (var json in Sse.DataPayloads(stream, watchdog.Token, () => watchdog.Rearm(IdleTimeout)).ConfigureAwait(false))
                 {
-                    watchdog.CancelAfter(IdleTimeout);
-                    if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
-                    var json = line.Substring(5).Trim();
-                    if (json.Length == 0) continue;
-                    if (json == "[DONE]") break;
+                    if (json == "[DONE]") break; // OpenAI ends the stream here
                     var piece = ParseOpenAiChunk(json);
                     if (piece.Length == 0) continue;
                     reply.Append(piece);
