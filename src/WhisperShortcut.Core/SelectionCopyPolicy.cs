@@ -26,4 +26,22 @@ public static class SelectionCopyPolicy
         var limit = give > CopyDeadline ? give : CopyDeadline;
         return elapsed >= limit ? CopyPollResult.Unreadable : CopyPollResult.Wait;
     }
+
+    static readonly System.Text.RegularExpressions.Regex EmptySelectionMarker =
+        new(@"""isFromEmptySelection""\s*:\s*true",System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// True when the copied clipboard content is a VS Code-family "copy with no selection" (Mac 5e041f0a, #383).
+    /// In VS Code, Cursor and Windsurf, Ctrl+C with nothing selected copies the whole current line; that line
+    /// is not a selection and must not reach the model as one. The editor marks such copies with
+    /// <c>"isFromEmptySelection":true</c> in its <c>vscode-editor-data</c> metadata, exposed either as that
+    /// clipboard format or inside Chromium's custom-data pickle (strings are UTF-16LE there; UTF-8 is a fallback).
+    /// </summary>
+    public static bool IsEditorEmptySelectionLineCopy(byte[]? customData, string? vscodeEditorData)
+    {
+        if (vscodeEditorData != null && EmptySelectionMarker.IsMatch(vscodeEditorData)) return true;
+        if (customData == null) return false;
+        return EmptySelectionMarker.IsMatch(System.Text.Encoding.Unicode.GetString(customData))
+            || EmptySelectionMarker.IsMatch(System.Text.Encoding.UTF8.GetString(customData));
+    }
 }

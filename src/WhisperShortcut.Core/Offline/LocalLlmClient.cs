@@ -31,6 +31,14 @@ public static class DictatePromptText
             + template.Trim();
     }
 
+    /// <summary>
+    /// Whether a Dictate Prompt recording goes to the text engine as a transcript instead of as audio. Only Gemini
+    /// takes the WAV inline, and only up to <paramref name="inlineLimitSeconds"/> (the recording limit of Dictate
+    /// Prompt); a longer take (a template recording replayed without its template) is transcribed in chunks first.
+    /// </summary>
+    public static bool UsesTranscript(Engine textEngine, double seconds, double inlineLimitSeconds) =>
+        textEngine != Engine.Gemini || seconds > inlineLimitSeconds;
+
     /// <summary>The compose marker when nothing is selected, otherwise the selection under its header.</summary>
     public static string SelectionBlock(string? selection) =>
         string.IsNullOrEmpty(selection)

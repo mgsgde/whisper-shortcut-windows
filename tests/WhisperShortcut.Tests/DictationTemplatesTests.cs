@@ -226,4 +226,52 @@ public class DictationTemplatesTests
         var t = T("a", hotkey: "");
         Assert.Null(TemplateHotkeys.Owner(t, new[] { t }, Apps, "", CanonOrNull));
     }
+
+    // ---- TemplateSave: one bad hotkey must not drop template edits ----
+
+    [Fact]
+    public void Save_KeysOk_TakesEditedTextAndCanonicalKeys()
+    {
+        var stored = new[] { T("a", "alt", hotkey: "ctrl+1", name: "Alt") };
+        var edited = new[] { T("a", " neu \r\n zwei ", hotkey: "CTRL+2", name: " Neu "), T("b", hotkey: "bad") };
+        var result = TemplateSave.Build(edited, stored, keysOk: true, k => k == "bad" ? null : CanonOrNull(k));
+        Assert.Equal(new[] { "a", "b" }, result.Select(t => t.Id));
+        Assert.Equal("Neu", result[0].Name);
+        Assert.Equal("neu \n zwei", result[0].Instructions);
+        Assert.Equal("ctrl+2", result[0].Hotkey);
+        Assert.Equal("", result[1].Hotkey);
+    }
+
+    [Fact]
+    public void Save_KeyProblem_StillSavesTextAddAndDelete_ButKeepsStoredKeys()
+    {
+        var stored = new[] { T("a", "alt", hotkey: "ctrl+1", name: "Alt"), T("gone", hotkey: "ctrl+9") };
+        var edited = new[] { T("a", "neue Anweisung", hotkey: "kaputt", name: "Umbenannt"), T("new", hotkey: "ctrl+5") };
+        var result = TemplateSave.Build(edited, stored, keysOk: false, CanonOrNull);
+        Assert.Equal(new[] { "a", "new" }, result.Select(t => t.Id)); // "gone" deleted, "new" added
+        Assert.Equal("Umbenannt", result[0].Name);
+        Assert.Equal("neue Anweisung", result[0].Instructions);
+        Assert.Equal("ctrl+1", result[0].Hotkey); // previous key kept
+        Assert.Equal("", result[1].Hotkey);       // new template: no key yet
+    }
+
+    // ---- Dictate Prompt path for a replayed template recording ----
+
+    [Theory]
+    [InlineData(Engine.Gemini, 60, 300, false)]
+    [InlineData(Engine.Gemini, 300, 300, false)]
+    [InlineData(Engine.Gemini, 301, 300, true)]
+    [InlineData(Engine.Gemini, 1500, 300, true)]
+    [InlineData(Engine.OpenAI, 10, 300, true)]
+    [InlineData(Engine.Local, 10, 300, true)]
+    public void PromptUsesTranscript_OnlyForNonGeminiOrOverTheInlineLimit(Engine engine, double seconds, double limit, bool expected) =>
+        Assert.Equal(expected, DictatePromptText.UsesTranscript(engine, seconds, limit));
+
+    [Fact]
+    public void NoNewTextTemplate_LeavesTheEditPromptAlone()
+    {
+        Assert.Null(DictatePromptText.BuildSystemPrompt("", null));
+        Assert.Equal("mein Prompt", DictatePromptText.BuildSystemPrompt(" mein Prompt ", null));
+        Assert.Contains("Angebot", DictatePromptText.BuildSystemPrompt("", "Angebot für Kunden")!);
+    }
 }
