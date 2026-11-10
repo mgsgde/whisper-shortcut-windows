@@ -307,13 +307,20 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         var rec = Core.RecordingCheckpoint.TryRecover();
         if (rec == null) return false;
-        var mode = string.Equals(rec.Mode, "Prompt", StringComparison.OrdinalIgnoreCase) ? Mode.Prompt : Mode.Dictate;
-        // A template take is recovered as a plain dictation: the template is not stored with the audio.
-        bool wasTemplate = string.Equals(rec.Mode, nameof(Mode.Template), StringComparison.OrdinalIgnoreCase);
-        _lastFailed = new FailedRun(rec.Wav, mode, rec.Seconds, null, null, IntPtr.Zero,
-            StopKey: mode == Mode.Prompt ? _settings.PromptHotkey : _settings.DictateHotkey, ClipboardOnly: true);
+        var (kind, templateId) = Core.RecordingKind.Parse(rec.Mode);
+        // A Template take replays with its template (found by id); a vanished template or an old checkpoint without id
+        // falls back to a plain dictation. Live replays explicitly as a normal dictation of the recorded audio.
+        Core.DictationTemplate? template = kind == Core.RecordingKindName.Template && templateId != null
+            ? _settings.Templates.FirstOrDefault(t => t.Id == templateId && t.IsUsable)?.Clone()
+            : null;
+        bool lostTemplate = kind == Core.RecordingKindName.Template && template == null;
+        var mode = template != null ? Mode.Template : kind == Core.RecordingKindName.Prompt ? Mode.Prompt : Mode.Dictate;
+        _lastFailed = new FailedRun(rec.Wav, mode, rec.Seconds, null, null, IntPtr.Zero, template,
+            StopKey: mode == Mode.Prompt ? _settings.PromptHotkey
+                : template != null ? (template.Hotkey.Length > 0 ? template.Hotkey : _settings.TemplateHotkey)
+                : _settings.DictateHotkey, ClipboardOnly: true);
         Notify("Aufnahme unterbrochen",
-            $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Der Text landet nach dem Transkribieren{(wasTemplate ? " ohne Vorlage" : "")} in der Zwischenablage.",
+            $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Der Text landet nach dem Transkribieren{(lostTemplate ? " ohne Vorlage" : "")} in der Zwischenablage.",
             ToolTipIcon.Warning, RetryLast, "Transkribieren");
         return true;
     }
@@ -892,7 +899,9 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         else
         {
-            mic = new MicAudioSource(limit, _settings.Microphone, checkpointMode: mode.ToString());
+            mic = new MicAudioSource(limit, _settings.Microphone, checkpointMode: _live != null ? Core.RecordingKind.Format(Core.RecordingKindName.Live)
+                : mode == Mode.Template ? Core.RecordingKind.Format(Core.RecordingKindName.Template, _template?.Id)
+                : Core.RecordingKind.Format(mode == Mode.Prompt ? Core.RecordingKindName.Prompt : Core.RecordingKindName.Dictate));
             if (_live is { } liveSession) mic.PcmAvailable += (buffer, n) => FeedLive(liveSession, buffer, n);
             mic.MaxDurationReached += () => _ui.Post(_ =>
             {
