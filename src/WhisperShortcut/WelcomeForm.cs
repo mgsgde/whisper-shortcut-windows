@@ -399,7 +399,18 @@ internal sealed class WelcomeForm : FastShowForm
         Saved?.Invoke();
         Core.Log.Info($"Welcome: chose {choice}");
         UpdateSetup();
+        if (choice == Core.DictationChoice.Offline) StartSpeechDownloadIfNeeded();
         if (choice == Core.DictationChoice.Cloud && _googleKey.Value.Length == 0) _googleKey.Box.Focus();
+    }
+
+    // Mac #418: picking Offline starts the one-time model download, so Weiter does not wait for a click on Laden that is easy to miss.
+    // Only when nothing is installed or running: never a second download, and picking Cloud again never cancels one.
+    private void StartSpeechDownloadIfNeeded()
+    {
+        if (OfflineEngine.SpeechInstalled || _offline.CurrentDownload != null) return;
+        ToggleSpeechDownload(); // nothing runs here, so the toggle starts the download
+        UpdateSpeechRow();
+        Core.Log.Info("Welcome: offline chosen, speech model download started");
     }
 
     private void UpdateSetup()
