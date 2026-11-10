@@ -21,7 +21,9 @@ public class SettingsGoldenTests
     private static ModelSelection Different(ModelStep step, ModelSelection d) =>
         new(Engine.OpenAI, Other(step.GeminiCatalog(), d.Gemini), Other(step.OpenAiCatalog(), d.OpenAi));
 
-    private static string Normalize(string s) => s.Replace("\r\n", "\n");
+    // A checkout with CRLF line endings (CI's autocrlf) puts \r\n into the multi-line default prompts, which the dumps and
+    // the JSON then show escaped; both forms compare as \n.
+    private static string Normalize(string s) => s.Replace("\r\n", "\n").Replace("\\r\\n", "\\n");
 
     private static void Compare(string name, string actual)
     {
