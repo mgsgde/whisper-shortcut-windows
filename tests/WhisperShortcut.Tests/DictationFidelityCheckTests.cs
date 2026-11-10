@@ -106,4 +106,41 @@ public class DictationFidelityCheckTests
     [Fact]
     public void KnownHeadingWithColon_IsNotFlagged() =>
         Assert.Empty(Check("Anamnese:\nPsoas links", "Psoas links"));
+
+    [Fact]
+    public void TemplateLabel_IsAllowed_ButExampleDrugInTemplateIsStillFlagged()
+    {
+        const string template = "Procedere:\nIbuprofen 600 bei Bedarf.\n# Nachsorge\nDosis: Ibuprofen";
+        const string output = "Procedere: Ibuprofen. Nachsorge bleibt.";
+        var flagged = DictationFidelityCheck.UnsupportedWords(output, new[] { "bleibt" }, template);
+        Assert.DoesNotContain("Procedere", flagged);
+        Assert.DoesNotContain("Nachsorge", flagged);
+        Assert.Contains("Ibuprofen", flagged);
+        // Without the template the custom label is an ordinary word.
+        var without = Check(output, "bleibt");
+        Assert.Contains("Procedere", without);
+        Assert.Contains("Ibuprofen", without);
+    }
+
+    [Fact]
+    public void ExampleContentInTemplate_IsNotASource()
+    {
+        const string template = "Anamnese:\nTherapie: Ibuprofen 400 mg";
+        var flagged = DictationFidelityCheck.UnsupportedWords("Anamnese: Kopfschmerz\nTherapie: Ibuprofen 400 mg",
+            new[] { "Kopfschmerz" }, template);
+        Assert.Contains("Ibuprofen", flagged);
+        Assert.Contains("400", flagged);
+    }
+
+    [Fact]
+    public void LabelWords_TakeOnlyWordsBeforeTheColon()
+    {
+        var words = DictationFidelityCheck.LabelWords("Anamnese:\nBefund: Psoas rechts\n## Weitere Hinweise\nkein Label hier\n  \n");
+        Assert.Contains("anamnese", words);
+        Assert.Contains("befund", words);
+        Assert.Contains("weitere", words);
+        Assert.Contains("hinweise", words);
+        Assert.DoesNotContain("psoas", words);
+        Assert.DoesNotContain("label", words);
+    }
 }

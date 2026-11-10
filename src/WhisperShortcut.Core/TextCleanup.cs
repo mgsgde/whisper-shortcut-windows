@@ -207,64 +207,135 @@ public static class TextCleanup
     }
 
     /// <summary>
-    /// Strips a glossary list the model appended after an otherwise correct dictation. Only the tail goes,
-    /// and only when it starts after a real sentence boundary (newline, or . ! ? … followed by whitespace;
-    /// a colon or the dot in "sabaki.dance" is none), the head contains a letter or digit, every tail word
-    /// is a glossary word, the words' term indices never decrease, and at least two distinct terms appear.
+    /// Strips a glossary list the model appended after an otherwise correct dictation (Mac b64a814b, #436).
+    /// Only the trailing term run goes. The run walks backward from the last word and takes the longest
+    /// glossary term ending there (a multi-word term counts as one); punctuation between the words is
+    /// ignored, so "Frau Dr. Läuffer" and sentence dots inside the echo stay in the run. Connector words are
+    /// not skipped and end the run ("Das war's. SumUp und lemniscus." stays). The run is removed only when at
+    /// least one word precedes it and the last non-blank character before it is a newline or . ! ? …
+    /// followed by whitespace (a colon or the dot in "sabaki.dance" is none). Two or more distinct terms are
+    /// stripped when the run is glossary-ordered (<see cref="IsGlossaryOrdered"/>: one descent per ten
+    /// pairs, so a keywords-order echo with one wrap-around goes); a single term only when the run is exactly
+    /// that one term and the head has 5+ words.
     /// </summary>
     public static string StripTrailingGlossaryEcho(string text, IReadOnlyList<string> glossaryTerms)
     {
         if (glossaryTerms.Count == 0 || text.Length == 0) return text;
 
-        var bodyEnd = text.Length;
-        while (bodyEnd > 0 && char.IsWhiteSpace(text[bodyEnd - 1])) bodyEnd--;
+        var tokens = EchoTokens(text);
+        var run = TrailingTermRun(tokens.Select(t => t.Folded).ToList(), glossaryTerms);
+        if (run.Count == 0) return text;
 
-        // Closing punctuation of the transcript itself (and a glued quote) is not the boundary.
-        const string terminal = ".!?…\"'”’“»›";
-        var searchEnd = bodyEnd;
-        while (searchEnd > 0 && terminal.Contains(text[searchEnd - 1])) searchEnd--;
-
-        const string boundaryPunct = ".!?…";
-        var boundary = -1;
-        for (var i = 0; i < searchEnd; i++)
-        {
-            var c = text[i];
-            if (IsNewline(c)) boundary = i;
-            else if (boundaryPunct.Contains(c) && i + 1 < text.Length && char.IsWhiteSpace(text[i + 1])) boundary = i;
-        }
+        var runWordCount = run.Sum(m => m.WordCount);
+        var runStartWord = tokens.Count - runWordCount;
+        // A transcript that is only the glossary belongs to the discard gate.
+        if (runStartWord <= 0) return text;
+        var boundary = GlossaryEchoBoundary(text, tokens[runStartWord].Start);
         if (boundary < 0) return text;
 
+        var distinct = run.Select(m => m.Index).Distinct().Count();
+        var singleTermEcho = run.Count == 1
+            && runWordCount == EchoWords(glossaryTerms[run[0].Index]).Count()
+            && runStartWord >= MinHeadWordsForSingleTermEcho;
+        if (!((distinct >= 2 && IsGlossaryOrdered(run.Select(m => m.Index).ToList())) || singleTermEcho))
+            return text;
+
         var headEnd = boundary + 1;
-        var head = text[..headEnd];
-        if (!head.Any(char.IsLetterOrDigit)) return text;
+        var tailLength = text[headEnd..].Trim().Length;
+        // Dictated content (patient data): log the size only, never the words.
+        Log.Warn($"Stripped trailing glossary echo ({tailLength} chars, {runWordCount} word(s), {distinct} distinct terms)");
+        return text[..headEnd].TrimEnd();
+    }
 
-        // First glossary entry containing the word; later duplicates do not reorder the echo.
-        var termIndexByWord = new Dictionary<string, int>(StringComparer.Ordinal);
+    private readonly record struct EchoMatch(int Index, int WordCount);
+
+    private readonly record struct EchoToken(string Folded, int Start);
+
+    // Letter/digit words with their start offset in the original text. Punctuation is not a token.
+    // A combining mark inside a word stays part of it (decomposed umlaut); the word is folded after NFC.
+    private static List<EchoToken> EchoTokens(string text)
+    {
+        var tokens = new List<EchoToken>();
+        var i = 0;
+        while (i < text.Length)
+        {
+            if (!char.IsLetterOrDigit(text[i])) { i++; continue; }
+            var start = i;
+            i++;
+            while (i < text.Length && (char.IsLetterOrDigit(text[i])
+                   || char.GetUnicodeCategory(text[i]) == System.Globalization.UnicodeCategory.NonSpacingMark)) i++;
+            tokens.Add(new EchoToken(GlossaryPrompt.Fold(text[start..i].Normalize(NormalizationForm.FormC)), start));
+        }
+        return tokens;
+    }
+
+    // Folded term words -> first glossary index; the first entry wins when two terms fold alike.
+    private static (Dictionary<string, int> ByWords, int MaxWords) GlossaryTermLookup(IReadOnlyList<string> glossaryTerms)
+    {
+        var byWords = new Dictionary<string, int>(StringComparer.Ordinal);
+        var maxWords = 0;
         for (var t = 0; t < glossaryTerms.Count; t++)
-            foreach (var w in EchoWords(glossaryTerms[t])) termIndexByWord.TryAdd(w, t);
-
-        var tail = bodyEnd > headEnd ? text[headEnd..bodyEnd] : "";
-        var distinct = new HashSet<int>();
-        var last = -1;
-        foreach (var w in EchoWords(tail))
         {
-            if (!termIndexByWord.TryGetValue(w, out var idx)) return text;
-            if (last >= 0 && idx < last) return text;
-            last = idx;
-            distinct.Add(idx);
+            var words = EchoWords(glossaryTerms[t]).ToList();
+            if (words.Count == 0) continue;
+            byWords.TryAdd(string.Join(' ', words), t);
+            maxWords = Math.Max(maxWords, words.Count);
         }
-        if (distinct.Count < 2)
-        {
-            // Mac 34bb2ce4: a lone term goes only when the tail is exactly that one term (a multi-word term
-            // counts as one) and the head has 5+ words; short replies and sign-offs stay.
-            if (distinct.Count == 0) return text;
-            var termWordCount = EchoWords(glossaryTerms[distinct.First()]).Count();
-            if (EchoWords(tail).Count() != termWordCount || EchoWords(head).Count() < MinHeadWordsForSingleTermEcho)
-                return text;
-        }
+        return (byWords, maxWords);
+    }
 
-        Log.Warn($"Stripped trailing glossary echo ({tail.Trim().Length} chars, {distinct.Count} distinct terms)");
-        return head.TrimEnd();
+    // Longest glossary term ending at word `end` (inclusive).
+    private static EchoMatch? LongestTermEndingAt(int end, IReadOnlyList<string> words, Dictionary<string, int> lookup, int maxWords)
+    {
+        EchoMatch? best = null;
+        for (var count = 1; count <= Math.Min(maxWords, end + 1); count++)
+            if (lookup.TryGetValue(string.Join(' ', words.Skip(end - count + 1).Take(count)), out var idx))
+                best = new EchoMatch(idx, count);
+        return best;
+    }
+
+    // Suffix of longest terms ending at the last word; stops at the first word that ends no term
+    // (connectors are not skipped). Indices in text order.
+    private static List<EchoMatch> TrailingTermRun(IReadOnlyList<string> words, IReadOnlyList<string> glossaryTerms)
+    {
+        var matches = new List<EchoMatch>();
+        var (lookup, maxWords) = GlossaryTermLookup(glossaryTerms);
+        if (words.Count == 0 || maxWords == 0) return matches;
+        var end = words.Count - 1;
+        while (end >= 0)
+        {
+            var match = LongestTermEndingAt(end, words, lookup, maxWords);
+            if (match is null) break;
+            matches.Add(match.Value);
+            end -= match.Value.WordCount;
+        }
+        matches.Reverse();
+        return matches;
+    }
+
+    // Glossary-ordered: descents (next index lower than the previous) at most one per ten adjacent pairs.
+    private static bool IsGlossaryOrdered(IReadOnlyList<int> termIndices)
+    {
+        var pairs = termIndices.Count - 1;
+        if (pairs <= 0) return true;
+        var descents = 0;
+        for (var i = 1; i < termIndices.Count; i++)
+            if (termIndices[i] < termIndices[i - 1]) descents++;
+        return descents <= pairs / 10;
+    }
+
+    // Offset of the boundary character before the run: a newline, or . ! ? … followed by whitespace.
+    // Spaces and tabs in between are skipped; -1 when there is none.
+    private static int GlossaryEchoBoundary(string text, int runStart)
+    {
+        for (var i = runStart - 1; i >= 0; i--)
+        {
+            var c = text[i];
+            if (IsNewline(c)) return i;
+            if (char.IsWhiteSpace(c)) continue;
+            return ".!?…".Contains(c) && i + 1 < text.Length && char.IsWhiteSpace(text[i + 1]) ? i : -1;
+        }
+        return -1;
     }
 
     // Mac 34bb2ce4: minimum head words before a lone trailing glossary term is stripped.

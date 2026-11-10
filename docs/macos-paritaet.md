@@ -65,6 +65,7 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | Getippte Anweisung in der Overlay-Karte | Textfeld, Return | nur Sprache / Strg+Zahl | offen (UI, Fokus, braucht echtes Windows) |
 | Gelernte Schnellanweisungen aus dem Nutzungslog | ja | kein Log | bewusst anders (keine Diktate gespeichert) |
 | Vorlagen als eigener Durchlauf (#275, #290) | ja | ja | erledigt |
+| Vorlagen: Fixes nach Mac-Abgleich | – | ja | erledigt: Vorlagentext zählt nicht als Beleg im Wortvergleich (nur Label-Wörter), Vorlagen speichern auch bei ungültigem Kürzel, „Nochmal ohne Vorlage“ ohne „Vorlage für neue Texte“ und bei langen Aufnahmen über das Transkript, Glossar-Korrekturen auch offline, kein Markdown-Entfernen bei Vorlagen, neues Kürzel gilt sofort, Hinweis „ohne Vorlage“ bei wiederhergestellter Aufnahme |
 | Vorlage + Screenshot | nie | Schnipsel geht mit | bewusst anders (Nutzer hat ihn gezielt ausgewählt) |
 | Vorlage: Tab = einmal ohne Vorlage, „Erneut ohne Vorlage“ (10 min) | ja | „Nochmal ohne Vorlage“ im Tray (10 min); Tab während der Aufnahme fehlt | teilweise |
 | Vorlage während der Aufnahme mit 1–9 wählen | ja | Kürzel nimmt die zuletzt benutzte | bewusst anders |
@@ -99,7 +100,8 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | Meeting-Fehler mit Grund | – | „N noch nicht transkribiert“ ohne Ursache | offen (klein) |
 | MCP-Grundwerkzeuge, Stufen, Undo | ja | ja (Abschnitt E) | erledigt |
 | MCP-Meeting-Werkzeuge + Live-Transkript (a5de0e37) | ja | – | offen; danach Datenschutztext unter „Claude & KI-Apps“ anpassen |
-| MCP-Vorlagen-Werkzeug, `get_recent_interactions` | ja | – | offen / bewusst anders (keine Diktate gespeichert) |
+| MCP-Vorlagen-Werkzeug | nein | nein | kein Unterschied (keine Seite hat eins) |
+| MCP `get_recent_interactions` | ja | – | bewusst anders (Windows speichert keine Diktate) |
 
 ## 6. Umfang, den Windows nicht hat
 

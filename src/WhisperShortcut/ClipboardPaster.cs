@@ -653,7 +653,14 @@ internal sealed class ClipboardPaster
                 var r = Core.SelectionCopyPolicy.Poll(changed, readable, elapsed, changedAt);
                 if (r == Core.CopyPollResult.Wait) continue;
                 if (r == Core.CopyPollResult.NoSelection) break;
+                // Read the editor markers while the copy is still on the clipboard (Restore replaces it).
+                bool wholeLine = r == Core.CopyPollResult.Selection && IsEditorEmptySelectionLineCopy();
                 if (previous != null) Restore(previous);
+                if (wholeLine)
+                {
+                    Core.Log.Info("Copy: whole-line copy from an empty editor selection, treating as no selection");
+                    return null;
+                }
                 if (r == Core.CopyPollResult.Unreadable)
                 {
                     Core.Log.Error("Copy: clipboard changed but could not be read");
@@ -1017,6 +1024,46 @@ internal sealed class ClipboardPaster
         snap.Items.Add((RegisterClipboardFormat("PNG"), png));
         snap.Items.Add((CF_DIB, dib));
         return RestoreCore(snap);
+    }
+
+    /// <summary>
+    /// Mac 5e041f0a (#383): VS Code, Cursor and Windsurf copy the whole current line for Ctrl+C without a
+    /// selection. They mark it in "vscode-editor-data" or inside Chromium's custom-data pickle.
+    /// Reads those two formats raw (no content is logged); false when absent or the clipboard cannot be opened.
+    /// </summary>
+    private bool IsEditorEmptySelectionLineCopy()
+    {
+        uint custom = RegisterClipboardFormat("Chromium Web Custom MIME Data Format");
+        uint editor = RegisterClipboardFormat("vscode-editor-data");
+        if (!IsClipboardFormatAvailable(custom) && !IsClipboardFormatAvailable(editor)) return false;
+        if (!Open()) return false;
+        try
+        {
+            byte[]? customData = ReadFormatBytes(custom);
+            byte[]? editorBytes = ReadFormatBytes(editor);
+            string? editorText = editorBytes == null ? null : System.Text.Encoding.UTF8.GetString(editorBytes);
+            return Core.SelectionCopyPolicy.IsEditorEmptySelectionLineCopy(customData, editorText);
+        }
+        finally { CloseClipboard(); }
+    }
+
+    /// <summary>Raw bytes of a memory format; the clipboard must be open. Null when the format is absent.</summary>
+    private static byte[]? ReadFormatBytes(uint format)
+    {
+        if (!IsClipboardFormatAvailable(format)) return null;
+        IntPtr handle = GetClipboardData(format);
+        if (handle == IntPtr.Zero) return null;
+        long size = (long)GlobalSize(handle);
+        if (size <= 0 || size > 16 * 1024 * 1024) return null;
+        IntPtr ptr = GlobalLock(handle);
+        if (ptr == IntPtr.Zero) return null;
+        try
+        {
+            var bytes = new byte[size];
+            Marshal.Copy(ptr, bytes, 0, bytes.Length);
+            return bytes;
+        }
+        finally { GlobalUnlock(handle); }
     }
 
     private bool TryReadText(out string? text)
