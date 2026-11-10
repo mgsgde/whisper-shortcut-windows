@@ -10,7 +10,7 @@ namespace WhisperShortcut;
 /// an error with an action stays until it is used or closed. A click elsewhere on the card closes it. Never takes
 /// focus, so a paste in the user's window is not disturbed. One notice at a time: a new one replaces the one on screen.
 /// </summary>
-internal sealed class Toast : Form
+internal sealed class Toast : OverlayForm
 {
     /// <summary>Mac notificationDuration: success and info.</summary>
     public static readonly TimeSpan InfoShown = TimeSpan.FromSeconds(3);
@@ -53,45 +53,15 @@ internal sealed class Toast : Form
     [System.ComponentModel.DesignerSerializationVisibility(System.ComponentModel.DesignerSerializationVisibility.Hidden)]
     public Func<Rectangle?>? AvoidBounds { get; set; }
 
-    public Toast()
+    public Toast() : base(layered: true, clickThrough: false)
     {
-        FormBorderStyle = FormBorderStyle.None;
-        ShowInTaskbar = false;
-        StartPosition = FormStartPosition.Manual;
-        // WHY no TopMost = true: WinForms then activates the window on Show despite ShowWithoutActivation, which
-        // took the focus from the chat (it closes on focus loss) and from the target window. WS_EX_TOPMOST below keeps it on top.
         AccessibleRole = AccessibleRole.Alert;
         _timer.Tick += (_, _) => OnTick();
-    }
-
-    protected override bool ShowWithoutActivation => true;
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            const int WS_EX_TOPMOST = 0x8, WS_EX_TOOLWINDOW = 0x80, WS_EX_LAYERED = 0x80000, WS_EX_NOACTIVATE = 0x08000000;
-            var cp = base.CreateParams;
-            cp.ExStyle |= WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE;
-            return cp;
-        }
-    }
-
-    protected override void WndProc(ref Message m)
-    {
-        const int WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
-        if (m.Msg == WM_MOUSEACTIVATE)
-        {
-            m.Result = MA_NOACTIVATE;
-            return;
-        }
-        base.WndProc(ref m);
     }
 
     protected override void OnPaint(PaintEventArgs e) { }
     protected override void OnPaintBackground(PaintEventArgs e) { }
 
-    private float S => DeviceDpi / 96f;
     private static bool Hc => SystemInformation.HighContrast;
 
     /// <summary>How long a notice stays: null = until it is used or closed (an error with an action, like the Mac).</summary>

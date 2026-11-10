@@ -1,7 +1,6 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
-using System.Runtime.InteropServices;
 
 namespace WhisperShortcut;
 
@@ -18,7 +17,7 @@ namespace WhisperShortcut;
 /// The window is a per-pixel-alpha layered window: the pill is drawn into a bitmap (true round ends,
 /// a soft shadow, fade and slide in and out) and handed to UpdateLayeredWindow.
 /// </summary>
-internal sealed class RecordingOverlay : Form
+internal sealed class RecordingOverlay : OverlayForm
 {
     private enum Phase { Hidden, Recording, Processing, Done, Warning }
 
@@ -110,42 +109,11 @@ internal sealed class RecordingOverlay : Form
     private bool _cancelHot;
     private const float CancelSize = 26;
 
-    public RecordingOverlay()
+    public RecordingOverlay() : base(layered: true, clickThrough: true)
     {
-        FormBorderStyle = FormBorderStyle.None;
-        ShowInTaskbar = false;
-        StartPosition = FormStartPosition.Manual;
-        // WHY no TopMost = true: WinForms then activates the window on Show despite ShowWithoutActivation, which
-        // took the focus from the chat (it closes on focus loss) and from the target window. WS_EX_TOPMOST below keeps it on top.
         AccessibleName = Core.UserCopy.OverlayAccessibleName;
         AccessibleRole = AccessibleRole.StatusBar;
         _timer.Tick += (_, _) => OnTick();
-    }
-
-    protected override bool ShowWithoutActivation => true;
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            const int WS_EX_TOPMOST = 0x8, WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80,
-                WS_EX_LAYERED = 0x80000, WS_EX_NOACTIVATE = 0x08000000;
-            var cp = base.CreateParams;
-            cp.ExStyle |= WS_EX_TOPMOST | WS_EX_TRANSPARENT | WS_EX_TOOLWINDOW | WS_EX_LAYERED | WS_EX_NOACTIVATE;
-            return cp;
-        }
-    }
-
-    protected override void WndProc(ref Message m)
-    {
-        // A click on the card must not activate it: the user's window keeps focus for the paste.
-        const int WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
-        if (m.Msg == WM_MOUSEACTIVATE)
-        {
-            m.Result = MA_NOACTIVATE;
-            return;
-        }
-        base.WndProc(ref m);
     }
 
     // The bitmap goes out through UpdateLayeredWindow; there is nothing for WM_PAINT to do.
@@ -262,8 +230,6 @@ internal sealed class RecordingOverlay : Form
     }
 
     // ---------------- layout ----------------
-
-    private float S => DeviceDpi / 96f;
 
     private static bool Hc => SystemInformation.HighContrast;
     private static Color CPrimary => Hc ? SystemColors.WindowText : Primary;
@@ -497,7 +463,7 @@ internal sealed class RecordingOverlay : Form
             using var cg = Graphics.FromImage(_cardCache);
             ConfigureText(cg);
             if (!Hc) LayeredWindow.Shadow(cg, card, radius, s);
-            using (var path = Rounded(card, radius))
+            using (var path = Theme.Rounded(card, radius))
             {
                 if (Hc)
                 {
@@ -516,7 +482,7 @@ internal sealed class RecordingOverlay : Form
             {
                 // Hairline border, a touch brighter along the top edge like light on glass.
                 var inner = RectangleF.Inflate(card, -0.5f, -0.5f);
-                using var path = Rounded(inner, radius - 0.5f);
+                using var path = Theme.Rounded(inner, radius - 0.5f);
                 using var edge = new LinearGradientBrush(card, Color.FromArgb(70, 255, 255, 255), Color.FromArgb(22, 255, 255, 255), 90f);
                 using var pen = new Pen(edge, 1f);
                 cg.DrawPath(pen, path);
@@ -578,7 +544,7 @@ internal sealed class RecordingOverlay : Form
     {
         float tw = MeasureWidth(g, label, _smallFont!);
         var r = new RectangleF(x, cy - 9 * s, tw + 12 * s, 18 * s);
-        using (var path = Rounded(r, 5 * s))
+        using (var path = Theme.Rounded(r, 5 * s))
         {
             using var fill = new SolidBrush(Hc ? SystemColors.Window : Color.FromArgb(34, 255, 255, 255));
             g.FillPath(fill, path);
@@ -607,12 +573,12 @@ internal sealed class RecordingOverlay : Form
             if (i == _hover)
             {
                 using var fill = new SolidBrush(Hc ? SystemColors.Highlight : Color.FromArgb(30, 255, 255, 255));
-                using var path = Rounded(row, 9 * s);
+                using var path = Theme.Rounded(row, 9 * s);
                 g.FillPath(fill, path);
             }
             float mid = row.Y + row.Height / 2;
             var cap = new RectangleF(textX, mid - 9 * s, chipW, 18 * s);
-            using (var path = Rounded(cap, 5 * s))
+            using (var path = Theme.Rounded(cap, 5 * s))
             {
                 using var fill = new SolidBrush(Color.FromArgb(i == _hover ? 52 : 30, 255, 255, 255));
                 g.FillPath(fill, path);
@@ -729,23 +695,6 @@ internal sealed class RecordingOverlay : Form
         }
     }
 
-    private static GraphicsPath Rounded(RectangleF r, float radius)
-    {
-        var path = new GraphicsPath();
-        float d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
-        if (d <= 0.5f)
-        {
-            path.AddRectangle(r);
-            return path;
-        }
-        path.AddArc(r.X, r.Y, d, d, 180, 90);
-        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
-
     private static GraphicsPath RoundedBar(float x, float y, float w, float h)
     {
         var path = new GraphicsPath();
@@ -799,14 +748,6 @@ internal sealed class RecordingOverlay : Form
         if (row >= 0) QuickActionClicked?.Invoke(row);
     }
 
-    private void SetClickThrough(bool through)
-    {
-        const int GWL_EXSTYLE = -20, WS_EX_TRANSPARENT = 0x20;
-        int ex = GetWindowLong(Handle, GWL_EXSTYLE);
-        int want = through ? ex | WS_EX_TRANSPARENT : ex & ~WS_EX_TRANSPARENT;
-        if (want != ex) SetWindowLong(Handle, GWL_EXSTYLE, want);
-    }
-
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -821,10 +762,4 @@ internal sealed class RecordingOverlay : Form
         }
         base.Dispose(disposing);
     }
-
-    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")]
-    private static extern int GetWindowLong(IntPtr hwnd, int index);
-
-    [DllImport("user32.dll", EntryPoint = "SetWindowLongW")]
-    private static extern int SetWindowLong(IntPtr hwnd, int index, int value);
 }
