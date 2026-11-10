@@ -13,6 +13,17 @@ public interface ISecretProtector
     string? Unprotect(string stored);
 }
 
+/// <summary>The settings as <see cref="Settings.Capture"/> took them. Opaque: only <see cref="Settings.Restore"/> reads it.</summary>
+public sealed class SettingsState
+{
+    internal SettingsState(string json) => Json = json;
+
+    internal string Json { get; }
+
+    /// <summary>Never the content: it holds the API keys in the clear.</summary>
+    public override string ToString() => nameof(SettingsState);
+}
+
 /// <summary>Passthrough protector for tests: stores the secret as is.</summary>
 public sealed class PlainSecretProtector : ISecretProtector
 {
@@ -340,88 +351,8 @@ public sealed partial class Settings
         {
             var dto = JsonSerializer.Deserialize<Dto>(File.ReadAllText(path), Json);
             if (dto == null) return s;
-            if (dto.ShortcutDefaultsAltV1 == true) s.ResetShortcutsToDefaults();
-            var rewrite = !string.IsNullOrEmpty(dto.ApiKeyPlain) || !string.IsNullOrEmpty(dto.OpenAiKeyPlain);
-            if (!string.IsNullOrEmpty(dto.ApiKeyProtected))
-            {
-                try { s.ApiKey = protector.Unprotect(dto.ApiKeyProtected) ?? ""; }
-                catch (Exception) { s.ApiKey = ""; }
-            }
-            else if (!string.IsNullOrEmpty(dto.ApiKeyPlain))
-            {
-                s.ApiKey = dto.ApiKeyPlain;
-            }
-            if (!string.IsNullOrEmpty(dto.OpenAiKeyProtected))
-            {
-                try { s.OpenAiKey = protector.Unprotect(dto.OpenAiKeyProtected) ?? ""; }
-                catch (Exception) { s.OpenAiKey = ""; }
-            }
-            else if (!string.IsNullOrEmpty(dto.OpenAiKeyPlain))
-            {
-                s.OpenAiKey = dto.OpenAiKeyPlain;
-            }
-            s.Dictate = ModelSelection.Load(ModelStep.Transcription, dto.SpeechEngine, dto.TranscriptionModel, dto.OpenAiTranscriptionModel,
-                ModelSelection.Default(ModelStep.Transcription));
-            s.Prompt = ModelSelection.Load(ModelStep.Text, dto.TextEngine, dto.PromptModel, dto.OpenAiPromptModel, ModelSelection.Default(ModelStep.Text));
-            s.PunctuationMode = Choices.Punctuation.Parse(dto.PunctuationMode);
-            s.DictateMode = Choices.DictateMode.Parse(dto.DictateMode);
-            s.TranscriptionLanguage = TranscriptionLanguages.Normalize(dto.TranscriptionLanguage);
-            s.TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(dto.TranscriptionTemperature);
-            s.TranscriptionThinking = TranscriptionTuning.NormalizeThinking(dto.TranscriptionThinking);
-            // JSON null entries (hand-edited or a half-written file) must not stay in the list:
-            // GlossaryEdit.TryAdd would then NullRef when the user adds a term.
-            s.Glossary = (dto.Glossary ?? new()).Where(t => t != null).ToList()!;
-            s.DictatePromptTemplate = dto.DictatePromptTemplate ?? dto.LegacyPromptSystemPrompt ?? "";
-            s.DictateSystemPrompt = CustomOrEmpty(dto.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt);
-            s.PromptModeSystemPrompt = CustomOrEmpty(dto.PromptModeSystemPrompt, Prompts.DefaultPromptModeSystemPrompt);
-            if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
-            if (!string.IsNullOrWhiteSpace(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey;
-            if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
-            // "" is a stored choice (unassigned) for these; only a missing field falls back.
-            if (dto.OpenSettingsHotkey != null) s.OpenSettingsHotkey = dto.OpenSettingsHotkey;
-            s.DictateHotkeyEnabled = dto.DictateHotkeyEnabled ?? s.DictateHotkeyEnabled;
-            s.PromptHotkeyEnabled = dto.PromptHotkeyEnabled ?? s.PromptHotkeyEnabled;
-            s.GlossaryHotkeyEnabled = dto.GlossaryHotkeyEnabled ?? s.GlossaryHotkeyEnabled;
-            s.ScreenshotHotkeyEnabled = dto.ScreenshotHotkeyEnabled ?? s.ScreenshotHotkeyEnabled;
-            s.LiveDictateHotkeyEnabled = dto.LiveDictateHotkeyEnabled ?? s.LiveDictateHotkeyEnabled;
-            s.OpenSettingsHotkeyEnabled = dto.OpenSettingsHotkeyEnabled ?? s.OpenSettingsHotkeyEnabled;
-            if (dto.ReadAloudHotkey != null) s.ReadAloudHotkey = dto.ReadAloudHotkey;
-            s.ReadAloudHotkeyEnabled = dto.ReadAloudHotkeyEnabled ?? s.ReadAloudHotkeyEnabled;
-            s.ReadAloudModel = ReadAloud.NormalizeModel(dto.ReadAloudModel);
-            s.ReadAloudVoiceGemini = ReadAloud.NormalizeVoice(TtsProvider.Gemini, dto.ReadAloudVoiceGemini);
-            s.ReadAloudVoiceOpenAi = ReadAloud.NormalizeVoice(TtsProvider.OpenAI, dto.ReadAloudVoiceOpenAi);
-            s.ReadAloudSpeed = ReadAloud.NormalizeSpeed(dto.ReadAloudSpeed ?? ReadAloud.DefaultSpeed);
-            s.ReadAloudSmartRewrite = dto.ReadAloudSmartRewrite ?? true;
-            s.RightCtrlDictation = dto.RightCtrlDictation ?? true;
-            s.Templates = LoadTemplates(dto.Templates);
-            s.TemplateHotkey = dto.TemplateHotkey ?? "";
-            s.SendScreenshots = dto.SendScreenshots ?? false;
-            if (dto.ScreenshotHotkey != null) s.ScreenshotHotkey = dto.ScreenshotHotkey;
-            s.LastTemplateId = dto.LastTemplateId ?? "";
-            s.Microphone = dto.Microphone ?? "";
-            s.MeetingHotkey = dto.MeetingHotkey ?? "";
-            if (dto.LiveDictateHotkey != null) s.LiveDictateHotkey = dto.LiveDictateHotkey;
-            s.MeetingAudioMode = MeetingAudioRouting.Name(MeetingAudioRouting.Parse(dto.MeetingAudioMode));
-            s.MeetingSummary = dto.MeetingSummary ?? true;
-            s.OfflineMode = dto.OfflineMode ?? false;
-            s.OfflineLlmId = dto.OfflineLlmId ?? "";
-            s.AutoPaste = dto.AutoPaste ?? true;
-            s.Sounds = dto.Sounds ?? true;
-            s.AutoUpdateCheck = dto.AutoUpdateCheck ?? true;
-            s.ClipboardAfterPaste = Choices.AfterPasteFromFile(dto.ClipboardAfterPaste, dto.RestoreClipboard);
-            s.WelcomeCompleted = dto.WelcomeCompleted ?? WelcomeTour.CompletedForExistingFile(s.ApiKey, s.OpenAiKey, s.OfflineMode);
-            s.WelcomeStep = dto.WelcomeStep ?? 0;
-            s.MoveOfferDismissed = (dto.MoveOfferDismissed ?? new()).Where(t => t != null).ToList()!;
-            // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
-            s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
-                ? new(QuickActionList.Defaults)
-                : QuickActionList.Clean(dto.QuickActions);
-            s.LoadFeatures(dto); // Settings.Features.cs: Vorlesen extras, Meetings, Chat (after the keys it checks against)
-            // An update adds the Read Aloud key to a file that never had it. It must not take a key the user already uses.
-            if (dto.ReadAloudHotkey == null && s.ReadAloudHotkeyEnabled && HotkeySlots.Clashes(s, HotkeyAction.ReadAloud))
-                s.ReadAloudHotkeyEnabled = false;
-            // A leftover plaintext key field is imported above and must leave the file on the next write.
-            if (rewrite)
+            // A leftover plaintext key field is imported by ApplyDto and must leave the file on the next write.
+            if (s.ApplyDto(dto, protector, exact: false))
             {
                 try { s.Save(); } catch { }
             }
@@ -432,6 +363,100 @@ public sealed partial class Settings
             try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
         }
         return s;
+    }
+
+    /// <summary>
+    /// Takes the values of <paramref name="dto"/> over (the one place that knows how a stored file becomes settings). Returns true
+    /// when the file still held a plaintext key, which must leave it on the next write. <paramref name="exact"/> = a state from
+    /// <see cref="Capture"/>: every field is there, so a blank shortcut key is a value and not a missing field.
+    /// </summary>
+    private bool ApplyDto(Dto dto, ISecretProtector protector, bool exact)
+    {
+        bool Has(string? key) => exact ? key != null : !string.IsNullOrWhiteSpace(key);
+        var s = this;
+        if (dto.ShortcutDefaultsAltV1 == true) s.ResetShortcutsToDefaults();
+        // Restore: a key the state does not hold is empty, not whatever the settings hold now (Load starts from "" anyway).
+        if (exact) { s.ApiKey = ""; s.OpenAiKey = ""; }
+        var rewrite = !string.IsNullOrEmpty(dto.ApiKeyPlain) || !string.IsNullOrEmpty(dto.OpenAiKeyPlain);
+        if (!string.IsNullOrEmpty(dto.ApiKeyProtected))
+        {
+            try { s.ApiKey = protector.Unprotect(dto.ApiKeyProtected) ?? ""; }
+            catch (Exception) { s.ApiKey = ""; }
+        }
+        else if (!string.IsNullOrEmpty(dto.ApiKeyPlain))
+        {
+            s.ApiKey = dto.ApiKeyPlain;
+        }
+        if (!string.IsNullOrEmpty(dto.OpenAiKeyProtected))
+        {
+            try { s.OpenAiKey = protector.Unprotect(dto.OpenAiKeyProtected) ?? ""; }
+            catch (Exception) { s.OpenAiKey = ""; }
+        }
+        else if (!string.IsNullOrEmpty(dto.OpenAiKeyPlain))
+        {
+            s.OpenAiKey = dto.OpenAiKeyPlain;
+        }
+        s.Dictate = ModelSelection.Load(ModelStep.Transcription, dto.SpeechEngine, dto.TranscriptionModel, dto.OpenAiTranscriptionModel,
+            ModelSelection.Default(ModelStep.Transcription));
+        s.Prompt = ModelSelection.Load(ModelStep.Text, dto.TextEngine, dto.PromptModel, dto.OpenAiPromptModel, ModelSelection.Default(ModelStep.Text));
+        s.PunctuationMode = Choices.Punctuation.Parse(dto.PunctuationMode);
+        s.DictateMode = Choices.DictateMode.Parse(dto.DictateMode);
+        s.TranscriptionLanguage = TranscriptionLanguages.Normalize(dto.TranscriptionLanguage);
+        s.TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(dto.TranscriptionTemperature);
+        s.TranscriptionThinking = TranscriptionTuning.NormalizeThinking(dto.TranscriptionThinking);
+        // JSON null entries (hand-edited or a half-written file) must not stay in the list:
+        // GlossaryEdit.TryAdd would then NullRef when the user adds a term.
+        s.Glossary = (dto.Glossary ?? new()).Where(t => t != null).ToList()!;
+        s.DictatePromptTemplate = dto.DictatePromptTemplate ?? dto.LegacyPromptSystemPrompt ?? "";
+        s.DictateSystemPrompt = CustomOrEmpty(dto.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt);
+        s.PromptModeSystemPrompt = CustomOrEmpty(dto.PromptModeSystemPrompt, Prompts.DefaultPromptModeSystemPrompt);
+        if (Has(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey!;
+        if (Has(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey!;
+        if (Has(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey!;
+        // "" is a stored choice (unassigned) for these; only a missing field falls back.
+        if (dto.OpenSettingsHotkey != null) s.OpenSettingsHotkey = dto.OpenSettingsHotkey;
+        s.DictateHotkeyEnabled = dto.DictateHotkeyEnabled ?? s.DictateHotkeyEnabled;
+        s.PromptHotkeyEnabled = dto.PromptHotkeyEnabled ?? s.PromptHotkeyEnabled;
+        s.GlossaryHotkeyEnabled = dto.GlossaryHotkeyEnabled ?? s.GlossaryHotkeyEnabled;
+        s.ScreenshotHotkeyEnabled = dto.ScreenshotHotkeyEnabled ?? s.ScreenshotHotkeyEnabled;
+        s.LiveDictateHotkeyEnabled = dto.LiveDictateHotkeyEnabled ?? s.LiveDictateHotkeyEnabled;
+        s.OpenSettingsHotkeyEnabled = dto.OpenSettingsHotkeyEnabled ?? s.OpenSettingsHotkeyEnabled;
+        if (dto.ReadAloudHotkey != null) s.ReadAloudHotkey = dto.ReadAloudHotkey;
+        s.ReadAloudHotkeyEnabled = dto.ReadAloudHotkeyEnabled ?? s.ReadAloudHotkeyEnabled;
+        s.ReadAloudModel = ReadAloud.NormalizeModel(dto.ReadAloudModel);
+        s.ReadAloudVoiceGemini = ReadAloud.NormalizeVoice(TtsProvider.Gemini, dto.ReadAloudVoiceGemini);
+        s.ReadAloudVoiceOpenAi = ReadAloud.NormalizeVoice(TtsProvider.OpenAI, dto.ReadAloudVoiceOpenAi);
+        s.ReadAloudSpeed = ReadAloud.NormalizeSpeed(dto.ReadAloudSpeed ?? ReadAloud.DefaultSpeed);
+        s.ReadAloudSmartRewrite = dto.ReadAloudSmartRewrite ?? true;
+        s.RightCtrlDictation = dto.RightCtrlDictation ?? true;
+        s.Templates = LoadTemplates(dto.Templates);
+        s.TemplateHotkey = dto.TemplateHotkey ?? "";
+        s.SendScreenshots = dto.SendScreenshots ?? false;
+        if (dto.ScreenshotHotkey != null) s.ScreenshotHotkey = dto.ScreenshotHotkey;
+        s.LastTemplateId = dto.LastTemplateId ?? "";
+        s.Microphone = dto.Microphone ?? "";
+        s.MeetingHotkey = dto.MeetingHotkey ?? "";
+        if (dto.LiveDictateHotkey != null) s.LiveDictateHotkey = dto.LiveDictateHotkey;
+        s.MeetingAudioMode = MeetingAudioRouting.Name(MeetingAudioRouting.Parse(dto.MeetingAudioMode));
+        s.MeetingSummary = dto.MeetingSummary ?? true;
+        s.OfflineMode = dto.OfflineMode ?? false;
+        s.OfflineLlmId = dto.OfflineLlmId ?? "";
+        s.AutoPaste = dto.AutoPaste ?? true;
+        s.Sounds = dto.Sounds ?? true;
+        s.AutoUpdateCheck = dto.AutoUpdateCheck ?? true;
+        s.ClipboardAfterPaste = Choices.AfterPasteFromFile(dto.ClipboardAfterPaste, dto.RestoreClipboard);
+        s.WelcomeCompleted = dto.WelcomeCompleted ?? WelcomeTour.CompletedForExistingFile(s.ApiKey, s.OpenAiKey, s.OfflineMode);
+        s.WelcomeStep = dto.WelcomeStep ?? 0;
+        s.MoveOfferDismissed = (dto.MoveOfferDismissed ?? new()).Where(t => t != null).ToList()!;
+        // Missing field = old file, give the defaults; an explicit empty list means the user removed them all.
+        s.QuickActions = dto.QuickActions == null || QuickActionList.IsLegacyDefaults(dto.QuickActions)
+            ? new(QuickActionList.Defaults)
+            : QuickActionList.Clean(dto.QuickActions);
+        s.LoadFeatures(dto); // Settings.Features.cs: Vorlesen extras, Meetings, Chat (after the keys it checks against)
+        // An update adds the Read Aloud key to a file that never had it. It must not take a key the user already uses.
+        if (dto.ReadAloudHotkey == null && s.ReadAloudHotkeyEnabled && HotkeySlots.Clashes(s, HotkeyAction.ReadAloud))
+            s.ReadAloudHotkeyEnabled = false;
+        return rewrite;
     }
 
     /// <summary>The shortcuts an install had before the Mac-digit defaults; every flag on, as it behaved then.</summary>
@@ -489,6 +514,16 @@ public sealed partial class Settings
     /// </summary>
     public string Fingerprint() => JsonSerializer.Serialize(ToDto(key =>
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(key)))), Json);
+
+    /// <summary>
+    /// Everything that is saved, kept in memory (keys in the clear, never written anywhere), to put back with <see cref="Restore"/>
+    /// when writing fails: built on the same Dto as the file, so a new setting is covered the day it gets its JSON field.
+    /// </summary>
+    public SettingsState Capture() => new(JsonSerializer.Serialize(ToDto(key => key), Json));
+
+    /// <summary>Puts every saved setting back as it was at <see cref="Capture"/>. Not saved; settings that are not persisted stay as they are.</summary>
+    public void Restore(SettingsState state) =>
+        ApplyDto(JsonSerializer.Deserialize<Dto>(state.Json, Json)!, new PlainSecretProtector(), exact: true);
 
     private Dto ToDto(Func<string, string> protect)
     {

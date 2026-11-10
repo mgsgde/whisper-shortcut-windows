@@ -24,19 +24,6 @@ internal sealed partial class SettingsForm
     private readonly List<Label> _changeWraps = new();
     private readonly System.Windows.Forms.Timer _mcpClock = new() { Interval = 30_000 };
 
-    /// <summary>True for the moment between an edit and its automatic apply.</summary>
-    public bool HasUnsavedChanges => _snapshot.Length > 0 && Snapshot() != _snapshot;
-
-    /// <summary>The page in front, to reopen the window on it.</summary>
-    public string CurrentPage => _pages.FirstOrDefault(p => p.Value.Visible).Key ?? General;
-
-    /// <summary>Closes without asking about unsaved changes (an AI app changed the settings underneath and the window reloads).</summary>
-    public void CloseDiscarding()
-    {
-        _discard = true;
-        Close();
-    }
-
     private void BuildAiAppsPage(McpService? mcp)
     {
         var page = NewPage(AiAppsPage, "Claude kann WhisperShortcut für dich einrichten: Namen und Fachwörter ins Glossar eintragen, "

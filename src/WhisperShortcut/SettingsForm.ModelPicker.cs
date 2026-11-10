@@ -3,8 +3,8 @@ namespace WhisperShortcut;
 /// <summary>
 /// The model pickers on Diktieren and Dictate Prompt, built like the Mac's (ModelPickerCuration): at most three tiles
 /// (Empfohlen · Am schnellsten · Offline), the rest behind „Weitere Modelle“, one line about the chosen model below.
-/// A tile sets the step's provider and model; the provider and model combos underneath stay the stored state, so
-/// Snapshot and TrySave are unchanged.
+/// A tile sets the step's provider and model; the provider and model combos underneath stay the stored state (one binding
+/// per step, SettingsForm.Bindings.cs).
 /// </summary>
 internal sealed partial class SettingsForm
 {

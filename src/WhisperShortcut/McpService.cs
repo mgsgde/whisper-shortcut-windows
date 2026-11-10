@@ -19,7 +19,6 @@ internal sealed class McpService : IMcpHost, IDisposable
     private readonly Core.Settings _settings;
     private readonly SynchronizationContext _ui;
     private readonly Func<bool> _processing;
-    private readonly Func<bool> _settingsDirty;
     private readonly Action _afterApply;
     private readonly McpToolContext _context;
     private readonly McpDispatcher _dispatcher;
@@ -40,14 +39,12 @@ internal sealed class McpService : IMcpHost, IDisposable
     public event Action? Changed;
 
     /// <param name="processing">True while a recording or its processing runs: writes wait until it is done.</param>
-    /// <param name="settingsDirty">True while the settings window has unsaved edits: a write would be overwritten by its Save.</param>
-    /// <param name="afterApply">Settings were changed and saved: re-register hotkeys, refresh the open window.</param>
-    public McpService(Core.Settings settings, SynchronizationContext ui, Func<bool> processing, Func<bool> settingsDirty, Action afterApply)
+    /// <param name="afterApply">Settings were changed and saved: re-register hotkeys, let the open settings window pull the new values.</param>
+    public McpService(Core.Settings settings, SynchronizationContext ui, Func<bool> processing, Action afterApply)
     {
         _settings = settings;
         _ui = ui;
         _processing = processing;
-        _settingsDirty = settingsDirty;
         _afterApply = afterApply;
         Config = McpConfig.Load(McpConfig.DefaultPath, new DpapiProtector());
         ChangeLog = new McpChangeLog(McpChangeLog.DefaultPath);
@@ -218,8 +215,6 @@ internal sealed class McpService : IMcpHost, IDisposable
     public string? WriteBlockedReason()
     {
         if (_processing()) return "WhisperShortcut is recording or processing a dictation right now. Nothing was changed. Try again in a moment.";
-        if (_settingsDirty())
-            return "The WhisperShortcut Settings window has unsaved changes. Nothing was changed. Ask the user to save or close it, then try again.";
         return null;
     }
 
@@ -227,7 +222,6 @@ internal sealed class McpService : IMcpHost, IDisposable
     public string? AcceptBlockedReason()
     {
         if (_processing()) return "Gerade läuft eine Aufnahme. Bitte warten, bis der Text da ist, dann noch einmal „Übernehmen“.";
-        if (_settingsDirty()) return "Im Einstellungsfenster gibt es ungespeicherte Änderungen. Bitte erst speichern oder schließen, dann „Übernehmen“.";
         return null;
     }
 

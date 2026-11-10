@@ -119,4 +119,52 @@ public class SettingsRoundTripTests
         var fresh = Settings.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json"), new Reverse());
         foreach (var p in SettableProperties()) Assert.NotNull(ValueFor(p, fresh));
     }
+
+    /// <summary>R7: Capture/Restore is what the settings window rolls back with when writing fails; it must cover every property.</summary>
+    [Theory]
+    [MemberData(nameof(PropertyNames))]
+    public void SettableProperty_IsRestoredByRestore(string name)
+    {
+        var prop = typeof(Settings).GetProperty(name)!;
+        var s = Settings.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json"), new Reverse());
+        var original = prop.GetValue(s);
+        var originalJson = Json(original);
+        var before = s.Capture();
+        var fingerprint = s.Fingerprint();
+
+        prop.SetValue(s, ValueFor(prop, s));
+        Assert.NotEqual(fingerprint, s.Fingerprint());
+        s.Restore(before);
+
+        Assert.Equal(originalJson, Json(prop.GetValue(s)));
+        Assert.Equal(fingerprint, s.Fingerprint());
+    }
+
+    [Fact]
+    public void Capture_KeepsBlankShortcutsAndKeys_AndRestoreIsExact()
+    {
+        var s = Settings.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json"), new Reverse());
+        s.ApiKey = "AIza-secret";
+        s.OpenAiKey = "";
+        s.DictateHotkey = "";
+        s.GlossaryHotkey = "";
+        s.Glossary = new List<string> { "Müller", "Schmidt" };
+        var print = s.Fingerprint();
+        var state = s.Capture();
+
+        s.ApiKey = "";
+        s.OpenAiKey = "sk-other";
+        s.DictateHotkey = "Alt+9";
+        s.GlossaryHotkey = "Alt+8";
+        s.Glossary.Clear();
+        s.Restore(state);
+
+        Assert.Equal("AIza-secret", s.ApiKey);
+        Assert.Equal("", s.OpenAiKey);
+        Assert.Equal("", s.DictateHotkey);
+        Assert.Equal("", s.GlossaryHotkey);
+        Assert.Equal(new[] { "Müller", "Schmidt" }, s.Glossary);
+        Assert.Equal(print, s.Fingerprint());
+        Assert.DoesNotContain("AIza-secret", state.ToString());
+    }
 }

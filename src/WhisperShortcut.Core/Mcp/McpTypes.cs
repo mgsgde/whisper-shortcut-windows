@@ -71,7 +71,7 @@ public interface IMcpHost
     /// <summary>Turns start-with-Windows on or off; false = failed.</summary>
     bool SetAutoStart(bool enabled);
 
-    /// <summary>Non-null: an English sentence saying why writes must wait (recording running, Settings window has unsaved edits).</summary>
+    /// <summary>Non-null: an English sentence saying why writes must wait (a recording is running).</summary>
     string? WriteBlockedReason();
 
     /// <summary>Settings were changed and saved: re-register hotkeys etc.</summary>

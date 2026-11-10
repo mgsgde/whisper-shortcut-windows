@@ -92,13 +92,17 @@ internal sealed partial class SettingsForm : FastShowForm
     /// <summary>For the UI tests: whether the window does background work (edit check, AI-app clock).</summary>
     internal bool TimersRunningForTests => _applyTimer.Enabled || _mcpClock.Enabled;
     private LevelProbe? _probe;
-    private string _snapshot = "";
-    private bool _loadedOffline;
+    // Every user-changeable value is one binding (SettingsForm.Bindings.cs); the window is loaded once the baselines are taken.
+    private readonly List<IBinding> _bindings = new();
+    private bool _loaded;
+    // A save left bindings edited (a shortcut was refused, writing failed): not tried again until something is edited.
+    private bool _holdSave;
+    // Set by TrySave for the shortcut bindings' gate: every shortcut valid.
+    private bool _keysOk;
     // "✓ Gespeichert" stays in the status line until then (Environment.TickCount64).
     private long _savedHintUntil;
     // Mac: every edit applies on its own. A changed state is written once it held still this long (keys: 500 ms).
     private const int ApplyDelayMs = 500;
-    private string _pendingSnapshot = "";
     private long _pendingSince;
     // Why the shortcuts were not taken over (invalid or taken twice); the rest of the edits still apply.
     private string? _keyProblem;
@@ -614,7 +618,7 @@ internal sealed partial class SettingsForm : FastShowForm
         // Each option sits in its own card row, so the automatic radio grouping (same parent) does not apply.
         _onlineMode.CheckedChanged += (_, _) => { if (_onlineMode.Checked) _offlineMode.Checked = false; };
         _offlineMode.CheckedChanged += (_, _) => { if (_offlineMode.Checked) _onlineMode.Checked = false; };
-        // Mac: one switch. The two option buttons stay the stored state (Snapshot, SyncOfflineFromTray) without being shown.
+        // Mac: one switch. The two option buttons stay the stored state (bound in SettingsForm.Bindings.cs) without being shown.
         var offlineSwitch = new ToggleSwitch { Checked = settings.OfflineMode, AccessibleName = "Offline-Modus" };
         offlineSwitch.CheckedChanged += (_, _) => (offlineSwitch.Checked ? _offlineMode : _onlineMode).Checked = true;
         _offlineMode.CheckedChanged += (_, _) => offlineSwitch.Checked = _offlineMode.Checked;
@@ -662,6 +666,9 @@ internal sealed partial class SettingsForm : FastShowForm
 
         // ================= page: Info =================
         BuildInfoPage();
+
+        // Every control above that holds a setting, in one list (SettingsForm.Bindings.cs).
+        BuildBindings();
 
         // ================= frame: navigation, page host, buttons =================
         // Scrolls when the window is lower than the pages and their section headers.
@@ -739,8 +746,8 @@ internal sealed partial class SettingsForm : FastShowForm
             Location = new Point(area.Left + (area.Width - Width) / 2, area.Top + (area.Height - Height) / 2);
             Theme.Apply(this);
             FitHints();
-            _snapshot = Snapshot();
-            _loadedOffline = _settings.OfflineMode;
+            foreach (var b in _bindings) b.Rebase(_settings);
+            _loaded = true;
             _openedPrompts = (_settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.DictatePromptTemplate);
         };
         UpdateMode();
@@ -760,20 +767,19 @@ internal sealed partial class SettingsForm : FastShowForm
             .Concat(_dictateStep.Combos).Concat(_promptStep.Combos).ToArray();
         dirtyTimer.Tick += (_, _) =>
         {
-            if (_snapshot.Length == 0 || combos.Any(c => c.DroppedDown)) return;
-            var now = Snapshot();
-            if (now != _snapshot)
-            {
-                if (now != _pendingSnapshot) (_pendingSnapshot, _pendingSince) = (now, Environment.TickCount64);
-                else if (Environment.TickCount64 - _pendingSince >= ApplyDelayMs) TrySave();
-            }
+            if (!_loaded || combos.Any(c => c.DroppedDown)) return;
+            bool edited = PollBindings(out bool moved);
+            if (!edited) _holdSave = false;
+            else if (moved) (_holdSave, _pendingSince) = (false, Environment.TickCount64);
+            else if (!_holdSave && Environment.TickCount64 - _pendingSince >= ApplyDelayMs) TrySave();
             UpdateSaveState();
         };
         // WHY only while visible: the window built in advance waits hidden for hours, and reading every field
         // (prompts, glossary, templates) seven times a second there only costs CPU while the user dictates.
         VisibleChanged += (_, _) => dirtyTimer.Enabled = Visible;
         FormClosing += OnClosing;
-        Activated += (_, _) => { if (!IsDisposed && !_discard) SyncOfflineFromTray(); };
+        // The tray, the playback bar or an AI app may have changed settings while the window was behind: show them.
+        Activated += (_, _) => { if (!IsDisposed && !_discard) Pull(); };
         // A running mic test keeps the microphone (and the Windows mic indicator) busy in the background.
         Deactivate += (_, _) => { if (_probe != null) StopMicTest(); };
         // Light/dark switched in Windows while the window is open: follow it.
@@ -1197,6 +1203,9 @@ internal sealed partial class SettingsForm : FastShowForm
         /// <summary>What to store: "" for the default.</summary>
         public string Value => Core.Settings.CustomOrEmpty(Box.Text, _default);
 
+        /// <summary>Shows a stored value ("" = the default text).</summary>
+        public void Show(string stored) => Box.Text = (stored.Length > 0 ? stored : _default).ReplaceLineEndings("\r\n");
+
         private void Update()
         {
             bool custom = Value.Length > 0;
@@ -1445,7 +1454,7 @@ internal sealed partial class SettingsForm : FastShowForm
     private bool SaveCheckedKey(string key, bool gemini)
     {
         var before = gemini ? _settings.ApiKey : _settings.OpenAiKey;
-        if (key == before || _snapshot.Length == 0) return false;
+        if (key == before || !_loaded) return false;
         if (gemini) _settings.ApiKey = key; else _settings.OpenAiKey = key;
         try
         {
@@ -1458,10 +1467,8 @@ internal sealed partial class SettingsForm : FastShowForm
             return false;
         }
         Core.Log.Info($"{(gemini ? "Gemini" : "OpenAI")} key saved after a successful check");
-        // The key is no longer an unsaved change; everything else keeps its state (fields as in Snapshot()).
-        var parts = _snapshot.Split('\u0001');
-        parts[gemini ? 2 : 3] = key;
-        _snapshot = string.Join('\u0001', parts);
+        // The key is no longer an unsaved change; everything else keeps its state.
+        (gemini ? _geminiKeyBinding : _openAiKeyBinding).Commit(_settings);
         _savedHintUntil = Environment.TickCount64 + 3000;
         UpdateSaveState();
         Saved?.Invoke();
@@ -1937,20 +1944,6 @@ internal sealed partial class SettingsForm : FastShowForm
 
     // ---------------- save / close ----------------
 
-    /// <summary>Everything the user can change, as one string: equal = nothing to save. The mode comes first (see SyncOfflineFromTray).</summary>
-    private string Snapshot() => string.Join("\u0001", new[]
-    {
-        _onlineMode.Checked.ToString(), SelectedLlmChoice.Id, _geminiKey.Value, _openAiKey.Value, SelectedMicrophone,
-        _dictateStep.Snapshot, _promptStep.Snapshot,
-        _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
-        _glossary.Text, _template.Text,
-        _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), SelectedAfterPaste.ToString(), _sounds.Checked.ToString(),
-        _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value, _liveKey.Value,
-        SelectedPunctuation.ToString(), SelectedDictateMode.ToString(), _settingsKey.Value, _rightCtrl.Checked.ToString(), ReadAloudSnapshot(), ChatSnapshot(), MeetingsSnapshot(),
-        SelectedLanguage, Core.TranscriptionTuning.Format(SelectedTemperature), SelectedThinking,
-    }.Concat(_quick.Select(q => q.Text))
-     .Concat(_templates.Select(t => string.Join("\u0002", t.Id, t.Name, t.Instructions, t.Hotkey))));
-
     private static string SelectedModel(FluentCombo combo) => ((ModelItem)combo.SelectedItem!).Model.Id;
 
     private static Keys ToKeys(Hotkey h) => h.Key
@@ -2019,24 +2012,10 @@ internal sealed partial class SettingsForm : FastShowForm
         if (next >= 0 && next < _nav.Count) _nav[next].Focus();
     }
 
-    /// <summary>
-    /// The tray menu can switch online/offline while this window is open. Take that over (unless the
-    /// user changed the mode here too), so Save does not quietly switch back.
-    /// </summary>
-    private void SyncOfflineFromTray()
-    {
-        if (_snapshot.Length == 0 || _settings.OfflineMode == _loadedOffline) return;
-        bool userChangedMode = _offlineMode.Checked != _loadedOffline;
-        _loadedOffline = _settings.OfflineMode;
-        if (userChangedMode) return;
-        (_loadedOffline ? _offlineMode : _onlineMode).Checked = true;
-        _snapshot = _onlineMode.Checked + _snapshot[_snapshot.IndexOf('\u0001')..];
-    }
-
     private void OnClosing(object? sender, FormClosingEventArgs e)
     {
-        if (_discard || _snapshot.Length == 0) return;
-        if (Snapshot() != _snapshot) TrySave();
+        if (_discard || !_loaded) return;
+        if (PollBindings(out bool moved) && (moved || !_holdSave)) TrySave();
         if (_keyProblem == null || e.CloseReason != CloseReason.UserClosing) return;
         if (ChoiceDialog.Ask(this, "Kürzel nicht übernommen", _keyProblem + " Es gelten weiter die bisherigen Kürzel.",
                 new[] { "Trotzdem schließen", "Zurück" }) != 0)
@@ -2058,20 +2037,23 @@ internal sealed partial class SettingsForm : FastShowForm
     private string? KeyProblem() =>
         Core.HotkeySlots.Check(_settings, new Core.HotkeyOverrides(BoxValue, _templates, _rightCtrl.Checked)) is { } c ? KeyProblemText(c) : null;
 
-    /// <summary>The field value of a slot ("" = off); null = the window has no field for it (Live Meeting is set from the tray menu).</summary>
-    private string? BoxValue(Core.HotkeySlot slot) => slot.Action switch
+    /// <summary>The field of a slot; null = the window has no field for it (Live Meeting is set from the tray menu).</summary>
+    private HotkeyBox? BoxOf(Core.HotkeySlot slot) => slot.Action switch
     {
-        Core.HotkeyAction.Dictate => _dictateKey.Value,
-        Core.HotkeyAction.Prompt => _promptKey.Value,
-        Core.HotkeyAction.Glossary => _glossaryKey.Value,
-        Core.HotkeyAction.Screenshot => _screenshotKey.Value,
-        Core.HotkeyAction.LiveDictate => _liveKey.Value,
-        Core.HotkeyAction.OpenSettings => _settingsKey.Value,
-        Core.HotkeyAction.ReadAloud => _readAloudKey.Value, // SettingsForm.ReadAloud.cs
-        Core.HotkeyAction.Chat => _chatKey.Value, // SettingsForm.Chat.cs
-        Core.HotkeyAction.TemplatePicker => _templateKey.Value,
+        Core.HotkeyAction.Dictate => _dictateKey,
+        Core.HotkeyAction.Prompt => _promptKey,
+        Core.HotkeyAction.Glossary => _glossaryKey,
+        Core.HotkeyAction.Screenshot => _screenshotKey,
+        Core.HotkeyAction.LiveDictate => _liveKey,
+        Core.HotkeyAction.OpenSettings => _settingsKey,
+        Core.HotkeyAction.ReadAloud => _readAloudKey, // SettingsForm.ReadAloud.cs
+        Core.HotkeyAction.Chat => _chatKey, // SettingsForm.Chat.cs
+        Core.HotkeyAction.TemplatePicker => _templateKey,
         _ => null,
     };
+
+    /// <summary>The field value of a slot ("" = off); null = the window has no field for it.</summary>
+    private string? BoxValue(Core.HotkeySlot slot) => BoxOf(slot)?.Value;
 
     /// <summary>The German wording of one conflict; the table knows the owners' names.</summary>
     private static string KeyProblemText(Core.HotkeyConflict c)
@@ -2085,67 +2067,26 @@ internal sealed partial class SettingsForm : FastShowForm
             + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
     }
 
-    /// <summary>The keys of every field to the settings (Mac isEnabled: empty switches a shortcut off and keeps the key as the suggestion).</summary>
-    private void StoreKeys()
+    /// <summary>One field's key to the settings (Mac isEnabled: empty switches a shortcut off and keeps the key as the suggestion).</summary>
+    private static void StoreKey(Core.Settings s, Core.HotkeySlot slot, string box)
     {
-        foreach (var slot in Core.HotkeySlots.All)
-        {
-            if (BoxValue(slot) is not { } box) continue;
-            if (slot.SetOn == null) { slot.Set(_settings, Core.HotkeySlots.Normalize(box) ?? ""); continue; }
-            var (key, on) = StoredKey(box, slot.Get(_settings));
-            slot.Set(_settings, key);
-            slot.SetOn(_settings, on);
-        }
+        if (slot.SetOn == null) { slot.Set(s, Core.HotkeySlots.Normalize(box) ?? ""); return; }
+        var (key, on) = StoredKey(box, slot.Get(s));
+        slot.Set(s, key);
+        slot.SetOn(s, on);
     }
 
     /// <summary>
-    /// Writes the window's state to the settings (called shortly after each edit, and on close). Shortcuts that are
-    /// invalid or taken twice are not taken over (<see cref="_keyProblem"/>); everything else is.
+    /// Writes what the user edited to the settings (called shortly after each edit, and on close): only the bindings that were
+    /// edited, so nothing changed from outside meanwhile is overwritten. Shortcuts that are invalid or taken twice are not
+    /// taken over (<see cref="_keyProblem"/>); everything else is. Writing fails: the settings are put back as they were.
     /// </summary>
     private bool TrySave()
     {
         _keyProblem = KeyProblem();
-        bool keysOk = _keyProblem == null;
-        var keysBefore = Core.HotkeySlots.All.Select(x => (Slot: x, Key: x.Get(_settings), On: x.On?.Invoke(_settings))).ToList();
-        var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
-            _settings.Glossary,
-            _settings.QuickActions, _settings.DictatePromptTemplate, _settings.Dictate, _settings.Prompt,
-            _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
-            _settings.OpenAiKey,
-            _settings.AutoUpdateCheck, _settings.Templates, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.PunctuationMode,
-            _settings.RightCtrlDictation,
-            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking, _settings.DictateMode);
-        _settings.OfflineMode = _offlineMode.Checked;
-        _settings.OfflineLlmId = SelectedLlmChoice.Id;
-        _settings.ApiKey = _geminiKey.Value;
-        _settings.OpenAiKey = _openAiKey.Value;
-        _settings.Dictate = _dictateStep.Selected;
-        _settings.Prompt = _promptStep.Selected;
-        _settings.Microphone = SelectedMicrophone;
-        if (keysOk) StoreKeys();
-        // Names, instructions and the list itself are saved even when a key is invalid; only the keys are held back.
-        _settings.Templates = Core.TemplateSave.Build(_templates, _settings.Templates, keysOk,
-            Core.HotkeySlots.Normalize);
-        _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
-        _settings.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
-        _settings.DictatePromptTemplate = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
-        _settings.DictateSystemPrompt = _dictatePrompt.Value;
-        _settings.PromptModeSystemPrompt = _promptPrompt.Value;
-        _settings.AutoPaste = _autoPaste.Checked;
-        _settings.ClipboardAfterPaste = SelectedAfterPaste;
-        _settings.PunctuationMode = SelectedPunctuation;
-        _settings.DictateMode = SelectedDictateMode;
-        _settings.TranscriptionLanguage = SelectedLanguage;
-        _settings.TranscriptionTemperature = SelectedTemperature;
-        _settings.TranscriptionThinking = SelectedThinking;
-        _settings.Sounds = _sounds.Checked;
-        _settings.AutoUpdateCheck = _autoUpdate.Checked;
-        _settings.SendScreenshots = _sendScreenshots.Checked;
-        _settings.RightCtrlDictation = _rightCtrl.Checked;
-        var readAloudBefore = ApplyReadAloud();
-        var meetingsBefore = ApplyMeetings();
-        var chatBefore = ApplyChat();
+        _keysOk = _keyProblem == null;
+        var before = _settings.Capture();
+        var written = _bindings.Where(b => b.Apply(_settings)).ToList();
         try
         {
             _settings.Save();
@@ -2153,42 +2094,27 @@ internal sealed partial class SettingsForm : FastShowForm
         catch (Exception e)
         {
             Core.Log.Error($"Saving settings failed: {e.GetType().Name}");
-            (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
-                _settings.Glossary,
-                _settings.QuickActions, _settings.DictatePromptTemplate, _settings.Dictate, _settings.Prompt,
-                _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
-            _settings.OpenAiKey,
-            _settings.AutoUpdateCheck, _settings.Templates, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.PunctuationMode,
-            _settings.RightCtrlDictation,
-            _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking, _settings.DictateMode) = before;
-            foreach (var (slot, key, on) in keysBefore)
-            {
-                slot.Set(_settings, key);
-                if (on is { } wasOn) slot.SetOn!(_settings, wasOn);
-            }
-            RestoreReadAloud(readAloudBefore);
-            RestoreMeetings(meetingsBefore);
-            RestoreChat(chatBefore);
+            _settings.Restore(before);
             // Said once, then in the status line: this runs after every edit.
             var error = Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message);
             if (error != _lastSaveError) Warn(error);
             _lastSaveError = error;
-            _snapshot = Snapshot();
+            _holdSave = true; // the edits stay in the window; not tried again until the user edits something
             UpdateSaveState();
             return false;
         }
         _lastSaveError = null;
-        if (_autoStart.Checked != AutoStart.IsEnabled)
+        // Windows autostart is no setting: only a change made here is carried out.
+        if (written.Contains(_autoStartBinding) && _autoStart.Checked != AutoStart.IsEnabled)
         {
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
         Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.Dictate.Gemini}/{_settings.Prompt.Gemini}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.Dictate.Engine}/{_settings.Prompt.Engine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.Dictate.OpenAi}/{_settings.Prompt.OpenAi}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode}, dictate mode {_settings.DictateMode})");
-        // Also with a key problem: the same state is not written again until the user edits something.
-        _snapshot = Snapshot();
-        _loadedOffline = _settings.OfflineMode;
-        if (keysOk) _savedHintUntil = Environment.TickCount64 + 2000;
+        foreach (var b in written) b.Commit(_settings);
+        // Also with a key problem: what stays edited (the refused shortcuts) is not written again until the user edits something.
+        _holdSave = _bindings.Any(b => b.Edited);
+        if (_keysOk) _savedHintUntil = Environment.TickCount64 + 2000;
         UpdateSaveState();
         Saved?.Invoke();
         return true;
@@ -2328,16 +2254,6 @@ internal sealed partial class SettingsForm : FastShowForm
         _templateOwnKey.Focus();
     }
 
-    /// <summary>The glossary hotkey added a term while this window is open: show it, so the next apply keeps it.</summary>
-    public void AppendGlossaryTerm(string term)
-    {
-        var lines = _glossary.Lines.ToList();
-        if (lines.Any(l => string.Equals(l.Trim(), term, StringComparison.CurrentCultureIgnoreCase))) return;
-        while (lines.Count > 0 && lines[^1].Trim().Length == 0) lines.RemoveAt(lines.Count - 1);
-        lines.Add(term);
-        _glossary.Text = string.Join("\r\n", lines);
-    }
-
     /// <summary>
     /// Two of Ctrl/Alt/Shift, one of them Ctrl or Alt, or Alt+digit (Mac digits). Ctrl+V or Alt+F as a
     /// global hotkey would take that key away from every program. Ctrl+Alt without Shift is AltGr on
@@ -2392,11 +2308,15 @@ internal sealed partial class SettingsForm : FastShowForm
             if (allowEmpty) PlaceholderText = "Kein Kürzel";
         }
 
-        /// <summary>Shows another stored combination ("" = none), e.g. when a different template is selected.</summary>
-        public void SetValue(string stored)
+        /// <summary>
+        /// Shows another stored combination ("" = none), e.g. when a different template is selected.
+        /// <paramref name="notify"/>: also raise <see cref="ValueChanged"/> (a value taken over from the settings, not a template switch).
+        /// </summary>
+        public void SetValue(string stored, bool notify = false)
         {
             Value = stored;
             Text = Hotkey.Display(stored);
+            if (notify) ValueChanged?.Invoke();
         }
 
         protected override bool IsInputKey(Keys keyData) => true;
