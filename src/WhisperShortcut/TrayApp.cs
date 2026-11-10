@@ -2299,8 +2299,8 @@ internal sealed partial class TrayApp : ApplicationContext
         if (fromSettingsWindow)
         {
             _hotkeyCheckPending = true;
-            // The window may already be out of front (the save runs 500 ms after the last edit, on the UI thread): then the
-            // hotkeys were registered from the old values and nothing else would re-arm them. Registered = not in front.
+            // The hotkeys are on unless a hotkey field has the focus (the save runs 500 ms after the last edit, so the
+            // field may already be left): then they were registered from the old values and nothing else would re-arm them.
             // Only while idle: during a recording the key that started it must keep stopping it (the check runs later).
             if (_globalHotkeysOn && _state == State.Idle)
             {
@@ -2308,7 +2308,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 _hotkeyCheckPending = false;
             }
         }
-        else if (d.HotkeysChanged && _globalHotkeysOn) RegisterHotkeys(); // otherwise they register when the window leaves the front
+        else if (d.HotkeysChanged && _globalHotkeysOn) RegisterHotkeys(); // otherwise they register when the hotkey field loses the focus
         if (_settings.OfflineMode && (fromSettingsWindow || d.OfflineModeChanged)) _promptMemory.Clear();
         SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
         _offline.Prewarm(); // offline mode or the engine may just have been switched to this PC
