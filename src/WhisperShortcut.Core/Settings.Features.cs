@@ -70,17 +70,11 @@ public sealed partial class Settings
 
     // ---------------- Chat (Mac ChatSettingsTab) ----------------
 
-    /// <summary>
-    /// New-install key for opening and closing the chat. The Mac uses ⌥Space; on Windows Alt+Space opens every window's system
-    /// menu, so the chat takes the free Mac digit 6 with Alt like the other shortcuts.
-    /// </summary>
-    public const string DefaultChatHotkey = "Alt+6";
-
     /// <summary>Hotkey that opens and closes the chat window.</summary>
-    public string ChatHotkey { get; set; } = DefaultChatHotkey;
+    public string ChatHotkey { get; set; } = "";
 
     /// <summary>Chat hotkey on. Use <see cref="ActiveChatHotkey"/> to register.</summary>
-    public bool ChatHotkeyEnabled { get; set; } = true;
+    public bool ChatHotkeyEnabled { get; set; }
 
     /// <summary>The chat key to register, "" when off.</summary>
     [JsonIgnore]
@@ -117,19 +111,6 @@ public sealed partial class Settings
         _ => ModelPickers.LocalId,
     };
 
-    // True when the chat key equals any other stored key (app keys and template keys); empty keys never clash.
-    private bool ChatKeyClashes()
-    {
-        if (string.IsNullOrWhiteSpace(ChatHotkey)) return false;
-        var others = new List<string>
-        {
-            DictateHotkey, PromptHotkey, GlossaryHotkey, ScreenshotHotkey, LiveDictateHotkey, OpenSettingsHotkey,
-            MeetingHotkey, TemplateHotkey, ReadAloudHotkey,
-        };
-        others.AddRange(Templates.Select(t => t.Hotkey));
-        return others.Any(k => SameKey(k, ChatHotkey));
-    }
-
     private void LoadFeatures(Dto dto)
     {
         ReadAloudVoiceSystem = ReadAloud.NormalizeVoice(TtsProvider.System, dto.ReadAloudVoiceSystem);
@@ -152,7 +133,7 @@ public sealed partial class Settings
         if (dto.ChatHotkey != null) ChatHotkey = dto.ChatHotkey;
         ChatHotkeyEnabled = dto.ChatHotkeyEnabled ?? true;
         // An update adds the chat key to a file that never had it. It must not take a key the user already uses.
-        if (dto.ChatHotkey == null && ChatKeyClashes()) ChatHotkeyEnabled = false;
+        if (dto.ChatHotkey == null && HotkeySlots.Clashes(this, HotkeyAction.Chat)) ChatHotkeyEnabled = false;
         ChatEngine = dto.ChatEngine != null ? Choices.Engine.Parse(dto.ChatEngine) : TextEngine;
         ChatModel = GeminiModels.NormalizePrompt(dto.ChatModel ?? DefaultPromptModel);
         ChatOpenAiModel = OpenAiModels.NormalizePrompt(dto.ChatOpenAiModel ?? OpenAiPromptModel);

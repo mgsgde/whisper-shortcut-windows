@@ -186,25 +186,24 @@ public static class McpSettingsCatalog
         Write = v => set(v is JsonValue b && b.TryGetValue<bool>(out var on) && on),
     };
 
-    // enabled/setEnabled: shortcuts with an on switch. Off reads as "" (the stored key is only a suggestion);
+    // Shortcuts with an on switch: off reads as "" (the stored key is only a suggestion);
     // Write("") switches off (needed by undo and the applier's rollback), a real key switches on.
-    private static McpSetting HotkeySetting(string id, string title, Func<string> get, Action<string> set,
-        Func<bool>? enabled = null, Action<bool>? setEnabled = null) => new()
+    private static McpSetting HotkeySetting(Settings settings, HotkeySlot slot) => new()
     {
-        Id = id, Title = title, Category = "shortcuts", Type = McpSettingType.Hotkey,
-        Read = () => enabled != null && !enabled()
+        Id = slot.McpId!, Title = "Tastenkürzel " + slot.Owner, Category = "shortcuts", Type = McpSettingType.Hotkey,
+        Read = () => !slot.On!(settings)
             ? JsonValue.Create("")
-            : JsonValue.Create(HotkeyRules.TryNormalize(get(), out var n) ? n : get()),
+            : JsonValue.Create(HotkeyRules.TryNormalize(slot.Get(settings), out var n) ? n : slot.Get(settings)),
         Write = v =>
         {
-            if (setEnabled != null && v is JsonValue j && j.TryGetValue<string>(out var text) && text.Trim().Length == 0)
+            if (v is JsonValue j && j.TryGetValue<string>(out var text) && text.Trim().Length == 0)
             {
-                setEnabled(false);
+                slot.SetOn!(settings, false);
                 return;
             }
             if (!TryHotkey(v, out var n)) throw new McpConfigException("Not a valid shortcut.");
-            set(n);
-            setEnabled?.Invoke(true);
+            slot.Set(settings, n);
+            slot.SetOn!(settings, true);
         },
     };
 
@@ -215,8 +214,8 @@ public static class McpSettingsCatalog
             ? new McpSettingOption(Choices.Engine.Token(Engine.Gemini), Choices.Engine.Label(Engine.Gemini), !string.IsNullOrWhiteSpace(settings.ApiKey), string.IsNullOrWhiteSpace(settings.ApiKey) ? NoGeminiKey : null)
             : new McpSettingOption(Choices.Engine.Token(Engine.OpenAI), Choices.Engine.Label(Engine.OpenAI), !string.IsNullOrWhiteSpace(settings.OpenAiKey), string.IsNullOrWhiteSpace(settings.OpenAiKey) ? NoOpenAiKey : null);
 
-        return new McpSetting[]
-        {
+        return
+        [
             new()
             {
                 Id = "dictation.engine", Title = "Spracherkennung (Anbieter)", Category = "models", Type = McpSettingType.Enum,
@@ -289,14 +288,7 @@ public static class McpSettingsCatalog
                 Options = () => OfflineCatalog.Llms.Select(l => new McpSettingOption(l.Id, l.DisplayName, true, null)).ToList(),
                 Write = v => settings.OfflineLlmId = Text(v),
             },
-            HotkeySetting("shortcuts.dictate", "Tastenkürzel Diktieren", () => settings.DictateHotkey, v => settings.DictateHotkey = v,
-                () => settings.DictateHotkeyEnabled, v => settings.DictateHotkeyEnabled = v),
-            HotkeySetting("shortcuts.dictate_prompt", "Tastenkürzel Text bearbeiten", () => settings.PromptHotkey, v => settings.PromptHotkey = v,
-                () => settings.PromptHotkeyEnabled, v => settings.PromptHotkeyEnabled = v),
-            HotkeySetting("shortcuts.add_to_glossary", "Tastenkürzel Glossar", () => settings.GlossaryHotkey, v => settings.GlossaryHotkey = v,
-                () => settings.GlossaryHotkeyEnabled, v => settings.GlossaryHotkeyEnabled = v),
-            HotkeySetting("shortcuts.read_aloud", "Tastenkürzel Vorlesen", () => settings.ReadAloudHotkey, v => settings.ReadAloudHotkey = v,
-                () => settings.ReadAloudHotkeyEnabled, v => settings.ReadAloudHotkeyEnabled = v),
+            ..HotkeySlots.All.Where(x => x.McpId != null).Select(x => HotkeySetting(settings, x)),
             new()
             {
                 Id = "read_aloud.model", Title = "Vorlesen: Modell", Category = "models", Type = McpSettingType.Enum,
@@ -349,7 +341,7 @@ public static class McpSettingsCatalog
                     if (!host.SetAutoStart(on)) throw new McpConfigException("Der automatische Start konnte nicht geändert werden.");
                 },
             },
-        };
+        ];
     }
 
     private static JsonNode? Canonical(JsonNode? v)
@@ -363,42 +355,35 @@ public static class McpSettingsCatalog
     public static bool SameValue(JsonNode? a, JsonNode? b) => JsonNode.DeepEquals(Canonical(a), Canonical(b));
 
     /// <summary>The active keys of features AI apps cannot change (empty ones are skipped by the caller).</summary>
-    public static IReadOnlyList<(string Owner, string Key)> FixedHotkeys(Settings s)
-    {
-        var list = new List<(string, string)>
-        {
-            ("Tastenkürzel Bildschirmfoto", s.ActiveScreenshotHotkey),
-            ("Tastenkürzel Live diktieren", s.ActiveLiveDictateHotkey),
-            ("Tastenkürzel Einstellungen öffnen", s.ActiveOpenSettingsHotkey),
-            ("Tastenkürzel Chat", s.ActiveChatHotkey),
-            ("Tastenkürzel Live Meeting", s.MeetingHotkey),
-            ("Tastenkürzel Vorlagen", s.TemplateHotkey),
-        };
-        // Like TemplateHotkeys.ActiveBindings: a template without instructions owns no key.
-        foreach (var t in s.Templates.Where(t => t.IsUsable)) list.Add(("Tastenkürzel einer Vorlage", t.Hotkey));
-        list.Add(("Rechte Strg-Taste (Diktieren)", s.RightCtrlDictation ? "RightCtrl" : ""));
-        return list;
-    }
+    public static IReadOnlyList<(string Owner, string Key)> FixedHotkeys(Settings s) =>
+        HotkeySlots.Assignments(s).Where(a => !IsMcpSlot(a)).Select(a => (OwnerLabel(a), a.Key)).ToList();
+
+    private static bool IsMcpSlot(HotkeyAssignment a) =>
+        a.TemplateId == null && !a.IsRightCtrlSwitch && HotkeySlots.Of(a.Action).McpId != null;
+
+    // AI apps get the owner of a fixed key, not the user's template names.
+    private static string OwnerLabel(HotkeyAssignment a) =>
+        a.IsRightCtrlSwitch ? a.Owner : a.TemplateId != null ? "Tastenkürzel einer Vorlage" : "Tastenkürzel " + a.Owner;
 
     /// <summary>Validates the state the whole batch would leave: the hotkeys must stay distinct (also against the unchanged ones). Null = ok.</summary>
-    public static string? ValidateBatch(IReadOnlyList<McpSetting> catalog, IReadOnlyList<(string Id, JsonNode? Value)> items,
-        IEnumerable<(string Owner, string Key)>? fixedKeys = null)
+    public static string? ValidateBatch(IReadOnlyList<McpSetting> catalog, IReadOnlyList<(string Id, JsonNode? Value)> items, Settings settings)
     {
-        var fixedOwners = new Dictionary<string, string>();
-        foreach (var (owner, raw) in fixedKeys ?? Array.Empty<(string, string)>())
-            if (HotkeyRules.TryNormalize(raw, out var fk)) fixedOwners.TryAdd(fk, owner);
-        var seen = new Dictionary<string, McpSetting>();
-        foreach (var s in catalog.Where(c => c.Type == McpSettingType.Hotkey))
+        var titles = catalog.Where(c => c.Type == McpSettingType.Hotkey).ToDictionary(c => c.Id, c => c.Title);
+        // The batch's value for a shortcut ("" or one that is no key = off); the others stay as they are.
+        string? Override(HotkeySlot slot)
         {
-            var value = items.Where(i => i.Id == s.Id).Select(i => i.Value).FirstOrDefault(_ => true);
-            var overridden = items.Any(i => i.Id == s.Id);
-            if (!TryHotkey(overridden ? value : s.Read(), out var key)) continue;
-            if (fixedOwners.TryGetValue(key, out var fixedOwner))
-                return $"{s.Title} would be {HotkeyRules.Display(key)}, which {fixedOwner} already uses. Each shortcut must be different.";
-            if (seen.TryGetValue(key, out var other))
-                return $"{other.Title} and {s.Title} would both be {HotkeyRules.Display(key)}. Each shortcut must be different.";
-            seen[key] = s;
+            if (slot.McpId == null || !items.Any(i => i.Id == slot.McpId)) return null;
+            var value = items.First(i => i.Id == slot.McpId).Value;
+            return TryHotkey(value, out var key) ? key : "";
         }
-        return null;
+        var conflict = HotkeySlots.Check(settings, new HotkeyOverrides(Override), IsMcpSlot, takenOnly: true);
+        if (conflict?.Other is not { } other) return null;
+        string Title(HotkeyAssignment a) => titles.GetValueOrDefault(HotkeySlots.Of(a.Action).McpId ?? "") ?? "Tastenkürzel " + a.Owner;
+        var shown = conflict.Display;
+        bool offenderMcp = IsMcpSlot(conflict.Offender), otherMcp = IsMcpSlot(other);
+        if (offenderMcp && otherMcp)
+            return $"{Title(other)} and {Title(conflict.Offender)} would both be {shown}. Each shortcut must be different.";
+        var (mine, fixedOne) = offenderMcp ? (conflict.Offender, other) : (other, conflict.Offender);
+        return $"{Title(mine)} would be {shown}, which {OwnerLabel(fixedOne)} already uses. Each shortcut must be different.";
     }
 }

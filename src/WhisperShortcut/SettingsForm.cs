@@ -2067,30 +2067,48 @@ internal sealed partial class SettingsForm : FastShowForm
         _dirty.Visible = visible;
     }
 
-    /// <summary>Why the shortcuts cannot be taken over as they are, or null. <paramref name="parsed"/>: Diktieren, Dictate Prompt, Ins Glossar.</summary>
-    private string? KeyProblem(out Hotkey?[] parsed)
+    /// <summary>Why the shortcuts cannot be taken over as they are, or null: what the fields show against everything the tray would register.</summary>
+    private string? KeyProblem() =>
+        Core.HotkeySlots.Check(_settings, new Core.HotkeyOverrides(BoxValue, _templates, _rightCtrl.Checked)) is { } c ? KeyProblemText(c) : null;
+
+    /// <summary>The field value of a slot ("" = off); null = the window has no field for it (Live Meeting is set from the tray menu).</summary>
+    private string? BoxValue(Core.HotkeySlot slot) => slot.Action switch
     {
-        // Like the Mac (isEnabled), every one of these may be empty (= off).
-        var keys = new[] { _dictateKey, _promptKey, _glossaryKey };
-        parsed = new Hotkey?[keys.Length];
-        for (int i = 0; i < keys.Length; i++)
+        Core.HotkeyAction.Dictate => _dictateKey.Value,
+        Core.HotkeyAction.Prompt => _promptKey.Value,
+        Core.HotkeyAction.Glossary => _glossaryKey.Value,
+        Core.HotkeyAction.Screenshot => _screenshotKey.Value,
+        Core.HotkeyAction.LiveDictate => _liveKey.Value,
+        Core.HotkeyAction.OpenSettings => _settingsKey.Value,
+        Core.HotkeyAction.ReadAloud => _readAloudKey.Value, // SettingsForm.ReadAloud.cs
+        Core.HotkeyAction.Chat => _chatKey.Value, // SettingsForm.Chat.cs
+        Core.HotkeyAction.TemplatePicker => _templateKey.Value,
+        _ => null,
+    };
+
+    /// <summary>The German wording of one conflict; the table knows the owners' names.</summary>
+    private static string KeyProblemText(Core.HotkeyConflict c)
+    {
+        var offender = c.Offender;
+        bool template = offender.Action == Core.HotkeyAction.Template;
+        if (c.Kind == Core.HotkeyConflictKind.Taken)
+            return $"{c.Display} ist schon für „{c.Other!.Owner}“ vergeben. Bitte für {(template ? "die " : "")}{offender.Owner} ein anderes Kürzel wählen.";
+        return (template ? offender.Owner : "Kürzel für " + offender.Owner)
+            + ": Bitte ein Tastenkürzel festlegen, z. B. Alt+1 oder Strg+Umschalt+V, oder es mit Entf entfernen. "
+            + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
+    }
+
+    /// <summary>The keys of every field to the settings (Mac isEnabled: empty switches a shortcut off and keeps the key as the suggestion).</summary>
+    private void StoreKeys()
+    {
+        foreach (var slot in Core.HotkeySlots.All)
         {
-            if (keys[i].Value.Length == 0) continue;
-            if (!Hotkey.TryParse(keys[i].Value, out var key) || !IsSafe(key))
-                return "Bitte für Diktieren und Dictate Prompt ein Tastenkürzel festlegen, z. B. Alt+1 oder Strg+Umschalt+D, oder es mit Entf entfernen. "
-                    + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
-            parsed[i] = key;
+            if (BoxValue(slot) is not { } box) continue;
+            if (slot.SetOn == null) { slot.Set(_settings, Core.HotkeySlots.Normalize(box) ?? ""); continue; }
+            var (key, on) = StoredKey(box, slot.Get(_settings));
+            slot.Set(_settings, key);
+            slot.SetOn(_settings, on);
         }
-        bool hasSettingsKey = Hotkey.TryParse(_settingsKey.Value, out var settingsKey);
-        if (_settingsKey.Value.Length > 0 && (!hasSettingsKey || !IsSafe(settingsKey)))
-            return "Kürzel für Einstellungen öffnen: bitte z. B. Alt+0 oder Strg+Umschalt+E festlegen, oder es mit Entf entfernen.";
-        for (int i = 0; i < keys.Length; i++)
-        {
-            if (parsed[i] is not { } key) continue;
-            if (parsed.Take(i).Contains(key) || (hasSettingsKey && key == settingsKey))
-                return "Die Tastenkürzel müssen verschieden sein. Diktieren, Dictate Prompt, Ins Glossar und Einstellungen öffnen brauchen je ein eigenes.";
-        }
-        return TemplateKeyProblem(parsed);
     }
 
     /// <summary>
@@ -2099,17 +2117,17 @@ internal sealed partial class SettingsForm : FastShowForm
     /// </summary>
     private bool TrySave()
     {
-        _keyProblem = KeyProblem(out var parsed);
+        _keyProblem = KeyProblem();
         bool keysOk = _keyProblem == null;
+        var keysBefore = Core.HotkeySlots.All.Select(x => (Slot: x, Key: x.Get(_settings), On: x.On?.Invoke(_settings))).ToList();
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
-            _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
+            _settings.Glossary,
             _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
             _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
-            _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
-            _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled, _settings.DictateHotkeyEnabled, _settings.PromptHotkeyEnabled,
-            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
+            _settings.AutoUpdateCheck, _settings.Templates, _settings.LastTemplateId,
+            _settings.SendScreenshots, _settings.PunctuationMode,
+            _settings.RightCtrlDictation,
             _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking, _settings.DictateMode);
         _settings.OfflineMode = _offlineMode.Checked;
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
@@ -2120,19 +2138,10 @@ internal sealed partial class SettingsForm : FastShowForm
         _settings.OpenAiTranscriptionModel = SelectedModel(_dictateModelOpenAi);
         _settings.OpenAiPromptModel = SelectedModel(_promptModelOpenAi);
         _settings.Microphone = SelectedMicrophone;
-        if (keysOk)
-        {
-            (_settings.DictateHotkey, _settings.DictateHotkeyEnabled) = StoredKey(_dictateKey.Value, _settings.DictateHotkey);
-            (_settings.PromptHotkey, _settings.PromptHotkeyEnabled) = StoredKey(_promptKey.Value, _settings.PromptHotkey);
-            (_settings.GlossaryHotkey, _settings.GlossaryHotkeyEnabled) = StoredKey(_glossaryKey.Value, _settings.GlossaryHotkey);
-            (_settings.ScreenshotHotkey, _settings.ScreenshotHotkeyEnabled) = StoredKey(_screenshotKey.Value, _settings.ScreenshotHotkey);
-            (_settings.LiveDictateHotkey, _settings.LiveDictateHotkeyEnabled) = StoredKey(_liveKey.Value, _settings.LiveDictateHotkey);
-            (_settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled) = StoredKey(_settingsKey.Value, _settings.OpenSettingsHotkey);
-            _settings.TemplateHotkey = Hotkey.TryParse(_templateKey.Value, out var picker) ? picker.ToString() : "";
-        }
+        if (keysOk) StoreKeys();
         // Names, instructions and the list itself are saved even when a key is invalid; only the keys are held back.
         _settings.Templates = Core.TemplateSave.Build(_templates, _settings.Templates, keysOk,
-            k => Hotkey.TryParse(k, out var own) ? own.ToString() : null);
+            Core.HotkeySlots.Normalize);
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
         _settings.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
         _settings.DictatePromptTemplate = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
@@ -2151,9 +2160,9 @@ internal sealed partial class SettingsForm : FastShowForm
         _settings.AutoUpdateCheck = _autoUpdate.Checked;
         _settings.SendScreenshots = _sendScreenshots.Checked;
         _settings.RightCtrlDictation = _rightCtrl.Checked;
-        var readAloudBefore = ApplyReadAloud(keysOk);
+        var readAloudBefore = ApplyReadAloud();
         var meetingsBefore = ApplyMeetings();
-        var chatBefore = ApplyChat(keysOk);
+        var chatBefore = ApplyChat();
         try
         {
             _settings.Save();
@@ -2162,15 +2171,19 @@ internal sealed partial class SettingsForm : FastShowForm
         {
             Core.Log.Error($"Saving settings failed: {e.GetType().Name}");
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
-                _settings.DictateHotkey, _settings.PromptHotkey, _settings.GlossaryHotkey, _settings.Glossary,
+                _settings.Glossary,
                 _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
-            _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
-            _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
-            _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled, _settings.DictateHotkeyEnabled, _settings.PromptHotkeyEnabled,
-            _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
+            _settings.AutoUpdateCheck, _settings.Templates, _settings.LastTemplateId,
+            _settings.SendScreenshots, _settings.PunctuationMode,
+            _settings.RightCtrlDictation,
             _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking, _settings.DictateMode) = before;
+            foreach (var (slot, key, on) in keysBefore)
+            {
+                slot.Set(_settings, key);
+                if (on is { } wasOn) slot.SetOn!(_settings, wasOn);
+            }
             RestoreReadAloud(readAloudBefore);
             RestoreMeetings(meetingsBefore);
             RestoreChat(chatBefore);
@@ -2319,65 +2332,11 @@ internal sealed partial class SettingsForm : FastShowForm
     }
 
     /// <summary>
-    /// The Vorlagen key and each template's own key: valid, and not taken by Diktieren, Text bearbeiten, Glossar,
-    /// the Vorlagen key or an earlier template. Same rules and the same kind of warning as the other hotkeys.
-    /// </summary>
-    /// <param name="app">The parsed app hotkeys in the order Diktieren, Dictate Prompt, Ins Glossar (null = off).</param>
-    private string? TemplateKeyProblem(Hotkey?[] app)
-    {
-        var taken = new List<(string Owner, Hotkey Key)>();
-        foreach (var (owner, key) in new[] { "Diktieren", "Dictate Prompt", "Ins Glossar" }.Zip(app))
-            if (key is { } k) taken.Add((owner, k));
-        if (Hotkey.TryParse(_settingsKey.Value, out var settingsKey)) taken.Add(("Einstellungen öffnen", settingsKey));
-        // The Live Meeting key is set from the tray menu, not here, but it is just as taken.
-        if (Hotkey.TryParse(_settings.MeetingHotkey, out var meetingKey)) taken.Add(("Live Meeting", meetingKey));
-        const string Rule = "Bitte ein Tastenkürzel mit zwei Zusatztasten festlegen, z. B. Strg+Umschalt+V, oder es mit Entf entfernen. "
-            + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
-        if (_liveKey.Value.Length > 0)
-        {
-            if (!Hotkey.TryParse(_liveKey.Value, out var live) || !IsSafe(live))
-            return "Kürzel für Live diktieren: " + Rule;
-            if (taken.FirstOrDefault(k => k.Key == live) is { Owner: { } owner })
-            return $"{live.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Live diktieren ein anderes Kürzel wählen.";
-            taken.Add(("Live diktieren", live));
-        }
-        if (_screenshotKey.Value.Length > 0)
-        {
-            if (!Hotkey.TryParse(_screenshotKey.Value, out var shot) || !IsSafe(shot))
-            return "Kürzel für Bildschirmfoto: " + Rule;
-            if (taken.FirstOrDefault(k => k.Key == shot) is { Owner: { } owner })
-            return $"{shot.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für das Bildschirmfoto ein anderes Kürzel wählen.";
-            taken.Add(("Bildschirmfoto", shot));
-        }
-        if (ReadAloudKeyProblem(taken, Rule) is { } readAloudProblem) return readAloudProblem;
-        if (ChatKeyProblem(taken, Rule) is { } chatProblem) return chatProblem;
-        if (_templateKey.Value.Length > 0)
-        {
-            if (!Hotkey.TryParse(_templateKey.Value, out var picker) || !IsSafe(picker))
-            return "Kürzel für Vorlagen: " + Rule;
-            if (taken.FirstOrDefault(k => k.Key == picker) is { Owner: { } owner })
-            return $"{picker.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Vorlagen ein anderes Kürzel wählen.";
-            taken.Add(("Vorlagen (zuletzt benutzte)", picker));
-        }
-        for (int i = 0; i < _templates.Count; i++)
-        {
-            var t = _templates[i];
-            if (t.Hotkey.Length == 0) continue;
-            if (!Hotkey.TryParse(t.Hotkey, out var key) || !IsSafe(key))
-            return $"Vorlage „{t.DisplayName}“: " + Rule;
-            if (taken.FirstOrDefault(k => k.Key == key) is { Owner: { } owner })
-            return $"{key.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für die Vorlage „{t.DisplayName}“ ein anderes Kürzel wählen.";
-            taken.Add(($"Vorlage „{t.DisplayName}“", key));
-        }
-        return null;
-    }
-
-    /// <summary>
     /// A field that may be empty, to the stored key and its on flag (Mac isEnabled): a combination switches it on; empty
     /// switches it off and keeps the previous key as the suggestion.
     /// </summary>
     private static (string Hotkey, bool Enabled) StoredKey(string boxValue, string current) =>
-        Hotkey.TryParse(boxValue, out var key) ? (key.ToString(), true) : (current, false);
+        Core.HotkeySlots.Normalize(boxValue) is { } key ? (key, true) : (current, false);
 
     private void ShowTemplate(int index)
     {

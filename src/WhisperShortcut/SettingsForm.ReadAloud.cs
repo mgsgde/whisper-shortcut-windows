@@ -4,7 +4,7 @@ namespace WhisperShortcut;
 /// Page „Vorlesen“ (Mac ReadAloudSettingsTab: voice model, voice, playback speed, smart rewriting, rewrite prompt, how to use) and the
 /// Vorlesen shortcut row on Allgemein. Kept in its own file so the main settings file only gets the hook lines: the page
 /// constant and nav entry, the shortcut row, <see cref="ReadAloudSnapshot"/> in Snapshot(), <see cref="ApplyReadAloud"/> /
-/// <see cref="RestoreReadAloud"/> in TrySave() and <see cref="ReadAloudKeyProblem"/> in the shortcut check.
+/// <see cref="RestoreReadAloud"/> in TrySave(); the key itself goes through the shortcut table (<see cref="StoreKeys"/>).
 /// </summary>
 internal sealed partial class SettingsForm
 {
@@ -205,17 +205,15 @@ internal sealed partial class SettingsForm
         _readAloudVoiceGemini, _readAloudVoiceOpenAi, _readAloudVoiceSystem,
         SelectedReadAloudSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture), _readAloudRewrite.Checked.ToString(), _readAloudPrompt.Value);
 
-    private sealed record ReadAloudState(string Hotkey, bool HotkeyEnabled, string Model, string VoiceGemini, string VoiceOpenAi,
+    private sealed record ReadAloudState(string Model, string VoiceGemini, string VoiceOpenAi,
         string VoiceSystem, double Speed, bool Rewrite, string Prompt, double SpeedShown);
 
     /// <summary>Writes the page into the settings (from TrySave); returns what was there, for <see cref="RestoreReadAloud"/>.</summary>
-    /// <param name="keysOk">All shortcuts valid: only then the Vorlesen key is taken over, like the other keys.</param>
-    private ReadAloudState ApplyReadAloud(bool keysOk)
+    private ReadAloudState ApplyReadAloud()
     {
-        var before = new ReadAloudState(_settings.ReadAloudHotkey, _settings.ReadAloudHotkeyEnabled, _settings.ReadAloudModel,
+        var before = new ReadAloudState(_settings.ReadAloudModel,
             _settings.ReadAloudVoiceGemini, _settings.ReadAloudVoiceOpenAi, _settings.ReadAloudVoiceSystem, _settings.ReadAloudSpeed,
             _settings.ReadAloudSmartRewrite, _settings.ReadAloudRewritePrompt, _readAloudSpeedShown);
-        if (keysOk) (_settings.ReadAloudHotkey, _settings.ReadAloudHotkeyEnabled) = StoredKey(_readAloudKey.Value, _settings.ReadAloudHotkey);
         _settings.ReadAloudModel = SelectedModel(_readAloudModel);
         _settings.ReadAloudVoiceGemini = _readAloudVoiceGemini;
         _settings.ReadAloudVoiceOpenAi = _readAloudVoiceOpenAi;
@@ -230,8 +228,6 @@ internal sealed partial class SettingsForm
     /// <summary>Saving failed: put the settings back as they were.</summary>
     private void RestoreReadAloud(ReadAloudState s)
     {
-        _settings.ReadAloudHotkey = s.Hotkey;
-        _settings.ReadAloudHotkeyEnabled = s.HotkeyEnabled;
         _settings.ReadAloudModel = s.Model;
         _settings.ReadAloudVoiceGemini = s.VoiceGemini;
         _settings.ReadAloudVoiceOpenAi = s.VoiceOpenAi;
@@ -240,16 +236,5 @@ internal sealed partial class SettingsForm
         _settings.ReadAloudSpeed = s.Speed;
         _readAloudSpeedShown = s.SpeedShown;
         _settings.ReadAloudSmartRewrite = s.Rewrite;
-    }
-
-    /// <summary>The Vorlesen key: valid and not taken by a key checked before it; then it is taken, too.</summary>
-    private string? ReadAloudKeyProblem(List<(string Owner, Hotkey Key)> taken, string rule)
-    {
-        if (_readAloudKey.Value.Length == 0) return null;
-        if (!Hotkey.TryParse(_readAloudKey.Value, out var key) || !IsSafe(key)) return "Kürzel für Vorlesen: " + rule;
-        if (taken.FirstOrDefault(k => k.Key == key) is { Owner: { } owner })
-            return $"{key.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für Vorlesen ein anderes Kürzel wählen.";
-        taken.Add(("Vorlesen", key));
-        return null;
     }
 }

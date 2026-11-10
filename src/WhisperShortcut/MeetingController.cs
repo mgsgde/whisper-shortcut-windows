@@ -18,7 +18,7 @@ internal sealed class MeetingController : IDisposable
     private readonly Func<string?> _unavailable;
     private readonly Action<string, string, ToolTipIcon, Action?> _notify;
     private readonly Action _save;
-    private readonly Func<IReadOnlyCollection<string>> _otherHotkeys;
+    private readonly Func<IReadOnlyCollection<(string Owner, string Key)>> _otherHotkeys;
     private readonly Action<bool> _suspendHotkeys;
     private readonly bool _fakeAudio;
 
@@ -52,13 +52,13 @@ internal sealed class MeetingController : IDisposable
     /// <param name="transcribe">One chunk WAV → cleaned transcript text ("" when nothing was said); throws on failure.</param>
     /// <param name="summarize">Transcript → Markdown summary with the Dictate Prompt model.</param>
     /// <param name="unavailable">Why a meeting cannot start right now (no key, offline models missing), or null.</param>
-    /// <param name="otherHotkeys">Stored hotkeys of dictation, Dictate Prompt and glossary, for the duplicate check.</param>
+    /// <param name="otherHotkeys">Every other key that is held (owner and key), for the duplicate check.</param>
     /// <param name="suspendHotkeys">true while the hotkey dialog records keys, false to register them again.</param>
     /// <param name="fakeAudio">VM test mode (--fake-gemini): a silent-free synthetic tone instead of the microphone.</param>
     public MeetingController(Core.Settings settings, SynchronizationContext ui,
         Func<byte[], CancellationToken, Task<string>> transcribe, Func<string, CancellationToken, Task<string>> summarize,
         Func<string?> unavailable, Action<string, string, ToolTipIcon, Action?> notify, Action save,
-        Func<IReadOnlyCollection<string>> otherHotkeys, Action<bool> suspendHotkeys, bool fakeAudio)
+        Func<IReadOnlyCollection<(string Owner, string Key)>> otherHotkeys, Action<bool> suspendHotkeys, bool fakeAudio)
     {
         _settings = settings;
         _ui = ui;
