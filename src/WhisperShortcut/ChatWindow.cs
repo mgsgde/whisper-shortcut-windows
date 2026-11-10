@@ -390,9 +390,9 @@ internal sealed partial class ChatWindow : FastShowForm
         Core.ModelPickers.Prompt(_offline.SelectedLlm.DisplayName);
 
     private Core.PickerModel? CurrentModel() =>
-        Core.ModelPickers.Find(ChatModels(), _settings.EffectiveChatEngine, _settings.EffectiveChatModel);
+        Core.ModelPickers.Find(ChatModels(), _settings.EffectiveChat.Engine, _settings.EffectiveChat.Model);
 
-    private string ModelName => CurrentModel()?.Name ?? _settings.EffectiveChatModel;
+    private string ModelName => CurrentModel()?.Name ?? _settings.EffectiveChat.Model;
 
     /// <summary>„/model 3.1 flash“: the model whose name contains every word, else null.</summary>
     private Core.PickerModel? MatchModel(string query)
@@ -429,9 +429,7 @@ internal sealed partial class ChatWindow : FastShowForm
 
     private void Pick(Core.PickerModel model)
     {
-        _settings.ChatEngine = model.Engine;
-        if (model.Engine == Core.Engine.Gemini) _settings.ChatModel = Core.GeminiModels.NormalizePrompt(model.Id);
-        else if (model.Engine == Core.Engine.OpenAI) _settings.ChatOpenAiModel = Core.OpenAiModels.NormalizePrompt(model.Id);
+        _settings.Chat = _settings.Chat.Choose(Core.ModelStep.Text, model.Engine, model.Id);
         _save();
         UpdateHeader();
         SetStatus($"Es antwortet jetzt {ModelName}.", Tone.Secondary);
@@ -459,8 +457,8 @@ internal sealed partial class ChatWindow : FastShowForm
         var session = _session;
         session.Add(new Core.ChatMessage(Core.ChatRole.User, text, DateTimeOffset.Now, Attachments: attachments is { Count: > 0 } ? attachments : null));
         Persist(session);
-        var engine = _settings.EffectiveChatEngine;
-        var model = _settings.EffectiveChatModel;
+        var engine = _settings.EffectiveChat.Engine;
+        var model = _settings.EffectiveChat.Model;
         var modelName = ModelName;
         var system = Core.ChatPrompts.Effective(_settings.ChatSystemPrompt, offline: engine == Core.Engine.Local);
         system = WithMeetingContext(system, session); // ChatWindow.Meeting.cs

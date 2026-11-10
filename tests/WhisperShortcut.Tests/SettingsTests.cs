@@ -18,8 +18,8 @@ public class SettingsTests
         Assert.Equal("Alt+1", s.DictateHotkey);
         Assert.Equal("Alt+2", s.PromptHotkey);
         Assert.Equal("Alt+7", s.GlossaryHotkey);
-        Assert.Equal("gemini-3.1-flash-lite", s.TranscriptionModel);
-        Assert.Equal("gemini-3.8-flash", s.PromptModel);
+        Assert.Equal("gemini-3.1-flash-lite", s.Dictate.Gemini);
+        Assert.Equal("gemini-3.8-flash", s.Prompt.Gemini);
 
         s.ApiKey = "abc123SECRET";
         s.Glossary = new() { "Kubernetes", "Müller" };
@@ -178,10 +178,10 @@ public class SettingsTests
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, "{\"promptModel\":\"gemini-3.7-flash\",\"transcriptionModel\":\"quatsch\",\"openAiPromptModel\":\"gpt-5\",\"openAiTranscriptionModel\":\"whisper-1\"}");
         var l = Settings.Load(path, new Reverse());
-        Assert.Equal("gemini-3.8-flash", l.PromptModel);
-        Assert.Equal(Settings.DefaultTranscriptionModel, l.TranscriptionModel);
-        Assert.Equal("gpt-6-sol", l.OpenAiPromptModel);
-        Assert.Equal("gpt-4o-transcribe", l.OpenAiTranscriptionModel);
+        Assert.Equal("gemini-3.8-flash", l.Prompt.Gemini);
+        Assert.Equal(Settings.DefaultTranscriptionModel, l.Dictate.Gemini);
+        Assert.Equal("gpt-6-sol", l.Prompt.OpenAi);
+        Assert.Equal("gpt-4o-transcribe", l.Dictate.OpenAi);
     }
 
     [Fact]
@@ -220,12 +220,12 @@ public class SettingsTests
     {
         var path = TempSettingsFile("{\"offlineMode\":true,\"dictateHotkey\":\"Ctrl+Shift+X\"}");
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal(Engine.Gemini, s.SpeechEngine);
-        Assert.Equal(Engine.Gemini, s.TextEngine);
+        Assert.Equal(Engine.Gemini, s.Dictate.Engine);
+        Assert.Equal(Engine.Gemini, s.Prompt.Engine);
         Assert.True(s.OfflineMode);
         Assert.Equal("", s.OpenAiKey);
-        Assert.Equal("gpt-4o-transcribe", s.OpenAiTranscriptionModel);
-        Assert.Equal("gpt-6-sol", s.OpenAiPromptModel);
+        Assert.Equal("gpt-4o-transcribe", s.Dictate.OpenAi);
+        Assert.Equal("gpt-6-sol", s.Prompt.OpenAi);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
@@ -234,8 +234,8 @@ public class SettingsTests
     {
         var path = TempSettingsFile("{\"speechEngine\":\"azure\",\"textEngine\":\"\"}");
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal(Engine.Gemini, s.SpeechEngine);
-        Assert.Equal(Engine.Gemini, s.TextEngine);
+        Assert.Equal(Engine.Gemini, s.Dictate.Engine);
+        Assert.Equal(Engine.Gemini, s.Prompt.Engine);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
@@ -244,11 +244,11 @@ public class SettingsTests
     {
         var path = TempSettingsFile("{}");
         var s = Settings.Load(path, new Reverse());
-        s.SpeechEngine = Engine.Local;
-        s.TextEngine = Engine.OpenAI;
+        s.Dictate = s.Dictate with { Engine = Engine.Local };
+        s.Prompt = s.Prompt with { Engine = Engine.OpenAI };
         s.OpenAiKey = "sk-SECRET123";
-        s.OpenAiTranscriptionModel = "gpt-4o-mini-transcribe";
-        s.OpenAiPromptModel = "gpt-6-luna";
+        s.Dictate = s.Dictate with { OpenAi = "gpt-4o-mini-transcribe" };
+        s.Prompt = s.Prompt with { OpenAi = "gpt-6-luna" };
         s.Save();
 
         var raw = File.ReadAllText(path);
@@ -257,11 +257,11 @@ public class SettingsTests
         Assert.Contains("\"textEngine\": \"openai\"", raw);
 
         var t = Settings.Load(path, new Reverse());
-        Assert.Equal(Engine.Local, t.SpeechEngine);
-        Assert.Equal(Engine.OpenAI, t.TextEngine);
+        Assert.Equal(Engine.Local, t.Dictate.Engine);
+        Assert.Equal(Engine.OpenAI, t.Prompt.Engine);
         Assert.Equal("sk-SECRET123", t.OpenAiKey);
-        Assert.Equal("gpt-4o-mini-transcribe", t.OpenAiTranscriptionModel);
-        Assert.Equal("gpt-6-luna", t.OpenAiPromptModel);
+        Assert.Equal("gpt-4o-mini-transcribe", t.Dictate.OpenAi);
+        Assert.Equal("gpt-6-luna", t.Prompt.OpenAi);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
@@ -287,8 +287,8 @@ public class SettingsTests
     {
         var path = TempSettingsFile("{}");
         var s = Settings.Load(path, new PlainSecretProtector());
-        s.SpeechEngine = Engine.OpenAI;
-        s.TextEngine = Engine.Gemini;
+        s.Dictate = s.Dictate with { Engine = Engine.OpenAI };
+        s.Prompt = s.Prompt with { Engine = Engine.Gemini };
         Assert.Equal(Engine.OpenAI, s.EffectiveSpeechEngine);
         Assert.Equal(Engine.Gemini, s.EffectiveTextEngine);
         s.OfflineMode = true;
@@ -307,7 +307,7 @@ public class SettingsTests
         Assert.Equal("", s.ApiKey);
         Assert.Equal("", s.OpenAiKey);
         Assert.Equal("Alt+1", s.DictateHotkey);
-        Assert.Equal(Engine.Gemini, s.SpeechEngine);
+        Assert.Equal(Engine.Gemini, s.Dictate.Engine);
         Assert.False(File.Exists(path));
     }
 
@@ -837,9 +837,9 @@ public class QuickActionRequestTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal(Engine.Gemini, s.MeetingSpeechEngine);
-        Assert.Equal(Settings.DefaultTranscriptionModel, s.MeetingTranscriptionModel);
-        Assert.Equal("gemini-3.5-flash-lite", s.MeetingSummaryModel);
+        Assert.Equal(Engine.Gemini, s.MeetingTranscription.Engine);
+        Assert.Equal(Settings.DefaultTranscriptionModel, s.MeetingTranscription.Gemini);
+        Assert.Equal("gemini-3.5-flash-lite", s.MeetingText.Gemini);
         Assert.Equal(60, s.MeetingChunkSeconds);
         Assert.Equal(90, s.MeetingSafeguardMinutes);
         s.OfflineMode = true;
@@ -858,12 +858,12 @@ public class QuickActionRequestTests
               "transcriptionModel": "gemini-3.8-flash", "openAiPromptModel": "gpt-6-luna" }
             """);
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal(Engine.OpenAI, s.MeetingSpeechEngine);
-        Assert.Equal("gpt-4o-mini-transcribe", s.MeetingOpenAiTranscriptionModel);
-        Assert.Equal("gemini-3.8-flash", s.MeetingTranscriptionModel);
-        Assert.Equal(Engine.Local, s.MeetingTextEngine);
-        Assert.Equal("gpt-6-luna", s.MeetingOpenAiSummaryModel);
-        Assert.Equal("gemini-3.5-flash-lite", s.MeetingSummaryModel);
+        Assert.Equal(Engine.OpenAI, s.MeetingTranscription.Engine);
+        Assert.Equal("gpt-4o-mini-transcribe", s.MeetingTranscription.OpenAi);
+        Assert.Equal("gemini-3.8-flash", s.MeetingTranscription.Gemini);
+        Assert.Equal(Engine.Local, s.MeetingText.Engine);
+        Assert.Equal("gpt-6-luna", s.MeetingText.OpenAi);
+        Assert.Equal("gemini-3.5-flash-lite", s.MeetingText.Gemini);
         Directory.Delete(dir, true);
     }
 
@@ -884,9 +884,9 @@ public class QuickActionRequestTests
         var s = Settings.Load(path, new PlainSecretProtector());
         Assert.False(s.MeetingSpeechEngineExplicit);
         Assert.Equal(Engine.Gemini, s.EffectiveMeetingSpeechEngine); // unset + Gemini dictation
-        s.SpeechEngine = Engine.Local;
+        s.Dictate = s.Dictate with { Engine = Engine.Local };
         Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);  // unset + Local dictation: no cloud
-        s.SpeechEngine = Engine.OpenAI;
+        s.Dictate = s.Dictate with { Engine = Engine.OpenAI };
         Assert.Equal(Engine.OpenAI, s.EffectiveMeetingSpeechEngine);
     }
 
@@ -894,15 +894,15 @@ public class QuickActionRequestTests
     public void MeetingEngine_Explicit_IgnoresDictation()
     {
         var s = Settings.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json"), new PlainSecretProtector());
-        s.SpeechEngine = Engine.Local;
-        s.MeetingSpeechEngine = Engine.OpenAI;
+        s.Dictate = s.Dictate with { Engine = Engine.Local };
+        s.MeetingTranscription = s.MeetingTranscription with { Engine = Engine.OpenAI };
         s.MeetingSpeechEngineExplicit = true;
         Assert.Equal(Engine.OpenAI, s.EffectiveMeetingSpeechEngine);
-        s.SpeechEngine = Engine.Gemini;
-        s.MeetingSpeechEngine = Engine.Local;
+        s.Dictate = s.Dictate with { Engine = Engine.Gemini };
+        s.MeetingTranscription = s.MeetingTranscription with { Engine = Engine.Local };
         Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
         s.OfflineMode = true; // Offline-Modus wins over an explicit cloud pick
-        s.MeetingSpeechEngine = Engine.Gemini;
+        s.MeetingTranscription = s.MeetingTranscription with { Engine = Engine.Gemini };
         Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
     }
 
@@ -911,10 +911,10 @@ public class QuickActionRequestTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        s.SpeechEngine = Engine.Local;
+        s.Dictate = s.Dictate with { Engine = Engine.Local };
         s.Save();
         Assert.False(Settings.Load(path, new PlainSecretProtector()).MeetingSpeechEngineExplicit);
-        s.MeetingSpeechEngine = Engine.Gemini;
+        s.MeetingTranscription = s.MeetingTranscription with { Engine = Engine.Gemini };
         s.MeetingSpeechEngineExplicit = true;
         s.Save();
         var t = Settings.Load(path, new PlainSecretProtector());
@@ -948,16 +948,16 @@ public class QuickActionRequestTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        s.MeetingSpeechEngine = Engine.Local;
-        s.MeetingTextEngine = Engine.OpenAI;
-        s.MeetingOpenAiSummaryModel = "gpt-5.4-mini";
+        s.MeetingTranscription = s.MeetingTranscription with { Engine = Engine.Local };
+        s.MeetingText = s.MeetingText with { Engine = Engine.OpenAI };
+        s.MeetingText = s.MeetingText with { OpenAi = "gpt-5.4-mini" };
         s.MeetingChunkSeconds = 30;
         s.MeetingSafeguardMinutes = 0;
         s.Save();
         var t = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal(Engine.Local, t.MeetingSpeechEngine);
-        Assert.Equal(Engine.OpenAI, t.MeetingTextEngine);
-        Assert.Equal("gpt-5.4-mini", t.MeetingOpenAiSummaryModel);
+        Assert.Equal(Engine.Local, t.MeetingTranscription.Engine);
+        Assert.Equal(Engine.OpenAI, t.MeetingText.Engine);
+        Assert.Equal("gpt-5.4-mini", t.MeetingText.OpenAi);
         Assert.Equal(30, t.MeetingChunkSeconds);
         Assert.Equal(0, t.MeetingSafeguardMinutes);
 
@@ -972,29 +972,29 @@ public class QuickActionRequestTests
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal("Alt+6", s.ActiveChatHotkey);
-        Assert.Equal(Engine.Gemini, s.EffectiveChatEngine);
-        Assert.Equal("gemini-3.8-flash", s.EffectiveChatModel);
+        Assert.Equal(Engine.Gemini, s.EffectiveChat.Engine);
+        Assert.Equal("gemini-3.8-flash", s.EffectiveChat.Model);
         Assert.True(s.ChatWebSearch);
         Assert.True(s.ChatCloseOnFocusLoss);
         Assert.Equal("", s.ChatSystemPrompt);
 
-        s.ChatEngine = Engine.OpenAI;
-        s.ChatOpenAiModel = "gpt-6-luna";
+        s.Chat = s.Chat with { Engine = Engine.OpenAI };
+        s.Chat = s.Chat with { OpenAi = "gpt-6-luna" };
         s.ChatWebSearch = false;
         s.ChatCloseOnFocusLoss = false;
         s.ChatSystemPrompt = "Antworte knapp.";
         s.ChatHotkeyEnabled = false;
         s.Save();
         var t = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal(Engine.OpenAI, t.ChatEngine);
-        Assert.Equal("gpt-6-luna", t.EffectiveChatModel);
+        Assert.Equal(Engine.OpenAI, t.Chat.Engine);
+        Assert.Equal("gpt-6-luna", t.EffectiveChat.Model);
         Assert.False(t.ChatWebSearch);
         Assert.False(t.ChatCloseOnFocusLoss);
         Assert.Equal("Antworte knapp.", t.ChatSystemPrompt);
         Assert.Equal("", t.ActiveChatHotkey);
         t.OfflineMode = true;
-        Assert.Equal(Engine.Local, t.EffectiveChatEngine);
-        Assert.Equal(ModelPickers.LocalId, t.EffectiveChatModel);
+        Assert.Equal(Engine.Local, t.EffectiveChat.Engine);
+        Assert.Equal(ModelPickers.LocalId, t.EffectiveChat.Model);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
@@ -1008,8 +1008,8 @@ public class QuickActionRequestTests
             { "textEngine": "openai", "openAiPromptModel": "gpt-5.4-mini", "templateHotkey": "Alt+6" }
             """);
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal(Engine.OpenAI, s.ChatEngine);
-        Assert.Equal("gpt-5.4-mini", s.ChatOpenAiModel);
+        Assert.Equal(Engine.OpenAI, s.Chat.Engine);
+        Assert.Equal("gpt-5.4-mini", s.Chat.OpenAi);
         Assert.Equal("Alt+6", s.ChatHotkey);
         Assert.False(s.ChatHotkeyEnabled); // Alt+6 already opens the template picker
 

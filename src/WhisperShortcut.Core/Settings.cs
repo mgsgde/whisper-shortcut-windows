@@ -55,11 +55,11 @@ public sealed partial class Settings
     /// <summary>OpenAI API key (plain in memory, protected on disk). Read at call time by OpenAiClient.</summary>
     public string OpenAiKey { get; set; } = "";
 
-    /// <summary>Where speech recognition (Dictate) runs. Use <see cref="EffectiveSpeechEngine"/> to decide.</summary>
-    public Engine SpeechEngine { get; set; } = Engine.Gemini;
+    /// <summary>Provider and models of speech recognition (Dictate). Use <see cref="EffectiveSpeechEngine"/> to decide where it runs.</summary>
+    public ModelSelection Dictate { get; set; } = ModelSelection.Default(ModelStep.Transcription);
 
-    /// <summary>Where text processing (Dictate Prompt) runs. Use <see cref="EffectiveTextEngine"/> to decide.</summary>
-    public Engine TextEngine { get; set; } = Engine.Gemini;
+    /// <summary>Provider and models of text processing (Dictate Prompt). Use <see cref="EffectiveTextEngine"/> to decide where it runs.</summary>
+    public ModelSelection Prompt { get; set; } = ModelSelection.Default(ModelStep.Text);
 
     /// <summary>
     /// "Only when spoken": offline dictation writes punctuation only where it is spoken ("Punkt", "Komma").
@@ -85,25 +85,19 @@ public sealed partial class Settings
     /// <summary>Gemini transcription thinking level: minimal, low, medium or high; see <see cref="TranscriptionTuning"/>.</summary>
     public string TranscriptionThinking { get; set; } = TranscriptionTuning.DefaultThinking;
 
-    /// <summary>OpenAI transcription model id.</summary>
-    public string OpenAiTranscriptionModel { get; set; } = OpenAiModels.DefaultTranscriptionModel;
-
-    /// <summary>OpenAI Dictate Prompt model id.</summary>
-    public string OpenAiPromptModel { get; set; } = OpenAiModels.DefaultPromptModel;
-
     /// <summary>
     /// The speech engine actually used. <see cref="OfflineMode"/> is the tray's "nothing leaves this PC"
     /// switch and overrides the choice with <see cref="Engine.Local"/>. Not persisted.
     /// </summary>
     [JsonIgnore]
-    public Engine EffectiveSpeechEngine => OfflineMode ? Engine.Local : SpeechEngine;
+    public Engine EffectiveSpeechEngine => Dictate.Effective(OfflineMode).Engine;
 
     /// <summary>
     /// The text engine actually used. <see cref="OfflineMode"/> is the tray's "nothing leaves this PC"
     /// switch and overrides the choice with <see cref="Engine.Local"/>. Not persisted.
     /// </summary>
     [JsonIgnore]
-    public Engine EffectiveTextEngine => OfflineMode ? Engine.Local : TextEngine;
+    public Engine EffectiveTextEngine => Prompt.Effective(OfflineMode).Engine;
 
     /// <summary>
     /// The provider whose API key <paramref name="engine"/> needs but lacks: "Gemini", "OpenAI", or null when the key is there
@@ -137,12 +131,6 @@ public sealed partial class Settings
     /// Empty = Prompts.DefaultPromptModeSystemPrompt. The template for new texts (DictatePromptTemplate) is appended to it.
     /// </summary>
     public string PromptModeSystemPrompt { get; set; } = "";
-
-    /// <summary>Transcription model id.</summary>
-    public string TranscriptionModel { get; set; } = DefaultTranscriptionModel;
-
-    /// <summary>Dictate Prompt model id.</summary>
-    public string PromptModel { get; set; } = DefaultPromptModel;
 
     /// <summary>Product name of the microphone to record from; "" = the Windows default device.</summary>
     public string Microphone { get; set; } = "";
@@ -372,23 +360,20 @@ public sealed partial class Settings
             {
                 s.OpenAiKey = dto.OpenAiKeyPlain;
             }
-            s.SpeechEngine = Choices.Engine.Parse(dto.SpeechEngine);
-            s.TextEngine = Choices.Engine.Parse(dto.TextEngine);
+            s.Dictate = ModelSelection.Load(ModelStep.Transcription, dto.SpeechEngine, dto.TranscriptionModel, dto.OpenAiTranscriptionModel,
+                ModelSelection.Default(ModelStep.Transcription));
+            s.Prompt = ModelSelection.Load(ModelStep.Text, dto.TextEngine, dto.PromptModel, dto.OpenAiPromptModel, ModelSelection.Default(ModelStep.Text));
             s.PunctuationMode = Choices.Punctuation.Parse(dto.PunctuationMode);
             s.DictateMode = Choices.DictateMode.Parse(dto.DictateMode);
-            s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
             s.TranscriptionLanguage = TranscriptionLanguages.Normalize(dto.TranscriptionLanguage);
             s.TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(dto.TranscriptionTemperature);
             s.TranscriptionThinking = TranscriptionTuning.NormalizeThinking(dto.TranscriptionThinking);
-            s.OpenAiPromptModel = OpenAiModels.NormalizePrompt(dto.OpenAiPromptModel);
             // JSON null entries (hand-edited or a half-written file) must not stay in the list:
             // GlossaryEdit.TryAdd would then NullRef when the user adds a term.
             s.Glossary = (dto.Glossary ?? new()).Where(t => t != null).ToList()!;
             s.DictatePromptTemplate = dto.DictatePromptTemplate ?? dto.LegacyPromptSystemPrompt ?? "";
             s.DictateSystemPrompt = CustomOrEmpty(dto.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt);
             s.PromptModeSystemPrompt = CustomOrEmpty(dto.PromptModeSystemPrompt, Prompts.DefaultPromptModeSystemPrompt);
-            s.TranscriptionModel = GeminiModels.NormalizeTranscription(dto.TranscriptionModel);
-            s.PromptModel = GeminiModels.NormalizePrompt(dto.PromptModel);
             if (!string.IsNullOrWhiteSpace(dto.DictateHotkey)) s.DictateHotkey = dto.DictateHotkey;
             if (!string.IsNullOrWhiteSpace(dto.PromptHotkey)) s.PromptHotkey = dto.PromptHotkey;
             if (!string.IsNullOrWhiteSpace(dto.GlossaryHotkey)) s.GlossaryHotkey = dto.GlossaryHotkey;
@@ -511,21 +496,21 @@ public sealed partial class Settings
         {
             ApiKeyProtected = ApiKey.Length == 0 ? "" : protect(ApiKey),
             OpenAiKeyProtected = OpenAiKey.Length == 0 ? "" : protect(OpenAiKey),
-            SpeechEngine = Choices.Engine.Token(SpeechEngine),
-            TextEngine = Choices.Engine.Token(TextEngine),
+            SpeechEngine = Choices.Engine.Token(Dictate.Engine),
+            TextEngine = Choices.Engine.Token(Prompt.Engine),
             PunctuationMode = Choices.Punctuation.Token(PunctuationMode),
             DictateMode = Choices.DictateMode.Token(DictateMode),
-            OpenAiTranscriptionModel = OpenAiTranscriptionModel,
+            OpenAiTranscriptionModel = Dictate.OpenAi,
             TranscriptionLanguage = TranscriptionLanguages.Normalize(TranscriptionLanguage),
             TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(TranscriptionTemperature),
             TranscriptionThinking = TranscriptionTuning.NormalizeThinking(TranscriptionThinking),
-            OpenAiPromptModel = OpenAiPromptModel,
+            OpenAiPromptModel = Prompt.OpenAi,
             Glossary = Glossary,
             DictatePromptTemplate = DictatePromptTemplate,
             DictateSystemPrompt = DictateSystemPrompt,
             PromptModeSystemPrompt = PromptModeSystemPrompt,
-            TranscriptionModel = TranscriptionModel,
-            PromptModel = PromptModel,
+            TranscriptionModel = Dictate.Gemini,
+            PromptModel = Prompt.Gemini,
             DictateHotkey = DictateHotkey,
             PromptHotkey = PromptHotkey,
             GlossaryHotkey = GlossaryHotkey,

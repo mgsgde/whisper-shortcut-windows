@@ -22,10 +22,7 @@ internal sealed partial class SettingsForm : FastShowForm
     private readonly ThemedLabel _offlineState;
     private readonly KeyField _geminiKey;
     private readonly KeyField _openAiKey;
-    private readonly FluentCombo _speechEngine;
-    private readonly FluentCombo _textEngine;
-    private readonly FluentCombo _dictateModelOpenAi;
-    private readonly FluentCombo _promptModelOpenAi;
+    private readonly ModelStepControls _dictateStep, _promptStep;
     private readonly Control[] _engineOnly;
     private readonly Card _dictateGeminiCard, _dictateOpenAiCard, _promptGeminiCard, _promptOpenAiCard;
     private readonly FluentCombo _punctuation;
@@ -48,8 +45,6 @@ internal sealed partial class SettingsForm : FastShowForm
     private readonly HotkeyBox _glossaryKey;
     private readonly HotkeyBox _settingsKey;
     private readonly ToggleSwitch _rightCtrl;
-    private readonly FluentCombo _dictateModel;
-    private readonly FluentCombo _promptModel;
     private readonly PromptEditor _dictatePrompt;
     private readonly PromptEditor _promptPrompt;
     private readonly ToggleSwitch _autoStart;
@@ -301,7 +296,7 @@ internal sealed partial class SettingsForm : FastShowForm
         _useParakeet.Click += (_, _) =>
         {
             Core.Log.Info("SETTINGS: Live diktieren note — switched speech recognition to Parakeet on this PC");
-            _speechEngine.SelectedItem = _speechEngine.Items.Cast<ChoiceItem<Core.Engine>>().First(i => i.Value == Core.Engine.Local);
+            _dictateStep.Engine.SelectedItem = _dictateStep.Engine.Items.Cast<ChoiceItem<Core.Engine>>().First(i => i.Value == Core.Engine.Local);
             RefreshPickers();
         };
         _liveWarning.Controls.Add(warningHead);
@@ -314,25 +309,21 @@ internal sealed partial class SettingsForm : FastShowForm
 
         // --- transcription model: provider per step (Mac: one model picker that includes the offline models) ---
         dictate.Controls.Add(Section("Transkriptionsmodell", subtitle: "Welches Modell deine Aufnahme in Text verwandelt."));
-        _speechEngine = EngineChoice(settings.SpeechEngine, "Spracherkennung", "Auf diesem PC (Parakeet)");
+        _dictateStep = new ModelStepControls(Core.ModelStep.Transcription, settings.Dictate, "Spracherkennung", "Auf diesem PC (Parakeet)");
         var speechEngineCard = new Card();
         speechEngineCard.AddRow(SettingRow("Anbieter", "Wer die Aufnahme in Text verwandelt, auch die gesprochene Anweisung bei Dictate Prompt.",
-            _speechEngine, ComboWidth, out _));
+            _dictateStep.Engine, ComboWidth, out _));
         var engineNote = Block();
         engineNote.Controls.Add(Wrap($"Gemischt geht auch: Die Spracherkennung auf diesem PC braucht nur {FormatBytes(ComponentSize(Core.OfflineCatalog.Parakeet))} "
             + "und ist sehr schnell, die Texte gehen online. Das große Sprachmodell muss dafür nicht geladen werden.", 2 * RowPadding, small: true));
         speechEngineCard.AddRow(engineNote);
-        _dictateModel = ModelChoice(Core.GeminiModels.Transcription, settings.TranscriptionModel);
-        _dictateGeminiCard = ModelCard(_dictateModel, "Gemini-Modell", "Gilt, wenn die Spracherkennung über Gemini läuft. "
+        _dictateGeminiCard = ModelCard(_dictateStep.Gemini, "Gemini-Modell", "Gilt, wenn die Spracherkennung über Gemini läuft. "
             + "Auf diesem PC erkennt Parakeet die Sprache, ohne Modellwahl und ohne eigene Anweisungen.");
-        _dictateModelOpenAi = ModelChoice(Core.OpenAiModels.Transcription, settings.OpenAiTranscriptionModel);
-        _dictateOpenAiCard = ModelCard(_dictateModelOpenAi, "OpenAI-Modell", "Gilt, wenn die Spracherkennung über OpenAI läuft. "
+        _dictateOpenAiCard = ModelCard(_dictateStep.OpenAi, "OpenAI-Modell", "Gilt, wenn die Spracherkennung über OpenAI läuft. "
             + "Das Glossar geht als Hinweis mit; die Anweisungen unten gelten nur für Gemini.");
         // The provider and model combos stay the stored state; the tiles (Mac model picker) set them.
         dictate.Controls.Add(Hidden(speechEngineCard, _dictateGeminiCard, _dictateOpenAiCard));
-        dictate.Controls.Add(ModelPicker("Transkriptionsmodell", () => Core.ModelPickers.Transcription("Parakeet"),
-            models => Core.ModelPickers.Recommended(models, Core.Settings.DefaultTranscriptionModel, Core.OpenAiModels.DefaultTranscriptionModel),
-            _speechEngine, _dictateModel, _dictateModelOpenAi, () => OfflineEngine.SpeechInstalled));
+        dictate.Controls.Add(ModelPicker("Transkriptionsmodell", _dictateStep));
 
         // --- offline speech model (Mac: Offline Models in this tab) ---
         dictate.Controls.Add(Section("Offline-Modell"));
@@ -422,20 +413,16 @@ internal sealed partial class SettingsForm : FastShowForm
 
         // ================= page: Dictate Prompt =================
         prompt.Controls.Add(Section("Modell", subtitle: "Das Modell, das deine gesprochene Anweisung hört und auf den markierten Text anwendet."));
-        _textEngine = EngineChoice(settings.TextEngine, "Texte bearbeiten", "Auf diesem PC (Sprachmodell)");
+        _promptStep = new ModelStepControls(Core.ModelStep.Text, settings.Prompt, "Texte bearbeiten", "Auf diesem PC (Sprachmodell)");
         var textEngineCard = new Card();
         textEngineCard.AddRow(SettingRow("Anbieter", "Wer die Anweisung auf den markierten Text anwendet, neue Texte schreibt und die "
-            + "Schnellanweisungen ausführt.", _textEngine, ComboWidth, out _));
+            + "Schnellanweisungen ausführt.", _promptStep.Engine, ComboWidth, out _));
         _engineOnly = new Control[] { speechEngineCard, textEngineCard };
-        _promptModel = ModelChoice(Core.GeminiModels.Prompt, settings.PromptModel);
-        _promptGeminiCard = ModelCard(_promptModel, "Gemini-Modell", "Gilt, wenn Texte über Gemini bearbeitet werden. "
+        _promptGeminiCard = ModelCard(_promptStep.Gemini, "Gemini-Modell", "Gilt, wenn Texte über Gemini bearbeitet werden. "
             + "Auf diesem PC arbeitet das Sprachmodell darunter.");
-        _promptModelOpenAi = ModelChoice(Core.OpenAiModels.Prompt, settings.OpenAiPromptModel);
-        _promptOpenAiCard = ModelCard(_promptModelOpenAi, "OpenAI-Modell", "Gilt, wenn Texte über OpenAI bearbeitet werden.");
+        _promptOpenAiCard = ModelCard(_promptStep.OpenAi, "OpenAI-Modell", "Gilt, wenn Texte über OpenAI bearbeitet werden.");
         prompt.Controls.Add(Hidden(textEngineCard, _promptGeminiCard, _promptOpenAiCard));
-        prompt.Controls.Add(ModelPicker("Modell für Dictate Prompt", () => Core.ModelPickers.Prompt(LocalLlmName),
-            models => Core.ModelPickers.Recommended(models, Core.Settings.DefaultPromptModel, Core.OpenAiModels.DefaultPromptModel),
-            _textEngine, _promptModel, _promptModelOpenAi, () => _llmChoice != null && OfflineEngine.LlmInstalled(SelectedLlmChoice)));
+        prompt.Controls.Add(ModelPicker("Modell für Dictate Prompt", _promptStep));
 
         // --- offline language model (Mac: the local models in the Dictate Prompt picker) ---
         prompt.Controls.Add(Section("Offline-Sprachmodell"));
@@ -647,8 +634,8 @@ internal sealed partial class SettingsForm : FastShowForm
             // Switching to online: say right away whether the stored keys work.
             if (_onlineMode.Checked && IsHandleCreated) CheckVisibleKeys();
         };
-        _speechEngine.SelectedIndexChanged += (_, _) => UpdateMode();
-        _textEngine.SelectedIndexChanged += (_, _) => UpdateMode();
+        _dictateStep.Engine.SelectedIndexChanged += (_, _) => UpdateMode();
+        _promptStep.Engine.SelectedIndexChanged += (_, _) => UpdateMode();
         // „Schlüssel nötig“ on the tiles follows the key fields on Konten.
         _geminiKey.Box.TextChanged += (_, _) => RefreshPickers();
         _openAiKey.Box.TextChanged += (_, _) => RefreshPickers();
@@ -769,7 +756,8 @@ internal sealed partial class SettingsForm : FastShowForm
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
         var dirtyTimer = _applyTimer;
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
-        var combos = new[] { _mic, _llmChoice, _dictateModel, _promptModel, _speechEngine, _textEngine, _dictateModelOpenAi, _promptModelOpenAi, _templateChoice, _punctuation, _dictateMode, _afterPaste, _language, _temperature, _thinking };
+        var combos = new[] { _mic, _llmChoice, _templateChoice, _punctuation, _dictateMode, _afterPaste, _language, _temperature, _thinking }
+            .Concat(_dictateStep.Combos).Concat(_promptStep.Combos).ToArray();
         dirtyTimer.Tick += (_, _) =>
         {
             if (_snapshot.Length == 0 || combos.Any(c => c.DroppedDown)) return;
@@ -1000,7 +988,7 @@ internal sealed partial class SettingsForm : FastShowForm
     {
         var info = new Core.ProblemReportInfo(AppVersion, Environment.OSVersion.Version.ToString(),
             System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(), _settings.OfflineMode,
-            _settings.TranscriptionModel, _settings.PromptModel, _settings.OfflineLlmId);
+            _settings.Dictate.Gemini, _settings.Prompt.Gemini, _settings.OfflineLlmId);
         var body = Core.ProblemReport.Body(info, Core.ProblemReport.TailLog(Core.Log.DefaultPath));
         var (url, bodyInUrl) = Core.ProblemReport.IssueUrl($"Problem in Version {AppVersion}", body);
         if (!bodyInUrl)
@@ -1640,7 +1628,7 @@ internal sealed partial class SettingsForm : FastShowForm
     private void UpdateDictateMode()
     {
         if (IsDisposed) return;
-        bool offlineSpeech = !_onlineMode.Checked || SelectedEngine(_speechEngine) == Core.Engine.Local;
+        bool offlineSpeech = !_onlineMode.Checked || _dictateStep.SelectedEngine == Core.Engine.Local;
         var reason = SelectedDictateMode == Core.DictateMode.Live
             ? Core.LiveDictation.UnavailableReason(duringMeeting: false, offlineSpeech, OfflineEngine.SpeechInstalled)
             : null;
@@ -1759,23 +1747,23 @@ internal sealed partial class SettingsForm : FastShowForm
     {
         SuspendLayout();
         bool online = _onlineMode.Checked;
-        var engines = online ? new[] { SelectedEngine(_speechEngine), SelectedEngine(_textEngine) } : new[] { Core.Engine.Local };
+        var engines = online ? new[] { _dictateStep.SelectedEngine, _promptStep.SelectedEngine } : new[] { Core.Engine.Local };
         foreach (var c in _engineOnly) c.Visible = online;
-        bool offlineSpeech = !online || SelectedEngine(_speechEngine) == Core.Engine.Local;
+        bool offlineSpeech = !online || _dictateStep.SelectedEngine == Core.Engine.Local;
         foreach (var c in _punctuationOnly) c.Visible = offlineSpeech;
         UpdateDictateMode();
-        bool openAiSpeech = online && SelectedEngine(_speechEngine) == Core.Engine.OpenAI;
-        bool openAiText = online && SelectedEngine(_textEngine) == Core.Engine.OpenAI;
+        bool openAiSpeech = online && _dictateStep.SelectedEngine == Core.Engine.OpenAI;
+        bool openAiText = online && _promptStep.SelectedEngine == Core.Engine.OpenAI;
         (_dictateGeminiCard.Visible, _dictateOpenAiCard.Visible) = (!openAiSpeech, openAiSpeech);
         (_promptGeminiCard.Visible, _promptOpenAiCard.Visible) = (!openAiText, openAiText);
-        bool shotsPossible = online && SelectedEngine(_textEngine) != Core.Engine.Local;
+        bool shotsPossible = online && _promptStep.SelectedEngine != Core.Engine.Local;
         _sendScreenshots.Enabled = _screenshotKey.Enabled = shotsPossible;
         _screenshotOff.Visible = !shotsPossible;
         _offlineState.Text = _offlineMode.Checked
             ? "Der Offline-Modus ist an: Aufnahmen und Texte bleiben auf diesem PC. Beides muss einmal geladen sein."
-            : SelectedEngine(_speechEngine) == Core.Engine.Local && SelectedEngine(_textEngine) != Core.Engine.Local
+            : _dictateStep.SelectedEngine == Core.Engine.Local && _promptStep.SelectedEngine != Core.Engine.Local
                 ? "Die Spracherkennung läuft auf diesem PC, Texte gehen online. Nur die Spracherkennung muss geladen sein."
-            : SelectedEngine(_textEngine) == Core.Engine.Local && SelectedEngine(_speechEngine) != Core.Engine.Local
+            : _promptStep.SelectedEngine == Core.Engine.Local && _dictateStep.SelectedEngine != Core.Engine.Local
                 ? "Texte werden auf diesem PC bearbeitet, die Spracherkennung läuft online. Dafür muss das Sprachmodell geladen sein."
             : "Der Offline-Modus ist aus. Die Modelle lassen sich schon vorher laden (Diktieren, Dictate Prompt).";
         ResumeLayout(true);
@@ -1953,10 +1941,9 @@ internal sealed partial class SettingsForm : FastShowForm
     private string Snapshot() => string.Join("\u0001", new[]
     {
         _onlineMode.Checked.ToString(), SelectedLlmChoice.Id, _geminiKey.Value, _openAiKey.Value, SelectedMicrophone,
-        SelectedEngine(_speechEngine).ToString(), SelectedEngine(_textEngine).ToString(),
-        SelectedModel(_dictateModelOpenAi), SelectedModel(_promptModelOpenAi),
+        _dictateStep.Snapshot, _promptStep.Snapshot,
         _dictateKey.Value, _promptKey.Value, _glossaryKey.Value, _autoStart.Checked.ToString(),
-        _glossary.Text, _template.Text, SelectedModel(_dictateModel), SelectedModel(_promptModel),
+        _glossary.Text, _template.Text,
         _dictatePrompt.Value, _promptPrompt.Value, _autoPaste.Checked.ToString(), SelectedAfterPaste.ToString(), _sounds.Checked.ToString(),
         _autoUpdate.Checked.ToString(), _templateKey.Value, _sendScreenshots.Checked.ToString(), _screenshotKey.Value, _liveKey.Value,
         SelectedPunctuation.ToString(), SelectedDictateMode.ToString(), _settingsKey.Value, _rightCtrl.Checked.ToString(), ReadAloudSnapshot(), ChatSnapshot(), MeetingsSnapshot(),
@@ -2122,9 +2109,9 @@ internal sealed partial class SettingsForm : FastShowForm
         var keysBefore = Core.HotkeySlots.All.Select(x => (Slot: x, Key: x.Get(_settings), On: x.On?.Invoke(_settings))).ToList();
         var before = (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
             _settings.Glossary,
-            _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
+            _settings.QuickActions, _settings.DictatePromptTemplate, _settings.Dictate, _settings.Prompt,
             _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
-            _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
+            _settings.OpenAiKey,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.PunctuationMode,
             _settings.RightCtrlDictation,
@@ -2133,10 +2120,8 @@ internal sealed partial class SettingsForm : FastShowForm
         _settings.OfflineLlmId = SelectedLlmChoice.Id;
         _settings.ApiKey = _geminiKey.Value;
         _settings.OpenAiKey = _openAiKey.Value;
-        _settings.SpeechEngine = SelectedEngine(_speechEngine);
-        _settings.TextEngine = SelectedEngine(_textEngine);
-        _settings.OpenAiTranscriptionModel = SelectedModel(_dictateModelOpenAi);
-        _settings.OpenAiPromptModel = SelectedModel(_promptModelOpenAi);
+        _settings.Dictate = _dictateStep.Selected;
+        _settings.Prompt = _promptStep.Selected;
         _settings.Microphone = SelectedMicrophone;
         if (keysOk) StoreKeys();
         // Names, instructions and the list itself are saved even when a key is invalid; only the keys are held back.
@@ -2145,8 +2130,6 @@ internal sealed partial class SettingsForm : FastShowForm
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
         _settings.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
         _settings.DictatePromptTemplate = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();
-        _settings.TranscriptionModel = SelectedModel(_dictateModel);
-        _settings.PromptModel = SelectedModel(_promptModel);
         _settings.DictateSystemPrompt = _dictatePrompt.Value;
         _settings.PromptModeSystemPrompt = _promptPrompt.Value;
         _settings.AutoPaste = _autoPaste.Checked;
@@ -2172,9 +2155,9 @@ internal sealed partial class SettingsForm : FastShowForm
             Core.Log.Error($"Saving settings failed: {e.GetType().Name}");
             (_settings.OfflineMode, _settings.OfflineLlmId, _settings.ApiKey, _settings.Microphone,
                 _settings.Glossary,
-                _settings.QuickActions, _settings.DictatePromptTemplate, _settings.TranscriptionModel, _settings.PromptModel,
+                _settings.QuickActions, _settings.DictatePromptTemplate, _settings.Dictate, _settings.Prompt,
                 _settings.DictateSystemPrompt, _settings.PromptModeSystemPrompt, _settings.AutoPaste, _settings.ClipboardAfterPaste, _settings.Sounds,
-            _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
+            _settings.OpenAiKey,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.PunctuationMode,
             _settings.RightCtrlDictation,
@@ -2201,7 +2184,7 @@ internal sealed partial class SettingsForm : FastShowForm
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.TranscriptionModel}/{_settings.PromptModel}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.SpeechEngine}/{_settings.TextEngine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.OpenAiTranscriptionModel}/{_settings.OpenAiPromptModel}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode}, dictate mode {_settings.DictateMode})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.Dictate.Gemini}/{_settings.Prompt.Gemini}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.Dictate.Engine}/{_settings.Prompt.Engine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.Dictate.OpenAi}/{_settings.Prompt.OpenAi}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode}, dictate mode {_settings.DictateMode})");
         // Also with a key problem: the same state is not written again until the user edits something.
         _snapshot = Snapshot();
         _loadedOffline = _settings.OfflineMode;

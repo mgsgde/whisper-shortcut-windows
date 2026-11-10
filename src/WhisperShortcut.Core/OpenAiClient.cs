@@ -33,7 +33,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
 
     /// <summary>Creates a client reading key and models from <paramref name="settings"/> on every call.</summary>
     public OpenAiClient(Settings settings, HttpClient? http = null)
-        : this(() => settings.OpenAiKey, () => settings.OpenAiTranscriptionModel, () => settings.OpenAiPromptModel, http)
+        : this(() => settings.OpenAiKey, () => settings.Dictate.OpenAi, () => settings.Prompt.OpenAi, http)
     {
         Language = () => settings.TranscriptionLanguage;
     }

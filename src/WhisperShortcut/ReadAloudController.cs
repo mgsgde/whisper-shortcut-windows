@@ -277,7 +277,7 @@ internal sealed class ReadAloudController : IDisposable
         var provider = _engines.Check(EngineStep.Chat).MissingKey == null ? _engines.Text(EngineStep.Chat) : null;
         if (provider == null)
         {
-            Core.Log.Info($"Read aloud: no rewrite with chat engine {_settings.EffectiveChatEngine}");
+            Core.Log.Info($"Read aloud: no rewrite with chat engine {_settings.EffectiveChat.Engine}");
             return text;
         }
         try

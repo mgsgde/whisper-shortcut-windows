@@ -72,7 +72,7 @@ public static class WelcomeTour
     /// </summary>
     public static void ChooseOffline(Settings s)
     {
-        s.SpeechEngine = Engine.Local;
+        s.Dictate = s.Dictate with { Engine = Engine.Local };
         s.MeetingSpeechEngineExplicit = false;
     }
 
@@ -86,8 +86,8 @@ public static class WelcomeTour
         s.OfflineMode = false;
         var preferred = s.ApiKey.Trim().Length > 0 ? Engine.Gemini : s.OpenAiKey.Trim().Length > 0 ? Engine.OpenAI : (Engine?)null;
         if (preferred == null) return;
-        if (!HasKey(s, s.SpeechEngine)) s.SpeechEngine = preferred.Value;
-        if (!HasKey(s, s.TextEngine)) s.TextEngine = preferred.Value;
+        if (!HasKey(s, s.Dictate.Engine)) s.Dictate = s.Dictate with { Engine = preferred.Value };
+        if (!HasKey(s, s.Prompt.Engine)) s.Prompt = s.Prompt with { Engine = preferred.Value };
     }
 
     private static bool HasKey(Settings s, Engine e) => e != Engine.Local && s.MissingKeyProvider(e) == null;

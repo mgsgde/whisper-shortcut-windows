@@ -179,6 +179,23 @@ public static class McpSettingsCatalog
         Write = v => set(Text(v)),
     };
 
+    /// <summary>One <see cref="ModelSelection"/> of the settings: how the engine and model rows of a step read and write it.</summary>
+    private sealed record Step(ModelStep Kind, Func<ModelSelection> Get, Action<ModelSelection> Set);
+
+    private static McpSetting EngineSetting(Step step, string id, string title, string description, Func<IReadOnlyList<McpSettingOption>> options) => new()
+    {
+        Id = id, Title = title, Category = "models", Type = McpSettingType.Enum, Description = description,
+        Read = () => JsonValue.Create(Choices.Engine.Token(step.Get().Engine)),
+        Options = options,
+        Write = v => step.Set(step.Get() with { Engine = Choices.Engine.Parse(Text(v)) }),
+    };
+
+    private static McpSetting GeminiModelSetting(Step step, string id, string title) =>
+        ModelSetting(id, title, step.Kind.GeminiCatalog(), () => step.Get().Gemini, v => step.Set(step.Get() with { Gemini = v }));
+
+    private static McpSetting OpenAiModelSetting(Step step, string id, string title) =>
+        ModelSetting(id, title, step.Kind.OpenAiCatalog(), () => step.Get().OpenAi, v => step.Set(step.Get() with { OpenAi = v }));
+
     private static McpSetting BoolSetting(string id, string title, string category, Func<bool> get, Action<bool> set) => new()
     {
         Id = id, Title = title, Category = category, Type = McpSettingType.Bool,
@@ -217,26 +234,21 @@ public static class McpSettingsCatalog
                 missing ? (e == Engine.Gemini ? NoGeminiKey : NoOpenAiKey) : null);
         }
 
+        var dictate = new Step(ModelStep.Transcription, () => settings.Dictate, v => settings.Dictate = v);
+        var prompt = new Step(ModelStep.Text, () => settings.Prompt, v => settings.Prompt = v);
+
         return
         [
-            new()
-            {
-                Id = "dictation.engine", Title = "Spracherkennung (Anbieter)", Category = "models", Type = McpSettingType.Enum,
-                Description = "Where speech recognition runs. Cloud providers send the audio to that provider.",
-                Read = () => JsonValue.Create(Choices.Engine.Token(settings.SpeechEngine)),
-                Options = () => new[]
+            EngineSetting(dictate, "dictation.engine", "Spracherkennung (Anbieter)",
+                "Where speech recognition runs. Cloud providers send the audio to that provider.",
+                () => new[]
                 {
                     new McpSettingOption(Choices.Engine.Token(Engine.Local), "Auf diesem PC (Parakeet)", host.SpeechModelInstalled, host.SpeechModelInstalled ? null : NoSpeechModel),
                     Cloud(Engine.Gemini), Cloud(Engine.OpenAI),
-                },
-                Write = v => settings.SpeechEngine = Choices.Engine.Parse(Text(v)),
-            },
-            new()
-            {
-                Id = "dictate_prompt.engine", Title = "Texte bearbeiten (Anbieter)", Category = "models", Type = McpSettingType.Enum,
-                Description = "Where Dictate Prompt (editing and composing text) runs. Cloud providers send the text to that provider.",
-                Read = () => JsonValue.Create(Choices.Engine.Token(settings.TextEngine)),
-                Options = () =>
+                }),
+            EngineSetting(prompt, "dictate_prompt.engine", "Texte bearbeiten (Anbieter)",
+                "Where Dictate Prompt (editing and composing text) runs. Cloud providers send the text to that provider.",
+                () =>
                 {
                     var llm = host.LocalLlmInstalled(OfflineCatalog.LlmById(settings.OfflineLlmId).Id);
                     return new[]
@@ -244,11 +256,9 @@ public static class McpSettingsCatalog
                         new McpSettingOption(Choices.Engine.Token(Engine.Local), "Auf diesem PC (Sprachmodell)", llm, llm ? null : NoLlm),
                         Cloud(Engine.Gemini), Cloud(Engine.OpenAI),
                     };
-                },
-                Write = v => settings.TextEngine = Choices.Engine.Parse(Text(v)),
-            },
-            ModelSetting("dictation.transcription_model", "Gemini-Modell Diktieren", GeminiModels.Transcription, () => settings.TranscriptionModel, v => settings.TranscriptionModel = v),
-            ModelSetting("dictation.openai_transcription_model", "OpenAI-Modell Diktieren", OpenAiModels.Transcription, () => settings.OpenAiTranscriptionModel, v => settings.OpenAiTranscriptionModel = v),
+                }),
+            GeminiModelSetting(dictate, "dictation.transcription_model", "Gemini-Modell Diktieren"),
+            OpenAiModelSetting(dictate, "dictation.openai_transcription_model", "OpenAI-Modell Diktieren"),
             ChoiceSetting("dictation.punctuation", "Satzzeichen (Offline-Spracherkennung)", "models",
                 "Offline speech recognition only (Parakeet on this PC). automatic: the model sets punctuation. spokenOnly: only spoken marks (Punkt, Komma, Fragezeichen, Ausrufezeichen, Doppelpunkt, Schrägstrich) are written and no final period is added. Cloud models and meetings always use automatic.",
                 Choices.Punctuation, () => settings.PunctuationMode, v => settings.PunctuationMode = v),
@@ -281,8 +291,8 @@ public static class McpSettingsCatalog
                 Options = () => TranscriptionTuning.ThinkingLevels.Select(t => new McpSettingOption(t.Value, t.Label, true, null)).ToList(),
                 Write = v => settings.TranscriptionThinking = TranscriptionTuning.NormalizeThinking(Text(v)),
             },
-            ModelSetting("dictate_prompt.model", "Gemini-Modell Text bearbeiten", GeminiModels.Prompt, () => settings.PromptModel, v => settings.PromptModel = v),
-            ModelSetting("dictate_prompt.openai_model", "OpenAI-Modell Text bearbeiten", OpenAiModels.Prompt, () => settings.OpenAiPromptModel, v => settings.OpenAiPromptModel = v),
+            GeminiModelSetting(prompt, "dictate_prompt.model", "Gemini-Modell Text bearbeiten"),
+            OpenAiModelSetting(prompt, "dictate_prompt.openai_model", "OpenAI-Modell Text bearbeiten"),
             new()
             {
                 Id = "offline.llm", Title = "Offline-Sprachmodell", Category = "models", Type = McpSettingType.Enum,

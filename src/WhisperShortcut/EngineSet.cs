@@ -51,12 +51,12 @@ internal sealed class EngineSet
         _local = local;
         _dictation = new(() => new Cloud(gemini ?? new Core.GeminiClient(settings), openAi ?? new Core.OpenAiClient(settings)));
         _meeting = new(() => new Cloud(
-            new Core.GeminiClient(() => settings.ApiKey, () => settings.MeetingTranscriptionModel, () => settings.MeetingSummaryModel, null, () => settings.DictateSystemPrompt),
-            new Core.OpenAiClient(() => settings.OpenAiKey, () => settings.MeetingOpenAiTranscriptionModel, () => settings.MeetingOpenAiSummaryModel)));
+            new Core.GeminiClient(() => settings.ApiKey, () => settings.MeetingTranscription.Gemini, () => settings.MeetingText.Gemini, null, () => settings.DictateSystemPrompt),
+            new Core.OpenAiClient(() => settings.OpenAiKey, () => settings.MeetingTranscription.OpenAi, () => settings.MeetingText.OpenAi)));
         // Mac maybeRewriteForSpeech uses the chat model (Settings → Chat).
         _chat = new(() => new Cloud(
-            new Core.GeminiClient(() => settings.ApiKey, () => settings.TranscriptionModel, () => settings.ChatModel),
-            new Core.OpenAiClient(() => settings.OpenAiKey, () => settings.OpenAiTranscriptionModel, () => settings.ChatOpenAiModel)));
+            new Core.GeminiClient(() => settings.ApiKey, () => settings.Dictate.Gemini, () => settings.Chat.Gemini),
+            new Core.OpenAiClient(() => settings.OpenAiKey, () => settings.Dictate.OpenAi, () => settings.Chat.OpenAi)));
     }
 
     /// <summary>The engine this step's speech recognition runs on.</summary>
@@ -67,7 +67,7 @@ internal sealed class EngineSet
     public Core.Engine TextEngine(EngineStep step) => step switch
     {
         EngineStep.Meeting => _settings.EffectiveMeetingTextEngine,
-        EngineStep.Chat => _settings.EffectiveChatEngine,
+        EngineStep.Chat => _settings.EffectiveChat.Engine,
         _ => _settings.EffectiveTextEngine,
     };
 

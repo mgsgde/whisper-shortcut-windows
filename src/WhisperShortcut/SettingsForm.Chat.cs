@@ -11,7 +11,7 @@ internal sealed partial class SettingsForm
     public const string ChatPage = "Chat";
 
     private HotkeyBox _chatKey = null!;
-    private FluentCombo _chatEngine = null!, _chatModel = null!, _chatModelOpenAi = null!;
+    private ModelStepControls _chatStep = null!;
     private ToggleSwitch _chatWebSearch = null!, _chatCloseOnFocusLoss = null!;
     private PromptEditor _chatPrompt = null!;
 
@@ -32,13 +32,9 @@ internal sealed partial class SettingsForm
 
         // --- chat model (Mac PromptModelSelectionView „Chat Model“) ---
         page.Controls.Add(Section("Chat-Modell", first: true, subtitle: "Welches Modell im Chat antwortet. Schlüssel findest du unter Konten."));
-        _chatEngine = EngineChoice(_settings.ChatEngine, "Chat", "Auf diesem PC (Sprachmodell)");
-        _chatModel = ModelChoice(Core.GeminiModels.Prompt, _settings.ChatModel);
-        _chatModelOpenAi = ModelChoice(Core.OpenAiModels.Prompt, _settings.ChatOpenAiModel);
-        page.Controls.Add(Hidden(_chatEngine, _chatModel, _chatModelOpenAi));
-        page.Controls.Add(ModelPicker("Chat-Modell", () => Core.ModelPickers.Prompt(LocalLlmName),
-            models => Core.ModelPickers.Recommended(models, Core.Settings.DefaultPromptModel, Core.OpenAiModels.DefaultPromptModel),
-            _chatEngine, _chatModel, _chatModelOpenAi, () => _llmChoice != null && OfflineEngine.LlmInstalled(SelectedLlmChoice)));
+        _chatStep = new ModelStepControls(Core.ModelStep.Text, _settings.Chat, "Chat", "Auf diesem PC (Sprachmodell)");
+        page.Controls.Add(_chatStep.Hide());
+        page.Controls.Add(ModelPicker("Chat-Modell", _chatStep));
 
         // --- web search (Mac: Gemini searches by default; the Mac's own toggle is for Claude, which Windows does not offer) ---
         page.Controls.Add(Section("Websuche", subtitle: "Gemini kann im Web nach aktuellen Informationen suchen und zeigt seine Quellen unter der Antwort."));
@@ -90,21 +86,16 @@ internal sealed partial class SettingsForm
     }
 
     /// <summary>The page's state for <c>Snapshot()</c>.</summary>
-    private string ChatSnapshot() => string.Join("\u0002", _chatKey.Value, SelectedEngine(_chatEngine), SelectedModel(_chatModel),
-        SelectedModel(_chatModelOpenAi), _chatWebSearch.Checked, _chatCloseOnFocusLoss.Checked, _chatPrompt.Value);
+    private string ChatSnapshot() => string.Join("\u0002", _chatKey.Value, _chatStep.Snapshot, _chatWebSearch.Checked, _chatCloseOnFocusLoss.Checked, _chatPrompt.Value);
 
-    private sealed record ChatState(Core.Engine Engine, string Model, string ModelOpenAi, bool WebSearch,
-        bool CloseOnFocusLoss, string Prompt);
+    private sealed record ChatState(Core.ModelSelection Model, bool WebSearch, bool CloseOnFocusLoss, string Prompt);
 
     /// <summary>Writes the page into the settings (from TrySave); returns what was there, for <see cref="RestoreChat"/>.</summary>
     private ChatState ApplyChat()
     {
         var s = _settings;
-        var before = new ChatState(s.ChatEngine, s.ChatModel, s.ChatOpenAiModel, s.ChatWebSearch,
-            s.ChatCloseOnFocusLoss, s.ChatSystemPrompt);
-        s.ChatEngine = SelectedEngine(_chatEngine);
-        s.ChatModel = SelectedModel(_chatModel);
-        s.ChatOpenAiModel = SelectedModel(_chatModelOpenAi);
+        var before = new ChatState(s.Chat, s.ChatWebSearch, s.ChatCloseOnFocusLoss, s.ChatSystemPrompt);
+        s.Chat = _chatStep.Selected;
         s.ChatWebSearch = _chatWebSearch.Checked;
         s.ChatCloseOnFocusLoss = _chatCloseOnFocusLoss.Checked;
         s.ChatSystemPrompt = _chatPrompt.Value;
@@ -115,7 +106,6 @@ internal sealed partial class SettingsForm
     private void RestoreChat(ChatState b)
     {
         var s = _settings;
-        (s.ChatEngine, s.ChatModel, s.ChatOpenAiModel) = (b.Engine, b.Model, b.ModelOpenAi);
-        (s.ChatWebSearch, s.ChatCloseOnFocusLoss, s.ChatSystemPrompt) = (b.WebSearch, b.CloseOnFocusLoss, b.Prompt);
+        (s.Chat, s.ChatWebSearch, s.ChatCloseOnFocusLoss, s.ChatSystemPrompt) = (b.Model, b.WebSearch, b.CloseOnFocusLoss, b.Prompt);
     }
 }

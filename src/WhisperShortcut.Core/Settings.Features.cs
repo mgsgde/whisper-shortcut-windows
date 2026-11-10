@@ -27,7 +27,7 @@ public sealed partial class Settings
     /// Where meeting chunks are transcribed, once the user picked it (<see cref="MeetingSpeechEngineExplicit"/>). Until then
     /// meetings follow the dictation engine: see <see cref="ConfiguredMeetingSpeechEngine"/>.
     /// </summary>
-    public Engine MeetingSpeechEngine { get; set; } = Engine.Gemini;
+    public ModelSelection MeetingTranscription { get; set; } = ModelSelection.Default(ModelStep.Transcription);
 
     /// <summary>
     /// The user picked the meeting engine in Einstellungen → Meetings (Mac: the meetings model key is set). False = meetings
@@ -37,22 +37,13 @@ public sealed partial class Settings
 
     /// <summary>The meeting engine before Offline-Modus: the user's pick, else the dictation engine.</summary>
     [JsonIgnore]
-    public Engine ConfiguredMeetingSpeechEngine => MeetingSpeechEngineExplicit ? MeetingSpeechEngine : SpeechEngine;
+    public Engine ConfiguredMeetingSpeechEngine => MeetingSpeechEngineExplicit ? MeetingTranscription.Engine : Dictate.Engine;
 
-    /// <summary>Gemini model for meeting transcription.</summary>
-    public string MeetingTranscriptionModel { get; set; } = DefaultTranscriptionModel;
-
-    /// <summary>OpenAI model for meeting transcription.</summary>
-    public string MeetingOpenAiTranscriptionModel { get; set; } = OpenAiModels.DefaultTranscriptionModel;
-
-    /// <summary>Where the meeting summary is written. Missing in an older file = the Dictate Prompt choice.</summary>
-    public Engine MeetingTextEngine { get; set; } = Engine.Gemini;
-
-    /// <summary>Gemini model for the meeting summary (Mac default Gemini 3.5 Flash-Lite).</summary>
-    public string MeetingSummaryModel { get; set; } = MeetingOptions.DefaultSummaryModel;
-
-    /// <summary>OpenAI model for the meeting summary.</summary>
-    public string MeetingOpenAiSummaryModel { get; set; } = OpenAiModels.DefaultPromptModel;
+    /// <summary>
+    /// Where the meeting summary is written and with which models (Mac default Gemini 3.5 Flash-Lite). Missing in an older file
+    /// = the Dictate Prompt choice. Named like the engine key (meetingTextEngine): <see cref="MeetingSummary"/> is the on switch.
+    /// </summary>
+    public ModelSelection MeetingText { get; set; } = ModelSelection.Default(ModelStep.Text) with { Gemini = MeetingOptions.DefaultSummaryModel };
 
     /// <summary>Longest meeting chunk in seconds, one of <see cref="MeetingOptions.ChunkSeconds"/> (Mac Chunk Interval).</summary>
     public int MeetingChunkSeconds { get; set; } = MeetingOptions.DefaultChunkSeconds;
@@ -66,7 +57,7 @@ public sealed partial class Settings
 
     /// <summary>The meeting summary engine actually used: Offline-Modus overrides it with <see cref="Engine.Local"/>.</summary>
     [JsonIgnore]
-    public Engine EffectiveMeetingTextEngine => OfflineMode ? Engine.Local : MeetingTextEngine;
+    public Engine EffectiveMeetingTextEngine => MeetingText.Effective(OfflineMode).Engine;
 
     // ---------------- Chat (Mac ChatSettingsTab) ----------------
 
@@ -80,14 +71,8 @@ public sealed partial class Settings
     [JsonIgnore]
     public string ActiveChatHotkey => Active(ChatHotkey, ChatHotkeyEnabled);
 
-    /// <summary>Who answers in the chat. Missing in an older file = the Dictate Prompt choice.</summary>
-    public Engine ChatEngine { get; set; } = Engine.Gemini;
-
-    /// <summary>Gemini chat model (Mac default Gemini 3.8 Flash).</summary>
-    public string ChatModel { get; set; } = DefaultPromptModel;
-
-    /// <summary>OpenAI chat model.</summary>
-    public string ChatOpenAiModel { get; set; } = OpenAiModels.DefaultPromptModel;
+    /// <summary>Who answers in the chat and with which models (Mac default Gemini 3.8 Flash). Missing in an older file = the Dictate Prompt choice.</summary>
+    public ModelSelection Chat { get; set; } = ModelSelection.Default(ModelStep.Text);
 
     /// <summary>The user's own chat instruction. Empty = <see cref="ChatPrompts.DefaultSystemPrompt"/>.</summary>
     public string ChatSystemPrompt { get; set; } = "";
@@ -98,18 +83,9 @@ public sealed partial class Settings
     /// <summary>Mac chatCloseOnFocusLoss: the chat closes when another app comes to the front (on by default; /pin keeps it).</summary>
     public bool ChatCloseOnFocusLoss { get; set; } = true;
 
-    /// <summary>Who answers in practice: Offline-Modus overrides the choice with <see cref="Engine.Local"/>.</summary>
+    /// <summary>Who answers in practice and with which model id ("local" on this PC): Offline-Modus overrides the provider.</summary>
     [JsonIgnore]
-    public Engine EffectiveChatEngine => OfflineMode ? Engine.Local : ChatEngine;
-
-    /// <summary>The model id for <see cref="EffectiveChatEngine"/> ("local" on this PC).</summary>
-    [JsonIgnore]
-    public string EffectiveChatModel => EffectiveChatEngine switch
-    {
-        Engine.Gemini => ChatModel,
-        Engine.OpenAI => ChatOpenAiModel,
-        _ => ModelPickers.LocalId,
-    };
+    public (Engine Engine, string Model) EffectiveChat => Chat.Effective(OfflineMode);
 
     private void LoadFeatures(Dto dto)
     {
@@ -117,16 +93,14 @@ public sealed partial class Settings
         ReadAloudRewritePrompt = CustomOrEmpty(dto.ReadAloudRewritePrompt, ReadAloud.DefaultRewritePrompt);
 
         // Before the Meetings page, meetings used the Diktieren and Dictate Prompt providers: an update keeps that.
-        MeetingSpeechEngine = dto.MeetingSpeechEngine != null ? Choices.Engine.Parse(dto.MeetingSpeechEngine) : SpeechEngine;
+        MeetingTranscription = ModelSelection.Load(ModelStep.Transcription, dto.MeetingSpeechEngine, dto.MeetingTranscriptionModel,
+            dto.MeetingOpenAiTranscriptionModel, Dictate);
         // A file from before the flag always stored an engine, the factory default Gemini included, so "chosen" cannot be told
         // from "never chosen" there: Gemini reads as never chosen (follows dictation), any other value was a pick.
         MeetingSpeechEngineExplicit = dto.MeetingSpeechEngineExplicit
-            ?? (dto.MeetingSpeechEngine != null && MeetingSpeechEngine != Engine.Gemini);
-        MeetingTranscriptionModel = GeminiModels.NormalizeTranscription(dto.MeetingTranscriptionModel ?? TranscriptionModel);
-        MeetingOpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.MeetingOpenAiTranscriptionModel ?? OpenAiTranscriptionModel);
-        MeetingTextEngine = dto.MeetingTextEngine != null ? Choices.Engine.Parse(dto.MeetingTextEngine) : TextEngine;
-        MeetingSummaryModel = GeminiModels.NormalizePrompt(dto.MeetingSummaryModel ?? MeetingOptions.DefaultSummaryModel);
-        MeetingOpenAiSummaryModel = OpenAiModels.NormalizePrompt(dto.MeetingOpenAiSummaryModel ?? OpenAiPromptModel);
+            ?? (dto.MeetingSpeechEngine != null && MeetingTranscription.Engine != Engine.Gemini);
+        MeetingText = ModelSelection.Load(ModelStep.Text, dto.MeetingTextEngine, dto.MeetingSummaryModel, dto.MeetingOpenAiSummaryModel,
+            Prompt with { Gemini = MeetingOptions.DefaultSummaryModel });
         MeetingChunkSeconds = MeetingOptions.NormalizeChunkSeconds(dto.MeetingChunkSeconds);
         MeetingSafeguardMinutes = MeetingOptions.NormalizeSafeguardMinutes(dto.MeetingSafeguardMinutes);
 
@@ -134,9 +108,7 @@ public sealed partial class Settings
         ChatHotkeyEnabled = dto.ChatHotkeyEnabled ?? true;
         // An update adds the chat key to a file that never had it. It must not take a key the user already uses.
         if (dto.ChatHotkey == null && HotkeySlots.Clashes(this, HotkeyAction.Chat)) ChatHotkeyEnabled = false;
-        ChatEngine = dto.ChatEngine != null ? Choices.Engine.Parse(dto.ChatEngine) : TextEngine;
-        ChatModel = GeminiModels.NormalizePrompt(dto.ChatModel ?? DefaultPromptModel);
-        ChatOpenAiModel = OpenAiModels.NormalizePrompt(dto.ChatOpenAiModel ?? OpenAiPromptModel);
+        Chat = ModelSelection.Load(ModelStep.Text, dto.ChatEngine, dto.ChatModel, dto.ChatOpenAiModel, Prompt with { Gemini = DefaultPromptModel });
         ChatSystemPrompt = CustomOrEmpty(dto.ChatSystemPrompt, ChatPrompts.DefaultSystemPrompt);
         ChatWebSearch = dto.ChatWebSearch ?? true;
         ChatCloseOnFocusLoss = dto.ChatCloseOnFocusLoss ?? true;
@@ -146,20 +118,20 @@ public sealed partial class Settings
     {
         dto.ReadAloudVoiceSystem = ReadAloudVoiceSystem;
         dto.ReadAloudRewritePrompt = ReadAloudRewritePrompt;
-        dto.MeetingSpeechEngine = Choices.Engine.Token(MeetingSpeechEngine);
+        dto.MeetingSpeechEngine = Choices.Engine.Token(MeetingTranscription.Engine);
         dto.MeetingSpeechEngineExplicit = MeetingSpeechEngineExplicit;
-        dto.MeetingTranscriptionModel = MeetingTranscriptionModel;
-        dto.MeetingOpenAiTranscriptionModel = MeetingOpenAiTranscriptionModel;
-        dto.MeetingTextEngine = Choices.Engine.Token(MeetingTextEngine);
-        dto.MeetingSummaryModel = MeetingSummaryModel;
-        dto.MeetingOpenAiSummaryModel = MeetingOpenAiSummaryModel;
+        dto.MeetingTranscriptionModel = MeetingTranscription.Gemini;
+        dto.MeetingOpenAiTranscriptionModel = MeetingTranscription.OpenAi;
+        dto.MeetingTextEngine = Choices.Engine.Token(MeetingText.Engine);
+        dto.MeetingSummaryModel = MeetingText.Gemini;
+        dto.MeetingOpenAiSummaryModel = MeetingText.OpenAi;
         dto.MeetingChunkSeconds = MeetingChunkSeconds;
         dto.MeetingSafeguardMinutes = MeetingSafeguardMinutes;
         dto.ChatHotkey = ChatHotkey;
         dto.ChatHotkeyEnabled = ChatHotkeyEnabled;
-        dto.ChatEngine = Choices.Engine.Token(ChatEngine);
-        dto.ChatModel = ChatModel;
-        dto.ChatOpenAiModel = ChatOpenAiModel;
+        dto.ChatEngine = Choices.Engine.Token(Chat.Engine);
+        dto.ChatModel = Chat.Gemini;
+        dto.ChatOpenAiModel = Chat.OpenAi;
         dto.ChatSystemPrompt = ChatSystemPrompt;
         dto.ChatWebSearch = ChatWebSearch;
         dto.ChatCloseOnFocusLoss = ChatCloseOnFocusLoss;

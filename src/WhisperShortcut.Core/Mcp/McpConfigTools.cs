@@ -213,14 +213,14 @@ public sealed class McpConfigTools(McpToolContext ctx) : IMcpToolProvider, IMcpR
         {
             ["app_version"] = ctx.Host.AppVersion,
             ["platform"] = "windows",
-            ["engines"] = new JsonObject { ["dictation"] = EngineName(s.SpeechEngine), ["dictate_prompt"] = EngineName(s.TextEngine) },
+            ["engines"] = new JsonObject { ["dictation"] = EngineName(s.Dictate.Engine), ["dictate_prompt"] = EngineName(s.Prompt.Engine) },
             ["offline_mode"] = s.OfflineMode,
             ["models"] = new JsonObject
             {
-                ["dictation_gemini"] = s.TranscriptionModel,
-                ["dictation_openai"] = s.OpenAiTranscriptionModel,
-                ["dictate_prompt_gemini"] = s.PromptModel,
-                ["dictate_prompt_openai"] = s.OpenAiPromptModel,
+                ["dictation_gemini"] = s.Dictate.Gemini,
+                ["dictation_openai"] = s.Dictate.OpenAi,
+                ["dictate_prompt_gemini"] = s.Prompt.Gemini,
+                ["dictate_prompt_openai"] = s.Prompt.OpenAi,
                 ["offline_llm"] = llmId,
             },
             // Whether a key exists, never the key.
