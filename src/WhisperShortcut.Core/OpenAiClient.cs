@@ -15,9 +15,7 @@ namespace WhisperShortcut.Core;
 /// </summary>
 public sealed class OpenAiClient : ISpeechProvider, ITextProvider
 {
-    private const string BaseUrl = "https://api.openai.com/v1/";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan MaxRetryAfter = HttpRetry.MaxWait;
 
     /// <summary>Output-token ceiling for edit calls, so a long selection gets room and a cut-off reply is detectable.</summary>
     internal const int MaxCompletionTokens = 32000;
@@ -136,7 +134,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     /// handshake on the hot path. Failures are ignored: the real request will try again.
     /// </summary>
     public Task PrewarmConnection() =>
-        HttpPrewarm.Connect(_http, "https://api.openai.com/", "OpenAI");
+        HttpPrewarm.Connect(_http, CloudApi.OpenAi.Origin, "OpenAI");
 
     /// <summary>
     /// Text-only call with a complete <paramref name="systemPrompt"/> and a complete <paramref name="userText"/>
@@ -225,157 +223,28 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     /// Checks an API key with a models-list request before it is saved. Never throws for network
     /// problems; caller cancellation propagates as <see cref="OperationCanceledException"/>.
     /// </summary>
-    public async Task<KeyCheck> CheckKeyAsync(string key, CancellationToken ct = default)
-    {
-        key = key?.Trim() ?? "";
-        if (key.Length == 0) return KeyCheck.Invalid;
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(10));
-        KeyCheck result;
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Get, BaseUrl + "models");
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-            using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
-            result = (int)response.StatusCode switch
-            {
-                200 => KeyCheck.Ok,
-                401 => KeyCheck.Invalid,
-                403 => KeyCheck.Forbidden,
-                _ => KeyCheck.Other,
-            };
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            result = KeyCheck.NoConnection;
-        }
-        catch (HttpRequestException)
-        {
-            result = KeyCheck.NoConnection;
-        }
-        Log.Info($"OpenAI key check: {result}");
-        return result;
-    }
+    public Task<KeyCheck> CheckKeyAsync(string key, CancellationToken ct = default) =>
+        CloudApi.OpenAi.CheckKeyAsync(_http, key, ct);
 
     // The body is rebuilt per attempt: a multipart content cannot be sent twice.
     private async Task<string> SendAsync(string path, string model, Func<HttpContent> buildContent, int size, CancellationToken ct)
     {
         var key = _apiKey()?.Trim();
-        if (string.IsNullOrEmpty(key))
-            throw new GeminiException("OpenAI", GeminiErrorKind.NoKey,
-                "Kein OpenAI-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.");
+        if (string.IsNullOrEmpty(key)) throw CloudApi.OpenAi.NoKey(KeyHint.Settings);
 
-        for (var attempt = 1; ; attempt++)
+        return await HttpRetry.RunAsync(async attempt =>
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             // Upload time scales with the body (~40 kB/s floor, e.g. slow DSL).
             timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(size / 40_000.0));
-            GeminiException failure;
-            string kind;
-            var serverError = false;
-            TimeSpan? retryAfter = null;
-            try
-            {
-                using var request = new HttpRequestMessage(HttpMethod.Post, BaseUrl + path) { Content = buildContent() };
-                request.Headers.ExpectContinue = false;
-                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-                using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
-                var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-
-                if (response.IsSuccessStatusCode)
+            return await CloudHttp.SendAsync(_http, CloudApi.OpenAi, CloudApi.OpenAi.ApiBase + path, key, buildContent(), $"OpenAI {model}",
+                timeout.Token, ct, async response =>
                 {
+                    var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
                     Log.Info($"OpenAI {model}: HTTP {(int)response.StatusCode}, request {size} bytes, answer {text.Length} bytes, attempt {attempt}");
                     return text;
-                }
-
-                var code = (int)response.StatusCode;
-                var errorCode = ErrorCode(text);
-                Log.Error($"OpenAI {model}: HTTP {code} {errorCode}");
-                failure = MapStatus(code, errorCode);
-                kind = $"HTTP {code}";
-                // An empty account will not recover within seconds: fail at once.
-                if (!HttpRetry.IsTransientStatus(code) || (code == 429 && errorCode == "insufficient_quota"))
-                    throw failure;
-                serverError = code >= 500;
-                if (code == 429) retryAfter = ParseRetryAfter(response.Headers);
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-            {
-                Log.Error($"OpenAI {model}: timeout");
-                failure = new GeminiException("OpenAI", GeminiErrorKind.Timeout,
-                    "Zeitüberschreitung: OpenAI hat nicht rechtzeitig geantwortet. Bitte Internetverbindung prüfen.");
-                kind = "timeout";
-            }
-            catch (HttpRequestException ex)
-            {
-                Log.Error($"OpenAI {model}: network", ex);
-                failure = new GeminiException("OpenAI", GeminiErrorKind.Network,
-                    "Kein Netz: OpenAI ist nicht erreichbar. Bitte Internetverbindung prüfen.", ex);
-                kind = "network";
-            }
-
-            if (attempt >= (serverError ? HttpRetry.MaxServerErrorAttempts : HttpRetry.MaxAttempts)) throw failure;
-            TimeSpan delay;
-            if (retryAfter is { } wait)
-            {
-                // OpenAI says when the limit lifts; a longer wait is not worth blocking dictation for.
-                if (wait > MaxRetryAfter) throw failure;
-                delay = wait;
-            }
-            else
-            {
-                delay = HttpRetry.Backoff(RetryDelay, attempt);
-            }
-            Log.Info($"OpenAI {model}: attempt {attempt} failed ({kind}), retrying in {delay.TotalSeconds:0.#} s");
-            await Task.Delay(delay, ct).ConfigureAwait(false);
-        }
-    }
-
-    internal static GeminiException MapStatus(int code, string errorCode)
-    {
-        if (code == 401)
-            return new GeminiException("OpenAI", GeminiErrorKind.InvalidKey, "OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
-        if (code == 403)
-            return new GeminiException("OpenAI", GeminiErrorKind.InvalidKey,
-                "Dieser OpenAI-Schlüssel darf das Modell nicht benutzen (Projekt- oder Organisationsrechte prüfen).");
-        if (code == 429 && errorCode == "insufficient_quota")
-            return new GeminiException("OpenAI", GeminiErrorKind.Billing, "Das OpenAI-Konto hat kein Guthaben mehr.",
-                "https://platform.openai.com/settings/organization/billing");
-        if (code == 429)
-            return new GeminiException("OpenAI", GeminiErrorKind.Quota,
-                "OpenAI ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
-        if (code == 404)
-            return new GeminiException("OpenAI", GeminiErrorKind.Server, UserCopy.ModelGone("OpenAI"));
-        return new GeminiException("OpenAI", GeminiErrorKind.Server, UserCopy.ServerBusy("OpenAI"));
-    }
-
-    /// <summary>error.code, else error.type, of an OpenAI error body ("insufficient_quota" wins if either has it); "" when absent. Never the message (it can quote content).</summary>
-    internal static string ErrorCode(string body)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(body);
-            if (!doc.RootElement.TryGetProperty("error", out var e) || e.ValueKind != JsonValueKind.Object) return "";
-            string? Get(string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
-            var code = Get("code");
-            var type = Get("type");
-            if (code == "insufficient_quota" || type == "insufficient_quota") return "insufficient_quota";
-            return code ?? type ?? "";
-        }
-        catch (JsonException) { return ""; }
-    }
-
-    private static TimeSpan? ParseRetryAfter(HttpResponseHeaders headers)
-    {
-        var inv = CultureInfo.InvariantCulture;
-        if (headers.TryGetValues("retry-after-ms", out var ms)
-            && double.TryParse(ms.FirstOrDefault(), NumberStyles.Float, inv, out var m) && m >= 0 && m < 86_400_000)
-            return TimeSpan.FromMilliseconds(m);
-        if (headers.TryGetValues("retry-after", out var s)
-            && double.TryParse(s.FirstOrDefault(), NumberStyles.Float, inv, out var secs) && secs >= 0 && secs < 86_400)
-            return TimeSpan.FromSeconds(secs);
-        return null;
+                }).ConfigureAwait(false);
+        }, RetryPolicy.OneShot(RetryDelay, TimeSpan.Zero), $"OpenAI {model}", ct).ConfigureAwait(false);
     }
 
     internal static string ExtractTranscript(string responseJson)

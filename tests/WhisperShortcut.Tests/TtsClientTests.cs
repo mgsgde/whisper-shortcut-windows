@@ -34,7 +34,7 @@ public class TtsClientTests
     }
 
     private static TtsClient Client(Handler h, string? gemini = "g-key", string? openAi = "o-key") =>
-        new(() => gemini, () => openAi, new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        new(() => gemini, () => openAi, new HttpClient(h)) { RetryDelay = TimeSpan.Zero, RetryInfoBuffer = TimeSpan.Zero };
 
     private static byte[] Pcm(int bytes, byte value) => Enumerable.Repeat(value, bytes).ToArray();
 
@@ -377,6 +377,105 @@ public class TtsClientTests
         var h = new Handler((_, _, _, _) => Task_(Ok("data: {\"promptFeedback\":{\"blockReason\":\"OTHER\"}}\r\n\r\n")));
         await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
         Assert.Equal(1, h.CallCount);
+    }
+
+    // ---- retry decision lives on the exception ----
+
+    private static HttpResponseMessage Quota429(string body) =>
+        new((HttpStatusCode)429) { Content = new StringContent(body) };
+
+    [Fact]
+    public async Task Synthesize_DoesNotRetryAGeminiDailyQuota()
+    {
+        // Used to retry 5 times with backoff (about 22 s per chunk) although the quota is gone until tomorrow.
+        var h = new Handler((_, _, _, _) => Task.FromResult(Quota429(
+            "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"Quota exceeded for metric ... PerDay ...\"}}")));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal("Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen.", ex.Message);
+        Assert.Equal(1, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Synthesize_StillRetriesAPerMinuteRateLimit()
+    {
+        var h = new Handler((n, _, _, _) => n < 3
+            ? Task.FromResult(Quota429("{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\"}}"))
+            : Task_(Ok(Sse(Pcm(3000, 4)))));
+        var failed = await Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default);
+        Assert.Equal(0, failed);
+        Assert.Equal(3, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Synthesize_HonoursRetryInfo_GivesUpWhenItAsksForMoreThanAMinute()
+    {
+        const string body = "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"100s\"}]}}";
+        var h = new Handler((_, _, _, _) => Task.FromResult(Quota429(body)));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal(1, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Synthesize_HonoursRetryInfo_WaitsForAShortOneAndSucceeds()
+    {
+        const string body = "{\"error\":{\"code\":429,\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"0s\"}]}}";
+        var h = new Handler((n, _, _, _) => n == 1 ? Task.FromResult(Quota429(body)) : Task_(Ok(Sse(Pcm(3000, 6)))));
+        var failed = await Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default);
+        Assert.Equal(0, failed);
+        Assert.Equal(2, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Synthesize_OpenAi_HonoursRetryAfterHeader()
+    {
+        var h = new Handler((_, _, _, _) =>
+        {
+            var r = Quota429("{}");
+            r.Headers.TryAddWithoutValidation("retry-after", "120");
+            return Task.FromResult(r);
+        });
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(OpenAiModel, "alloy", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal(1, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Synthesize_DoesNotRetryAnEmptyOpenAiAccount()
+    {
+        var h = new Handler((_, _, _, _) => Task.FromResult(Quota429("{\"error\":{\"code\":\"insufficient_quota\"}}")));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(OpenAiModel, "alloy", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(GeminiErrorKind.Billing, ex.Kind);
+        Assert.Equal(1, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Synthesize_RetriesA2xxWithoutAudio()
+    {
+        var h = new Handler((n, _, _, _) => n == 1 ? Task_(Ok("data: {\"usageMetadata\":{}}\r\n\r\n")) : Task_(Ok(Sse(Pcm(3000, 8)))));
+        var failed = await Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default);
+        Assert.Equal(0, failed);
+        Assert.Equal(2, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Synthesize_DoesNotRetryAGoneModel()
+    {
+        var h = new Handler((_, _, _, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") }));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        Assert.Equal(1, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Synthesize_InStreamQuotaErrorObject_FollowsTheSameRules()
+    {
+        var daily = new Handler((_, _, _, _) => Task_(Ok(
+            "data: {\"error\":{\"code\":429,\"message\":\"Quota ... per day ...\"}}\r\n\r\n")));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(daily).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal(1, daily.CallCount);
     }
 
     private static string LongText() =>

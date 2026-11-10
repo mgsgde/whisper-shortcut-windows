@@ -26,6 +26,20 @@ public class RecordingCheckpointTests
     }
 
     [Fact]
+    public void Checkpoint_KeepsTemplateKindAndIdAcrossRecover()
+    {
+        using var dir = new TempDir();
+        using (var cp = RecordingCheckpoint.TryBegin(dir.Path, RecordingKind.Format(RecordingKindName.Template, "abc")))
+        {
+            Assert.NotNull(cp);
+            Assert.True(cp!.TryAppend(Pcm(seconds: 1, seed: 5)));
+        }
+        var rec = RecordingCheckpoint.TryRecover(dir.Path);
+        Assert.NotNull(rec);
+        Assert.Equal((RecordingKindName.Template, (string?)"abc"), RecordingKind.Parse(rec!.Mode));
+    }
+
+    [Fact]
     public void Repair_FixesZeroSizedHeader_AsAfterACrash()
     {
         var pcm = Pcm(seconds: 1, seed: 9);

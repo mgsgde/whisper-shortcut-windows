@@ -1,6 +1,4 @@
 using System.Diagnostics;
-using System.Net;
-using System.Net.Http.Headers;
 using System.Runtime.ExceptionServices;
 using System.Text;
 using System.Text.Encodings.Web;
@@ -169,9 +167,6 @@ public sealed class PlaybackOrderGate
 /// </summary>
 public sealed class TtsClient
 {
-    private const string GeminiBase = "https://generativelanguage.googleapis.com/v1beta/models/";
-    private const string OpenAiSpeechUrl = "https://api.openai.com/v1/audio/speech";
-
     // The text goes in bare: Gemini 3.8 TTS speaks any lead-in literally ("Sag Folgendes: ..."), measured on the Mac.
     private static readonly JsonSerializerOptions Compact = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
@@ -181,6 +176,9 @@ public sealed class TtsClient
 
     /// <summary>Base of the exponential backoff between retries of a chunk (1.5 s, doubling; tests set it to zero).</summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(1.5);
+
+    /// <summary>Safety margin added to a Google RetryInfo delay (2 s; tests set it to zero).</summary>
+    public TimeSpan RetryInfoBuffer { get; set; } = TimeSpan.FromSeconds(2);
 
     /// <summary>
     /// Idle budget before the first audio of a stream. The preview models were unstable on the Mac (first audio 0.9-3.3 s on a
@@ -247,22 +245,7 @@ public sealed class TtsClient
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return (null, null);
 
-            if (root.TryGetProperty("error", out var err) && err.ValueKind != JsonValueKind.Null)
-            {
-                // The HTTP status was 200, so the code lives in the error object.
-                var code = err.ValueKind == JsonValueKind.Object && err.TryGetProperty("code", out var c)
-                    && c.ValueKind == JsonValueKind.Number && c.TryGetInt32(out var n) && n >= 400 && n <= 599 ? n : 500;
-                Log.Error($"TTS Gemini: stream error object {code} {GeminiClient.GoogleStatus(json)}");
-                throw GeminiClient.MapStatus((HttpStatusCode)code, json);
-            }
-            if (root.TryGetProperty("promptFeedback", out var feedback) && feedback.ValueKind == JsonValueKind.Object
-                && feedback.TryGetProperty("blockReason", out var block) && block.ValueKind == JsonValueKind.String)
-            {
-                var ex = new GeminiException(GeminiErrorKind.Server,
-                    $"Gemini hat den Text zum Vorlesen abgelehnt ({block.GetString()}).");
-                ex.Data[NoRetryKey] = true; // the same text is blocked again
-                throw ex;
-            }
+            if (CloudApi.Gemini.StreamError(root, json, "TTS Gemini", "den Text zum Vorlesen") is { } streamError) throw streamError;
 
             string? finish = null;
             using var audio = new MemoryStream();
@@ -291,19 +274,6 @@ public sealed class TtsClient
         }
     }
 
-    // Exception.Data marker for failures that a retry cannot fix although their kind says "Server".
-    private const string NoRetryKey = "tts.noRetry";
-
-    // Network, Timeout, Server and Quota can pass by waiting; a missing or rejected key, an empty account or an unsupported
-    // request cannot.
-    private static bool IsRetryable(Exception ex) => ex switch
-    {
-        GeminiException g => g.Kind is GeminiErrorKind.Network or GeminiErrorKind.Timeout or GeminiErrorKind.Server
-            or GeminiErrorKind.Quota && !g.Data.Contains(NoRetryKey),
-        HttpRequestException or IOException => true,
-        _ => false,
-    };
-
     /// <summary>
     /// Synthesizes one text segment with a single request (no retry) and returns the complete raw PCM (s16le, 24 kHz, mono).
     /// <paramref name="onPartial"/>, when given, receives playable slices in order and is awaited.
@@ -317,166 +287,104 @@ public sealed class TtsClient
     private async Task<byte[]> SynthesizeGeminiAsync(TtsModel model, string voice, string text,
         Func<byte[], Task>? onPartial, CancellationToken ct)
     {
-        const string provider = "Gemini";
+        var api = CloudApi.Gemini;
         var key = _geminiKey()?.Trim();
-        if (string.IsNullOrEmpty(key))
-            throw new GeminiException(provider, GeminiErrorKind.NoKey,
-                "Kein Gemini-API-Schlüssel eingetragen. Bitte unter Einstellungen → Konten eintragen.");
+        if (string.IsNullOrEmpty(key)) throw api.NoKey(KeyHint.Accounts);
 
         var started = Stopwatch.StartNew();
-        // One token for the whole request: the watchdog (CancelAfter, re-armed on every audio object) cancels it when the
-        // stream stalls, the caller's Stop cancels it through the link.
-        using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        watchdog.CancelAfter(FirstAudioTimeout);
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, $"{GeminiBase}{model.Id}:streamGenerateContent?alt=sse")
+        // The watchdog is re-armed on audio only (not on keep-alive lines): a stream that sends no sound is stalled.
+        using var watchdog = new IdleWatchdog(ct, FirstAudioTimeout);
+        Log.Info($"TTS {model.Id}: request ({text.Length} chars, voice {voice})");
+        return await CloudHttp.SendAsync(_http, api, $"{api.ApiBase}{model.Id}:streamGenerateContent?alt=sse", key,
+            new StringContent(BuildGeminiBody(text, voice), Encoding.UTF8, "application/json"), $"TTS {model.Id}",
+            watchdog.Token, ct, async response =>
             {
-                Content = new StringContent(BuildGeminiBody(text, voice), Encoding.UTF8, "application/json"),
-            };
-            request.Headers.ExpectContinue = false;
-            request.Headers.Add("x-goog-api-key", key);
-            Log.Info($"TTS {model.Id}: request ({text.Length} chars, voice {voice})");
-
-            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, watchdog.Token)
-                .ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                var body = await response.Content.ReadAsStringAsync(watchdog.Token).ConfigureAwait(false);
-                Log.Error($"TTS {model.Id}: HTTP {(int)response.StatusCode} {GeminiClient.GoogleStatus(body)}");
-                throw GeminiClient.MapStatus(response.StatusCode, body);
-            }
-
-            using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
-            using var reader = new StreamReader(stream, Encoding.UTF8);
-            var batcher = new PcmStreamBatcher();
-            using var audio = new MemoryStream();
-            var objects = 0;
-            var audioObjects = 0;
-            var loggedFirst = false;
-            while (await reader.ReadLineAsync(watchdog.Token).ConfigureAwait(false) is { } line)
-            {
-                // Server-sent events: one JSON object per "data:" line.
-                if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
-                var json = line.Substring(5).Trim();
-                if (json.Length == 0 || json == "[DONE]") continue;
-                objects++;
-                var (pcm, finish) = ParseGeminiStreamObject(json);
-                if (finish != null && finish != "STOP") Log.Info($"TTS {model.Id}: finishReason {finish}");
-                if (pcm == null) continue;
-                audioObjects++;
-                watchdog.CancelAfter(StallTimeout);
-                audio.Write(pcm, 0, pcm.Length);
-                if (onPartial == null) continue;
-                await batcher.AddAsync(pcm, async slice =>
+                using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
+                var batcher = new PcmStreamBatcher();
+                using var audio = new MemoryStream();
+                var objects = 0;
+                var audioObjects = 0;
+                var loggedFirst = false;
+                await foreach (var json in Sse.DataPayloads(stream, watchdog.Token).ConfigureAwait(false))
                 {
-                    if (!loggedFirst)
+                    if (json == "[DONE]") continue;
+                    objects++;
+                    var (pcm, finish) = ParseGeminiStreamObject(json);
+                    if (finish != null && finish != "STOP") Log.Info($"TTS {model.Id}: finishReason {finish}");
+                    if (pcm == null) continue;
+                    audioObjects++;
+                    watchdog.Rearm(StallTimeout);
+                    audio.Write(pcm, 0, pcm.Length);
+                    if (onPartial == null) continue;
+                    await batcher.AddAsync(pcm, async slice =>
                     {
-                        loggedFirst = true;
-                        Log.Info($"TTS {model.Id}: first audio slice after {started.ElapsedMilliseconds} ms ({slice.Length} bytes)");
-                    }
-                    await onPartial(slice).ConfigureAwait(false);
-                }).ConfigureAwait(false);
-            }
-            if (onPartial != null && batcher.Drain() is { } rest) await onPartial(rest).ConfigureAwait(false);
+                        if (!loggedFirst)
+                        {
+                            loggedFirst = true;
+                            Log.Info($"TTS {model.Id}: first audio slice after {started.ElapsedMilliseconds} ms ({slice.Length} bytes)");
+                        }
+                        await onPartial(slice).ConfigureAwait(false);
+                    }).ConfigureAwait(false);
+                }
+                if (onPartial != null && batcher.Drain() is { } rest) await onPartial(rest).ConfigureAwait(false);
 
-            Log.Info($"TTS {model.Id}: stream end after {started.ElapsedMilliseconds} ms (objects {objects}, audio objects {audioObjects}, {audio.Length} bytes)");
-            if (audio.Length == 0)
-            {
-                Log.Error($"TTS {model.Id}: 2xx without any audio (objects {objects})");
-                throw new GeminiException(provider, GeminiErrorKind.Server, "Gemini hat kein Audio zum Vorlesen geliefert.");
-            }
-            return EvenLength(audio.ToArray());
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            Log.Error($"TTS {model.Id}: stalled, no audio progress for the allowed time");
-            throw new GeminiException(provider, GeminiErrorKind.Timeout,
-                "Zeitüberschreitung: Gemini hat nicht rechtzeitig geantwortet. Bitte Internetverbindung prüfen.");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException)
-        {
-            Log.Error($"TTS {model.Id}: network", ex);
-            throw new GeminiException(provider, GeminiErrorKind.Network,
-                "Kein Netz: Gemini ist nicht erreichbar. Bitte Internetverbindung prüfen.", ex);
-        }
+                Log.Info($"TTS {model.Id}: stream end after {started.ElapsedMilliseconds} ms (objects {objects}, audio objects {audioObjects}, {audio.Length} bytes)");
+                if (audio.Length == 0)
+                {
+                    Log.Error($"TTS {model.Id}: 2xx without any audio (objects {objects})");
+                    throw new GeminiException(api.Name, GeminiErrorKind.Server, "Gemini hat kein Audio zum Vorlesen geliefert.")
+                        { Retryable = true }; // a new request may well deliver audio
+                }
+                return EvenLength(audio.ToArray());
+            }, HttpCompletionOption.ResponseHeadersRead, "stalled, no audio progress for the allowed time").ConfigureAwait(false);
     }
 
     private async Task<byte[]> SynthesizeOpenAiAsync(TtsModel model, string voice, string text,
         Func<byte[], Task>? onPartial, CancellationToken ct)
     {
-        const string provider = "OpenAI";
+        var api = CloudApi.OpenAi;
         var key = _openAiKey()?.Trim();
-        if (string.IsNullOrEmpty(key))
-            throw new GeminiException(provider, GeminiErrorKind.NoKey,
-                "Kein OpenAI-API-Schlüssel eingetragen. Bitte unter Einstellungen → Konten eintragen.");
+        if (string.IsNullOrEmpty(key)) throw api.NoKey(KeyHint.Accounts);
 
         var started = Stopwatch.StartNew();
-        using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        watchdog.CancelAfter(FirstAudioTimeout);
-        try
-        {
-            using var request = new HttpRequestMessage(HttpMethod.Post, OpenAiSpeechUrl)
+        using var watchdog = new IdleWatchdog(ct, FirstAudioTimeout);
+        Log.Info($"TTS {model.Id}: request ({text.Length} chars, voice {voice})");
+        return await CloudHttp.SendAsync(_http, api, api.ApiBase + "audio/speech", key,
+            new StringContent(BuildOpenAiBody(model.Id, text, voice), Encoding.UTF8, "application/json"), $"TTS {model.Id}",
+            watchdog.Token, ct, async response =>
             {
-                Content = new StringContent(BuildOpenAiBody(model.Id, text, voice), Encoding.UTF8, "application/json"),
-            };
-            request.Headers.ExpectContinue = false;
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-            Log.Info($"TTS {model.Id}: request ({text.Length} chars, voice {voice})");
-
-            using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, watchdog.Token)
-                .ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                var body = await response.Content.ReadAsStringAsync(watchdog.Token).ConfigureAwait(false);
-                var errorCode = OpenAiClient.ErrorCode(body);
-                Log.Error($"TTS {model.Id}: HTTP {(int)response.StatusCode} {errorCode}");
-                throw OpenAiClient.MapStatus((int)response.StatusCode, errorCode);
-            }
-
-            using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
-            var batcher = new PcmStreamBatcher();
-            using var audio = new MemoryStream();
-            var buffer = new byte[8192];
-            var loggedFirst = false;
-            int read;
-            while ((read = await stream.ReadAsync(buffer.AsMemory(), watchdog.Token).ConfigureAwait(false)) > 0)
-            {
-                watchdog.CancelAfter(StallTimeout);
-                audio.Write(buffer, 0, read);
-                if (onPartial == null) continue;
-                await batcher.AddAsync(buffer.AsMemory(0, read), async slice =>
+                using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
+                var batcher = new PcmStreamBatcher();
+                using var audio = new MemoryStream();
+                var buffer = new byte[8192];
+                var loggedFirst = false;
+                int read;
+                while ((read = await stream.ReadAsync(buffer.AsMemory(), watchdog.Token).ConfigureAwait(false)) > 0)
                 {
-                    if (!loggedFirst)
+                    watchdog.Rearm(StallTimeout);
+                    audio.Write(buffer, 0, read);
+                    if (onPartial == null) continue;
+                    await batcher.AddAsync(buffer.AsMemory(0, read), async slice =>
                     {
-                        loggedFirst = true;
-                        Log.Info($"TTS {model.Id}: first audio slice after {started.ElapsedMilliseconds} ms ({slice.Length} bytes)");
-                    }
-                    await onPartial(slice).ConfigureAwait(false);
-                }).ConfigureAwait(false);
-            }
-            if (onPartial != null && batcher.Drain() is { } rest) await onPartial(rest).ConfigureAwait(false);
+                        if (!loggedFirst)
+                        {
+                            loggedFirst = true;
+                            Log.Info($"TTS {model.Id}: first audio slice after {started.ElapsedMilliseconds} ms ({slice.Length} bytes)");
+                        }
+                        await onPartial(slice).ConfigureAwait(false);
+                    }).ConfigureAwait(false);
+                }
+                if (onPartial != null && batcher.Drain() is { } rest) await onPartial(rest).ConfigureAwait(false);
 
-            Log.Info($"TTS {model.Id}: stream end after {started.ElapsedMilliseconds} ms ({audio.Length} bytes)");
-            if (audio.Length == 0)
-            {
-                Log.Error($"TTS {model.Id}: 2xx without any audio");
-                throw new GeminiException(provider, GeminiErrorKind.Server, "OpenAI hat kein Audio zum Vorlesen geliefert.");
-            }
-            return EvenLength(audio.ToArray());
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            Log.Error($"TTS {model.Id}: stalled, no audio progress for the allowed time");
-            throw new GeminiException(provider, GeminiErrorKind.Timeout,
-                "Zeitüberschreitung: OpenAI hat nicht rechtzeitig geantwortet. Bitte Internetverbindung prüfen.");
-        }
-        catch (Exception ex) when (ex is HttpRequestException or IOException)
-        {
-            Log.Error($"TTS {model.Id}: network", ex);
-            throw new GeminiException(provider, GeminiErrorKind.Network,
-                "Kein Netz: OpenAI ist nicht erreichbar. Bitte Internetverbindung prüfen.", ex);
-        }
+                Log.Info($"TTS {model.Id}: stream end after {started.ElapsedMilliseconds} ms ({audio.Length} bytes)");
+                if (audio.Length == 0)
+                {
+                    Log.Error($"TTS {model.Id}: 2xx without any audio");
+                    throw new GeminiException(api.Name, GeminiErrorKind.Server, "OpenAI hat kein Audio zum Vorlesen geliefert.")
+                        { Retryable = true };
+                }
+                return EvenLength(audio.ToArray());
+            }, HttpCompletionOption.ResponseHeadersRead, "stalled, no audio progress for the allowed time").ConfigureAwait(false);
     }
 
     // A trailing half sample is noise at best; the batcher drops it from the partials too.
@@ -484,7 +392,7 @@ public sealed class TtsClient
 
     /// <summary>
     /// Synthesizes the whole text: split by <see cref="TtsTextChunker"/> for the model's provider, all chunks started at once,
-    /// each retried on its own (Network, Timeout, Server, Quota; <see cref="HttpRetry.MaxAttempts"/> attempts). <paramref name="onAudio"/>
+    /// each retried on its own (<see cref="GeminiException.Retryable"/> failures, <see cref="HttpRetry.MaxAttempts"/> attempts). <paramref name="onAudio"/>
     /// receives PCM strictly in playback order, may be called from any thread, never concurrently. Returns how many chunks failed
     /// for good (0 = all fine; the rest plays with a gap). If every chunk failed, the first chunk's exception is thrown.
     /// Cancellation throws <see cref="OperationCanceledException"/>.
@@ -516,40 +424,33 @@ public sealed class TtsClient
     private async Task<Exception?> RunChunkAsync(TtsModel model, string voice, string text, int index, int total,
         PlaybackOrderGate gate, CancellationToken ct)
     {
-        for (var attempt = 1; ; attempt++)
+        var policy = new RetryPolicy(HttpRetry.MaxAttempts, HttpRetry.MaxAttempts, RetryDelay,
+            model.Provider == TtsProvider.Gemini ? RetryInfoBuffer : TimeSpan.Zero);
+        byte[] data;
+        try
         {
-            byte[] data;
-            try
+            data = await HttpRetry.RunAsync(attempt =>
             {
-                ct.ThrowIfCancellationRequested();
                 // Partials stream to the gate on the first attempt only. A retry re-synthesizes the whole chunk (TTS output
                 // is not deterministic, so its bytes cannot be spliced onto what already played); the gate then emits just
                 // the part beyond what it has handed out.
                 Func<byte[], Task>? partial = attempt == 1
                     ? slice => { gate.Partial(index, slice); return Task.CompletedTask; }
                     : null;
-                data = await SynthesizeChunkAsync(model, voice, text, partial, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                if (!IsRetryable(ex) || attempt >= HttpRetry.MaxAttempts)
-                {
-                    Log.Error($"TTS {model.Id}: chunk {index + 1}/{total} failed for good after {attempt} attempt(s)", ex);
-                    gate.Fail(index);
-                    return ex;
-                }
-                gate.DiscardBuffered(index);
-                var delay = HttpRetry.Backoff(RetryDelay, attempt);
-                Log.Info($"TTS {model.Id}: chunk {index + 1}/{total} attempt {attempt} failed ({ex.GetType().Name}), retrying in {delay.TotalSeconds:0.#} s");
-                await Task.Delay(delay, ct).ConfigureAwait(false);
-                continue;
-            }
-            gate.Complete(index, data);
-            return null;
+                return SynthesizeChunkAsync(model, voice, text, partial, ct);
+            }, policy, $"TTS {model.Id} chunk {index + 1}/{total}", ct, beforeRetry: _ => gate.DiscardBuffered(index)).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"TTS {model.Id}: chunk {index + 1}/{total} failed for good", ex);
+            gate.Fail(index);
+            return ex;
+        }
+        gate.Complete(index, data);
+        return null;
     }
 }

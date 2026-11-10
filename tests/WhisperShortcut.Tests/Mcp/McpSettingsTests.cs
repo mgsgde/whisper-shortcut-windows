@@ -32,6 +32,27 @@ public class McpSettingsTests
     }
 
     [Fact]
+    public void DisabledDictateKeys_ReadEmptyAndSwitchOnAndOff()
+    {
+        using var s = new McpStack();
+        s.Settings.DictateHotkeyEnabled = false;
+        s.Settings.PromptHotkeyEnabled = false;
+        var list = s.ToolJson("get_settings", new JsonObject(), McpAccess.Read)["settings"]!.AsArray();
+        Assert.Equal("", list.First(x => x!["id"]!.GetValue<string>() == "shortcuts.dictate")!["value"]!.GetValue<string>());
+        Assert.Equal("", list.First(x => x!["id"]!.GetValue<string>() == "shortcuts.dictate_prompt")!["value"]!.GetValue<string>());
+
+        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.dictate\":\"Ctrl+Shift+X\"}},{R}}}"))["status"]!.GetValue<string>());
+        var on = s.ReloadSettings();
+        Assert.True(on.DictateHotkeyEnabled);
+        Assert.Equal("Ctrl+Shift+X", on.ActiveDictateHotkey);
+        Assert.False(on.PromptHotkeyEnabled);
+
+        // Empty is for undo and rollback (like the glossary row), not for AI apps.
+        s.Catalog.First(c => c.Id == "shortcuts.dictate").Write(System.Text.Json.Nodes.JsonValue.Create("")!);
+        Assert.False(s.Settings.DictateHotkeyEnabled);
+    }
+
+    [Fact]
     public void Punctuation_AppliesBothWays()
     {
         using var s = new McpStack();

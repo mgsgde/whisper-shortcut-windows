@@ -38,7 +38,7 @@ public class ChatClientTests
     }
 
     private static ChatClient Client(Handler h, string? gemini = "g-key", string? openAi = "o-key") =>
-        new(() => gemini, () => openAi, new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        new(() => gemini, () => openAi, new HttpClient(h)) { RetryDelay = TimeSpan.Zero, RetryInfoBuffer = TimeSpan.Zero };
 
     private static Task<HttpResponseMessage> Sse(string body) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
     {
@@ -497,5 +497,89 @@ public class ChatClientTests
         var parts = JsonNode.Parse(ChatClient.BuildOpenAiBody("gpt-6-sol", "", msgs))!["messages"]![0]!["content"]!.AsArray();
         Assert.Single(parts);
         Assert.Equal("image_url", (string?)parts[0]!["type"]);
+    }
+
+    // ---- Retry-After / RetryInfo / daily quota ----
+
+    private const string RetryInfo100s =
+        "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"100s\"}]}}";
+    private const string RetryInfo0s =
+        "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"0s\"}]}}";
+
+    [Fact]
+    public async Task Gemini_gives_up_at_once_when_RetryInfo_asks_for_longer_than_a_minute()
+    {
+        var h = new Handler((_, _, _, _) => Status((HttpStatusCode)429, RetryInfo100s));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h)));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal(1, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Gemini_retries_a_429_with_a_short_RetryInfo()
+    {
+        var h = new Handler((n, _, _, _) => n == 1 ? Status((HttpStatusCode)429, RetryInfo0s) : Sse(GeminiObject("danach")));
+        Assert.Equal("danach", (await Gemini(Client(h))).Text);
+        Assert.Equal(2, h.CallCount);
+    }
+
+    [Fact]
+    public async Task Gemini_does_not_retry_a_daily_quota()
+    {
+        var h = new Handler((_, _, _, _) => Status((HttpStatusCode)429, "{\"error\":{\"message\":\"Quota exceeded ... PerDay ...\"}}"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h)));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal(1, h.CallCount);
+    }
+
+    [Fact]
+    public async Task OpenAi_gives_up_at_once_when_Retry_After_is_longer_than_a_minute()
+    {
+        var h = new Handler((_, _, _, _) =>
+        {
+            var r = new HttpResponseMessage((HttpStatusCode)429) { Content = new StringContent("{}") };
+            r.Headers.TryAddWithoutValidation("retry-after", "120");
+            return Task.FromResult(r);
+        });
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(h)));
+        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal(1, h.CallCount);
+    }
+
+    [Fact]
+    public async Task OpenAi_retries_a_429_with_a_short_Retry_After()
+    {
+        var h = new Handler((n, _, _, _) =>
+        {
+            if (n > 1) return Sse(OpenAiObject("danach"));
+            var r = new HttpResponseMessage((HttpStatusCode)429) { Content = new StringContent("{}") };
+            r.Headers.TryAddWithoutValidation("retry-after-ms", "0");
+            return Task.FromResult(r);
+        });
+        Assert.Equal("danach", (await OpenAi(Client(h))).Text);
+        Assert.Equal(2, h.CallCount);
+    }
+
+    [Fact]
+    public async Task A_blocked_prompt_and_an_empty_answer_are_not_retried()
+    {
+        var blocked = new Handler((_, _, _, _) => Sse("data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}\r\n\r\n"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(blocked)));
+        Assert.Equal("Gemini hat die Anfrage abgelehnt (SAFETY).", ex.Message);
+        Assert.Equal(1, blocked.CallCount);
+
+        var empty = new Handler((_, _, _, _) => Sse(": nothing\r\n\r\n"));
+        var ex2 = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(empty)));
+        Assert.Equal("Gemini hat keine Antwort geliefert. Bitte noch einmal versuchen.", ex2.Message);
+        Assert.Equal(1, empty.CallCount);
+    }
+
+    [Fact]
+    public async Task OpenAi_empty_answer_message_is_pinned()
+    {
+        var empty = new Handler((_, _, _, _) => Sse("data: [DONE]\r\n\r\n"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(empty)));
+        Assert.Equal("OpenAI hat keine Antwort geliefert. Bitte noch einmal versuchen.", ex.Message);
+        Assert.Equal(1, empty.CallCount);
     }
 }
