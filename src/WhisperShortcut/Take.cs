@@ -68,6 +68,9 @@ internal sealed class Take : IDisposable
     /// <summary>A replay of kept audio: the result is copied, never pasted.</summary>
     public bool ClipboardOnly { get; init; }
 
+    /// <summary>The live session of a Live take; disposed with it.</summary>
+    public LiveRun? Live { get; init; }
+
     /// <summary>Bumped by every recording that starts; right Ctrl remembers the one it started (Mac fnStartedRecordingID).</summary>
     public long Serial { get; set; }
 
@@ -126,6 +129,7 @@ internal sealed class Take : IDisposable
         _disposed = true;
         (Audio as MicAudioSource)?.Cancel(discardCheckpoint: !KeepCheckpoint);
         Audio = null;
+        Live?.Dispose();
         _selectionCts?.Cancel();
         _selectionCts?.Dispose();
         _selectionCts = null;

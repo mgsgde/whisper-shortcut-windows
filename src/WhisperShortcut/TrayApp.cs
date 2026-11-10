@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 
 namespace WhisperShortcut;
 
@@ -56,21 +55,8 @@ internal sealed partial class TrayApp : ApplicationContext
     /// <summary>The take that is still recording: a late event of an earlier take must not stop the next one.</summary>
     private bool IsRunning(Take take) => ReferenceEquals(_take, take) && take.Phase == TakePhase.Recording;
 
-    // Live diktieren (macOS Dictate Live): Mode.Dictate plus a live session, like the Mac's isLiveDictation flag.
-    // _live and _liveChunker change under _liveGate: the capture thread feeds the chunker.
-    private volatile Core.LiveDictationSession? _live;
-    private Core.MeetingChunker? _liveChunker;
-    private readonly object _liveGate = new();
-    private readonly System.Collections.Concurrent.ConcurrentQueue<(Core.MeetingAudioChunk Chunk, long Cut)> _livePieces = new();
-    private readonly System.Windows.Forms.Timer _liveRetryTimer = new() { Interval = 500 };
-    // The window the live dictation types into; set once the recording runs.
-    private IntPtr _liveTarget;
     private long _recordingSerial; // the last Take.Serial handed out
     private long _rightCtrlRecording = -1;
-    /// <summary>Process the current live dictation inserts into (Mac liveTargetBundleId), for the last-insertion memory.</summary>
-    private string? _liveTargetApp;
-    /// <summary>Punctuation mode of the current live dictation, fixed at its start like Diktieren (Mac livePunctuationMode).</summary>
-    private Core.PunctuationMode _livePunctuation = Core.PunctuationMode.Automatic;
     /// <summary>What the previous live dictation ended with, while nothing has moved the caret since.</summary>
     private readonly LiveInsertionMemory _lastLive;
     private SettingsForm? _settingsForm;
@@ -223,11 +209,6 @@ internal sealed partial class TrayApp : ApplicationContext
         };
 
         _keyUpTimer.Tick += (_, _) => PollArmedKey();
-        // Windows equivalent of the Mac's didActivateApplication retry: the dictated-into window is in front again.
-        _liveRetryTimer.Tick += (_, _) =>
-        {
-            if (_live is { HasHeldText: true } session && ClipboardPaster.ForegroundRoot() == _liveTarget) session.RetryHeld();
-        };
         _replayExpiry.Tick += (_, _) =>
         {
             if (_templateReplay.DropIfExpired(DateTime.UtcNow))
@@ -399,7 +380,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _finishSetupItem.Visible = !_settings.WelcomeCompleted;
         _welcomeItem.Visible = _settings.WelcomeCompleted; // Mac: „Einführung …“ hides while „Einrichtung abschließen …“ shows
         var recording = _take is { Phase: TakePhase.Recording } r ? r.Kind : (Core.RecordingKindName?)null;
-        _dictateItem.Text = recording == Core.RecordingKindName.Dictate && _live == null ? "Diktat beenden" : "Diktieren";
+        _dictateItem.Text = recording == Core.RecordingKindName.Dictate ? "Diktat beenden" : "Diktieren";
         _promptItem.Text = recording == Core.RecordingKindName.Prompt ? "Prompt-Diktat beenden" : "Dictate Prompt";
         _readAloudItem.Text = _readAloud?.IsActive == true ? "Vorlesen beenden" : "Vorlesen";
         foreach (var (action, item) in new[]
@@ -637,12 +618,8 @@ internal sealed partial class TrayApp : ApplicationContext
             take.Cts?.Cancel(); // same path as a hotkey press during processing
             return;
         }
-        if (_live != null)
-        {
-            // Text already inserted stays: it is in another window.
-            _paster.EndLive(LiveClipboardAtEnd(null, false), null);
-            DiscardLive();
-        }
+        // Text already inserted stays: it is in another window.
+        if (take.Live != null) _paster.EndLive(LiveClipboardAtEnd(null, false), null);
         EndTake(take); // stops the microphone and the selection copy; Esc also drops the crash checkpoint
         Core.RecordingCheckpoint.DiscardAll();
         Sounds.Stop();
@@ -776,7 +753,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// <summary>Any mode lacks a key: for the tray tooltip.</summary>
     private bool MissingKey => _engines.Check(EngineStep.Prompt, checkKeys: !_fakeGemini).MissingKey != null;
 
-    private void StartRecording(Core.RecordingKindName kind, string stored, Core.DictationTemplate? template = null)
+    private void StartRecording(Core.RecordingKindName kind, string stored, Core.DictationTemplate? template = null, LiveRun? live = null)
     {
         var mode = Take.ModeOf(kind);
         // The snip UI is open: its image is about to arrive over the clipboard, a Ctrl+C now would collide with it.
@@ -820,7 +797,7 @@ internal sealed partial class TrayApp : ApplicationContext
         var feedback = Stopwatch.StartNew();
         // Mac pastes only into the app that was in front now; the hotkey was pressed in the user's window.
         // The take is idle until the microphone runs: a failed start leaves nothing behind (Dispose).
-        var take = new Take(kind, stored, _paster) { Template = template, PasteTarget = ClipboardPaster.ForegroundRoot() };
+        var take = new Take(kind, stored, _paster) { Template = template, Live = live, PasteTarget = ClipboardPaster.ForegroundRoot() };
         // Copy the selection right away, while the user's selection is still there. It runs while recording.
         if (mode != Mode.Dictate) take.StartSelectionCopy();
         // Loading the language model takes seconds to half a minute; do it while the user speaks.
@@ -838,9 +815,8 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         else
         {
-            mic = new MicAudioSource(limit, _settings.Microphone,
-                checkpointMode: _live != null ? Core.RecordingKind.Format(Core.RecordingKindName.Live) : take.CheckpointMode);
-            if (_live is { } liveSession) mic.PcmAvailable += (buffer, n) => FeedLive(liveSession, buffer, n);
+            mic = new MicAudioSource(limit, _settings.Microphone, checkpointMode: take.CheckpointMode);
+            if (live != null) mic.PcmAvailable += live.Feed;
             mic.MaxDurationReached += () => _ui.Post(_ =>
             {
                 if (!IsRunning(take)) return;
@@ -868,8 +844,7 @@ internal sealed partial class TrayApp : ApplicationContext
         catch (Exception e)
         {
             Core.Log.Error("Recording start failed", e);
-            if (_live != null) DiscardLive();
-            take.Dispose();
+            take.Dispose(); // also the live session: no clipboard change yet, BeginLive was not called
             Sounds.Error();
             Notify("Aufnahme nicht möglich",
                 e is MicrophoneUnavailableException ? e.Message : Core.UserCopy.TechnicalFallback("Die Aufnahme konnte nicht starten.", e.Message),
@@ -888,9 +863,9 @@ internal sealed partial class TrayApp : ApplicationContext
             mic != null ? () => mic.Level : null, mic != null ? () => mic.PeakSoFar : null,
             mode == Mode.Prompt ? _settings.QuickActions : null,
             templateName: mode == Mode.Template ? template!.DisplayName : null, screenshot: take.Shot != null,
-            title: _live != null ? Core.UserCopy.LiveTitle : null);
+            title: live != null ? Core.UserCopy.LiveTitle : null);
         Core.Log.Info($"{mode}: overlay after {feedback.ElapsedMilliseconds} ms (setup {beforeMic} ms, microphone {micMs} ms)");
-        if (mode == Mode.Dictate && _live == null && _welcomeForm is { TakesTryResult: true } tour && take.PasteTarget == tour.Handle)
+        if (kind == Core.RecordingKindName.Dictate && _welcomeForm is { TakesTryResult: true } tour && take.PasteTarget == tour.Handle)
             tour.ShowTryListening();
         if (take.Selection is { } pending)
         {
@@ -901,7 +876,8 @@ internal sealed partial class TrayApp : ApplicationContext
         }
     }
 
-    private Task StopAndProcessAsync() => _live != null ? ProcessLiveAsync(_take!) : ProcessAsync(_take!, null);
+    private Task StopAndProcessAsync() =>
+        _take!.Kind == Core.RecordingKindName.Live ? ProcessLiveAsync(_take) : ProcessAsync(_take, null);
 
     // ---------------- live diktieren ----------------
 
@@ -915,77 +891,39 @@ internal sealed partial class TrayApp : ApplicationContext
         // The character already before the caret spaces and cases the first piece (Mac #328); when it cannot be read,
         // the end of the previous live dictation into the same program stands in for it (Mac #339).
         var front = ClipboardPaster.ForegroundRoot();
-        _liveTargetApp = FocusedTextContext.ProcessName(front);
+        var targetApp = FocusedTextContext.ProcessName(front);
         var readCaret = FocusedTextContext.CharacterBeforeCaret(front);
-        var caret = Core.LastInsertion.Seed(readCaret, _lastLive.Last, _liveTargetApp, DateTime.UtcNow);
+        var caret = Core.LastInsertion.Seed(readCaret, _lastLive.Last, targetApp, DateTime.UtcNow);
         Core.Log.Info(caret != readCaret
             ? $"LIVE-DICTATE: caret context from last dictation ({caret.LogKind})"
             : $"LIVE-DICTATE: caret context {caret.LogKind}");
         _lastLive.Forget(null); // the new session records its own ending; the old memory is spent either way
         // Like Diktieren: "Nur gesprochen" applies offline, outside meetings (Live never runs in a meeting).
-        _livePunctuation = Core.PunctuationModes.Effective(_settings.PunctuationMode, isOffline: true, duringMeeting: false);
-        // The session exists before the recording starts, so a failed start finds it and discards it.
-        var session = new Core.LiveDictationSession(
-            (wav, ct) => DecodeLivePieceAsync(wav, ct),
-            text => _paster.PasteLivePieceAsync(text, _liveTarget, CancellationToken.None),
-            holdsPeriods: _livePunctuation != Core.PunctuationMode.SpokenOnly,
-            caret: caret);
-        _liveTarget = IntPtr.Zero;
-        _livePieces.Clear();
-        lock (_liveGate)
-        {
-            _liveChunker = new Core.MeetingChunker(16000, Core.LiveDictation.ChunkPolicy);
-            _live = session;
-        }
-        StartRecording(Core.RecordingKindName.Dictate, stored);
+        var punctuation = Core.PunctuationModes.Effective(_settings.PunctuationMode, isOffline: true, duringMeeting: false);
+        // The session exists before the recording starts, so a failed start (Take.Dispose) finds it and discards it.
+        var live = new LiveRun(_ui, punctuation, targetApp, caret, DecodeLivePieceAsync,
+            (text, target) => _paster.PasteLivePieceAsync(text, target, CancellationToken.None));
+        StartRecording(Core.RecordingKindName.Live, stored, live: live);
         if (!IsRecording)
         {
-            DiscardLive(); // no clipboard change yet: BeginLive was not called
+            live.Dispose(); // refused before the take existed; no clipboard change yet: BeginLive was not called
             return;
         }
-        _liveTarget = _take!.PasteTarget;
+        live.Target = _take!.PasteTarget;
         _paster.BeginLive(_settings.RestoreClipboard);
-        _liveRetryTimer.Start();
-        var targetName = _liveTarget == IntPtr.Zero ? "none" : FocusedTextContext.ProcessName(_liveTarget) ?? "unknown";
+        live.StartRetryTimer();
+        var targetName = live.Target == IntPtr.Zero ? "none" : FocusedTextContext.ProcessName(live.Target) ?? "unknown";
         Core.Log.Info($"LIVE-DICTATE: started (target {targetName})");
-        if (_liveTarget == IntPtr.Zero)
+        if (live.Target == IntPtr.Zero)
             Core.Log.Info("LIVE-DICTATE: no target window captured; pieces will be held");
-        else if (NativeMethods.GetWindowThreadProcessId(_liveTarget, out uint targetPid) != 0 && targetPid == (uint)Environment.ProcessId)
+        else if (NativeMethods.GetWindowThreadProcessId(live.Target, out uint targetPid) != 0 && targetPid == (uint)Environment.ProcessId)
             Core.Log.Info("LIVE-DICTATE: target is a window of this app; pieces will be held");
     }
 
-    /// <summary>Capture thread: cuts the stream at pauses and hands finished pieces to the UI thread.</summary>
-    private void FeedLive(Core.LiveDictationSession session, byte[] buffer, int count)
-    {
-        bool any = false;
-        lock (_liveGate)
-        {
-            if (_live != session || _liveChunker == null) return;
-            foreach (var chunk in _liveChunker.Write(MemoryMarshal.Cast<byte, short>(buffer.AsSpan(0, count & ~1))))
-            {
-                _livePieces.Enqueue((chunk, System.Diagnostics.Stopwatch.GetTimestamp()));
-                any = true;
-            }
-        }
-        if (any) _ui.Post(_ => DrainLivePieces(session), null);
-    }
-
-    /// <summary>UI thread: hands the finished pieces to the session, in order.</summary>
-    private void DrainLivePieces(Core.LiveDictationSession session)
-    {
-        while (_live == session && _livePieces.TryDequeue(out var cut))
-        {
-            var chunk = cut.Chunk;
-            var reason = chunk.DurationSeconds >= Core.LiveDictation.ChunkPolicy.MaxChunk.TotalSeconds - 0.01 ? "Max" : "Pause";
-            session.Add(chunk.Wav, chunk.Silent, new Core.LivePieceInfo(reason, cut.Cut));
-        }
-    }
-
-    private async Task<string> DecodeLivePieceAsync(byte[] wav, CancellationToken ct)
+    private async Task<string> DecodeLivePieceAsync(byte[] wav, Core.PunctuationMode mode, CancellationToken ct)
     {
         if (_fakeGemini) return "test";
         // No TextCleanup.ForDictation per piece: it would capitalise and end every piece with a period.
-        var mode = _livePunctuation;
         if (mode != Core.PunctuationMode.SpokenOnly)
             return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(await _offline.TranscribeAsync(wav, ct), mode));
         // "Nur gesprochen": Parakeet's marks stay only where the token timings show speech time behind them (Mac #339/#347).
@@ -993,23 +931,9 @@ internal sealed partial class TrayApp : ApplicationContext
         return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(text, mode, timedMarks: timed));
     }
 
-    /// <summary>Forgets the live session. Does not touch the clipboard.</summary>
-    private void DiscardLive(bool cancel = true)
-    {
-        _liveRetryTimer.Stop();
-        var session = _live;
-        lock (_liveGate)
-        {
-            _live = null;
-            _liveChunker = null;
-        }
-        if (cancel) session?.Cancel();
-        _livePieces.Clear();
-    }
-
     private async Task ProcessLiveAsync(Take take)
     {
-        var session = _live!;
+        var live = take.Live!;
         var audio = take.Audio!;
         take.Audio = null;
         take.Cts = new CancellationTokenSource();
@@ -1033,25 +957,11 @@ internal sealed partial class TrayApp : ApplicationContext
 
             // A test file arrives whole: cut it like a recording would have been.
             if (audio is not MicAudioSource && Core.Wav.TryGetPcm16(wav, out var pcm) && pcm.SampleRate == 16000 && pcm.Channels == 1)
-            {
-                lock (_liveGate)
-                {
-                    if (_liveChunker != null)
-                        foreach (var chunk in _liveChunker.Write(MemoryMarshal.Cast<byte, short>(wav.AsSpan(pcm.DataOffset, pcm.DataLength & ~1))))
-                            _livePieces.Enqueue((chunk, System.Diagnostics.Stopwatch.GetTimestamp()));
-                }
-            }
-            Core.MeetingAudioChunk? tail;
-            lock (_liveGate)
-            {
-                tail = _liveChunker?.Flush();
-                _liveChunker = null;
-            }
-            DrainLivePieces(session); // earlier pieces before the tail
-            if (tail != null) session.Add(tail.Wav, tail.Silent, new Core.LivePieceInfo("Stop", System.Diagnostics.Stopwatch.GetTimestamp()));
+                live.FeedWhole(wav.AsSpan(pcm.DataOffset, pcm.DataLength));
+            live.EndRecording();
 
-            using var registration = ct.Register(session.Cancel);
-            var outcome = await session.FinishAsync(wav);
+            using var registration = ct.Register(live.Session.Cancel);
+            var outcome = await live.FinishAsync(wav);
 
             string fallback = "";
             if (outcome.FailedPieces > 0)
@@ -1107,7 +1017,7 @@ internal sealed partial class TrayApp : ApplicationContext
             {
                 _overlay.ShowDone(Core.UserCopy.LiveInserted);
                 done = true;
-                _lastLive.Remember(outcome.Text, _liveTargetApp);
+                _lastLive.Remember(outcome.Text, live.TargetApp);
             }
 
             if (finalText.Length > 0) _recent.Add(finalText);
@@ -1128,7 +1038,7 @@ internal sealed partial class TrayApp : ApplicationContext
             Core.Log.Error($"Dictate (live): microphone problem {e.GetType().Name}");
             Sounds.Error();
             Notify("Problem mit dem Mikrofon", e.Message, ToolTipIcon.Warning);
-            session.Cancel();
+            live.Session.Cancel();
             _paster.EndLive(cancelledAction, null);
         }
         catch (Exception e)
@@ -1136,12 +1046,13 @@ internal sealed partial class TrayApp : ApplicationContext
             Core.Log.Error("Dictate (live): unexpected error", e);
             Sounds.Error();
             NotifyRetryable(Core.UserCopy.ErrorTitle, "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", Failed());
-            session.Cancel();
+            live.Session.Cancel();
             _paster.EndLive(cancelledAction, null);
         }
         finally
         {
-            DiscardLive(cancel: false); // every path above has finished or cancelled the session; the clipboard is settled
+            // Every path above has finished or cancelled the session and settled the clipboard; the take's end only
+            // forgets the live run (a finished session is not cancelled again).
             EndTake(take);
             if (!done) _overlay.HideOverlay();
             RefreshStatus();
@@ -2465,7 +2376,6 @@ internal sealed partial class TrayApp : ApplicationContext
         _icon.Visible = false;
         _icon.Dispose();
         _keyUpTimer.Dispose();
-        _liveRetryTimer.Dispose();
         _lastLive.Dispose();
         _templateReplay.Clear();
         _replayExpiry.Dispose();
