@@ -36,19 +36,9 @@ public static class ChatThinking
         if (!id.StartsWith("gemini-", StringComparison.Ordinal) || id.Contains("image", StringComparison.Ordinal))
             return null;
 
-        var rejectsMinimal = id is "gemini-4-argon" or "gemini-3.1-pro" or "gemini-3.8-flash";
-        var builtIn = id switch
-        {
-            "gemini-4-argon" => "high",
-            "gemini-3.1-pro" => "high",
-            "gemini-3.8-flash" => "low",
-            "gemini-3.1-flash-lite" or "gemini-3.5-flash-lite" => "minimal",
-            _ => "low",
-        };
-
-        var chosen = builtIn;
+        var chosen = GeminiModels.BuiltInThinking(id);
         if (TryParse(level, out var l) && l != Default)
-            chosen = l == "minimal" && rejectsMinimal ? "low" : l;
+            chosen = l == "minimal" && GeminiModels.RejectsMinimalThinking(id) ? "low" : l;
         return new JsonObject { ["thinkingLevel"] = chosen };
     }
 

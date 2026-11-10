@@ -58,4 +58,27 @@ public class GeminiModelsTests
         Assert.Contains("Vorlage X", c);
         Assert.DoesNotContain(first, c);
     }
+
+    [Theory]
+    [InlineData("gemini-4-argon", true)]
+    [InlineData("gemini-3.1-pro", true)]
+    [InlineData("gemini-3.8-flash", true)]
+    [InlineData("gemini-3.7-flash", true)]
+    [InlineData("gemini-3.7-flash-preview", true)]
+    [InlineData("some-PRO-model", true)]
+    [InlineData("gemini-3.1-flash-lite", false)]
+    [InlineData("gemini-3.5-flash-lite", false)]
+    [InlineData(null, false)]
+    public void RejectsMinimalThinking_isTheUnionOfExactIdsAndLegacySubstrings(string? id, bool expected) =>
+        Assert.Equal(expected, GeminiModels.RejectsMinimalThinking(id));
+
+    [Theory]
+    [InlineData("gemini-4-argon", "high")]
+    [InlineData("gemini-3.1-pro", "high")]
+    [InlineData("gemini-3.8-flash", "low")]
+    [InlineData("gemini-3.1-flash-lite", "minimal")]
+    [InlineData("gemini-3.5-flash-lite", "minimal")]
+    [InlineData("gemini-unknown", "low")]
+    public void BuiltInThinking_values(string id, string expected) =>
+        Assert.Equal(expected, GeminiModels.BuiltInThinking(id));
 }

@@ -74,4 +74,22 @@ public class ModelPickerTests
             null, m => m.Engine != Engine.OpenAI);
         Assert.Equal("gemini-3.5-flash-lite", c.Featured.Single(f => f.Badges.Contains(PickerBadge.Fastest)).Model.Id);
     }
+
+    [Fact]
+    public void SpeedRanks_matchTheValuesTheMapsHadBeforeTheyMovedOntoModelInfo()
+    {
+        var transcription = new Dictionary<string, int>
+        {
+            ["gemini-3.1-flash-lite"] = 1, ["gpt-4o-mini-transcribe"] = 2, ["gemini-3.5-flash-lite"] = 3,
+            ["gpt-4o-transcribe"] = 4, ["gpt-transcribe"] = 5, ["gemini-3.8-flash"] = 6,
+        };
+        var prompt = new Dictionary<string, int>
+        {
+            ["gemini-3.5-flash-lite"] = 1, ["gemini-3.1-flash-lite"] = 2, ["gpt-6-luna"] = 3, ["gpt-5.4-mini"] = 4,
+            ["gemini-3.8-flash"] = 5, ["gpt-6-sol"] = 6,
+        };
+        foreach (var (models, expected) in new[] { (ModelPickers.Transcription("x"), transcription), (ModelPickers.Prompt("x"), prompt) })
+            foreach (var m in models)
+                Assert.Equal(expected.TryGetValue(m.Id, out var r) ? r : (int?)null, m.SpeedRank);
+    }
 }

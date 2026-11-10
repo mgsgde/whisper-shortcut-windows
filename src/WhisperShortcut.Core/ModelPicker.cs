@@ -58,24 +58,12 @@ public static class ModelPickers
     /// <summary>The Id of the entry that runs on this PC.</summary>
     public const string LocalId = "local";
 
-    // Lower = faster for the job (measured against each other on short dictations / short edits).
-    private static readonly Dictionary<string, int> TranscriptionSpeed = new()
-    {
-        ["gemini-3.1-flash-lite"] = 1, ["gpt-4o-mini-transcribe"] = 2, ["gemini-3.5-flash-lite"] = 3,
-        ["gpt-4o-transcribe"] = 4, ["gpt-transcribe"] = 5, ["gemini-3.8-flash"] = 6,
-    };
-    private static readonly Dictionary<string, int> PromptSpeed = new()
-    {
-        ["gemini-3.5-flash-lite"] = 1, ["gemini-3.1-flash-lite"] = 2, ["gpt-6-luna"] = 3, ["gpt-5.4-mini"] = 4,
-        ["gemini-3.8-flash"] = 5, ["gpt-6-sol"] = 6,
-    };
-
     public static IReadOnlyList<PickerModel> Transcription(string localName) =>
-        Build(GeminiModels.Transcription, OpenAiModels.Transcription, TranscriptionSpeed,
+        Build(GeminiModels.Transcription, OpenAiModels.Transcription, m => m.TranscriptionSpeed,
             new PickerModel(Engine.Local, LocalId, localName, "Auf diesem PC, kostenlos, nichts verlässt den Rechner"));
 
     public static IReadOnlyList<PickerModel> Prompt(string localName) =>
-        Build(GeminiModels.Prompt, OpenAiModels.Prompt, PromptSpeed,
+        Build(GeminiModels.Prompt, OpenAiModels.Prompt, m => m.PromptSpeed,
             new PickerModel(Engine.Local, LocalId, localName, "Auf diesem PC, kostenlos, nichts verlässt den Rechner; langsamer"));
 
     /// <summary>The recommendations in order: Gemini first (the Windows default), then OpenAI.</summary>
@@ -87,9 +75,9 @@ public static class ModelPickers
         models.FirstOrDefault(m => m.Engine == engine && (engine == Engine.Local || m.Id == id));
 
     private static IReadOnlyList<PickerModel> Build(IEnumerable<ModelInfo> gemini, IEnumerable<ModelInfo> openAi,
-        Dictionary<string, int> speed, PickerModel local) =>
-        gemini.Select(m => new PickerModel(Engine.Gemini, m.Id, m.Name, m.Description, speed.TryGetValue(m.Id, out var g) ? g : null))
-            .Concat(openAi.Select(m => new PickerModel(Engine.OpenAI, m.Id, m.Name, m.Description, speed.TryGetValue(m.Id, out var o) ? o : null)))
+        Func<ModelInfo, int?> speed, PickerModel local) =>
+        gemini.Select(m => new PickerModel(Engine.Gemini, m.Id, m.Name, m.Description, speed(m)))
+            .Concat(openAi.Select(m => new PickerModel(Engine.OpenAI, m.Id, m.Name, m.Description, speed(m))))
             .Append(local)
             .ToList();
 }
