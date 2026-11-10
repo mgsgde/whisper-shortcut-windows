@@ -234,6 +234,165 @@ public sealed class SettingsWindowTests : IDisposable
         });
     }
 
+    /// <summary>
+    /// R7: a setting changed from outside (tray, playback bar, AI app) while the window is open and untouched there is shown after
+    /// Pull, and a later save of another field neither reverts it in the file nor in the window.
+    /// </summary>
+    [Fact]
+    public void OutsideChange_IsShownAfterPull_AndNotOverwrittenByLaterSave()
+    {
+        Sta.Run(() =>
+        {
+            using var form = OpenSettings(out var settings);
+            Assert.False(form.HasUnsavedChanges);
+            double speed = Core.ReadAloud.Speeds.First(s => Math.Abs(s - settings.ReadAloudSpeed) > 0.001);
+
+            settings.Sounds = !settings.Sounds;
+            settings.ReadAloudSpeed = speed;
+            settings.OfflineMode = !settings.OfflineMode;
+            var sounds = settings.Sounds;
+            var offline = settings.OfflineMode;
+            form.Pull();
+
+            Assert.Equal(sounds, Toggle(form, "_sounds"));
+            Assert.Equal(speed, ComboProperty(form, "_readAloudSpeed", "Speed"));
+            Assert.Equal(offline, Toggle(form, "_offlineMode"));
+            Assert.False(form.HasUnsavedChanges); // taking a value over is no edit
+
+            // Edit something else and save; the pulled values must stay.
+            SetCombo(form, "_afterPaste", Core.ClipboardAfterPaste.Clear);
+            Assert.True(form.HasUnsavedChanges);
+            Assert.True(Save(form));
+
+            var fresh = Core.Settings.Load(Path.Combine(_dir, "settings.json"), new Core.PlainSecretProtector());
+            Assert.Equal(Core.ClipboardAfterPaste.Clear, fresh.ClipboardAfterPaste);
+            Assert.Equal(sounds, fresh.Sounds);
+            Assert.Equal(speed, fresh.ReadAloudSpeed);
+            Assert.Equal(offline, fresh.OfflineMode);
+            Assert.False(form.HasUnsavedChanges);
+        });
+    }
+
+    /// <summary>R7: even without a Pull, a save writes only what was edited: a stale control never reverts an outside change.</summary>
+    [Fact]
+    public void Save_WritesOnlyEditedFields()
+    {
+        Sta.Run(() =>
+        {
+            using var form = OpenSettings(out var settings);
+            settings.Sounds = !settings.Sounds;
+            settings.ChatWebSearch = !settings.ChatWebSearch;
+            var (sounds, search) = (settings.Sounds, settings.ChatWebSearch);
+
+            SetCombo(form, "_punctuation", Core.PunctuationMode.SpokenOnly);
+            Assert.True(Save(form));
+
+            Assert.Equal(sounds, settings.Sounds);
+            Assert.Equal(search, settings.ChatWebSearch);
+            Assert.Equal(Core.PunctuationMode.SpokenOnly, settings.PunctuationMode);
+        });
+    }
+
+    /// <summary>R7: a field the user is editing keeps the edit through a Pull; the other fields still take the outside change.</summary>
+    [Fact]
+    public void EditedField_IsNotOverwrittenByPull()
+    {
+        Sta.Run(() =>
+        {
+            using var form = OpenSettings(out var settings);
+            var prompt = PromptBox(form, "_chatPrompt");
+            prompt.Text = "Mein eigener Chat-Prompt";
+            Assert.True(form.HasUnsavedChanges);
+
+            settings.ChatSystemPrompt = "Von außen gesetzt";
+            settings.Sounds = !settings.Sounds;
+            form.Pull();
+
+            Assert.Equal("Mein eigener Chat-Prompt", prompt.Text);
+            Assert.Equal(settings.Sounds, Toggle(form, "_sounds"));
+            Assert.True(form.HasUnsavedChanges);
+
+            Assert.True(Save(form));
+            Assert.Equal("Mein eigener Chat-Prompt", settings.ChatSystemPrompt); // the edit wins on its own field
+            Assert.False(form.HasUnsavedChanges);
+        });
+    }
+
+    /// <summary>R7: a glossary term added from outside (the glossary key) appears in the open window, also while the glossary box is being edited.</summary>
+    [Fact]
+    public void GlossaryTermFromOutside_IsShown_AndKeptNextToAnEdit()
+    {
+        Sta.Run(() =>
+        {
+            using var form = OpenSettings(out var settings);
+            var glossary = (TextBox)Field(form, "_glossary");
+
+            settings.Glossary = new List<string> { "Müller" };
+            form.Pull();
+            Assert.Equal("Müller", glossary.Text);
+            Assert.False(form.HasUnsavedChanges);
+
+            glossary.Text = "Müller\r\nSchmidt"; // typed, not yet saved
+            settings.Glossary = new List<string> { "Müller", "Meier" }; // the glossary key, meanwhile
+            form.Pull();
+            Assert.Equal(new[] { "Müller", "Schmidt", "Meier" }, glossary.Lines);
+
+            Assert.True(Save(form));
+            Assert.Equal(new[] { "Müller", "Schmidt", "Meier" }, settings.Glossary);
+        });
+    }
+
+    /// <summary>R7: shortcuts are taken over only when all are valid; the other edits are saved anyway and the refused ones stay in the window.</summary>
+    [Fact]
+    public void TakenShortcut_IsHeldBack_OtherEditsAreSaved()
+    {
+        Sta.Run(() =>
+        {
+            using var form = OpenSettings(out var settings);
+            var (dictate, prompt) = (settings.DictateHotkey, settings.PromptHotkey);
+            var box = Field(form, "_dictateKey");
+            box.GetType().GetMethod("SetValue")!.Invoke(box, new object[] { settings.PromptHotkey, false }); // taken twice
+            SetCombo(form, "_afterPaste", Core.ClipboardAfterPaste.Clear);
+
+            Assert.True(Save(form));
+
+            Assert.Equal(Core.ClipboardAfterPaste.Clear, settings.ClipboardAfterPaste);
+            Assert.Equal(dictate, settings.DictateHotkey);
+            Assert.Equal(prompt, settings.PromptHotkey);
+            Assert.True(form.HasUnsavedChanges); // the refused key is still shown as edited
+
+            // Fixing the clash lets the next save take the key.
+            box.GetType().GetMethod("SetValue")!.Invoke(box, new object[] { "Alt+8", false });
+            Assert.True(Save(form));
+            Assert.Equal("Alt+8", settings.DictateHotkey);
+            Assert.False(form.HasUnsavedChanges);
+        });
+    }
+
+    private static object Field(SettingsForm form, string field) =>
+        typeof(SettingsForm).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+
+    private static bool Toggle(SettingsForm form, string field)
+    {
+        var control = Field(form, field);
+        return (bool)control.GetType().GetProperty("Checked")!.GetValue(control)!;
+    }
+
+    private static TextBox PromptBox(SettingsForm form, string field)
+    {
+        var editor = Field(form, field);
+        return (TextBox)editor.GetType().GetProperty("Box")!.GetValue(editor)!;
+    }
+
+    private static object? ComboProperty(SettingsForm form, string field, string property)
+    {
+        var item = Combo(form, field).SelectedItem!;
+        return item.GetType().GetProperty(property)!.GetValue(item);
+    }
+
+    private static bool Save(SettingsForm form) =>
+        (bool)typeof(SettingsForm).GetMethod("TrySave", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null)!;
+
     private static string KeyBoxValue(SettingsForm form, string field)
     {
         var box = typeof(SettingsForm).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
@@ -259,9 +418,11 @@ public sealed class SettingsWindowTests : IDisposable
         combo.SelectedItem = combo.Items.Cast<object>().First(i => Equals(i.GetType().GetProperty("Value")!.GetValue(i), value));
     }
 
-    private SettingsForm OpenSettings()
+    private SettingsForm OpenSettings() => OpenSettings(out _);
+
+    private SettingsForm OpenSettings(out Core.Settings settings)
     {
-        var settings = Core.Settings.Load(Path.Combine(_dir, "settings.json"), new Core.PlainSecretProtector());
+        settings = Core.Settings.Load(Path.Combine(_dir, "settings.json"), new Core.PlainSecretProtector());
         var form = new SettingsForm(settings, new OfflineEngine(settings), new Core.GeminiClient(settings),
             new Core.OpenAiClient(settings), new UpdateService(settings, () => true, () => { }))
         {

@@ -3,8 +3,7 @@ namespace WhisperShortcut;
 /// <summary>
 /// Page „Chat“ (Mac ChatSettingsTab: chat model, web search, system prompt, how to use, under „Erweitert“ the window behaviour)
 /// and the Chat row of the shortcut list on Allgemein. Own file: the main settings file only gets the hook lines (nav entry,
-/// the shortcut row, <see cref="BuildChatPage"/>, <see cref="ChatSnapshot"/>, <see cref="ApplyChat"/> / <see cref="RestoreChat"/>;
-/// the key itself goes through the shortcut table, see <see cref="StoreKeys"/>).
+/// the shortcut row, <see cref="BuildChatPage"/>; the settings of the page are bound in SettingsForm.Bindings.cs).
 /// </summary>
 internal sealed partial class SettingsForm
 {
@@ -83,29 +82,5 @@ internal sealed partial class SettingsForm
         windowCard.AddRow(SettingRow("Chat schließen, wenn außerhalb geklickt wird", "Schließt den Chat, sobald eine andere App im Vordergrund "
             + "ist. Mit /pin bleibt das Fenster offen.", _chatCloseOnFocusLoss, ToggleWidth, out _));
         AddAdvanced(page, Section("Fensterverhalten"), windowCard);
-    }
-
-    /// <summary>The page's state for <c>Snapshot()</c>.</summary>
-    private string ChatSnapshot() => string.Join("\u0002", _chatKey.Value, _chatStep.Snapshot, _chatWebSearch.Checked, _chatCloseOnFocusLoss.Checked, _chatPrompt.Value);
-
-    private sealed record ChatState(Core.ModelSelection Model, bool WebSearch, bool CloseOnFocusLoss, string Prompt);
-
-    /// <summary>Writes the page into the settings (from TrySave); returns what was there, for <see cref="RestoreChat"/>.</summary>
-    private ChatState ApplyChat()
-    {
-        var s = _settings;
-        var before = new ChatState(s.Chat, s.ChatWebSearch, s.ChatCloseOnFocusLoss, s.ChatSystemPrompt);
-        s.Chat = _chatStep.Selected;
-        s.ChatWebSearch = _chatWebSearch.Checked;
-        s.ChatCloseOnFocusLoss = _chatCloseOnFocusLoss.Checked;
-        s.ChatSystemPrompt = _chatPrompt.Value;
-        return before;
-    }
-
-    /// <summary>Saving failed: put the settings back as they were.</summary>
-    private void RestoreChat(ChatState b)
-    {
-        var s = _settings;
-        (s.Chat, s.ChatWebSearch, s.ChatCloseOnFocusLoss, s.ChatSystemPrompt) = (b.Model, b.WebSearch, b.CloseOnFocusLoss, b.Prompt);
     }
 }

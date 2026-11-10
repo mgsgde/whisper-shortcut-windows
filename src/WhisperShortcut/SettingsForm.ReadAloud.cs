@@ -3,8 +3,7 @@ namespace WhisperShortcut;
 /// <summary>
 /// Page „Vorlesen“ (Mac ReadAloudSettingsTab: voice model, voice, playback speed, smart rewriting, rewrite prompt, how to use) and the
 /// Vorlesen shortcut row on Allgemein. Kept in its own file so the main settings file only gets the hook lines: the page
-/// constant and nav entry, the shortcut row, <see cref="ReadAloudSnapshot"/> in Snapshot(), <see cref="ApplyReadAloud"/> /
-/// <see cref="RestoreReadAloud"/> in TrySave(); the key itself goes through the shortcut table (<see cref="StoreKeys"/>).
+/// constant and nav entry, the shortcut row; the settings of the page are bound in SettingsForm.Bindings.cs.
 /// </summary>
 internal sealed partial class SettingsForm
 {
@@ -19,8 +18,6 @@ internal sealed partial class SettingsForm
     // Installed Windows voices, listed once per window (SAPI lookup).
     private IReadOnlyList<Core.TtsVoice>? _windowsVoices;
     private Core.TtsProvider _readAloudVoiceProvider;
-    // The speed this window last showed or wrote: the playback card can change the setting while the window is open.
-    private double _readAloudSpeedShown;
 
     private sealed record VoiceItem(Core.TtsVoice Voice)
     {
@@ -95,8 +92,7 @@ internal sealed partial class SettingsForm
         page.Controls.Add(Section("Wiedergabetempo", subtitle: "Wie schnell vorgelesen wird. Die Tonhöhe bleibt gleich."));
         _readAloudSpeed = new FluentCombo { Width = ComboWidth, AccessibleName = "Wiedergabetempo" };
         foreach (var speed in Core.ReadAloud.Speeds) _readAloudSpeed.Items.Add(new SpeedItem(speed));
-        _readAloudSpeedShown = _settings.ReadAloudSpeed;
-        SelectReadAloudSpeed(_readAloudSpeedShown);
+        SelectReadAloudSpeed(_settings.ReadAloudSpeed);
         var speedCard = new Card();
         speedCard.AddRow(SettingRow("Tempo", "Lässt sich beim Vorlesen auch in der Leiste unten umschalten.", _readAloudSpeed, ComboWidth, out _));
         page.Controls.Add(speedCard);
@@ -199,42 +195,4 @@ internal sealed partial class SettingsForm
             ?? _readAloudSpeed.Items[1];
 
     private double SelectedReadAloudSpeed => ((SpeedItem)_readAloudSpeed.SelectedItem!).Speed;
-
-    /// <summary>The page's state for <c>Snapshot()</c>: equal = nothing to apply.</summary>
-    private string ReadAloudSnapshot() => string.Join("\u0002", _readAloudKey.Value, SelectedModel(_readAloudModel),
-        _readAloudVoiceGemini, _readAloudVoiceOpenAi, _readAloudVoiceSystem,
-        SelectedReadAloudSpeed.ToString(System.Globalization.CultureInfo.InvariantCulture), _readAloudRewrite.Checked.ToString(), _readAloudPrompt.Value);
-
-    private sealed record ReadAloudState(string Model, string VoiceGemini, string VoiceOpenAi,
-        string VoiceSystem, double Speed, bool Rewrite, string Prompt, double SpeedShown);
-
-    /// <summary>Writes the page into the settings (from TrySave); returns what was there, for <see cref="RestoreReadAloud"/>.</summary>
-    private ReadAloudState ApplyReadAloud()
-    {
-        var before = new ReadAloudState(_settings.ReadAloudModel,
-            _settings.ReadAloudVoiceGemini, _settings.ReadAloudVoiceOpenAi, _settings.ReadAloudVoiceSystem, _settings.ReadAloudSpeed,
-            _settings.ReadAloudSmartRewrite, _settings.ReadAloudRewritePrompt, _readAloudSpeedShown);
-        _settings.ReadAloudModel = SelectedModel(_readAloudModel);
-        _settings.ReadAloudVoiceGemini = _readAloudVoiceGemini;
-        _settings.ReadAloudVoiceOpenAi = _readAloudVoiceOpenAi;
-        _settings.ReadAloudVoiceSystem = _readAloudVoiceSystem;
-        _settings.ReadAloudRewritePrompt = _readAloudPrompt.Value;
-        // Untouched here = keep what the playback card may have set meanwhile.
-        if (SelectedReadAloudSpeed != _readAloudSpeedShown) _settings.ReadAloudSpeed = _readAloudSpeedShown = SelectedReadAloudSpeed;
-        _settings.ReadAloudSmartRewrite = _readAloudRewrite.Checked;
-        return before;
-    }
-
-    /// <summary>Saving failed: put the settings back as they were.</summary>
-    private void RestoreReadAloud(ReadAloudState s)
-    {
-        _settings.ReadAloudModel = s.Model;
-        _settings.ReadAloudVoiceGemini = s.VoiceGemini;
-        _settings.ReadAloudVoiceOpenAi = s.VoiceOpenAi;
-        _settings.ReadAloudVoiceSystem = s.VoiceSystem;
-        _settings.ReadAloudRewritePrompt = s.Prompt;
-        _settings.ReadAloudSpeed = s.Speed;
-        _readAloudSpeedShown = s.SpeedShown;
-        _settings.ReadAloudSmartRewrite = s.Rewrite;
-    }
 }

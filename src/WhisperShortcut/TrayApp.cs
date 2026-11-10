@@ -198,7 +198,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _icon = new NotifyIcon { Icon = TrayIcons.Ready, ContextMenuStrip = menu, Visible = true };
         // One left click opens the settings (Click alone would also fire on right click, which opens the menu).
         _icon.MouseClick += (_, e) => { if (e.Button == MouseButtons.Left) ShowSettings(); };
-        _mcp = new McpService(_settings, _ui, () => !IsIdle, () => _settingsForm?.HasUnsavedChanges == true, AfterMcpApply);
+        _mcp = new McpService(_settings, _ui, () => !IsIdle, AfterMcpApply);
         _mcp.StartIfEnabled();
         ScheduleSpareSettings(5000);
         _readAloud = new ReadAloudController(_settings, _paster, (t, m, i, a) => Notify(t, m, i, a), () => ShowSettings(), TrySave, _ui);
@@ -1740,7 +1740,7 @@ internal sealed partial class TrayApp : ApplicationContext
                     TrySave();
                     _offline.GlossaryChanged();
                     _appliedSettings = Core.SettingsDelta.Snapshot.Of(_settings); // reloaded just now: the next apply must not reload again
-                    _settingsForm?.AppendGlossaryTerm(term);
+                    _settingsForm?.Pull(); // an open window shows the term (and keeps one it is editing)
                     ShowDoneIfFree($"„{term}“ steht jetzt im Glossar");
                     break;
                 case Core.GlossaryAddResult.Duplicate:
@@ -2224,25 +2224,13 @@ internal sealed partial class TrayApp : ApplicationContext
 
     /// <summary>
     /// An AI app changed the settings (directly, through an accepted suggestion, or an Undo): apply them like
-    /// „Speichern“ does. An open settings window still shows the old values, so it reopens on the same page;
-    /// writes wait while it has unsaved edits (<see cref="McpService.WriteBlockedReason"/>), so nothing is lost.
+    /// „Speichern“ does. An open settings window takes the new values into every field the user is not editing
+    /// (<see cref="SettingsForm.Pull()"/>); a field being edited keeps the edit, so nothing is lost and nothing refused.
     /// </summary>
     private void AfterMcpApply()
     {
         ApplySettingsChange(TakeSettingsDelta(), fromSettingsWindow: false);
-        if (_settingsForm is not { IsDisposed: false } form) return;
-        _ui.Post(_ =>
-        {
-            if (_settingsForm != form || form.HasUnsavedChanges) return;
-            var (page, location) = (form.CurrentPage, form.Location);
-            form.CloseDiscarding();
-            ShowSettings();
-            if (_settingsForm is { } fresh)
-            {
-                fresh.Location = location;
-                fresh.ShowPage(page);
-            }
-        }, null);
+        _settingsForm?.Pull();
     }
 
     private void TrySave()

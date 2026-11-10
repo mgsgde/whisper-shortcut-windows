@@ -5,8 +5,8 @@ namespace WhisperShortcut;
 /// <summary>
 /// Page „Meetings“ (Mac MeetingsSettingsTab: how it works with the transcripts folder, the transcription model, the summary
 /// model, the pointer to Claude &amp; KI-Apps, and under „Erweitert“ the chunk interval and the meeting safeguard). Own file:
-/// the main settings file only gets the hook lines (nav entry, <see cref="BuildMeetingsPage"/>, <see cref="MeetingsSnapshot"/>,
-/// <see cref="ApplyMeetings"/> / <see cref="RestoreMeetings"/>).
+/// the main settings file only gets the hook lines (nav entry, <see cref="BuildMeetingsPage"/>; the settings of the
+/// page are bound in SettingsForm.Bindings.cs).
 /// </summary>
 internal sealed partial class SettingsForm
 {
@@ -41,8 +41,7 @@ internal sealed partial class SettingsForm
         // --- transcription model ---
         page.Controls.Add(Section("Modell für Meeting-Transkription", subtitle: "Welches Modell die Meeting-Aufnahme in Text verwandelt. "
             + "Glossar und Anweisungen kommen von Diktieren."));
-        _meetingSpeechEngineShown = _settings.ConfiguredMeetingSpeechEngine;
-        _meetingSpeechStep = new ModelStepControls(Core.ModelStep.Transcription, _settings.MeetingTranscription with { Engine = _meetingSpeechEngineShown },
+        _meetingSpeechStep = new ModelStepControls(Core.ModelStep.Transcription, _settings.MeetingTranscription with { Engine = _settings.ConfiguredMeetingSpeechEngine },
             "Meeting-Transkription", "Auf diesem PC (Parakeet)");
         page.Controls.Add(_meetingSpeechStep.Hide());
         page.Controls.Add(ModelPicker("Modell für Meeting-Transkription", _meetingSpeechStep));
@@ -96,37 +95,5 @@ internal sealed partial class SettingsForm
         {
             Core.Log.Error("Meetings folder could not be opened", e);
         }
-    }
-
-    /// <summary>The page's state for <c>Snapshot()</c>.</summary>
-    private string MeetingsSnapshot() => string.Join("\u0002", _meetingSpeechStep.Snapshot, _meetingTextStep.Snapshot,
-        SelectedChoice(_meetingChunk), SelectedChoice(_meetingSafeguard));
-
-    // The engine the page showed when it was built; a different pick on save makes the choice explicit (else meetings follow Diktieren).
-    private Core.Engine _meetingSpeechEngineShown;
-
-    private sealed record MeetingsState(Core.ModelSelection Speech, bool SpeechExplicit, Core.ModelSelection Text, int Chunk, int Safeguard);
-
-    /// <summary>Writes the page into the settings (from TrySave); returns what was there, for <see cref="RestoreMeetings"/>.</summary>
-    private MeetingsState ApplyMeetings()
-    {
-        var s = _settings;
-        var before = new MeetingsState(s.MeetingTranscription, s.MeetingSpeechEngineExplicit, s.MeetingText, s.MeetingChunkSeconds, s.MeetingSafeguardMinutes);
-        var pickedSpeech = _meetingSpeechStep.Selected;
-        if (pickedSpeech.Engine != _meetingSpeechEngineShown) s.MeetingSpeechEngineExplicit = true;
-        // Until the engine was picked, the stored engine stays (meetings follow Diktieren); the models are always stored.
-        s.MeetingTranscription = s.MeetingSpeechEngineExplicit ? pickedSpeech : pickedSpeech with { Engine = s.MeetingTranscription.Engine };
-        s.MeetingText = _meetingTextStep.Selected;
-        s.MeetingChunkSeconds = SelectedChoice(_meetingChunk);
-        s.MeetingSafeguardMinutes = SelectedChoice(_meetingSafeguard);
-        return before;
-    }
-
-    /// <summary>Saving failed: put the settings back as they were.</summary>
-    private void RestoreMeetings(MeetingsState b)
-    {
-        var s = _settings;
-        (s.MeetingTranscription, s.MeetingSpeechEngineExplicit, s.MeetingText) = (b.Speech, b.SpeechExplicit, b.Text);
-        (s.MeetingChunkSeconds, s.MeetingSafeguardMinutes) = (b.Chunk, b.Safeguard);
     }
 }
