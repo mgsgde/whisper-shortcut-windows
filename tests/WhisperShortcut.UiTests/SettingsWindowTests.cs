@@ -205,6 +205,41 @@ public sealed class SettingsWindowTests : IDisposable
         });
     }
 
+    /// <summary>
+    /// A shortcut switched off in settings.json (dictateHotkeyEnabled / promptHotkeyEnabled false) must show as empty
+    /// ("Kein Kürzel"), like the Mac's disabled shortcuts, and saving the window must keep it off and keep the key.
+    /// </summary>
+    [Fact]
+    public void DisabledDictateAndPromptKeys_ShowEmptyAndStayOff()
+    {
+        Sta.Run(() =>
+        {
+            var path = Path.Combine(_dir, "settings.json");
+            var seed = Core.Settings.Load(path, new Core.PlainSecretProtector());
+            seed.DictateHotkeyEnabled = false;
+            seed.PromptHotkeyEnabled = false;
+            seed.Save();
+
+            using var form = OpenSettings();
+            Assert.Equal("", KeyBoxValue(form, "_dictateKey"));
+            Assert.Equal("", KeyBoxValue(form, "_promptKey"));
+            Assert.True((bool)typeof(SettingsForm).GetMethod("TrySave", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null)!);
+
+            var fresh = Core.Settings.Load(path, new Core.PlainSecretProtector());
+            Assert.False(fresh.DictateHotkeyEnabled);
+            Assert.False(fresh.PromptHotkeyEnabled);
+            Assert.Equal(seed.DictateHotkey, fresh.DictateHotkey);
+            Assert.Equal("", fresh.ActiveDictateHotkey);
+            Assert.Equal("", fresh.ActivePromptHotkey);
+        });
+    }
+
+    private static string KeyBoxValue(SettingsForm form, string field)
+    {
+        var box = typeof(SettingsForm).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+        return (string)box.GetType().GetProperty("Value")!.GetValue(box)!;
+    }
+
     private static ComboBox Combo(SettingsForm form, string field) =>
         (ComboBox)typeof(SettingsForm).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
 

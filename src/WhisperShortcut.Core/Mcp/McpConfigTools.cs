@@ -228,9 +228,9 @@ public sealed class McpConfigTools(McpToolContext ctx) : IMcpToolProvider, IMcpR
             ["offline_models"] = new JsonObject { ["speech_installed"] = ctx.Host.SpeechModelInstalled, ["llm_installed"] = ctx.Host.LocalLlmInstalled(llmId) },
             ["hotkeys"] = new JsonObject
             {
-                ["dictate"] = Key(s.DictateHotkey),
-                ["dictate_prompt"] = Key(s.PromptHotkey),
-                ["add_to_glossary"] = Key(s.GlossaryHotkey),
+                ["dictate"] = Key(s.ActiveDictateHotkey),
+                ["dictate_prompt"] = Key(s.ActivePromptHotkey),
+                ["add_to_glossary"] = Key(s.ActiveGlossaryHotkey),
             },
             ["system_prompts"] = new JsonObject
             {

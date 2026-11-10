@@ -177,8 +177,8 @@ internal sealed partial class SettingsForm : FastShowForm
         general.Controls.Add(Wrap("Globale Tastenkürzel – sie funktionieren in jeder App. Einmal drücken zum Starten, noch einmal zum Beenden. "
             + "Ins Feld klicken und die neue Kombination drücken, z. B. Alt+1; Entf entfernt ein Kürzel. Solange dieses Fenster vorne "
             + "ist, sind die Kürzel aus.", 0));
-        _dictateKey = new HotkeyBox(settings.DictateHotkey) { AccessibleName = "Tastenkürzel Diktieren" };
-        _promptKey = new HotkeyBox(settings.PromptHotkey) { AccessibleName = "Tastenkürzel Dictate Prompt" };
+        _dictateKey = new HotkeyBox(settings.ActiveDictateHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Diktieren" };
+        _promptKey = new HotkeyBox(settings.ActivePromptHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Dictate Prompt" };
         _screenshotKey = new HotkeyBox(settings.ActiveScreenshotHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Bildschirmfoto" };
         // Empty = off (Mac: Add to Glossary ships disabled); the stored key stays as the suggestion.
         _glossaryKey = new HotkeyBox(settings.ActiveGlossaryHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Ins Glossar" };
@@ -475,7 +475,7 @@ internal sealed partial class SettingsForm : FastShowForm
         prompt.Controls.Add(_screenshotOff);
 
         prompt.Controls.Add(Section("Schnellanweisungen"));
-        prompt.Controls.Add(Wrap($"Erscheinen bei Dictate Prompt ({Hotkey.Display(settings.PromptHotkey)}) unten in der Anzeige. "
+        prompt.Controls.Add(Wrap($"Erscheinen bei Dictate Prompt ({Hotkey.Display(settings.ActivePromptHotkey.Length > 0 ? settings.ActivePromptHotkey : settings.PromptHotkey)}) unten in der Anzeige. "
             + $"{Core.QuickActionList.KeyRange} oder ein Klick wendet sie sofort an: auf die Markierung oder, ohne Markierung, auf das gerade "
             + "Diktierte. Beispiel: Text markieren, Strg+3, schon kürzer. Leere Felder werden ausgelassen.", 0));
         var quickTable = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0) };
@@ -2070,14 +2070,14 @@ internal sealed partial class SettingsForm : FastShowForm
     /// <summary>Why the shortcuts cannot be taken over as they are, or null. <paramref name="parsed"/>: Diktieren, Dictate Prompt, Ins Glossar.</summary>
     private string? KeyProblem(out Hotkey?[] parsed)
     {
-        // Diktieren and Dictate Prompt need a key; Ins Glossar may be empty (= off).
+        // Like the Mac (isEnabled), every one of these may be empty (= off).
         var keys = new[] { _dictateKey, _promptKey, _glossaryKey };
         parsed = new Hotkey?[keys.Length];
         for (int i = 0; i < keys.Length; i++)
         {
-            if (keys[i] == _glossaryKey && _glossaryKey.Value.Length == 0) continue;
+            if (keys[i].Value.Length == 0) continue;
             if (!Hotkey.TryParse(keys[i].Value, out var key) || !IsSafe(key))
-                return "Bitte für Diktieren und Dictate Prompt ein Tastenkürzel festlegen, z. B. Alt+1 oder Strg+Umschalt+D. "
+                return "Bitte für Diktieren und Dictate Prompt ein Tastenkürzel festlegen, z. B. Alt+1 oder Strg+Umschalt+D, oder es mit Entf entfernen. "
                     + "Strg+Alt allein geht nicht, das ist auf deutschen Tastaturen AltGr.";
             parsed[i] = key;
         }
@@ -2108,7 +2108,7 @@ internal sealed partial class SettingsForm : FastShowForm
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
-            _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
+            _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled, _settings.DictateHotkeyEnabled, _settings.PromptHotkeyEnabled,
             _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
             _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking, _settings.DictateMode);
         _settings.OfflineMode = _offlineMode.Checked;
@@ -2122,8 +2122,8 @@ internal sealed partial class SettingsForm : FastShowForm
         _settings.Microphone = SelectedMicrophone;
         if (keysOk)
         {
-            _settings.DictateHotkey = parsed[0]!.Value.ToString();
-            _settings.PromptHotkey = parsed[1]!.Value.ToString();
+            (_settings.DictateHotkey, _settings.DictateHotkeyEnabled) = StoredKey(_dictateKey.Value, _settings.DictateHotkey);
+            (_settings.PromptHotkey, _settings.PromptHotkeyEnabled) = StoredKey(_promptKey.Value, _settings.PromptHotkey);
             (_settings.GlossaryHotkey, _settings.GlossaryHotkeyEnabled) = StoredKey(_glossaryKey.Value, _settings.GlossaryHotkey);
             (_settings.ScreenshotHotkey, _settings.ScreenshotHotkeyEnabled) = StoredKey(_screenshotKey.Value, _settings.ScreenshotHotkey);
             (_settings.LiveDictateHotkey, _settings.LiveDictateHotkeyEnabled) = StoredKey(_liveKey.Value, _settings.LiveDictateHotkey);
@@ -2168,7 +2168,7 @@ internal sealed partial class SettingsForm : FastShowForm
             _settings.OpenAiKey, _settings.SpeechEngine, _settings.TextEngine, _settings.OpenAiTranscriptionModel, _settings.OpenAiPromptModel,
             _settings.AutoUpdateCheck, _settings.Templates, _settings.TemplateHotkey, _settings.LastTemplateId,
             _settings.SendScreenshots, _settings.ScreenshotHotkey, _settings.LiveDictateHotkey, _settings.PunctuationMode,
-            _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled,
+            _settings.GlossaryHotkeyEnabled, _settings.ScreenshotHotkeyEnabled, _settings.LiveDictateHotkeyEnabled, _settings.DictateHotkeyEnabled, _settings.PromptHotkeyEnabled,
             _settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled, _settings.RightCtrlDictation,
             _settings.TranscriptionLanguage, _settings.TranscriptionTemperature, _settings.TranscriptionThinking, _settings.DictateMode) = before;
             RestoreReadAloud(readAloudBefore);
