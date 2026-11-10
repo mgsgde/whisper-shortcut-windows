@@ -184,6 +184,22 @@ public class SettingsGoldenTests
             { "dictateHotkey": "Alt+6", "promptHotkey": "Alt+4", "welcomeCompleted": false, "sounds": false, "sendScreenshots": true }
             """));
 
+    [Fact]
+    public void FieldRows_NewInstallValuesMatchTheConstructor()
+    {
+        var dir = Dir();
+        try
+        {
+            Assert.Null(Settings.NewInstallMismatch(Settings.Load(Path.Combine(dir, "settings.json"), new PlainSecretProtector())));
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void OnlyTheExplicitFields_AreOutsideTheRowTable() =>
+        Assert.Equal(new[] { "apiKey", "apiKeyProtected", "clipboardAfterPaste", "meetingSpeechEngineExplicit", "openAiKey", "openAiKeyProtected",
+            "restoreClipboard", "shortcutDefaultsAltV1" }, Settings.ExplicitJsonKeys.ToArray());
+
     private static string LoadText(string json)
     {
         var dir = Dir();
