@@ -40,10 +40,11 @@ public sealed class HotkeyPressGate
 public static class HotkeyPolicy
 {
     /// <summary>
-    /// Off only while the settings window is in front and nothing runs, so its hotkey field can record
-    /// the very key combination that would otherwise start a dictation.
+    /// Off only while a hotkey field in the settings window has the focus and nothing runs: it records the very
+    /// key combination that would otherwise start a dictation (like the Mac's shortcut recorder). Everywhere
+    /// else in the settings window the shortcuts keep working, so the user can dictate into its text fields.
     /// </summary>
-    public static bool WantGlobalHotkeys(bool settingsInFront, bool idle) => !(settingsInFront && idle);
+    public static bool WantGlobalHotkeys(bool recordingHotkeyField, bool idle) => !(recordingHotkeyField && idle);
 }
 
 /// <summary>What a hotkey press should do in the recording state machine.</summary>

@@ -24,6 +24,11 @@ public class PasteTargetPolicyTests
     public void OwnTarget_ClipboardOnlyOwnWindow()
         => Assert.Equal(PasteTargetAction.ClipboardOnlyOwnWindow, D(own: true, fgIsTarget: true));
 
+    // Settings window or chat as target: the caller passes own=false for them, so a paste goes through.
+    [Fact]
+    public void OwnTextWindowAsTarget_ForegroundIsTarget_PasteNow()
+        => Assert.Equal(PasteTargetAction.PasteNow, D(own: false, fgIsTarget: true, fg: ForegroundKind.Own));
+
     [Fact]
     public void TargetGone_ClipboardOnlyTargetGone()
         => Assert.Equal(PasteTargetAction.ClipboardOnlyTargetGone, D(exists: false, fg: ForegroundKind.Shell));

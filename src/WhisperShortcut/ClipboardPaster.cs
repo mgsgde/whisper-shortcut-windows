@@ -100,6 +100,14 @@ internal sealed class ClipboardPaster
         return Core.ReplyGuards.IsOwnWindow(pid, (uint)Environment.ProcessId);
     }
 
+    /// <summary>
+    /// Our own windows that take dictated text: the settings window and the chat. Their text fields paste with
+    /// Ctrl+V like any app; a message box or the tour still gets the clipboard only.
+    /// </summary>
+    public Func<IntPtr, bool>? IsOwnTextWindow { get; set; }
+
+    private bool IsOwnTextTarget(IntPtr target) => target != IntPtr.Zero && (IsOwnTextWindow?.Invoke(target) ?? false);
+
     /// <summary>The foreground window belongs to this process (settings window or one of its dialogs).</summary>
     public static bool ForegroundIsOwnWindow() => BelongsToThisProcess(GetForegroundWindow());
 
@@ -142,7 +150,7 @@ internal sealed class ClipboardPaster
             return WriteText(text) ? PasteOutcome.ClipboardOnlyKeysHeld : PasteOutcome.Failed;
 
         bool hasTarget = target != IntPtr.Zero;
-        var action = Core.PasteTargetPolicy.Decide(hasTarget, hasTarget && BelongsToThisProcess(target),
+        var action = Core.PasteTargetPolicy.Decide(hasTarget, hasTarget && BelongsToThisProcess(target) && !IsOwnTextTarget(target),
             hasTarget && IsWindow(target), hasTarget && IsIconic(target),
             hasTarget && ForegroundRoot() == target, ClassifyForeground());
         switch (action)
@@ -172,7 +180,8 @@ internal sealed class ClipboardPaster
             }
         }
 
-        if (ForegroundIsOwnWindow())
+        // The settings window / chat as target is in front on purpose; any other window of ours (message box) is not.
+        if (ForegroundIsOwnWindow() && !(hasTarget && ForegroundRoot() == target && IsOwnTextTarget(target)))
         {
             Core.Log.Info("Paste: foreground is one of our own windows, leaving text on the clipboard");
             return WriteText(text) ? PasteOutcome.ClipboardOnlyOwnWindow : PasteOutcome.Failed;
@@ -290,7 +299,7 @@ internal sealed class ClipboardPaster
         if (!await WaitForModifiersReleasedAsync(ct)) return Refused("keys still held");
         ct.ThrowIfCancellationRequested();
         if (ForegroundRoot() != target) return Refused("another window is in front");
-        if (ForegroundIsOwnWindow()) return Refused("a window of this app is in front");
+        if (ForegroundIsOwnWindow() && !IsOwnTextTarget(target)) return Refused("a window of this app is in front");
         if (ForegroundIsElevated()) return Refused("the window in front runs as administrator");
         // The dictation ended (Esc) while this piece waited for the modifiers: write and paste nothing.
         if (generation != _liveGeneration) return Refused("the dictation ended");

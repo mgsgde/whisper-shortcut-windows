@@ -61,12 +61,12 @@ public class HotkeyPressGateTests
 public class HotkeyPolicyTests
 {
     [Theory]
-    [InlineData(false, true, true)]   // no settings window
+    [InlineData(false, true, true)]   // no hotkey field focused (settings open or not): dictation works
     [InlineData(false, false, true)]
-    [InlineData(true, true, false)]   // settings in front, idle: the hotkey box records the keys
+    [InlineData(true, true, false)]   // hotkey field focused, idle: the box records the keys
     [InlineData(true, false, true)]   // recording or processing keeps them
-    public void WantGlobalHotkeys(bool settingsInFront, bool idle, bool expected) =>
-        Assert.Equal(expected, HotkeyPolicy.WantGlobalHotkeys(settingsInFront, idle));
+    public void WantGlobalHotkeys(bool recordingHotkeyField, bool idle, bool expected) =>
+        Assert.Equal(expected, HotkeyPolicy.WantGlobalHotkeys(recordingHotkeyField, idle));
 }
 
 public class RecordingHotkeyPolicyTests
