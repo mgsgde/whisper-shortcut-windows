@@ -42,6 +42,7 @@ public class OfflineCatalogTests
         var all = new List<OfflineComponent>
         {
             OfflineCatalog.Parakeet,
+            OfflineCatalog.SileroVad,
             OfflineCatalog.LlamaServer(Architecture.X64),
             OfflineCatalog.LlamaServer(Architecture.Arm64),
         };

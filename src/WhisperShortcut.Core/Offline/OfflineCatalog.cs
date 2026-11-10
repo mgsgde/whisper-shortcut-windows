@@ -56,6 +56,20 @@ public static class OfflineCatalog
         });
 
     /// <summary>
+    /// Silero VAD (silero_vad.onnx, 0.6 MB) for the speech gate in front of cloud dictation. Not part of
+    /// the offline mode: it is fetched in the background on first use, in its own folder.
+    /// </summary>
+    public static OfflineComponent SileroVad { get; } = new(
+        "silero-vad",
+        "Sprachaktivitätserkennung (Silero VAD, ca. 0,6 MB)",
+        "silero-vad",
+        new ModelFile[]
+        {
+            new("silero_vad.onnx", "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+                643854, "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6"),
+        });
+
+    /// <summary>
     /// The llama.cpp b11755 build for the CPU architecture. X64 uses the Vulkan build (GPU when
     /// there is one, its CPU backends otherwise).
     /// </summary>
