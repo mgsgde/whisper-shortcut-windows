@@ -227,7 +227,7 @@ internal sealed class ClipboardPaster
             return PasteOutcome.ClipboardOnlyClipboardChanged;
         }
         SendChord(0x56); // V
-        Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars), afterwards {Core.ClipboardAfterPasteModes.Name(afterPaste)}");
+        Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars), afterwards {Core.Choices.AfterPaste.Token(afterPaste)}");
 
         if (afterPaste == Core.ClipboardAfterPaste.RestorePrevious) _ = RestoreLaterAsync(original, ourSequence, restore);
         else if (afterPaste == Core.ClipboardAfterPaste.Clear)

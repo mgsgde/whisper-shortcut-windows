@@ -329,7 +329,7 @@ public sealed partial class Settings
 
     /// <summary>
     /// What happens to the clipboard after auto-paste (ignored when <see cref="AutoPaste"/> is off). New installs leave
-    /// the dictation there like the Mac; older files map their "restoreClipboard" switch (see <see cref="ClipboardAfterPasteModes.FromFile"/>).
+    /// the dictation there like the Mac; older files map their "restoreClipboard" switch (see <see cref="Choices.AfterPasteFromFile"/>).
     /// </summary>
     public ClipboardAfterPaste ClipboardAfterPaste { get; set; } = ClipboardAfterPaste.KeepDictation;
 
@@ -407,10 +407,10 @@ public sealed partial class Settings
             {
                 s.OpenAiKey = dto.OpenAiKeyPlain;
             }
-            s.SpeechEngine = ParseEngine(dto.SpeechEngine);
-            s.TextEngine = ParseEngine(dto.TextEngine);
-            s.PunctuationMode = ParsePunctuationMode(dto.PunctuationMode);
-            s.DictateMode = ParseDictateMode(dto.DictateMode);
+            s.SpeechEngine = Choices.Engine.Parse(dto.SpeechEngine);
+            s.TextEngine = Choices.Engine.Parse(dto.TextEngine);
+            s.PunctuationMode = Choices.Punctuation.Parse(dto.PunctuationMode);
+            s.DictateMode = Choices.DictateMode.Parse(dto.DictateMode);
             s.OpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.OpenAiTranscriptionModel);
             s.TranscriptionLanguage = TranscriptionLanguages.Normalize(dto.TranscriptionLanguage);
             s.TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(dto.TranscriptionTemperature);
@@ -458,7 +458,7 @@ public sealed partial class Settings
             s.AutoPaste = dto.AutoPaste ?? true;
             s.Sounds = dto.Sounds ?? true;
             s.AutoUpdateCheck = dto.AutoUpdateCheck ?? true;
-            s.ClipboardAfterPaste = ClipboardAfterPasteModes.FromFile(dto.ClipboardAfterPaste, dto.RestoreClipboard);
+            s.ClipboardAfterPaste = Choices.AfterPasteFromFile(dto.ClipboardAfterPaste, dto.RestoreClipboard);
             s.WelcomeCompleted = dto.WelcomeCompleted ?? WelcomeTour.CompletedForExistingFile(s.ApiKey, s.OpenAiKey, s.OfflineMode);
             s.WelcomeStep = dto.WelcomeStep ?? 0;
             s.MoveOfferDismissed = (dto.MoveOfferDismissed ?? new()).Where(t => t != null).ToList()!;
@@ -562,35 +562,6 @@ public sealed partial class Settings
         return list;
     }
 
-    // Unknown or missing = Gemini, the engine every old settings file used.
-    private static Engine ParseEngine(string? v) => v?.Trim().ToLowerInvariant() switch
-    {
-        "local" => Engine.Local,
-        "openai" => Engine.OpenAI,
-        _ => Engine.Gemini,
-    };
-
-    // Unknown or missing = Automatic.
-    private static PunctuationMode ParsePunctuationMode(string? v) =>
-        v?.Trim().ToLowerInvariant() == "spokenonly" ? PunctuationMode.SpokenOnly : PunctuationMode.Automatic;
-
-    private static string PunctuationModeName(PunctuationMode m) =>
-        m == PunctuationMode.SpokenOnly ? "spokenOnly" : "automatic";
-
-    /// <summary>Mac raw values "dictate" / "live"; anything else (or a missing key) is the default.</summary>
-    public static DictateMode ParseDictateMode(string? v) =>
-        v?.Trim().ToLowerInvariant() == "live" ? DictateMode.Live : DictateMode.Dictate;
-
-    /// <summary>The stored name, the Mac's raw value.</summary>
-    public static string DictateModeName(DictateMode m) => m == DictateMode.Live ? "live" : "dictate";
-
-    private static string EngineName(Engine e) => e switch
-    {
-        Engine.Local => "local",
-        Engine.OpenAI => "openai",
-        _ => "gemini",
-    };
-
     /// <summary>Writes the settings to the path given at <see cref="Load"/>.</summary>
     public void Save()
     {
@@ -628,10 +599,10 @@ public sealed partial class Settings
         {
             ApiKeyProtected = ApiKey.Length == 0 ? "" : protect(ApiKey),
             OpenAiKeyProtected = OpenAiKey.Length == 0 ? "" : protect(OpenAiKey),
-            SpeechEngine = EngineName(SpeechEngine),
-            TextEngine = EngineName(TextEngine),
-            PunctuationMode = PunctuationModeName(PunctuationMode),
-            DictateMode = DictateModeName(DictateMode),
+            SpeechEngine = Choices.Engine.Token(SpeechEngine),
+            TextEngine = Choices.Engine.Token(TextEngine),
+            PunctuationMode = Choices.Punctuation.Token(PunctuationMode),
+            DictateMode = Choices.DictateMode.Token(DictateMode),
             OpenAiTranscriptionModel = OpenAiTranscriptionModel,
             TranscriptionLanguage = TranscriptionLanguages.Normalize(TranscriptionLanguage),
             TranscriptionTemperature = TranscriptionTuning.NormalizeTemperature(TranscriptionTemperature),
@@ -683,7 +654,7 @@ public sealed partial class Settings
             Sounds = Sounds,
             AutoUpdateCheck = AutoUpdateCheck,
             RestoreClipboard = RestoreClipboard,
-            ClipboardAfterPaste = ClipboardAfterPasteModes.Name(ClipboardAfterPaste),
+            ClipboardAfterPaste = Choices.AfterPaste.Token(ClipboardAfterPaste),
             WelcomeCompleted = WelcomeCompleted,
             WelcomeStep = WelcomeStep,
             MoveOfferDismissed = MoveOfferDismissed,

@@ -160,7 +160,7 @@ internal sealed partial class SettingsForm
     /// <summary>A tile was chosen: set the step's provider and, online, its model. The automatic apply stores it.</summary>
     private void Pick(Picker p, Core.PickerModel model)
     {
-        p.Engine.SelectedItem = p.Engine.Items.Cast<EngineItem>().First(i => i.Engine == model.Engine);
+        p.Engine.SelectedItem = p.Engine.Items.Cast<ChoiceItem<Core.Engine>>().First(i => i.Value == model.Engine);
         var combo = model.Engine switch { Core.Engine.Gemini => p.Gemini, Core.Engine.OpenAI => p.OpenAi, _ => null };
         if (combo != null) combo.SelectedItem = combo.Items.Cast<ModelItem>().First(i => i.Model.Id == model.Id);
         RefreshPicker(p);

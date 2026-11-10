@@ -60,4 +60,11 @@ public class ChatThinkingTests
     [InlineData("gpt-6-luna", "high", "high")]
     public void OpenAi_effort(string model, string? level, string? expected) =>
         Assert.Equal(expected, ChatThinking.OpenAiEffort(model, level));
+
+    [Theory]
+    [InlineData("gemini-4-argon")]
+    [InlineData("gemini-3.7-flash")]
+    [InlineData("gemini-9-pro")]
+    public void Gemini_minimal_becomes_low_for_models_that_reject_it(string model) =>
+        Assert.Equal("low", ChatThinking.GeminiConfig(model, "minimal")!["thinkingLevel"]!.GetValue<string>());
 }

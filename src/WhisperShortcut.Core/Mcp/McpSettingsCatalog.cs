@@ -156,13 +156,14 @@ public static class McpSettingsCatalog
         return false;
     }
 
-    private static string EngineName(Engine e) => e switch { Engine.Local => "local", Engine.OpenAI => "openai", _ => "gemini" };
-
-    private static Engine ParseEngine(JsonNode? v) => (v as JsonValue)?.GetValue<string>() switch
+    /// <summary>An enum setting built from its choice table: tokens and labels are the Settings window's.</summary>
+    private static McpSetting ChoiceSetting<T>(string id, string title, string category, string description, ChoiceSet<T> set,
+        Func<T> get, Action<T> put) => new()
     {
-        "local" => Engine.Local,
-        "openai" => Engine.OpenAI,
-        _ => Engine.Gemini,
+        Id = id, Title = title, Category = category, Type = McpSettingType.Enum, Description = description,
+        Read = () => JsonValue.Create(set.Token(get())),
+        Options = () => set.All.Select(c => new McpSettingOption(c.Token, c.Label, true, null)).ToList(),
+        Write = v => put(set.Parse(Text(v))),
     };
 
     private static string Text(JsonNode? v) => v is JsonValue s && s.TryGetValue<string>(out var t) ? t : "";
@@ -211,8 +212,8 @@ public static class McpSettingsCatalog
     public static IReadOnlyList<McpSetting> Build(Settings settings, IMcpHost host)
     {
         McpSettingOption Cloud(Engine e) => e == Engine.Gemini
-            ? new McpSettingOption("gemini", "Google Gemini", !string.IsNullOrWhiteSpace(settings.ApiKey), string.IsNullOrWhiteSpace(settings.ApiKey) ? NoGeminiKey : null)
-            : new McpSettingOption("openai", "OpenAI", !string.IsNullOrWhiteSpace(settings.OpenAiKey), string.IsNullOrWhiteSpace(settings.OpenAiKey) ? NoOpenAiKey : null);
+            ? new McpSettingOption(Choices.Engine.Token(Engine.Gemini), Choices.Engine.Label(Engine.Gemini), !string.IsNullOrWhiteSpace(settings.ApiKey), string.IsNullOrWhiteSpace(settings.ApiKey) ? NoGeminiKey : null)
+            : new McpSettingOption(Choices.Engine.Token(Engine.OpenAI), Choices.Engine.Label(Engine.OpenAI), !string.IsNullOrWhiteSpace(settings.OpenAiKey), string.IsNullOrWhiteSpace(settings.OpenAiKey) ? NoOpenAiKey : null);
 
         return new McpSetting[]
         {
@@ -220,56 +221,38 @@ public static class McpSettingsCatalog
             {
                 Id = "dictation.engine", Title = "Spracherkennung (Anbieter)", Category = "models", Type = McpSettingType.Enum,
                 Description = "Where speech recognition runs. Cloud providers send the audio to that provider.",
-                Read = () => JsonValue.Create(EngineName(settings.SpeechEngine)),
+                Read = () => JsonValue.Create(Choices.Engine.Token(settings.SpeechEngine)),
                 Options = () => new[]
                 {
-                    new McpSettingOption("local", "Auf diesem PC (Parakeet)", host.SpeechModelInstalled, host.SpeechModelInstalled ? null : NoSpeechModel),
+                    new McpSettingOption(Choices.Engine.Token(Engine.Local), "Auf diesem PC (Parakeet)", host.SpeechModelInstalled, host.SpeechModelInstalled ? null : NoSpeechModel),
                     Cloud(Engine.Gemini), Cloud(Engine.OpenAI),
                 },
-                Write = v => settings.SpeechEngine = ParseEngine(v),
+                Write = v => settings.SpeechEngine = Choices.Engine.Parse(Text(v)),
             },
             new()
             {
                 Id = "dictate_prompt.engine", Title = "Texte bearbeiten (Anbieter)", Category = "models", Type = McpSettingType.Enum,
                 Description = "Where Dictate Prompt (editing and composing text) runs. Cloud providers send the text to that provider.",
-                Read = () => JsonValue.Create(EngineName(settings.TextEngine)),
+                Read = () => JsonValue.Create(Choices.Engine.Token(settings.TextEngine)),
                 Options = () =>
                 {
                     var llm = host.LocalLlmInstalled(OfflineCatalog.LlmById(settings.OfflineLlmId).Id);
                     return new[]
                     {
-                        new McpSettingOption("local", "Auf diesem PC (Sprachmodell)", llm, llm ? null : NoLlm),
+                        new McpSettingOption(Choices.Engine.Token(Engine.Local), "Auf diesem PC (Sprachmodell)", llm, llm ? null : NoLlm),
                         Cloud(Engine.Gemini), Cloud(Engine.OpenAI),
                     };
                 },
-                Write = v => settings.TextEngine = ParseEngine(v),
+                Write = v => settings.TextEngine = Choices.Engine.Parse(Text(v)),
             },
             ModelSetting("dictation.transcription_model", "Gemini-Modell Diktieren", GeminiModels.Transcription, () => settings.TranscriptionModel, v => settings.TranscriptionModel = v),
             ModelSetting("dictation.openai_transcription_model", "OpenAI-Modell Diktieren", OpenAiModels.Transcription, () => settings.OpenAiTranscriptionModel, v => settings.OpenAiTranscriptionModel = v),
-            new()
-            {
-                Id = "dictation.punctuation", Title = "Satzzeichen (Offline-Spracherkennung)", Category = "models", Type = McpSettingType.Enum,
-                Description = "Offline speech recognition only (Parakeet on this PC). automatic: the model sets punctuation. spokenOnly: only spoken marks (Punkt, Komma, Fragezeichen, Ausrufezeichen, Doppelpunkt, Schrägstrich) are written and no final period is added. Cloud models and meetings always use automatic.",
-                Read = () => JsonValue.Create(settings.PunctuationMode == PunctuationMode.SpokenOnly ? "spokenOnly" : "automatic"),
-                Options = () => new[]
-                {
-                    new McpSettingOption("automatic", "Automatisch", true, null),
-                    new McpSettingOption("spokenOnly", "Nur gesprochen", true, null),
-                },
-                Write = v => settings.PunctuationMode = Text(v) == "spokenOnly" ? PunctuationMode.SpokenOnly : PunctuationMode.Automatic,
-            },
-            new()
-            {
-                Id = "dictation.mode", Title = "Modus", Category = "models", Type = McpSettingType.Enum,
-                Description = "What the Dictate shortcut and right Ctrl start. dictate: the text is inserted when the recording stops. live: Live diktieren, the text appears at the cursor after each pause (offline Parakeet only; without it the key starts nothing and says why). The Live diktieren shortcut always starts Live diktieren. During a live meeting the Dictate shortcut records a meeting segment either way.",
-                Read = () => JsonValue.Create(Settings.DictateModeName(settings.DictateMode)),
-                Options = () => new[]
-                {
-                    new McpSettingOption("dictate", "Diktieren", true, null),
-                    new McpSettingOption("live", "Live diktieren", true, null),
-                },
-                Write = v => settings.DictateMode = Settings.ParseDictateMode(Text(v)),
-            },
+            ChoiceSetting("dictation.punctuation", "Satzzeichen (Offline-Spracherkennung)", "models",
+                "Offline speech recognition only (Parakeet on this PC). automatic: the model sets punctuation. spokenOnly: only spoken marks (Punkt, Komma, Fragezeichen, Ausrufezeichen, Doppelpunkt, Schrägstrich) are written and no final period is added. Cloud models and meetings always use automatic.",
+                Choices.Punctuation, () => settings.PunctuationMode, v => settings.PunctuationMode = v),
+            ChoiceSetting("dictation.mode", "Modus", "models",
+                "What the Dictate shortcut and right Ctrl start. dictate: the text is inserted when the recording stops. live: Live diktieren, the text appears at the cursor after each pause (offline Parakeet only; without it the key starts nothing and says why). The Live diktieren shortcut always starts Live diktieren. During a live meeting the Dictate shortcut records a meeting segment either way.",
+                Choices.DictateMode, () => settings.DictateMode, v => settings.DictateMode = v),
             new()
             {
                 Id = "dictation.language", Title = "Sprache (OpenAI-Transkription)", Category = "models", Type = McpSettingType.Enum,
@@ -344,11 +327,10 @@ public static class McpSettingsCatalog
             {
                 Id = "clipboard.after_paste", Title = "Zwischenablage nach dem Einfügen", Category = "clipboard", Type = McpSettingType.Enum,
                 Description = "What happens to the clipboard after auto-paste (no effect while clipboard.auto_paste is off). keep: the dictated text stays (default). restore: the previous clipboard comes back 3 s after pasting. clear: the clipboard is emptied 3 s after pasting, if it still holds the dictation.",
-                Read = () => JsonValue.Create(ClipboardAfterPasteModes.Name(settings.ClipboardAfterPaste)),
-                Options = () => ClipboardAfterPasteModes.All
-                    .Select(m => new McpSettingOption(ClipboardAfterPasteModes.Name(m), ClipboardAfterPasteModes.Label(m), true, null)).ToList(),
-                Write = v => settings.ClipboardAfterPaste = ClipboardAfterPasteModes.Parse(Text(v))
-                    ?? throw new McpConfigException("Use keep, restore or clear."),
+                Read = () => JsonValue.Create(Choices.AfterPaste.Token(settings.ClipboardAfterPaste)),
+                Options = () => Choices.AfterPaste.All.Select(c => new McpSettingOption(c.Token, c.Label, true, null)).ToList(),
+                Write = v => settings.ClipboardAfterPaste = Choices.AfterPaste.TryParse(Text(v), out var m) ? m
+                    : throw new McpConfigException("Use keep, restore or clear."),
             },
             BoolSetting("clipboard.restore_after_paste", "Zwischenablage wiederherstellen (alt, siehe clipboard.after_paste)", "clipboard", () => settings.RestoreClipboard, v => settings.RestoreClipboard = v),
             BoolSetting("general.sounds", "Signaltöne", "general", () => settings.Sounds, v => settings.Sounds = v),

@@ -272,7 +272,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         if (hint.Length > 0) instruction += "\n\n" + hint;
 
         // 3.7 / 3.8 Flash and Pro reject "minimal" (HTTP 400): clamp to "low" like TranscriptionModels.swift.
-        var level = TranscriptionTuning.ThinkingFor(thinking, RejectsMinimal(model));
+        var level = TranscriptionTuning.ThinkingFor(thinking, GeminiModels.RejectsMinimalThinking(model));
         var writer = new ArrayBufferWriter<byte>(JsonCapacity(wav.Length, instruction.Length));
         using (var w = new Utf8JsonWriter(writer))
         {
@@ -451,11 +451,6 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     // JSON + base64 is ~4/3 of the WAV plus the instruction; size the writer so it does not grow twice.
     private static int JsonCapacity(int wavBytes, int textChars) =>
         Math.Max(256, 64 + textChars * 3 + wavBytes + wavBytes / 3);
-
-    private static bool RejectsMinimal(string model) =>
-        model.Contains("gemini-3.7-flash", StringComparison.OrdinalIgnoreCase)
-        || model.Contains("gemini-3.8-flash", StringComparison.OrdinalIgnoreCase)
-        || model.Contains("-pro", StringComparison.OrdinalIgnoreCase);
 
     /// <summary>
     /// Checks an API key with a cheap models-list request before it is saved. Never throws for

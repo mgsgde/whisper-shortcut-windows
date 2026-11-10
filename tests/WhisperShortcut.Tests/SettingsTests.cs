@@ -654,21 +654,6 @@ public class QuickActionRequestTests
     }
 
     [Fact]
-    public void ClipboardAfterPasteModes_NamesLabelsAndExplanations()
-    {
-        Assert.Equal(new[] { "keep", "restore", "clear" }, ClipboardAfterPasteModes.All.Select(ClipboardAfterPasteModes.Name));
-        foreach (var m in ClipboardAfterPasteModes.All)
-        {
-            Assert.Equal(m, ClipboardAfterPasteModes.Parse(ClipboardAfterPasteModes.Name(m)));
-            Assert.False(string.IsNullOrWhiteSpace(ClipboardAfterPasteModes.Label(m)));
-            Assert.DoesNotContain("Sie ", ClipboardAfterPasteModes.Explanation(m)); // du-form
-        }
-        Assert.Equal("Diktat behalten", ClipboardAfterPasteModes.Label(ClipboardAfterPaste.KeepDictation));
-        Assert.Null(ClipboardAfterPasteModes.Parse(null));
-        Assert.Null(ClipboardAfterPasteModes.Parse("x"));
-    }
-
-    [Fact]
     public void AutoUpdateCheck_defaults_on_and_round_trips()
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");

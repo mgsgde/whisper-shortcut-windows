@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace WhisperShortcut.UiTests;
@@ -147,6 +148,74 @@ public sealed class SettingsWindowTests : IDisposable
             Assert.False(dictate.WarningVisible);
             Assert.Equal("Der Text wird eingefügt, wenn du stoppst.", dictate.Caption);
         });
+    }
+
+    /// <summary>R8: the engine, punctuation, dictate-mode and after-paste combos are filled from Core.Choices and must show what is stored.</summary>
+    [Fact]
+    public void ChoiceCombos_ShowStoredValues()
+    {
+        Sta.Run(() =>
+        {
+            var path = Path.Combine(_dir, "settings.json");
+            var stored = Core.Settings.Load(path, new Core.PlainSecretProtector());
+            stored.OpenAiKey = "sk-test";
+            stored.SpeechEngine = Core.Engine.OpenAI;
+            stored.TextEngine = Core.Engine.OpenAI;
+            stored.PunctuationMode = Core.PunctuationMode.SpokenOnly;
+            stored.DictateMode = Core.DictateMode.Live;
+            stored.ClipboardAfterPaste = Core.ClipboardAfterPaste.Clear;
+            stored.Save();
+
+            using var form = OpenSettings();
+            Assert.Equal(Core.Engine.OpenAI, ComboValue(form, "_speechEngine"));
+            Assert.Equal(Core.Engine.OpenAI, ComboValue(form, "_textEngine"));
+            Assert.Equal(Core.PunctuationMode.SpokenOnly, ComboValue(form, "_punctuation"));
+            Assert.Equal(Core.DictateMode.Live, ComboValue(form, "_dictateMode"));
+            Assert.Equal(Core.ClipboardAfterPaste.Clear, ComboValue(form, "_afterPaste"));
+        });
+    }
+
+    /// <summary>R8: picking a non-default entry in each of those combos and saving writes the matching token to settings.json.</summary>
+    [Fact]
+    public void ChoiceCombos_SaveToFile()
+    {
+        Sta.Run(() =>
+        {
+            var path = Path.Combine(_dir, "settings.json");
+            var seed = Core.Settings.Load(path, new Core.PlainSecretProtector());
+            seed.OpenAiKey = "sk-test";
+            seed.Save();
+
+            using var form = OpenSettings();
+            SetCombo(form, "_speechEngine", Core.Engine.OpenAI);
+            SetCombo(form, "_punctuation", Core.PunctuationMode.SpokenOnly);
+            SetCombo(form, "_afterPaste", Core.ClipboardAfterPaste.Clear);
+            SetCombo(form, "_dictateMode", Core.DictateMode.Live);
+            Assert.True((bool)typeof(SettingsForm).GetMethod("TrySave", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null)!);
+
+            var fresh = Core.Settings.Load(path, new Core.PlainSecretProtector());
+            Assert.Equal(Core.Engine.OpenAI, fresh.SpeechEngine);
+            Assert.Equal(Core.PunctuationMode.SpokenOnly, fresh.PunctuationMode);
+            Assert.Equal(Core.ClipboardAfterPaste.Clear, fresh.ClipboardAfterPaste);
+            Assert.Equal(Core.DictateMode.Live, fresh.DictateMode);
+
+            var raw = File.ReadAllText(path);
+            foreach (var token in new[] { "\"openai\"", "\"spokenOnly\"", "\"clear\"", "\"live\"" })
+                Assert.Contains(token, raw);
+        });
+    }
+
+    private static ComboBox Combo(SettingsForm form, string field) =>
+        (ComboBox)typeof(SettingsForm).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+
+    /// <summary>The Value of the combo's selected ChoiceItem (a private record, hence reflection).</summary>
+    private static object? ComboValue(SettingsForm form, string field) =>
+        Combo(form, field).SelectedItem!.GetType().GetProperty("Value")!.GetValue(Combo(form, field).SelectedItem);
+
+    private static void SetCombo(SettingsForm form, string field, object value)
+    {
+        var combo = Combo(form, field);
+        combo.SelectedItem = combo.Items.Cast<object>().First(i => Equals(i.GetType().GetProperty("Value")!.GetValue(i), value));
     }
 
     private SettingsForm OpenSettings()

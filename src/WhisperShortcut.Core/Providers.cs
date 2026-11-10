@@ -4,7 +4,14 @@ namespace WhisperShortcut.Core;
 /// <param name="Id">API model id.</param>
 /// <param name="Name">Display name.</param>
 /// <param name="Description">One-line hint shown beside the name.</param>
-public sealed record ModelInfo(string Id, string Name, string Description);
+public sealed record ModelInfo(string Id, string Name, string Description)
+{
+    /// <summary>Speed rank at short dictations, lower = faster; null = never featured as the fastest.</summary>
+    public int? TranscriptionSpeed { get; init; }
+
+    /// <summary>Speed rank at short edits (Dictate Prompt), lower = faster; null = never featured as the fastest.</summary>
+    public int? PromptSpeed { get; init; }
+}
 
 /// <summary>Where a step (speech recognition, text processing) runs.</summary>
 public enum Engine

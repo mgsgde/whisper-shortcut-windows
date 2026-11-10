@@ -21,17 +21,17 @@ public static class OpenAiModels
     /// <summary>Models offered for Dictate, in display order.</summary>
     public static IReadOnlyList<ModelInfo> Transcription { get; } = new[]
     {
-        new ModelInfo("gpt-4o-transcribe", "GPT-4o Transcribe", "Genau, beachtet das Glossar, empfohlen"),
-        new ModelInfo("gpt-4o-mini-transcribe", "GPT-4o mini Transcribe", "Günstiger, etwas ungenauer"),
-        new ModelInfo("gpt-transcribe", "GPT Transcribe", "Neuestes Modell, Glossar als Stichwörter, ohne eigene Anweisungen"),
+        new ModelInfo("gpt-4o-transcribe", "GPT-4o Transcribe", "Genau, beachtet das Glossar, empfohlen") { TranscriptionSpeed = 4 },
+        new ModelInfo("gpt-4o-mini-transcribe", "GPT-4o mini Transcribe", "Günstiger, etwas ungenauer") { TranscriptionSpeed = 2 },
+        new ModelInfo("gpt-transcribe", "GPT Transcribe", "Neuestes Modell, Glossar als Stichwörter, ohne eigene Anweisungen") { TranscriptionSpeed = 5 },
     };
 
     /// <summary>Models offered for Dictate Prompt, in display order.</summary>
     public static IReadOnlyList<ModelInfo> Prompt { get; } = new[]
     {
-        new ModelInfo("gpt-6-sol", "GPT-6 Sol", "Gründlich, empfohlen"),
-        new ModelInfo("gpt-6-luna", "GPT-6 Luna", "Schnell und sehr günstig"),
-        new ModelInfo("gpt-5.4-mini", "GPT-5.4 mini", "Günstig, einfache Aufgaben"),
+        new ModelInfo("gpt-6-sol", "GPT-6 Sol", "Gründlich, empfohlen") { PromptSpeed = 6 },
+        new ModelInfo("gpt-6-luna", "GPT-6 Luna", "Schnell und sehr günstig") { PromptSpeed = 3 },
+        new ModelInfo("gpt-5.4-mini", "GPT-5.4 mini", "Günstig, einfache Aufgaben") { PromptSpeed = 4 },
     };
 
     // Same idea as the Mac's migrateLegacyPromptRawValue: ids that no longer exist map to a successor
