@@ -137,6 +137,7 @@ internal sealed partial class TrayApp : ApplicationContext
         bool firstRun = !File.Exists(Core.Settings.DefaultPath);
         _settings = Core.Settings.Load(Core.Settings.DefaultPath, new DpapiProtector());
         Sounds.Enabled = _settings.Sounds;
+        _appliedSettings = Core.SettingsDelta.Snapshot.Of(_settings);
         bool testRun = testWav != null || fakeGemini;
         InstallState.TestRun = testRun; // before anything registers itself: the one "may register" rule reads it
         if (firstRun)
@@ -1967,6 +1968,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 case Core.GlossaryAddResult.Added:
                     TrySave();
                     _offline.GlossaryChanged();
+                    _appliedSettings = Core.SettingsDelta.Snapshot.Of(_settings); // reloaded just now: the next apply must not reload again
                     _settingsForm?.AppendGlossaryTerm(term);
                     ShowDoneIfFree($"„{term}“ steht jetzt im Glossar");
                     break;
@@ -2254,11 +2256,38 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     // A key, the offline choice or offline mode changed in the tour: the same follow-ups as a settings save.
-    private void AfterTourSaved()
+    private void AfterTourSaved() => ApplySettingsChange(TakeSettingsDelta(), fromSettingsWindow: false);
+
+    // What the follow-up steps last saw. The settings window, the tour and MCP all write into Settings before they
+    // tell us, so the "before" of a change is this snapshot, refreshed by every apply.
+    private Core.SettingsDelta.Snapshot _appliedSettings = null!;
+
+    private Core.SettingsDelta TakeSettingsDelta()
     {
-        if (_settings.OfflineMode) _promptMemory.Clear();
-        SetState(_state); // tooltip "Bereit" instead of "Kein API-Schlüssel"
-        _offline.Prewarm();
+        var now = Core.SettingsDelta.Snapshot.Of(_settings);
+        var d = Core.SettingsDelta.Between(_appliedSettings, now);
+        _appliedSettings = now;
+        return d;
+    }
+
+    /// <summary>
+    /// The one list of follow-ups after settings changed, for the settings window, the tour and MCP. Steps that
+    /// guard themselves (state, prewarm, screenshot, sounds, offline stop) run every time; the others run on their flag.
+    /// <paramref name="fromSettingsWindow"/>: that window applies after every edit, even unrelated ones, so it keeps
+    /// its old reactions to the current state (clear memory while offline, check the hotkeys when it leaves the front)
+    /// instead of reacting to changes only.
+    /// </summary>
+    private void ApplySettingsChange(Core.SettingsDelta d, bool fromSettingsWindow)
+    {
+        // Only a changed glossary reloads the offline recognizer (a few seconds); most applies are other edits.
+        if (d.GlossaryChanged) _offline.GlossaryChanged();
+        Sounds.Enabled = _settings.Sounds;
+        if (fromSettingsWindow) _hotkeyCheckPending = true;
+        else if (d.HotkeysChanged && _globalHotkeysOn) RegisterHotkeys(); // otherwise they register when the window leaves the front
+        if (_settings.OfflineMode && (fromSettingsWindow || d.OfflineModeChanged)) _promptMemory.Clear();
+        SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
+        _offline.Prewarm(); // offline mode or the engine may just have been switched to this PC
+        DropScreenshotIfNotAllowed(); // a local text engine must not get a held screenshot later
         _mcp.SyncOfflineMode();
         AfterOfflineMaybeChanged();
     }
@@ -2390,21 +2419,7 @@ internal sealed partial class TrayApp : ApplicationContext
         // Posted: while Deactivate runs the new foreground window is not set yet.
         _settingsForm.Deactivate += (_, _) => { if (_settingsForm == form) _ui.Post(_ => SyncGlobalHotkeys(), null); };
         // Edits apply by themselves (shortly after each one): apply right away, check the hotkeys once the window leaves the front.
-        var glossary = string.Join("\n", _settings.Glossary);
-        _settingsForm.Saved += () =>
-        {
-            // Only a changed glossary reloads the offline recognizer (a few seconds); most applies are other edits.
-            var nowGlossary = string.Join("\n", _settings.Glossary);
-            if (nowGlossary != glossary) { glossary = nowGlossary; _offline.GlossaryChanged(); }
-            Sounds.Enabled = _settings.Sounds;
-            _hotkeyCheckPending = true;
-            if (_settings.OfflineMode) _promptMemory.Clear();
-            SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
-            _offline.Prewarm(); // offline mode may just have been switched on
-            DropScreenshotIfNotAllowed();
-            _mcp.SyncOfflineMode();
-            AfterOfflineMaybeChanged();
-        };
+        _settingsForm.Saved += () => ApplySettingsChange(TakeSettingsDelta(), fromSettingsWindow: true);
         _settingsForm.FormClosed += (_, _) =>
         {
             _settingsForm = null;
@@ -2430,12 +2445,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private void AfterMcpApply()
     {
-        Sounds.Enabled = _settings.Sounds;
-        if (_globalHotkeysOn) RegisterHotkeys(); // a hotkey may have changed; otherwise they register when the window leaves the front
-        SetState(_state);
-        _offline.Prewarm(); // the engine may have been switched to this PC
-        _offline.GlossaryChanged();
-        DropScreenshotIfNotAllowed(); // a local text engine must not get a held screenshot later
+        ApplySettingsChange(TakeSettingsDelta(), fromSettingsWindow: false);
         if (_settingsForm is not { IsDisposed: false } form) return;
         _ui.Post(_ =>
         {
