@@ -2,8 +2,7 @@ using System.Text.Json.Serialization;
 
 namespace WhisperShortcut.Core;
 
-// Settings added with step 10 of docs/plan-mac-angleich.md (Vorlesen, Meetings, Chat). In their own file so the main settings
-// file only carries two hook lines: LoadFeatures in Load and SaveFeatures in SaveCore.
+// Settings added with step 10 of docs/plan-mac-angleich.md (Vorlesen, Meetings, Chat). Load/save rows: Settings.Fields.cs.
 public sealed partial class Settings
 {
     /// <summary>Chosen Windows voice for Read Aloud (its name); "" = the voice of the Windows language.</summary>
@@ -86,56 +85,6 @@ public sealed partial class Settings
     /// <summary>Who answers in practice and with which model id ("local" on this PC): Offline-Modus overrides the provider.</summary>
     [JsonIgnore]
     public (Engine Engine, string Model) EffectiveChat => Chat.Effective(OfflineMode);
-
-    private void LoadFeatures(Dto dto)
-    {
-        ReadAloudVoiceSystem = ReadAloud.NormalizeVoice(TtsProvider.System, dto.ReadAloudVoiceSystem);
-        ReadAloudRewritePrompt = CustomOrEmpty(dto.ReadAloudRewritePrompt, ReadAloud.DefaultRewritePrompt);
-
-        // Before the Meetings page, meetings used the Diktieren and Dictate Prompt providers: an update keeps that.
-        MeetingTranscription = ModelSelection.Load(ModelStep.Transcription, dto.MeetingSpeechEngine, dto.MeetingTranscriptionModel,
-            dto.MeetingOpenAiTranscriptionModel, Dictate);
-        // A file from before the flag always stored an engine, the factory default Gemini included, so "chosen" cannot be told
-        // from "never chosen" there: Gemini reads as never chosen (follows dictation), any other value was a pick.
-        MeetingSpeechEngineExplicit = dto.MeetingSpeechEngineExplicit
-            ?? (dto.MeetingSpeechEngine != null && MeetingTranscription.Engine != Engine.Gemini);
-        MeetingText = ModelSelection.Load(ModelStep.Text, dto.MeetingTextEngine, dto.MeetingSummaryModel, dto.MeetingOpenAiSummaryModel,
-            Prompt with { Gemini = MeetingOptions.DefaultSummaryModel });
-        MeetingChunkSeconds = MeetingOptions.NormalizeChunkSeconds(dto.MeetingChunkSeconds);
-        MeetingSafeguardMinutes = MeetingOptions.NormalizeSafeguardMinutes(dto.MeetingSafeguardMinutes);
-
-        if (dto.ChatHotkey != null) ChatHotkey = dto.ChatHotkey;
-        ChatHotkeyEnabled = dto.ChatHotkeyEnabled ?? true;
-        // An update adds the chat key to a file that never had it. It must not take a key the user already uses.
-        if (dto.ChatHotkey == null && HotkeySlots.Clashes(this, HotkeyAction.Chat)) ChatHotkeyEnabled = false;
-        Chat = ModelSelection.Load(ModelStep.Text, dto.ChatEngine, dto.ChatModel, dto.ChatOpenAiModel, Prompt with { Gemini = DefaultPromptModel });
-        ChatSystemPrompt = CustomOrEmpty(dto.ChatSystemPrompt, ChatPrompts.DefaultSystemPrompt);
-        ChatWebSearch = dto.ChatWebSearch ?? true;
-        ChatCloseOnFocusLoss = dto.ChatCloseOnFocusLoss ?? true;
-    }
-
-    private void SaveFeatures(Dto dto)
-    {
-        dto.ReadAloudVoiceSystem = ReadAloudVoiceSystem;
-        dto.ReadAloudRewritePrompt = ReadAloudRewritePrompt;
-        dto.MeetingSpeechEngine = Choices.Engine.Token(MeetingTranscription.Engine);
-        dto.MeetingSpeechEngineExplicit = MeetingSpeechEngineExplicit;
-        dto.MeetingTranscriptionModel = MeetingTranscription.Gemini;
-        dto.MeetingOpenAiTranscriptionModel = MeetingTranscription.OpenAi;
-        dto.MeetingTextEngine = Choices.Engine.Token(MeetingText.Engine);
-        dto.MeetingSummaryModel = MeetingText.Gemini;
-        dto.MeetingOpenAiSummaryModel = MeetingText.OpenAi;
-        dto.MeetingChunkSeconds = MeetingChunkSeconds;
-        dto.MeetingSafeguardMinutes = MeetingSafeguardMinutes;
-        dto.ChatHotkey = ChatHotkey;
-        dto.ChatHotkeyEnabled = ChatHotkeyEnabled;
-        dto.ChatEngine = Choices.Engine.Token(Chat.Engine);
-        dto.ChatModel = Chat.Gemini;
-        dto.ChatOpenAiModel = Chat.OpenAi;
-        dto.ChatSystemPrompt = ChatSystemPrompt;
-        dto.ChatWebSearch = ChatWebSearch;
-        dto.ChatCloseOnFocusLoss = ChatCloseOnFocusLoss;
-    }
 
     private sealed partial class Dto
     {
