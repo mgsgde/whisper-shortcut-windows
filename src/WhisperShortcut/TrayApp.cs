@@ -1549,10 +1549,9 @@ internal sealed partial class TrayApp : ApplicationContext
         {
             _cts.Dispose();
             _cts = null;
-            _selectionCts?.Cancel(); // an early end must stop the selection copy still polling
-            _selectionCts?.Dispose();
-            _selectionCts = null;
-            _selection = null;
+            // An early end must stop the selection copy still polling and its late-copy watch. Safe after a paste: the
+            // paste cancelled the watch itself, and the clipboard restore is separate (ClipboardPaster._pendingRestore).
+            CancelSelectionCopy();
             _quickAction = null;
             _noNewTextTemplate = false;
             _runShot = null; // a failed run keeps it in _lastFailed for the retry
