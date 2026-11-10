@@ -166,22 +166,6 @@ internal sealed class ReadAloudController : IDisposable
         {
             // Stopped by the user.
         }
-        catch (Core.SelectionUnreadableException)
-        {
-            if (run != _run) return;
-            Stop();
-            Sounds.Error();
-            _notify("Vorlesen", "Markierter Text konnte nicht gelesen werden. Bitte noch einmal versuchen.", ToolTipIcon.Warning, null);
-        }
-        catch (Core.GeminiException e)
-        {
-            if (run != _run) return;
-            Core.Log.Error($"Read aloud: {e.Provider} {e.Kind}");
-            Stop();
-            Sounds.Error();
-            Action? click = e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey ? _showSettings : null;
-            _notify("Vorlesen fehlgeschlagen", e.Message, ToolTipIcon.Error, click);
-        }
         catch (InvalidOperationException e) when (model.Provider == Core.TtsProvider.System)
         {
             if (run != _run) return;
@@ -194,10 +178,13 @@ internal sealed class ReadAloudController : IDisposable
         catch (Exception e)
         {
             if (run != _run) return;
-            Core.Log.Error("Read aloud failed", e);
+            if (e is Core.GeminiException g) Core.Log.Error($"Read aloud: {g.Provider} {g.Kind}");
+            else if (e is not Core.SelectionUnreadableException) Core.Log.Error("Read aloud failed", e);
+            var shown = Core.RunOutcomes.ForFailure(e, audioKept: false, Core.FailureContext.ReadAloud);
             Stop();
-            Sounds.Error();
-            _notify("Vorlesen fehlgeschlagen", "Der Text konnte nicht vorgelesen werden. Details stehen im Protokoll.", ToolTipIcon.Error, null);
+            if (shown.ErrorSound) Sounds.Error();
+            // Only a missing or rejected key opens the settings (there is no recording to retry here).
+            _notify(shown.Title, shown.Text, Toast.IconOf(shown.Icon), shown.Action == Core.FollowUp.None ? null : _showSettings);
         }
     }
 

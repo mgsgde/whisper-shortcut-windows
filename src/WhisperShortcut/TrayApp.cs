@@ -1293,7 +1293,6 @@ internal sealed partial class TrayApp : ApplicationContext
             case Core.PresentationKind.Toast:
                 if (p.ErrorSound) Sounds.Error();
                 if (p.KeepAudio) _lastFailed = failed;
-                var icon = p.Icon switch { Core.Severity.Error => ToolTipIcon.Error, Core.Severity.Warning => ToolTipIcon.Warning, _ => ToolTipIcon.Info };
                 var url = p.Url;
                 var (onClick, label) = p.Action switch
                 {
@@ -1304,7 +1303,7 @@ internal sealed partial class TrayApp : ApplicationContext
                     Core.FollowUp.TopUp when url != null => ((Action?)(() => OpenBillingUrl(url)), Core.UserCopy.ActionTopUp),
                     _ => ((Action?)null, (string?)null),
                 };
-                Notify(p.Title, p.Text, icon, onClick, label);
+                Notify(p.Title, p.Text, Toast.IconOf(p.Icon), onClick, label);
                 return false;
             default:
                 return false;
