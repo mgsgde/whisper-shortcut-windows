@@ -133,9 +133,9 @@ internal static class Theme
     {
         if (!form.IsHandleCreated) return;
         int dark = Dark && !HighContrast ? 1 : 0;
-        _ = DwmSetWindowAttribute(form.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
+        _ = NativeMethods.DwmSetWindowAttribute(form.Handle, DWMWA_USE_IMMERSIVE_DARK_MODE, ref dark, sizeof(int));
         int caption = ColorTranslator.ToWin32(Window);
-        _ = DwmSetWindowAttribute(form.Handle, DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
+        _ = NativeMethods.DwmSetWindowAttribute(form.Handle, DWMWA_CAPTION_COLOR, ref caption, sizeof(int));
     }
 
     /// <summary>Scroll bars and drop-down lists follow the theme ("DarkMode_Explorer" is what Explorer uses).</summary>
@@ -173,7 +173,7 @@ internal static class Theme
     {
         var path = new GraphicsPath();
         float d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
-        if (d <= 0) { path.AddRectangle(r); return path; }
+        if (d <= 0.5f) { path.AddRectangle(r); return path; }
         path.AddArc(r.X, r.Y, d, d, 180, 90);
         path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
         path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
@@ -184,9 +184,6 @@ internal static class Theme
 
     private const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     private const int DWMWA_CAPTION_COLOR = 35;
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
     [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)]
     private static extern int SetWindowTheme(IntPtr hwnd, string? subAppName, string? subIdList);

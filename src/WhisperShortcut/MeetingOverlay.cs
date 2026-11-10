@@ -1,5 +1,4 @@
 using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
 
 namespace WhisperShortcut;
 
@@ -11,7 +10,7 @@ namespace WhisperShortcut;
 /// dragged elsewhere when it is in the way of a shared screen.
 /// It never takes focus (WS_EX_NOACTIVATE, MA_NOACTIVATE): the user is typing into the meeting app.
 /// </summary>
-internal sealed class MeetingOverlay : Form
+internal sealed class MeetingOverlay : OverlayForm
 {
     private enum Phase { Hidden, Recording, Finishing }
 
@@ -27,7 +26,6 @@ internal sealed class MeetingOverlay : Form
 
     private const int Bars = 12;
     // Under 1 % peak after 5 s: a muted or blocked microphone, not a quiet room (same bar as the dictation pill).
-    private const float SilentPeak = 0.01f;
     private static readonly TimeSpan SilentAfter = TimeSpan.FromSeconds(5);
 
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 50 };
@@ -38,8 +36,7 @@ internal sealed class MeetingOverlay : Form
     private Phase _phase = Phase.Hidden;
     private DateTime _started;
     private Func<float>? _level;
-    private float _peakSoFar;
-    private float _smoothed;
+    private readonly Core.LevelMeter _meter = new(0.8f);
     private int _levelHead;
     private int _tick;
     private string _status = "";
@@ -54,13 +51,8 @@ internal sealed class MeetingOverlay : Form
     /// <summary>The "Beenden" button was clicked.</summary>
     public event Action? StopClicked;
 
-    public MeetingOverlay()
+    public MeetingOverlay() : base(layered: false, clickThrough: false)
     {
-        FormBorderStyle = FormBorderStyle.None;
-        ShowInTaskbar = false;
-        StartPosition = FormStartPosition.Manual;
-        // WHY no TopMost = true: WinForms then activates the window on Show despite ShowWithoutActivation, which
-        // took the focus from the chat (it closes on focus loss) and from the target window. WS_EX_TOPMOST below keeps it on top.
         BackColor = Back;
         DoubleBuffered = true;
         Opacity = 0.97;
@@ -68,37 +60,10 @@ internal sealed class MeetingOverlay : Form
         _timer.Tick += (_, _) => OnTick();
     }
 
-    protected override bool ShowWithoutActivation => true;
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            const int WS_EX_TOPMOST = 0x8, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
-            var cp = base.CreateParams;
-            cp.ExStyle |= WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-            return cp;
-        }
-    }
-
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        int round = 2; // DWMWCP_ROUND, Windows 11; Windows 10 ignores it
-        DwmSetWindowAttribute(Handle, 33, ref round, sizeof(int));
-        int border = ColorTranslator.ToWin32(Border);
-        DwmSetWindowAttribute(Handle, 34, ref border, sizeof(int));
-    }
-
-    protected override void WndProc(ref Message m)
-    {
-        const int WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
-        if (m.Msg == WM_MOUSEACTIVATE)
-        {
-            m.Result = MA_NOACTIVATE;
-            return;
-        }
-        base.WndProc(ref m);
+        ApplyRoundedBorder(Border);
     }
 
     // ---------------- API for MeetingController ----------------
@@ -110,8 +75,7 @@ internal sealed class MeetingOverlay : Form
         _phase = Phase.Recording;
         _started = startedUtc;
         _level = level;
-        _peakSoFar = 0;
-        _smoothed = 0;
+        _meter.Reset();
         Array.Clear(_levels);
         Present();
     }
@@ -143,8 +107,6 @@ internal sealed class MeetingOverlay : Form
 
     // ---------------- layout ----------------
 
-    private float S => DeviceDpi / 96f;
-
     private void Present()
     {
         var size = new Size((int)(320 * S), (int)(60 * S));
@@ -170,14 +132,11 @@ internal sealed class MeetingOverlay : Form
         _tick++;
         if (_phase == Phase.Recording && _level != null)
         {
-            float raw = Math.Clamp(_level(), 0f, 1f);
-            if (raw > _peakSoFar) _peakSoFar = raw;
-            raw = MathF.Sqrt(raw);
-            _smoothed = raw > _smoothed ? raw : _smoothed * 0.8f + raw * 0.2f;
+            float smoothed = _meter.Feed(_level());
             // Bars move every 100 ms: a quieter meter than the dictation pill, it stays on screen for an hour.
             if (_tick % 2 == 0)
             {
-                _levels[_levelHead] = _smoothed;
+                _levels[_levelHead] = smoothed;
                 _levelHead = (_levelHead + 1) % Bars;
             }
         }
@@ -205,7 +164,7 @@ internal sealed class MeetingOverlay : Form
             float bw = labelSize.Width + 20 * s, bh = 24 * s;
             _button = new RectangleF(right - bw, (Height - bh) / 2f, bw, bh);
             using (var fill = new SolidBrush(_buttonHover ? ButtonHover : ButtonBack))
-            using (var path = Rounded(_button, 6 * s))
+            using (var path = Theme.Rounded(_button, 6 * s))
                 g.FillPath(fill, path);
             TextRenderer.DrawText(g, label, _textFont,
                 new Point((int)(_button.X + (bw - labelSize.Width) / 2f), (int)(_button.Y + (bh - labelSize.Height) / 2f)),
@@ -223,7 +182,7 @@ internal sealed class MeetingOverlay : Form
 
         if (_phase == Phase.Recording)
         {
-            string time = Format(DateTime.UtcNow - _started);
+            string time = Core.Clock.Format(DateTime.UtcNow - _started);
             var timeSize = TextRenderer.MeasureText(g, time, _textFont, Size.Empty, TextFormatFlags.NoPadding);
             float timeX = textX + titleSize.Width + 10 * s;
             TextRenderer.DrawText(g, time, _textFont, new Point((int)timeX, (int)(row1 - timeSize.Height / 2f)), Secondary, TextFormatFlags.NoPadding);
@@ -234,7 +193,7 @@ internal sealed class MeetingOverlay : Form
 
         string status = _status;
         Color color = _statusWarn ? Amber : Muted;
-        if (_phase == Phase.Recording && _level != null && DateTime.UtcNow - _started > SilentAfter && _peakSoFar < SilentPeak)
+        if (_phase == Phase.Recording && _level != null && Core.LevelMeter.IsSilent(_meter.Peak, DateTime.UtcNow - _started, SilentAfter))
         {
             status = "Kein Ton. Mikrofon stumm oder gesperrt?";
             color = Amber;
@@ -323,20 +282,6 @@ internal sealed class MeetingOverlay : Form
         if (_phase == Phase.Recording && e.Button == MouseButtons.Left && _button.Contains(e.Location)) StopClicked?.Invoke();
     }
 
-    private static GraphicsPath Rounded(RectangleF r, float radius)
-    {
-        var path = new GraphicsPath();
-        float d = radius * 2;
-        path.AddArc(r.X, r.Y, d, d, 180, 90);
-        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
-
-    private static string Format(TimeSpan t) => t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : $"{(int)t.TotalMinutes}:{t.Seconds:00}";
-
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -347,7 +292,4 @@ internal sealed class MeetingOverlay : Form
         }
         base.Dispose(disposing);
     }
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 }

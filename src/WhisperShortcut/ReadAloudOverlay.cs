@@ -1,5 +1,4 @@
 using System.Drawing.Drawing2D;
-using System.Runtime.InteropServices;
 
 namespace WhisperShortcut;
 
@@ -9,7 +8,7 @@ namespace WhisperShortcut;
 /// taskbar like the dictation pill, draggable, and it never takes focus (WS_EX_NOACTIVATE): the user keeps reading in
 /// their app. Same colours as <see cref="MeetingOverlay"/>.
 /// </summary>
-internal sealed class ReadAloudOverlay : Form
+internal sealed class ReadAloudOverlay : OverlayForm
 {
     private enum Phase { Hidden, Preparing, Speaking }
 
@@ -50,13 +49,8 @@ internal sealed class ReadAloudOverlay : Form
     /// <summary>The progress bar was clicked: seek to this share (0..1) of the duration.</summary>
     public event Action<double>? SeekClicked;
 
-    public ReadAloudOverlay()
+    public ReadAloudOverlay() : base(layered: false, clickThrough: false)
     {
-        FormBorderStyle = FormBorderStyle.None;
-        ShowInTaskbar = false;
-        StartPosition = FormStartPosition.Manual;
-        // WHY no TopMost = true: WinForms then activates the window on Show despite ShowWithoutActivation, which
-        // took the focus from the chat (it closes on focus loss) and from the target window. WS_EX_TOPMOST below keeps it on top.
         BackColor = Back;
         DoubleBuffered = true;
         Opacity = 0.97;
@@ -64,37 +58,10 @@ internal sealed class ReadAloudOverlay : Form
         _timer.Tick += (_, _) => { _tick++; Invalidate(); };
     }
 
-    protected override bool ShowWithoutActivation => true;
-
-    protected override CreateParams CreateParams
-    {
-        get
-        {
-            const int WS_EX_TOPMOST = 0x8, WS_EX_TOOLWINDOW = 0x80, WS_EX_NOACTIVATE = 0x08000000;
-            var cp = base.CreateParams;
-            cp.ExStyle |= WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE;
-            return cp;
-        }
-    }
-
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        int round = 2; // DWMWCP_ROUND, Windows 11; Windows 10 ignores it
-        DwmSetWindowAttribute(Handle, 33, ref round, sizeof(int));
-        int border = ColorTranslator.ToWin32(Border);
-        DwmSetWindowAttribute(Handle, 34, ref border, sizeof(int));
-    }
-
-    protected override void WndProc(ref Message m)
-    {
-        const int WM_MOUSEACTIVATE = 0x21, MA_NOACTIVATE = 3;
-        if (m.Msg == WM_MOUSEACTIVATE)
-        {
-            m.Result = MA_NOACTIVATE;
-            return;
-        }
-        base.WndProc(ref m);
+        ApplyRoundedBorder(Border);
     }
 
     // ---------------- API for ReadAloudController ----------------
@@ -128,8 +95,6 @@ internal sealed class ReadAloudOverlay : Form
     }
 
     // ---------------- layout ----------------
-
-    private float S => DeviceDpi / 96f;
 
     private void Present()
     {
@@ -197,7 +162,7 @@ internal sealed class ReadAloudOverlay : Form
         _bar = new RectangleF(pad, barY - 6 * s, Width - 2 * pad, barH + 12 * s); // larger hit area than the line
         var line = new RectangleF(pad, barY, Width - 2 * pad, barH);
         using (var track = new SolidBrush(Track))
-        using (var path = Rounded(line, barH / 2))
+        using (var path = Theme.Rounded(line, barH / 2))
             g.FillPath(track, path);
         if (total > 0)
         {
@@ -206,13 +171,13 @@ internal sealed class ReadAloudOverlay : Form
             if (buffered > 0)
             {
                 using var light = new SolidBrush(Color.FromArgb(110, 110, 110));
-                using var path = Rounded(new RectangleF(line.X, line.Y, Math.Max(barH, line.Width * buffered), barH), barH / 2);
+                using var path = Theme.Rounded(new RectangleF(line.X, line.Y, Math.Max(barH, line.Width * buffered), barH), barH / 2);
                 g.FillPath(light, path);
             }
             if (played > 0)
             {
                 using var fill = new SolidBrush(Accent);
-                using var path = Rounded(new RectangleF(line.X, line.Y, Math.Max(barH, line.Width * played), barH), barH / 2);
+                using var path = Theme.Rounded(new RectangleF(line.X, line.Y, Math.Max(barH, line.Width * played), barH), barH / 2);
                 g.FillPath(fill, path);
             }
         }
@@ -225,7 +190,7 @@ internal sealed class ReadAloudOverlay : Form
         float bh = 26 * s, bw = Math.Max(bh, size.Width + 14 * s);
         var box = new RectangleF(right - bw, centerY - bh / 2, bw, bh);
         using (var fill = new SolidBrush(_hover == command ? ButtonHover : ButtonBack))
-        using (var path = Rounded(box, 6 * s))
+        using (var path = Theme.Rounded(box, 6 * s))
             g.FillPath(fill, path);
         TextRenderer.DrawText(g, label, font,
             new Point((int)(box.X + (bw - size.Width) / 2f), (int)(box.Y + (bh - size.Height) / 2f)), Primary, TextFormatFlags.NoPadding);
@@ -314,23 +279,7 @@ internal sealed class ReadAloudOverlay : Form
         }
     }
 
-    private static GraphicsPath Rounded(RectangleF r, float radius)
-    {
-        var path = new GraphicsPath();
-        float d = Math.Min(radius * 2, Math.Min(r.Width, r.Height));
-        path.AddArc(r.X, r.Y, d, d, 180, 90);
-        path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
-        path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
-        path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
-        path.CloseFigure();
-        return path;
-    }
-
-    private static string Format(double seconds)
-    {
-        var t = TimeSpan.FromSeconds(Math.Max(0, seconds));
-        return t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : $"{(int)t.TotalMinutes}:{t.Seconds:00}";
-    }
+    private static string Format(double seconds) => Core.Clock.Format(TimeSpan.FromSeconds(Math.Max(0, seconds)));
 
     protected override void Dispose(bool disposing)
     {
@@ -343,7 +292,4 @@ internal sealed class ReadAloudOverlay : Form
         }
         base.Dispose(disposing);
     }
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 }

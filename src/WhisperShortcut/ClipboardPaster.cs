@@ -227,11 +227,7 @@ internal sealed class ClipboardPaster
     }
 
     /// <summary>Puts text on the clipboard without pasting (tray menu: "Letzten Text kopieren").</summary>
-    public bool CopyToClipboard(string text)
-    {
-        CancelLateWatch();
-        return WriteText(text);
-    }
+    public bool CopyToClipboard(string text) => KeepOnClipboard(text);
 
     // ---- Live diktieren ----
 
@@ -358,8 +354,7 @@ internal sealed class ClipboardPaster
                 return false;
             }
             // Immediate data, no rendering needed: keep it out of the Win+V history and the cloud clipboard.
-            SetDword("CanIncludeInClipboardHistory", 0);
-            SetDword("CanUploadToCloudClipboard", 0);
+            ClipboardMemory.MarkPrivate();
             ok = true;
             return true;
         }
@@ -402,14 +397,9 @@ internal sealed class ClipboardPaster
         string? text = _lazyText;
         if (text == null) return;
         uint before = GetClipboardSequenceNumber();
-        IntPtr handle = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)((text.Length + 1) * 2));
+        IntPtr handle = ClipboardMemory.AllocText(text);
         if (handle == IntPtr.Zero) return;
-        IntPtr ptr = GlobalLock(handle);
-        Marshal.Copy(text.ToCharArray(), 0, ptr, text.Length);
-        Marshal.WriteInt16(ptr, text.Length * 2, 0);
-        GlobalUnlock(handle);
-        if (SetClipboardData(CF_UNICODETEXT, handle) == IntPtr.Zero) GlobalFree(handle);
-        else
+        if (ClipboardMemory.SetData(CF_UNICODETEXT, handle))
         {
             Interlocked.CompareExchange(ref _liveReadTimestamp, System.Diagnostics.Stopwatch.GetTimestamp(), 0);
             // Should rendering move the sequence number, it is still our write (EndLive's restore checks it).
@@ -763,11 +753,8 @@ internal sealed class ClipboardPaster
             {
                 IntPtr handle = GetClipboardData(format);
                 if (handle == IntPtr.Zero) continue;
-                long size = (long)GlobalSize(handle);
-                if (size <= 0 || size > SnapshotCap) continue;
-                var snap = new ClipboardSnapshot();
-                CopyFormat(snap, format, handle, size);
-                if (snap.Items.Count == 1) return (snap.Items[0].Data, isPng);
+                byte[]? data = ClipboardMemory.ReadBytes(handle, SnapshotCap);
+                if (data != null) return (data, isPng);
             }
             return null;
         }
@@ -928,28 +915,16 @@ internal sealed class ClipboardPaster
                     Core.Log.Info($"Clipboard snapshot above {SnapshotCap / (1024 * 1024)} MB ({sizes}), keeping text only");
                     snap.Items.Clear();
                     IntPtr text = GetClipboardData(CF_UNICODETEXT);
-                    long textSize = text == IntPtr.Zero ? 0 : (long)GlobalSize(text);
-                    if (textSize > 0 && textSize <= SnapshotCap) CopyFormat(snap, CF_UNICODETEXT, text, textSize);
+                    byte[]? textData = text == IntPtr.Zero ? null : ClipboardMemory.ReadBytes(text, SnapshotCap);
+                    if (textData != null) snap.Items.Add((CF_UNICODETEXT, textData));
                     return snap.Items.Count > 0 ? snap : null;
                 }
-                CopyFormat(snap, format, handle, size);
+                byte[]? data = ClipboardMemory.ReadBytes(handle, SnapshotCap);
+                if (data != null) snap.Items.Add((format, data));
             }
             return snap.Items.Count > 0 ? snap : null;
         }
         finally { CloseClipboard(); }
-    }
-
-    private static void CopyFormat(ClipboardSnapshot snap, uint format, IntPtr handle, long size)
-    {
-        IntPtr ptr = GlobalLock(handle);
-        if (ptr == IntPtr.Zero) return;
-        try
-        {
-            var bytes = new byte[size];
-            Marshal.Copy(ptr, bytes, 0, bytes.Length);
-            snap.Items.Add((format, bytes));
-        }
-        finally { GlobalUnlock(handle); }
     }
 
     /// <summary>
@@ -973,14 +948,9 @@ internal sealed class ClipboardPaster
             int written = 0;
             foreach (var (format, data) in snap.Items)
             {
-                IntPtr handle = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)(uint)data.Length);
+                IntPtr handle = ClipboardMemory.AllocBytes(data);
                 if (handle == IntPtr.Zero) continue;
-                IntPtr ptr = GlobalLock(handle);
-                if (ptr == IntPtr.Zero) { GlobalFree(handle); continue; }
-                Marshal.Copy(data, 0, ptr, data.Length);
-                GlobalUnlock(handle);
-                if (SetClipboardData(format, handle) == IntPtr.Zero) GlobalFree(handle);
-                else written++;
+                if (ClipboardMemory.SetData(format, handle)) written++;
             }
             return written > 0;
         }
@@ -1034,17 +1004,7 @@ internal sealed class ClipboardPaster
         if (!IsClipboardFormatAvailable(format)) return null;
         IntPtr handle = GetClipboardData(format);
         if (handle == IntPtr.Zero) return null;
-        long size = (long)GlobalSize(handle);
-        if (size <= 0 || size > 16 * 1024 * 1024) return null;
-        IntPtr ptr = GlobalLock(handle);
-        if (ptr == IntPtr.Zero) return null;
-        try
-        {
-            var bytes = new byte[size];
-            Marshal.Copy(ptr, bytes, 0, bytes.Length);
-            return bytes;
-        }
-        finally { GlobalUnlock(handle); }
+        return ClipboardMemory.ReadBytes(handle, 16 * 1024 * 1024);
     }
 
     private bool TryReadText(out string? text)
@@ -1079,34 +1039,12 @@ internal sealed class ClipboardPaster
         try
         {
             EmptyClipboard();
-            int bytes = (text.Length + 1) * 2;
-            IntPtr handle = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)bytes);
-            if (handle == IntPtr.Zero) return false;
-            IntPtr ptr = GlobalLock(handle);
-            Marshal.Copy(text.ToCharArray(), 0, ptr, text.Length);
-            Marshal.WriteInt16(ptr, text.Length * 2, 0);
-            GlobalUnlock(handle);
-            if (SetClipboardData(CF_UNICODETEXT, handle) == IntPtr.Zero)
-            {
-                GlobalFree(handle);
-                return false;
-            }
+            IntPtr handle = ClipboardMemory.AllocText(text);
+            if (handle == IntPtr.Zero || !ClipboardMemory.SetData(CF_UNICODETEXT, handle)) return false;
             // Keep dictations and copied selections out of the Win+V history and the cloud clipboard.
-            SetDword("CanIncludeInClipboardHistory", 0);
-            SetDword("CanUploadToCloudClipboard", 0);
+            ClipboardMemory.MarkPrivate();
             return true; // the system owns the memory now
         }
         finally { CloseClipboard(); }
-    }
-
-    private static void SetDword(string format, int value)
-    {
-        uint id = RegisterClipboardFormat(format);
-        if (id == 0) return;
-        IntPtr h = GlobalAlloc(GMEM_MOVEABLE, (UIntPtr)4);
-        if (h == IntPtr.Zero) return;
-        Marshal.WriteInt32(GlobalLock(h), value);
-        GlobalUnlock(h);
-        if (SetClipboardData(id, h) == IntPtr.Zero) GlobalFree(h);
     }
 }
