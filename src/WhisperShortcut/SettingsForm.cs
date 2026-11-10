@@ -708,12 +708,13 @@ internal sealed partial class SettingsForm : FastShowForm
                 nav.Controls.Add(new ThemedLabel
                 {
                     Text = pageSection, Tone = Tone.Secondary, Font = Theme.Small, AutoSize = false,
-                    Location = new Point(22, y), Size = new Size(256, 22), TextAlign = ContentAlignment.BottomLeft,
+                    Location = new Point(22, y), Size = new Size(240, 22), TextAlign = ContentAlignment.BottomLeft,
                     AccessibleRole = AccessibleRole.StaticText, UseMnemonic = false,
                 });
                 y += 24;
             }
-            var item = new NavItem(name, icon) { Location = new Point(8, y), Size = new Size(274, 38) };
+            // 262 wide: leaves room for the vertical scroll bar, so a low window never scrolls sideways.
+            var item = new NavItem(name, icon) { Location = new Point(8, y), Size = new Size(262, 38) };
             item.Picked += (_, _) => ShowPage(name);
             _nav.Add(item);
             nav.Controls.Add(item);
