@@ -84,6 +84,44 @@ public class TranscriptGuardsTests
     public void TrailingEchoNonMatchesStay(string text) =>
         Assert.Equal(text, TextCleanup.StripTrailingGlossaryEcho(text, TrailingGlossary));
 
+    // Mac b64a814b (#436): the real 49-term glossary and the echo a cloud model read back in keywords order.
+    private static readonly string[] RealGlossaryTerms =
+    {
+        "Claude", "Christoph", "Michelbach", "Cursor", "EnBW", "Grok", "GrokBot", "Opus", "Sonnet", "Gemini",
+        "Implementer Queue", "Karlsruhe", "Kizomba", "Salsa", "AutoMagic", "Onepager", "Whisper Shortcut",
+        "Schönstein", "BlockInfinity", "Claude Code", "MCP", "Bachata", "sabaki.dance", "Wianco", "Datev",
+        "Regulon", "Lemniskus", "Parakeet", "Vibe-Coding", "KMU", "Odoo", "Johanna", "Pia", "Codex",
+        "Wellensteyn", "Gödde", "Seiter", "Anthropic", "Azure DevOps", "Läuffer", "cloud session",
+        "Frau Dr. Läuffer", "Dr. Läuffer", "Frau Läuffer", "Dependabot", "Joschka", "Ramin", "Baileys", "Vattenfall",
+    };
+
+    private const string KeywordOrderEcho = "Claude Code MCP Bachata sabaki.dance Wianco Datev Regulon Lemniskus Parakeet Vibe-Coding KMU Odoo Johanna Pia Codex Wellensteyn Gödde Läuffer Frau Dr. Läuffer Dr. Läuffer Frau Läuffer Dependabot Joschka Ramin Baileys Vattenfall Claude Christoph Michelbach Cursor EnBW Grok GrokBot Opus Sonnet Gemini Implementer Queue Karlsruhe Kizomba Salsa AutoMagic Onepager Whisper Shortcut Schönstein BlockInfinity Seiter Anthropic Azure DevOps cloud session";
+
+    [Fact]
+    public void KeywordOrderEchoIsDiscarded() =>
+        Assert.Equal("", TextCleanup.DiscardGlossaryEcho(KeywordOrderEcho + ".", 11.0, RealGlossaryTerms));
+
+    [Fact]
+    public void KeywordOrderEchoAfterRealSpeechIsStripped()
+    {
+        var head = "Ah, was da natürlich noch cool wäre, wenn die aufgeladen ist. Das wäre vielleicht noch cool.";
+        Assert.Equal(head, TextCleanup.StripTrailingGlossaryEcho(head + " " + KeywordOrderEcho + ".", RealGlossaryTerms));
+    }
+
+    [Fact]
+    public void ShortShuffledListAfterASentenceStays()
+    {
+        var text = "Wir haben heute verglichen. Opus Grok Sonnet Claude Gemini Cursor.";
+        Assert.Equal(text, TextCleanup.StripTrailingGlossaryEcho(text, RealGlossaryTerms));
+    }
+
+    [Fact]
+    public void ConnectorInsideTrailingPairStays()
+    {
+        var text = "Das war's. SumUp und lemniscus.";
+        Assert.Equal(text, TextCleanup.StripTrailingGlossaryEcho(text, TrailingGlossary));
+    }
+
     private static readonly string[] ConnectorGlossary = { "Claude Code", "MCP", "Bachata" };
 
     // Mac 63ded84b (#261): connectors between glossary terms are neutral.
