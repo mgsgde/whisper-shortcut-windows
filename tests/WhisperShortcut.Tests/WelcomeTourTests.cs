@@ -71,6 +71,22 @@ public class WelcomeTourTests
     }
 
     [Fact]
+    public void ChooseOffline_MeetingsFollowDictationAndStayLocal()
+    {
+        var s = Settings.Load(NewPath(), new PlainSecretProtector());
+        s.ApiKey = "key";
+        Assert.Equal(Engine.Gemini, s.EffectiveMeetingSpeechEngine);
+        WelcomeTour.ChooseOffline(s);
+        Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
+
+        // An earlier explicit cloud pick is given up by the Offline answer.
+        s.MeetingSpeechEngine = Engine.Gemini;
+        s.MeetingSpeechEngineExplicit = true;
+        WelcomeTour.ChooseOffline(s);
+        Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
+    }
+
+    [Fact]
     public void ChooseCloud_TurnsOfflineOff_AndMovesStepsWithoutAKey()
     {
         var s = Settings.Load(NewPath(), new PlainSecretProtector());

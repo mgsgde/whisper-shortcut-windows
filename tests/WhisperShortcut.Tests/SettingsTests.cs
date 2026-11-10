@@ -867,6 +867,82 @@ public class QuickActionRequestTests
         Directory.Delete(dir, true);
     }
 
+    private static Settings LoadJson(string json)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, json);
+        try { return Settings.Load(path, new PlainSecretProtector()); }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void MeetingEngine_Unset_FollowsDictation()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.False(s.MeetingSpeechEngineExplicit);
+        Assert.Equal(Engine.Gemini, s.EffectiveMeetingSpeechEngine); // unset + Gemini dictation
+        s.SpeechEngine = Engine.Local;
+        Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);  // unset + Local dictation: no cloud
+        s.SpeechEngine = Engine.OpenAI;
+        Assert.Equal(Engine.OpenAI, s.EffectiveMeetingSpeechEngine);
+    }
+
+    [Fact]
+    public void MeetingEngine_Explicit_IgnoresDictation()
+    {
+        var s = Settings.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json"), new PlainSecretProtector());
+        s.SpeechEngine = Engine.Local;
+        s.MeetingSpeechEngine = Engine.OpenAI;
+        s.MeetingSpeechEngineExplicit = true;
+        Assert.Equal(Engine.OpenAI, s.EffectiveMeetingSpeechEngine);
+        s.SpeechEngine = Engine.Gemini;
+        s.MeetingSpeechEngine = Engine.Local;
+        Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
+        s.OfflineMode = true; // Offline-Modus wins over an explicit cloud pick
+        s.MeetingSpeechEngine = Engine.Gemini;
+        Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
+    }
+
+    [Fact]
+    public void MeetingEngine_ExplicitFlag_RoundTrips()
+    {
+        var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.SpeechEngine = Engine.Local;
+        s.Save();
+        Assert.False(Settings.Load(path, new PlainSecretProtector()).MeetingSpeechEngineExplicit);
+        s.MeetingSpeechEngine = Engine.Gemini;
+        s.MeetingSpeechEngineExplicit = true;
+        s.Save();
+        var t = Settings.Load(path, new PlainSecretProtector());
+        Assert.True(t.MeetingSpeechEngineExplicit);
+        Assert.Equal(Engine.Gemini, t.EffectiveMeetingSpeechEngine);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void MeetingEngine_Migration_OldFileWithoutFlag()
+    {
+        // The old default was written into every file: Gemini = never chosen, so an offline-dictation user stays offline.
+        var offline = LoadJson("""{ "speechEngine": "local", "meetingSpeechEngine": "gemini" }""");
+        Assert.False(offline.MeetingSpeechEngineExplicit);
+        Assert.Equal(Engine.Local, offline.EffectiveMeetingSpeechEngine);
+        // A non-default value was a pick.
+        var picked = LoadJson("""{ "speechEngine": "gemini", "meetingSpeechEngine": "local" }""");
+        Assert.True(picked.MeetingSpeechEngineExplicit);
+        Assert.Equal(Engine.Local, picked.EffectiveMeetingSpeechEngine);
+        // No meeting key at all: follows dictation, as before.
+        var none = LoadJson("""{ "speechEngine": "openai" }""");
+        Assert.False(none.MeetingSpeechEngineExplicit);
+        Assert.Equal(Engine.OpenAI, none.EffectiveMeetingSpeechEngine);
+        // An explicit flag in the file wins over the guess.
+        var flagged = LoadJson("""{ "speechEngine": "local", "meetingSpeechEngine": "gemini", "meetingSpeechEngineExplicit": true }""");
+        Assert.Equal(Engine.Gemini, flagged.EffectiveMeetingSpeechEngine);
+    }
+
     [Fact]
     public void Meetings_RoundTrip_AndUnknownValuesFallBack()
     {

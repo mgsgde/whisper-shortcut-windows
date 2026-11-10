@@ -23,8 +23,21 @@ public sealed partial class Settings
 
     // ---------------- Meetings (Mac MeetingsSettingsTab) ----------------
 
-    /// <summary>Where meeting chunks are transcribed. Missing in an older file = the dictation choice, as meetings ran before.</summary>
+    /// <summary>
+    /// Where meeting chunks are transcribed, once the user picked it (<see cref="MeetingSpeechEngineExplicit"/>). Until then
+    /// meetings follow the dictation engine: see <see cref="ConfiguredMeetingSpeechEngine"/>.
+    /// </summary>
     public Engine MeetingSpeechEngine { get; set; } = Engine.Gemini;
+
+    /// <summary>
+    /// The user picked the meeting engine in Einstellungen → Meetings (Mac: the meetings model key is set). False = meetings
+    /// follow the dictation engine, so an offline-dictation user's meeting audio never goes to the cloud.
+    /// </summary>
+    public bool MeetingSpeechEngineExplicit { get; set; }
+
+    /// <summary>The meeting engine before Offline-Modus: the user's pick, else the dictation engine.</summary>
+    [JsonIgnore]
+    public Engine ConfiguredMeetingSpeechEngine => MeetingSpeechEngineExplicit ? MeetingSpeechEngine : SpeechEngine;
 
     /// <summary>Gemini model for meeting transcription.</summary>
     public string MeetingTranscriptionModel { get; set; } = DefaultTranscriptionModel;
@@ -49,7 +62,7 @@ public sealed partial class Settings
 
     /// <summary>The meeting speech engine actually used: Offline-Modus overrides it with <see cref="Engine.Local"/>.</summary>
     [JsonIgnore]
-    public Engine EffectiveMeetingSpeechEngine => OfflineMode ? Engine.Local : MeetingSpeechEngine;
+    public Engine EffectiveMeetingSpeechEngine => OfflineMode ? Engine.Local : ConfiguredMeetingSpeechEngine;
 
     /// <summary>The meeting summary engine actually used: Offline-Modus overrides it with <see cref="Engine.Local"/>.</summary>
     [JsonIgnore]
@@ -124,6 +137,10 @@ public sealed partial class Settings
 
         // Before the Meetings page, meetings used the Diktieren and Dictate Prompt providers: an update keeps that.
         MeetingSpeechEngine = dto.MeetingSpeechEngine != null ? Choices.Engine.Parse(dto.MeetingSpeechEngine) : SpeechEngine;
+        // A file from before the flag always stored an engine, the factory default Gemini included, so "chosen" cannot be told
+        // from "never chosen" there: Gemini reads as never chosen (follows dictation), any other value was a pick.
+        MeetingSpeechEngineExplicit = dto.MeetingSpeechEngineExplicit
+            ?? (dto.MeetingSpeechEngine != null && MeetingSpeechEngine != Engine.Gemini);
         MeetingTranscriptionModel = GeminiModels.NormalizeTranscription(dto.MeetingTranscriptionModel ?? TranscriptionModel);
         MeetingOpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.MeetingOpenAiTranscriptionModel ?? OpenAiTranscriptionModel);
         MeetingTextEngine = dto.MeetingTextEngine != null ? Choices.Engine.Parse(dto.MeetingTextEngine) : TextEngine;
@@ -149,6 +166,7 @@ public sealed partial class Settings
         dto.ReadAloudVoiceSystem = ReadAloudVoiceSystem;
         dto.ReadAloudRewritePrompt = ReadAloudRewritePrompt;
         dto.MeetingSpeechEngine = Choices.Engine.Token(MeetingSpeechEngine);
+        dto.MeetingSpeechEngineExplicit = MeetingSpeechEngineExplicit;
         dto.MeetingTranscriptionModel = MeetingTranscriptionModel;
         dto.MeetingOpenAiTranscriptionModel = MeetingOpenAiTranscriptionModel;
         dto.MeetingTextEngine = Choices.Engine.Token(MeetingTextEngine);
@@ -171,6 +189,7 @@ public sealed partial class Settings
         [JsonPropertyName("readAloudVoiceSystem")] public string? ReadAloudVoiceSystem { get; set; }
         [JsonPropertyName("readAloudRewritePrompt")] public string? ReadAloudRewritePrompt { get; set; }
         [JsonPropertyName("meetingSpeechEngine")] public string? MeetingSpeechEngine { get; set; }
+        [JsonPropertyName("meetingSpeechEngineExplicit")] public bool? MeetingSpeechEngineExplicit { get; set; }
         [JsonPropertyName("meetingTranscriptionModel")] public string? MeetingTranscriptionModel { get; set; }
         [JsonPropertyName("meetingOpenAiTranscriptionModel")] public string? MeetingOpenAiTranscriptionModel { get; set; }
         [JsonPropertyName("meetingTextEngine")] public string? MeetingTextEngine { get; set; }

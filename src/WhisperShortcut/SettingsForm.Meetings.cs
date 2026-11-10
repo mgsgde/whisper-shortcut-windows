@@ -42,7 +42,8 @@ internal sealed partial class SettingsForm
         // --- transcription model ---
         page.Controls.Add(Section("Modell für Meeting-Transkription", subtitle: "Welches Modell die Meeting-Aufnahme in Text verwandelt. "
             + "Glossar und Anweisungen kommen von Diktieren."));
-        _meetingSpeechEngine = EngineChoice(_settings.MeetingSpeechEngine, "Meeting-Transkription", "Auf diesem PC (Parakeet)");
+        _meetingSpeechEngineShown = _settings.ConfiguredMeetingSpeechEngine;
+        _meetingSpeechEngine = EngineChoice(_meetingSpeechEngineShown, "Meeting-Transkription", "Auf diesem PC (Parakeet)");
         _meetingModel = ModelChoice(Core.GeminiModels.Transcription, _settings.MeetingTranscriptionModel);
         _meetingModelOpenAi = ModelChoice(Core.OpenAiModels.Transcription, _settings.MeetingOpenAiTranscriptionModel);
         page.Controls.Add(Hidden(_meetingSpeechEngine, _meetingModel, _meetingModelOpenAi));
@@ -111,16 +112,21 @@ internal sealed partial class SettingsForm
         SelectedModel(_meetingModelOpenAi), SelectedEngine(_meetingTextEngine), SelectedModel(_meetingSummaryModel),
         SelectedModel(_meetingSummaryModelOpenAi), SelectedChoice(_meetingChunk), SelectedChoice(_meetingSafeguard));
 
-    private sealed record MeetingsState(Core.Engine Speech, string Model, string ModelOpenAi, Core.Engine Text, string Summary,
+    // The engine the page showed when it was built; a different pick on save makes the choice explicit (else meetings follow Diktieren).
+    private Core.Engine _meetingSpeechEngineShown;
+
+    private sealed record MeetingsState(Core.Engine Speech, bool SpeechExplicit, string Model, string ModelOpenAi, Core.Engine Text, string Summary,
         string SummaryOpenAi, int Chunk, int Safeguard);
 
     /// <summary>Writes the page into the settings (from TrySave); returns what was there, for <see cref="RestoreMeetings"/>.</summary>
     private MeetingsState ApplyMeetings()
     {
         var s = _settings;
-        var before = new MeetingsState(s.MeetingSpeechEngine, s.MeetingTranscriptionModel, s.MeetingOpenAiTranscriptionModel,
+        var before = new MeetingsState(s.MeetingSpeechEngine, s.MeetingSpeechEngineExplicit, s.MeetingTranscriptionModel, s.MeetingOpenAiTranscriptionModel,
             s.MeetingTextEngine, s.MeetingSummaryModel, s.MeetingOpenAiSummaryModel, s.MeetingChunkSeconds, s.MeetingSafeguardMinutes);
-        s.MeetingSpeechEngine = SelectedEngine(_meetingSpeechEngine);
+        var pickedSpeech = SelectedEngine(_meetingSpeechEngine);
+        if (pickedSpeech != _meetingSpeechEngineShown) s.MeetingSpeechEngineExplicit = true;
+        if (s.MeetingSpeechEngineExplicit) s.MeetingSpeechEngine = pickedSpeech;
         s.MeetingTranscriptionModel = SelectedModel(_meetingModel);
         s.MeetingOpenAiTranscriptionModel = SelectedModel(_meetingModelOpenAi);
         s.MeetingTextEngine = SelectedEngine(_meetingTextEngine);
@@ -135,7 +141,8 @@ internal sealed partial class SettingsForm
     private void RestoreMeetings(MeetingsState b)
     {
         var s = _settings;
-        (s.MeetingSpeechEngine, s.MeetingTranscriptionModel, s.MeetingOpenAiTranscriptionModel) = (b.Speech, b.Model, b.ModelOpenAi);
+        (s.MeetingSpeechEngine, s.MeetingSpeechEngineExplicit) = (b.Speech, b.SpeechExplicit);
+        (s.MeetingTranscriptionModel, s.MeetingOpenAiTranscriptionModel) = (b.Model, b.ModelOpenAi);
         (s.MeetingTextEngine, s.MeetingSummaryModel, s.MeetingOpenAiSummaryModel) = (b.Text, b.Summary, b.SummaryOpenAi);
         (s.MeetingChunkSeconds, s.MeetingSafeguardMinutes) = (b.Chunk, b.Safeguard);
     }

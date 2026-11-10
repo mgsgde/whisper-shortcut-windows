@@ -121,6 +121,47 @@ public class GlossaryPromptTests
         Assert.Equal("x", GlossaryPrompt.CorrectRejectedSpellings("x", L()));
         Assert.Equal("", GlossaryPrompt.CorrectRejectedSpellings("", glossary));
     }
+
+    private static string AfterTitle(string text) => GlossaryPrompt.ReplacingRejectedNameAfterTitle("Läufer", "Läuffer", text);
+
+    [Fact]
+    public void NameAfterTitleIsCorrected()
+    {
+        Assert.Equal("Ich wundere mich, die Frau Dr. Läuffer.", AfterTitle("Ich wundere mich, die Frau Dr. Läufer."));
+        Assert.Equal("Frau Läuffer hat geschrieben.", AfterTitle("Frau Läufer hat geschrieben."));
+        Assert.Equal("Grüße an Herrn Läuffer", AfterTitle("Grüße an Herrn Läufer"));
+        Assert.Equal("Prof. Läuffer, Dr. Läuffer", AfterTitle("Prof. Läufer, Dr. Läufer"));
+    }
+
+    [Theory]
+    [InlineData("Der Läufer kam ins Ziel.")]
+    [InlineData("Läufer, Läufer immer falsch")]
+    [InlineData("Frau Läuferin")]
+    [InlineData("Frau Marathonläufer")]
+    [InlineData("die Frauen Läufer")]
+    public void NameAfterTitleLeavesOtherUsesAlone(string text)
+    {
+        Assert.Equal(text, AfterTitle(text));
+    }
+
+    [Fact]
+    public void NameAfterTitleLeavesCommonNounAlone()
+    {
+        var text = "Wir speichern die Daten.";
+        Assert.Equal(text, GlossaryPrompt.ReplacingRejectedNameAfterTitle("Daten", "Datev", text));
+    }
+
+    [Fact]
+    public void CorrectRejectedSpellingsHandlesOneWordNameAfterTitle()
+    {
+        var glossary = L("Läuffer (nicht \"Läufer\")");
+        Assert.Equal("Frau Dr. Läuffer ruft an.", GlossaryPrompt.CorrectRejectedSpellings("Frau Dr. Läufer ruft an.", glossary));
+        var bare = "Der Läufer kam ins Ziel.";
+        Assert.Equal(bare, GlossaryPrompt.CorrectRejectedSpellings(bare, glossary));
+        // Lowercase correct form (not a name): never rewritten.
+        var lower = L("daten (nicht \"Daten\")");
+        Assert.Equal("Frau Daten", GlossaryPrompt.CorrectRejectedSpellings("Frau Daten", lower));
+    }
 }
 
 public class TermSpellingTests

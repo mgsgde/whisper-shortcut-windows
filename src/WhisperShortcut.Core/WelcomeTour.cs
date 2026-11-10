@@ -70,8 +70,15 @@ public static class WelcomeTour
         return null;
     }
 
-    /// <summary>The user picked Offline: dictation runs on this PC. The offline-mode switch stays the user's own.</summary>
-    public static void ChooseOffline(Settings s) => s.SpeechEngine = Engine.Local;
+    /// <summary>
+    /// The user picked Offline: dictation runs on this PC. The offline-mode switch stays the user's own. Meetings follow
+    /// dictation again (Mac R202), so their audio stays on this PC too; an earlier explicit cloud pick is dropped for that.
+    /// </summary>
+    public static void ChooseOffline(Settings s)
+    {
+        s.SpeechEngine = Engine.Local;
+        s.MeetingSpeechEngineExplicit = false;
+    }
 
     /// <summary>
     /// The user picked Cloud or saved a key (Mac OnboardingTranscriptionChoice.preferCloud): offline mode goes off

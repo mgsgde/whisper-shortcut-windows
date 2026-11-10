@@ -207,7 +207,7 @@ public static class GlossaryPrompt
 
     /// <summary>
     /// Rewrites a transcript that carries a spelling the user rejected (<c>Claude CLI (not "Cloud CLI")</c>).
-    /// Only multi-word rejected forms are rewritten, and a match preceded by a capitalised word is left
+    /// Multi-word rejected forms are rewritten, and a match preceded by a capitalised word is left
     /// alone ("Google Cloud CLI" survives, "die Cloud CLI" becomes "die Claude CLI"). Both rules fail
     /// toward changing nothing.
     /// </summary>
@@ -224,6 +224,17 @@ public static class GlossaryPrompt
             {
                 if (!rejected.Contains(' ')) continue;
                 result = ReplacingRejectedSpelling(rejected, c.Correct, result);
+            }
+        }
+        // A one-word rejected spelling is rewritten only right after a personal title, and only when the
+        // correct form is one capitalised word ("Frau Dr. Läufer" -> "Läuffer"; bare "Läufer" stays).
+        foreach (var c in corrections)
+        {
+            if (c.Correct.Contains(' ') || c.Correct.Length == 0 || !char.IsUpper(c.Correct[0])) continue;
+            foreach (var rejected in c.Rejected)
+            {
+                if (rejected.Contains(' ')) continue;
+                result = ReplacingRejectedNameAfterTitle(rejected, c.Correct, result);
             }
         }
         if (!string.Equals(result, text, StringComparison.Ordinal))
@@ -248,6 +259,19 @@ public static class GlossaryPrompt
             result = result[..m.Index] + correct + result[(m.Index + m.Length)..];
         }
         return result;
+    }
+
+    /// <summary>
+    /// Rewrites a one-word rejected spelling only when a personal title stands immediately before it
+    /// ("Frau Dr. Läufer" -> "Frau Dr. Läuffer"). The title makes the token a name; the same spelling as a
+    /// bare noun stays. Lookarounds instead of <c></c>, because "Dr." has its word boundary on the period.
+    /// </summary>
+    public static string ReplacingRejectedNameAfterTitle(string rejected, string correct, string text)
+    {
+        var regex = new Regex(
+            @"(?<![\p{L}\p{N}])(Frau|Herrn|Herr|Fr\.|Hr\.|Dr\.|Prof\.|Doktor|Professor)(\s+)"
+            + Regex.Escape(rejected) + @"(?![\p{L}\p{N}])");
+        return regex.Replace(text, m => m.Groups[1].Value + m.Groups[2].Value + correct);
     }
 
     // True when the token right before `location` starts with an uppercase letter. Punctuation,
