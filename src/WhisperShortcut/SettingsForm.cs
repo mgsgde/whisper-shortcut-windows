@@ -238,14 +238,13 @@ internal sealed partial class SettingsForm : FastShowForm
         general.Controls.Add(Section("Zwischenablage", subtitle: "Was passiert, wenn Diktieren oder Dictate Prompt fertig ist. Der Text liegt immer auch in der Zwischenablage."));
         _autoPaste = new ToggleSwitch { Checked = settings.AutoPaste, AccessibleName = "Automatisch einfügen" };
         _afterPaste = new FluentCombo { Width = ComboWidth, AccessibleName = "Zwischenablage nach dem Einfügen" };
-        foreach (var mode in Core.ClipboardAfterPasteModes.All) _afterPaste.Items.Add(new AfterPasteItem(mode));
-        _afterPaste.SelectedItem = _afterPaste.Items.Cast<AfterPasteItem>().First(i => i.Mode == settings.ClipboardAfterPaste);
+        FillChoices(_afterPaste, Core.Choices.AfterPaste, settings.ClipboardAfterPaste);
         var pasteCard = new Card();
         pasteCard.AddRow(SettingRow("Automatisch einfügen", "Der Text erscheint dort, wo der Cursor steht. Aus: Er liegt nur in der "
             + "Zwischenablage und wird mit Strg+V selbst eingefügt.", _autoPaste, ToggleWidth, out _));
         // Mac "After auto-paste": the explanation line follows the chosen option.
         pasteCard.AddRow(SettingRow("Nach dem Einfügen", "", _afterPaste, ComboWidth, out var afterPasteText));
-        void DescribeAfterPaste() => afterPasteText.Text = Core.ClipboardAfterPasteModes.Explanation(SelectedAfterPaste);
+        void DescribeAfterPaste() => afterPasteText.Text = Core.Choices.AfterPaste.Explanation(SelectedAfterPaste);
         _afterPaste.SelectedIndexChanged += (_, _) => DescribeAfterPaste();
         DescribeAfterPaste();
         general.Controls.Add(pasteCard);
@@ -284,9 +283,7 @@ internal sealed partial class SettingsForm : FastShowForm
         dictate.Controls.Add(Section("Modus", first: true,
             subtitle: "Was das Diktieren-Kürzel und die rechte Strg-Taste tun. Das Kürzel für Live diktieren startet immer Live diktieren."));
         _dictateMode = new FluentCombo { Width = ComboWidth, AccessibleName = "Modus" };
-        _dictateMode.Items.Add(new ChoiceItem<Core.DictateMode>(Core.DictateMode.Dictate, "Diktieren"));
-        _dictateMode.Items.Add(new ChoiceItem<Core.DictateMode>(Core.DictateMode.Live, "Live diktieren"));
-        _dictateMode.SelectedItem = _dictateMode.Items.Cast<ChoiceItem<Core.DictateMode>>().First(i => i.Value == settings.DictateMode);
+        FillChoices(_dictateMode, Core.Choices.DictateMode, settings.DictateMode);
         var dictateModeCard = new Card();
         dictateModeCard.AddRow(SettingRow("Modus", "", _dictateMode, ComboWidth, out _dictateModeText));
         // Selectable anyway (Mac): refusing the choice silently looked like a broken control. The note says why instead.
@@ -300,7 +297,7 @@ internal sealed partial class SettingsForm : FastShowForm
         _useParakeet.Click += (_, _) =>
         {
             Core.Log.Info("SETTINGS: Live diktieren note — switched speech recognition to Parakeet on this PC");
-            _speechEngine.SelectedItem = _speechEngine.Items.Cast<EngineItem>().First(i => i.Engine == Core.Engine.Local);
+            _speechEngine.SelectedItem = _speechEngine.Items.Cast<ChoiceItem<Core.Engine>>().First(i => i.Value == Core.Engine.Local);
             RefreshPickers();
         };
         _liveWarning.Controls.Add(warningHead);
@@ -347,9 +344,7 @@ internal sealed partial class SettingsForm : FastShowForm
         var punctuationSection = Section("Satzzeichen", subtitle: "Wie Satzzeichen ins Diktat kommen.");
         dictate.Controls.Add(punctuationSection);
         _punctuation = new FluentCombo { Width = ComboWidth, AccessibleName = "Satzzeichen" };
-        _punctuation.Items.Add(new PunctuationItem(Core.PunctuationMode.Automatic, "Automatisch"));
-        _punctuation.Items.Add(new PunctuationItem(Core.PunctuationMode.SpokenOnly, "Nur gesprochen"));
-        _punctuation.SelectedItem = _punctuation.Items.Cast<PunctuationItem>().First(i => i.Mode == settings.PunctuationMode);
+        FillChoices(_punctuation, Core.Choices.Punctuation, settings.PunctuationMode);
         var punctuationCard = new Card();
         punctuationCard.AddRow(SettingRow("Satzzeichen", "", _punctuation, ComboWidth, out var punctuationText));
         void DescribePunctuation() => punctuationText.Text = SelectedPunctuation == Core.PunctuationMode.SpokenOnly
@@ -1584,26 +1579,22 @@ internal sealed partial class SettingsForm : FastShowForm
         page.Controls.Add(key.Card);
     }
 
-    private sealed record EngineItem(Core.Engine Engine, string Label)
-    {
-        public override string ToString() => Label;
-    }
-
     private static FluentCombo EngineChoice(Core.Engine selected, string name, string localLabel)
     {
         var combo = new FluentCombo { Width = ComboWidth, AccessibleName = name };
-        combo.Items.Add(new EngineItem(Core.Engine.Gemini, "Gemini (Google)"));
-        combo.Items.Add(new EngineItem(Core.Engine.OpenAI, "OpenAI"));
-        combo.Items.Add(new EngineItem(Core.Engine.Local, localLabel));
-        combo.SelectedItem = combo.Items.Cast<EngineItem>().First(i => i.Engine == selected);
+        foreach (var c in Core.Choices.Engine.All)
+            combo.Items.Add(new ChoiceItem<Core.Engine>(c.Value, c.Value == Core.Engine.Local ? localLabel : c.Label));
+        combo.SelectedItem = combo.Items.Cast<ChoiceItem<Core.Engine>>().First(i => i.Value == selected);
         return combo;
     }
 
-    private static Core.Engine SelectedEngine(FluentCombo combo) => ((EngineItem)combo.SelectedItem!).Engine;
+    private static Core.Engine SelectedEngine(FluentCombo combo) => ((ChoiceItem<Core.Engine>)combo.SelectedItem!).Value;
 
-    private sealed record PunctuationItem(Core.PunctuationMode Mode, string Label)
+    /// <summary>Fills a combo from a choice table (its order and labels) and selects <paramref name="selected"/>.</summary>
+    private static void FillChoices<T>(FluentCombo combo, Core.ChoiceSet<T> set, T selected)
     {
-        public override string ToString() => Label;
+        foreach (var c in set.All) combo.Items.Add(new ChoiceItem<T>(c.Value, c.Label));
+        combo.SelectedItem = combo.Items.Cast<ChoiceItem<T>>().First(i => EqualityComparer<T>.Default.Equals(i.Value, selected));
     }
 
     /// <summary>A combo entry: the stored value and its German label.</summary>
@@ -1616,14 +1607,9 @@ internal sealed partial class SettingsForm : FastShowForm
     private double SelectedTemperature => ((ChoiceItem<double>)_temperature.SelectedItem!).Value;
     private string SelectedThinking => ((ChoiceItem<string>)_thinking.SelectedItem!).Value;
 
-    private sealed record AfterPasteItem(Core.ClipboardAfterPaste Mode)
-    {
-        public override string ToString() => Core.ClipboardAfterPasteModes.Label(Mode);
-    }
+    private Core.ClipboardAfterPaste SelectedAfterPaste => ((ChoiceItem<Core.ClipboardAfterPaste>)_afterPaste.SelectedItem!).Value;
 
-    private Core.ClipboardAfterPaste SelectedAfterPaste => ((AfterPasteItem)_afterPaste.SelectedItem!).Mode;
-
-    private Core.PunctuationMode SelectedPunctuation => ((PunctuationItem)_punctuation.SelectedItem!).Mode;
+    private Core.PunctuationMode SelectedPunctuation => ((ChoiceItem<Core.PunctuationMode>)_punctuation.SelectedItem!).Value;
 
     private Core.DictateMode SelectedDictateMode => ((ChoiceItem<Core.DictateMode>)_dictateMode.SelectedItem!).Value;
 

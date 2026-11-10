@@ -1395,7 +1395,7 @@ internal sealed partial class TrayApp : ApplicationContext
             var outcome = keepOnly
                 ? (_paster.KeepOnClipboard(text) ? PasteOutcome.ClipboardOnlyByChoice : PasteOutcome.Failed)
                 : await _paster.PasteAsync(text, _pasteTarget, _settings.ClipboardAfterPaste, ct);
-            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, after paste {Core.ClipboardAfterPasteModes.Name(_settings.ClipboardAfterPaste)}");
+            Core.Log.Info($"{_mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, after paste {Core.Choices.AfterPaste.Token(_settings.ClipboardAfterPaste)}");
             switch (outcome)
             {
                 case PasteOutcome.ClipboardOnlyByChoice when _unsupported.Count > 0:

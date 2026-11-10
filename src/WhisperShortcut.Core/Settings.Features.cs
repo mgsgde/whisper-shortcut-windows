@@ -123,10 +123,10 @@ public sealed partial class Settings
         ReadAloudRewritePrompt = CustomOrEmpty(dto.ReadAloudRewritePrompt, ReadAloud.DefaultRewritePrompt);
 
         // Before the Meetings page, meetings used the Diktieren and Dictate Prompt providers: an update keeps that.
-        MeetingSpeechEngine = dto.MeetingSpeechEngine != null ? ParseEngine(dto.MeetingSpeechEngine) : SpeechEngine;
+        MeetingSpeechEngine = dto.MeetingSpeechEngine != null ? Choices.Engine.Parse(dto.MeetingSpeechEngine) : SpeechEngine;
         MeetingTranscriptionModel = GeminiModels.NormalizeTranscription(dto.MeetingTranscriptionModel ?? TranscriptionModel);
         MeetingOpenAiTranscriptionModel = OpenAiModels.NormalizeTranscription(dto.MeetingOpenAiTranscriptionModel ?? OpenAiTranscriptionModel);
-        MeetingTextEngine = dto.MeetingTextEngine != null ? ParseEngine(dto.MeetingTextEngine) : TextEngine;
+        MeetingTextEngine = dto.MeetingTextEngine != null ? Choices.Engine.Parse(dto.MeetingTextEngine) : TextEngine;
         MeetingSummaryModel = GeminiModels.NormalizePrompt(dto.MeetingSummaryModel ?? MeetingOptions.DefaultSummaryModel);
         MeetingOpenAiSummaryModel = OpenAiModels.NormalizePrompt(dto.MeetingOpenAiSummaryModel ?? OpenAiPromptModel);
         MeetingChunkSeconds = MeetingOptions.NormalizeChunkSeconds(dto.MeetingChunkSeconds);
@@ -136,7 +136,7 @@ public sealed partial class Settings
         ChatHotkeyEnabled = dto.ChatHotkeyEnabled ?? true;
         // An update adds the chat key to a file that never had it. It must not take a key the user already uses.
         if (dto.ChatHotkey == null && ChatKeyClashes()) ChatHotkeyEnabled = false;
-        ChatEngine = dto.ChatEngine != null ? ParseEngine(dto.ChatEngine) : TextEngine;
+        ChatEngine = dto.ChatEngine != null ? Choices.Engine.Parse(dto.ChatEngine) : TextEngine;
         ChatModel = GeminiModels.NormalizePrompt(dto.ChatModel ?? DefaultPromptModel);
         ChatOpenAiModel = OpenAiModels.NormalizePrompt(dto.ChatOpenAiModel ?? OpenAiPromptModel);
         ChatSystemPrompt = CustomOrEmpty(dto.ChatSystemPrompt, ChatPrompts.DefaultSystemPrompt);
@@ -148,17 +148,17 @@ public sealed partial class Settings
     {
         dto.ReadAloudVoiceSystem = ReadAloudVoiceSystem;
         dto.ReadAloudRewritePrompt = ReadAloudRewritePrompt;
-        dto.MeetingSpeechEngine = EngineName(MeetingSpeechEngine);
+        dto.MeetingSpeechEngine = Choices.Engine.Token(MeetingSpeechEngine);
         dto.MeetingTranscriptionModel = MeetingTranscriptionModel;
         dto.MeetingOpenAiTranscriptionModel = MeetingOpenAiTranscriptionModel;
-        dto.MeetingTextEngine = EngineName(MeetingTextEngine);
+        dto.MeetingTextEngine = Choices.Engine.Token(MeetingTextEngine);
         dto.MeetingSummaryModel = MeetingSummaryModel;
         dto.MeetingOpenAiSummaryModel = MeetingOpenAiSummaryModel;
         dto.MeetingChunkSeconds = MeetingChunkSeconds;
         dto.MeetingSafeguardMinutes = MeetingSafeguardMinutes;
         dto.ChatHotkey = ChatHotkey;
         dto.ChatHotkeyEnabled = ChatHotkeyEnabled;
-        dto.ChatEngine = EngineName(ChatEngine);
+        dto.ChatEngine = Choices.Engine.Token(ChatEngine);
         dto.ChatModel = ChatModel;
         dto.ChatOpenAiModel = ChatOpenAiModel;
         dto.ChatSystemPrompt = ChatSystemPrompt;
