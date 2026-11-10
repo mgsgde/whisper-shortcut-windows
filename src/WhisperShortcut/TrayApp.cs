@@ -1610,7 +1610,8 @@ internal sealed partial class TrayApp : ApplicationContext
 
         // Only Gemini hears the instruction itself, and only up to the Dictate Prompt limit (inline request); a local or
         // OpenAI text model, or a longer take (a template recording replayed without its template), gets it transcribed.
-        if (Core.DictatePromptText.UsesTranscript(_settings.EffectiveTextEngine, seconds, MicAudioSource.PromptLimit.TotalSeconds))
+        // +1 s: a recording stopped by the limit can run a buffer past it and must still go inline.
+        if (Core.DictatePromptText.UsesTranscript(_settings.EffectiveTextEngine, seconds, MicAudioSource.PromptLimit.TotalSeconds + 1))
             return await PromptFromTranscriptAsync(wav, selection, systemPrompt, ct);
         if (!HasSpeech(wav))
         {
@@ -2161,7 +2162,9 @@ internal sealed partial class TrayApp : ApplicationContext
         bool chatInFront = _chatWindow is { IsDisposed: false, Visible: true } chat && ClipboardPaster.ForegroundRoot() == chat.Handle;
         bool settingsInFront = f is { IsDisposed: false, Visible: true } && ClipboardPaster.ForegroundIsOwnWindow() && !tourInFront && !chatInFront;
         bool wanted = Core.HotkeyPolicy.WantGlobalHotkeys(settingsInFront, _state == State.Idle);
-        if (wanted == _globalHotkeysOn) return;
+        // Keys saved during a recording (Saved left them pending) are taken over once it is idle again.
+        bool pendingWhileOn = wanted && _globalHotkeysOn && _hotkeyCheckPending && _state == State.Idle;
+        if (wanted == _globalHotkeysOn && !pendingWhileOn) return;
         if (wanted)
         {
             RegisterHotkeys(notify || _hotkeyCheckPending);
@@ -2412,7 +2415,8 @@ internal sealed partial class TrayApp : ApplicationContext
             _hotkeyCheckPending = true;
             // The window may already be out of front (the save runs 500 ms after the last edit, on the UI thread): then the
             // hotkeys were registered from the old values and nothing else would re-arm them. Registered = not in front.
-            if (_globalHotkeysOn)
+            // Only while idle: during a recording the key that started it must keep stopping it (the check runs later).
+            if (_globalHotkeysOn && _state == State.Idle)
             {
                 RegisterHotkeys(notify: true);
                 _hotkeyCheckPending = false;
