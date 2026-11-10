@@ -27,6 +27,9 @@ public sealed class ChatClient
     /// <summary>Base of the backoff between retries (1.5 s, doubling; tests set it to zero).</summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(1.5);
 
+    /// <summary>Safety margin added to a Google RetryInfo delay (2 s; tests set it to zero).</summary>
+    public TimeSpan RetryInfoBuffer { get; set; } = TimeSpan.FromSeconds(2);
+
     /// <summary>
     /// How long the server may stay silent (before the first byte and between stream lines) before the request
     /// counts as timed out. Search grounding can think for a while before the first token.
@@ -69,26 +72,12 @@ public sealed class ChatClient
             ? BuildGeminiBody(model, systemPrompt, messages, webSearch, thinkingLevel)
             : BuildOpenAiBody(model, systemPrompt, messages, thinkingLevel);
 
-        for (var attempt = 1; ; attempt++)
-        {
-            ct.ThrowIfCancellationRequested();
-            GeminiException failure;
-            try
-            {
-                return gemini
-                    ? await StreamGeminiAsync(model, key, body, Deliver, ct).ConfigureAwait(false)
-                    : await StreamOpenAiAsync(model, key, body, Deliver, ct).ConfigureAwait(false);
-            }
-            catch (GeminiException ex)
-            {
-                failure = ex;
-            }
-
-            if (delivered || !failure.Retryable || attempt > MaxRetries) throw failure;
-            var delay = HttpRetry.Backoff(RetryDelay, attempt);
-            Log.Info($"Chat {api.Name} {model}: attempt {attempt} failed ({failure.Kind}), retrying in {delay.TotalSeconds:0.#} s");
-            await Task.Delay(delay, ct).ConfigureAwait(false);
-        }
+        // Once a piece of text reached the caller a retry would repeat it: the error ends the answer.
+        var policy = new RetryPolicy(MaxRetries + 1, MaxRetries + 1, RetryDelay, gemini ? RetryInfoBuffer : TimeSpan.Zero);
+        return await HttpRetry.RunAsync(_ => gemini
+                ? StreamGeminiAsync(model, key, body, Deliver, ct)
+                : StreamOpenAiAsync(model, key, body, Deliver, ct),
+            policy, $"Chat {api.Name} {model}", ct, mayRetry: () => !delivered).ConfigureAwait(false);
     }
 
     // ---- request bodies ----

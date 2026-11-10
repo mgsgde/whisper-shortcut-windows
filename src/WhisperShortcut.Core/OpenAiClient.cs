@@ -232,42 +232,19 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         var key = _apiKey()?.Trim();
         if (string.IsNullOrEmpty(key)) throw CloudApi.OpenAi.NoKey(KeyHint.Settings);
 
-        for (var attempt = 1; ; attempt++)
+        return await HttpRetry.RunAsync(async attempt =>
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             // Upload time scales with the body (~40 kB/s floor, e.g. slow DSL).
             timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(size / 40_000.0));
-            GeminiException failure;
-            try
-            {
-                return await CloudHttp.SendAsync(_http, CloudApi.OpenAi, CloudApi.OpenAi.ApiBase + path, key, buildContent(), $"OpenAI {model}",
-                    timeout.Token, ct, async response =>
-                    {
-                        var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-                        Log.Info($"OpenAI {model}: HTTP {(int)response.StatusCode}, request {size} bytes, answer {text.Length} bytes, attempt {attempt}");
-                        return text;
-                    }).ConfigureAwait(false);
-            }
-            catch (GeminiException ex) when (ex.Retryable)
-            {
-                failure = ex;
-            }
-
-            if (attempt >= (failure.ServerFault ? HttpRetry.MaxServerErrorAttempts : HttpRetry.MaxAttempts)) throw failure;
-            TimeSpan delay;
-            if (failure.RetryAfter is { } wait)
-            {
-                // OpenAI says when the limit lifts; a longer wait is not worth blocking dictation for.
-                if (wait > HttpRetry.MaxWait) throw failure;
-                delay = wait;
-            }
-            else
-            {
-                delay = HttpRetry.Backoff(RetryDelay, attempt);
-            }
-            Log.Info($"OpenAI {model}: attempt {attempt} failed ({failure.Kind}), retrying in {delay.TotalSeconds:0.#} s");
-            await Task.Delay(delay, ct).ConfigureAwait(false);
-        }
+            return await CloudHttp.SendAsync(_http, CloudApi.OpenAi, CloudApi.OpenAi.ApiBase + path, key, buildContent(), $"OpenAI {model}",
+                timeout.Token, ct, async response =>
+                {
+                    var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+                    Log.Info($"OpenAI {model}: HTTP {(int)response.StatusCode}, request {size} bytes, answer {text.Length} bytes, attempt {attempt}");
+                    return text;
+                }).ConfigureAwait(false);
+        }, RetryPolicy.OneShot(RetryDelay, TimeSpan.Zero), $"OpenAI {model}", ct).ConfigureAwait(false);
     }
 
     internal static string ExtractTranscript(string responseJson)

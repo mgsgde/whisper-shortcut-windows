@@ -478,43 +478,19 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         if (string.IsNullOrEmpty(key)) throw CloudApi.Gemini.NoKey(KeyHint.Settings);
 
         var url = $"{CloudApi.Gemini.ApiBase}{model}:generateContent";
-        for (var attempt = 1; ; attempt++)
+        return await HttpRetry.RunAsync(async attempt =>
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             // Upload time scales with the body (~40 kB/s floor, e.g. slow DSL).
             timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(json.Length / 40_000.0));
-            GeminiException failure;
-            try
-            {
-                return await CloudHttp.SendAsync(_http, CloudApi.Gemini, url, key, JsonUtf8Content(json), $"Gemini {model}",
-                    timeout.Token, ct, async response =>
-                    {
-                        var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-                        Log.Info($"Gemini {model}: HTTP {(int)response.StatusCode}, request {json.Length} bytes, answer {text.Length} bytes, attempt {attempt}");
-                        return ExtractText(text, rejectTruncated);
-                    }).ConfigureAwait(false);
-            }
-            catch (GeminiException ex) when (ex.Retryable)
-            {
-                failure = ex;
-            }
-
-            // Retryable failure: 5 attempts, 6 when the server itself is failing.
-            if (attempt >= (failure.ServerFault ? HttpRetry.MaxServerErrorAttempts : HttpRetry.MaxAttempts)) throw failure;
-            TimeSpan delay;
-            if (failure.RetryAfter is { } info)
-            {
-                // Google says when the limit lifts; a longer wait is not worth blocking dictation for.
-                if (info > HttpRetry.MaxWait) throw failure;
-                delay = info + RetryInfoBuffer;
-            }
-            else
-            {
-                delay = HttpRetry.Backoff(RetryDelay, attempt);
-            }
-            Log.Info($"Gemini {model}: attempt {attempt} failed ({failure.Kind}), retrying in {delay.TotalSeconds:0.#} s");
-            await Task.Delay(delay, ct).ConfigureAwait(false);
-        }
+            return await CloudHttp.SendAsync(_http, CloudApi.Gemini, url, key, JsonUtf8Content(json), $"Gemini {model}",
+                timeout.Token, ct, async response =>
+                {
+                    var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+                    Log.Info($"Gemini {model}: HTTP {(int)response.StatusCode}, request {json.Length} bytes, answer {text.Length} bytes, attempt {attempt}");
+                    return ExtractText(text, rejectTruncated);
+                }).ConfigureAwait(false);
+        }, RetryPolicy.OneShot(RetryDelay, RetryInfoBuffer), $"Gemini {model}", ct).ConfigureAwait(false);
     }
 
     /// <summary>The delay from a Google RetryInfo detail ("55s", "1.5s"), or null when absent.</summary>

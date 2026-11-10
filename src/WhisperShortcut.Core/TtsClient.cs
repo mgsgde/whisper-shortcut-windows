@@ -177,6 +177,9 @@ public sealed class TtsClient
     /// <summary>Base of the exponential backoff between retries of a chunk (1.5 s, doubling; tests set it to zero).</summary>
     public TimeSpan RetryDelay { get; set; } = TimeSpan.FromSeconds(1.5);
 
+    /// <summary>Safety margin added to a Google RetryInfo delay (2 s; tests set it to zero).</summary>
+    public TimeSpan RetryInfoBuffer { get; set; } = TimeSpan.FromSeconds(2);
+
     /// <summary>
     /// Idle budget before the first audio of a stream. The preview models were unstable on the Mac (first audio 0.9-3.3 s on a
     /// good run, up to 39 s on a bad one), so 45 s admits the slow-but-alive case and still aborts a dead request.
@@ -242,11 +245,7 @@ public sealed class TtsClient
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return (null, null);
 
-            if (CloudApi.Gemini.StreamError(root, json, "TTS Gemini", "den Text zum Vorlesen") is { } streamError)
-            {
-                if (!root.TryGetProperty("error", out _)) streamError.Data[NoRetryKey] = true; // blocked: the same text is blocked again
-                throw streamError;
-            }
+            if (CloudApi.Gemini.StreamError(root, json, "TTS Gemini", "den Text zum Vorlesen") is { } streamError) throw streamError;
 
             string? finish = null;
             using var audio = new MemoryStream();
@@ -274,19 +273,6 @@ public sealed class TtsClient
             return (audio.Length == 0 ? null : audio.ToArray(), finish);
         }
     }
-
-    // Exception.Data marker for failures that a retry cannot fix although their kind says "Server".
-    private const string NoRetryKey = "tts.noRetry";
-
-    // Network, Timeout, Server and Quota can pass by waiting; a missing or rejected key, an empty account or an unsupported
-    // request cannot.
-    private static bool IsRetryable(Exception ex) => ex switch
-    {
-        GeminiException g => g.Kind is GeminiErrorKind.Network or GeminiErrorKind.Timeout or GeminiErrorKind.Server
-            or GeminiErrorKind.Quota && !g.Data.Contains(NoRetryKey),
-        HttpRequestException or IOException => true,
-        _ => false,
-    };
 
     /// <summary>
     /// Synthesizes one text segment with a single request (no retry) and returns the complete raw PCM (s16le, 24 kHz, mono).
@@ -352,7 +338,8 @@ public sealed class TtsClient
                 if (audio.Length == 0)
                 {
                     Log.Error($"TTS {model.Id}: 2xx without any audio (objects {objects})");
-                    throw new GeminiException(api.Name, GeminiErrorKind.Server, "Gemini hat kein Audio zum Vorlesen geliefert.");
+                    throw new GeminiException(api.Name, GeminiErrorKind.Server, "Gemini hat kein Audio zum Vorlesen geliefert.")
+                        { Retryable = true }; // a new request may well deliver audio
                 }
                 return EvenLength(audio.ToArray());
             }, HttpCompletionOption.ResponseHeadersRead, "stalled, no audio progress for the allowed time").ConfigureAwait(false);
@@ -400,7 +387,8 @@ public sealed class TtsClient
                 if (audio.Length == 0)
                 {
                     Log.Error($"TTS {model.Id}: 2xx without any audio");
-                    throw new GeminiException(api.Name, GeminiErrorKind.Server, "OpenAI hat kein Audio zum Vorlesen geliefert.");
+                    throw new GeminiException(api.Name, GeminiErrorKind.Server, "OpenAI hat kein Audio zum Vorlesen geliefert.")
+                        { Retryable = true };
                 }
                 return EvenLength(audio.ToArray());
             }, HttpCompletionOption.ResponseHeadersRead, "stalled, no audio progress for the allowed time").ConfigureAwait(false);
@@ -411,7 +399,7 @@ public sealed class TtsClient
 
     /// <summary>
     /// Synthesizes the whole text: split by <see cref="TtsTextChunker"/> for the model's provider, all chunks started at once,
-    /// each retried on its own (Network, Timeout, Server, Quota; <see cref="HttpRetry.MaxAttempts"/> attempts). <paramref name="onAudio"/>
+    /// each retried on its own (<see cref="GeminiException.Retryable"/> failures, <see cref="HttpRetry.MaxAttempts"/> attempts). <paramref name="onAudio"/>
     /// receives PCM strictly in playback order, may be called from any thread, never concurrently. Returns how many chunks failed
     /// for good (0 = all fine; the rest plays with a gap). If every chunk failed, the first chunk's exception is thrown.
     /// Cancellation throws <see cref="OperationCanceledException"/>.
@@ -443,40 +431,33 @@ public sealed class TtsClient
     private async Task<Exception?> RunChunkAsync(TtsModel model, string voice, string text, int index, int total,
         PlaybackOrderGate gate, CancellationToken ct)
     {
-        for (var attempt = 1; ; attempt++)
+        var policy = new RetryPolicy(HttpRetry.MaxAttempts, HttpRetry.MaxAttempts, RetryDelay,
+            model.Provider == TtsProvider.Gemini ? RetryInfoBuffer : TimeSpan.Zero);
+        byte[] data;
+        try
         {
-            byte[] data;
-            try
+            data = await HttpRetry.RunAsync(attempt =>
             {
-                ct.ThrowIfCancellationRequested();
                 // Partials stream to the gate on the first attempt only. A retry re-synthesizes the whole chunk (TTS output
                 // is not deterministic, so its bytes cannot be spliced onto what already played); the gate then emits just
                 // the part beyond what it has handed out.
                 Func<byte[], Task>? partial = attempt == 1
                     ? slice => { gate.Partial(index, slice); return Task.CompletedTask; }
                     : null;
-                data = await SynthesizeChunkAsync(model, voice, text, partial, ct).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                if (!IsRetryable(ex) || attempt >= HttpRetry.MaxAttempts)
-                {
-                    Log.Error($"TTS {model.Id}: chunk {index + 1}/{total} failed for good after {attempt} attempt(s)", ex);
-                    gate.Fail(index);
-                    return ex;
-                }
-                gate.DiscardBuffered(index);
-                var delay = HttpRetry.Backoff(RetryDelay, attempt);
-                Log.Info($"TTS {model.Id}: chunk {index + 1}/{total} attempt {attempt} failed ({ex.GetType().Name}), retrying in {delay.TotalSeconds:0.#} s");
-                await Task.Delay(delay, ct).ConfigureAwait(false);
-                continue;
-            }
-            gate.Complete(index, data);
-            return null;
+                return SynthesizeChunkAsync(model, voice, text, partial, ct);
+            }, policy, $"TTS {model.Id} chunk {index + 1}/{total}", ct, beforeRetry: _ => gate.DiscardBuffered(index)).ConfigureAwait(false);
         }
+        catch (OperationCanceledException) when (ct.IsCancellationRequested)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"TTS {model.Id}: chunk {index + 1}/{total} failed for good", ex);
+            gate.Fail(index);
+            return ex;
+        }
+        gate.Complete(index, data);
+        return null;
     }
 }
