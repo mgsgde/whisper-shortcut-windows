@@ -133,6 +133,13 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         _http = http ?? NetworkPolicy.CreateApiClient();
     }
 
+    /// <inheritdoc/>
+    public Task<string> TranscribeAsync(byte[] wav, IReadOnlyList<string> glossary, bool sendKeywords, CancellationToken ct = default) =>
+        TranscribeAsync(wav, glossary, ct);
+
+    /// <inheritdoc/>
+    public IReadOnlyList<byte[]> SplitForUpload(byte[] wav) => WavChunker.Split(wav);
+
     /// <summary>
     /// Transcribes a WAV (temperature 0 for a deterministic transcript). Returns the raw model text,
     /// "" if nothing was recognised. Transient failures are retried, see <see cref="GeminiClient"/>.

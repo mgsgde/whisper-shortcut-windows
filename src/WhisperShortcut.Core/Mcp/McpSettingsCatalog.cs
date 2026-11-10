@@ -210,9 +210,12 @@ public static class McpSettingsCatalog
     /// <summary>Builds the catalog over live <paramref name="settings"/>; options are evaluated on every call.</summary>
     public static IReadOnlyList<McpSetting> Build(Settings settings, IMcpHost host)
     {
-        McpSettingOption Cloud(Engine e) => e == Engine.Gemini
-            ? new McpSettingOption(Choices.Engine.Token(Engine.Gemini), Choices.Engine.Label(Engine.Gemini), !string.IsNullOrWhiteSpace(settings.ApiKey), string.IsNullOrWhiteSpace(settings.ApiKey) ? NoGeminiKey : null)
-            : new McpSettingOption(Choices.Engine.Token(Engine.OpenAI), Choices.Engine.Label(Engine.OpenAI), !string.IsNullOrWhiteSpace(settings.OpenAiKey), string.IsNullOrWhiteSpace(settings.OpenAiKey) ? NoOpenAiKey : null);
+        McpSettingOption Cloud(Engine e)
+        {
+            var missing = settings.MissingKeyProvider(e) != null;
+            return new McpSettingOption(Choices.Engine.Token(e), Choices.Engine.Label(e), !missing,
+                missing ? (e == Engine.Gemini ? NoGeminiKey : NoOpenAiKey) : null);
+        }
 
         return
         [
@@ -296,7 +299,7 @@ public static class McpSettingsCatalog
                 Read = () => JsonValue.Create(ReadAloud.NormalizeModel(settings.ReadAloudModel)),
                 Options = () => ReadAloud.Models.Select(m =>
                 {
-                    var needsKey = m.Provider == TtsProvider.OpenAI && string.IsNullOrWhiteSpace(settings.OpenAiKey);
+                    var needsKey = m.Provider == TtsProvider.OpenAI && settings.MissingKeyProvider(Engine.OpenAI) != null;
                     return new McpSettingOption(m.Id, m.Name, !needsKey, needsKey ? NoOpenAiKey : null);
                 }).ToList(),
                 Write = v => settings.ReadAloudModel = ReadAloud.NormalizeModel(Text(v)),

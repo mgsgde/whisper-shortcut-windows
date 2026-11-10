@@ -12,8 +12,7 @@ internal sealed class ReadAloudController : IDisposable
 
     private readonly Core.Settings _settings;
     private readonly ClipboardPaster _paster;
-    private readonly Core.GeminiClient _gemini;
-    private readonly Core.OpenAiClient _openAi;
+    private readonly EngineSet _engines;
     private readonly Core.TtsClient _tts;
     private readonly Action<string, string, ToolTipIcon, Action?> _notify;
     private readonly Action _showSettings;
@@ -33,14 +32,13 @@ internal sealed class ReadAloudController : IDisposable
     /// <summary>Raised on the UI thread when it starts, starts speaking or ends.</summary>
     public event Action? StateChanged;
 
-    public ReadAloudController(Core.Settings settings, ClipboardPaster paster, Core.GeminiClient gemini, Core.OpenAiClient openAi,
+    public ReadAloudController(Core.Settings settings, ClipboardPaster paster,
         Action<string, string, ToolTipIcon, Action?> notify, Action showSettings, Action save, SynchronizationContext ui)
     {
         _settings = settings;
         _paster = paster;
-        // Mac maybeRewriteForSpeech uses the chat model (Settings → Chat): clients that read the chat choice on every call.
-        _gemini = new Core.GeminiClient(() => settings.ApiKey, () => settings.TranscriptionModel, () => settings.ChatModel);
-        _openAi = new Core.OpenAiClient(() => settings.OpenAiKey, () => settings.OpenAiTranscriptionModel, () => settings.ChatOpenAiModel);
+        // Mac maybeRewriteForSpeech uses the chat model (Settings → Chat): the set's chat step reads that choice on every call.
+        _engines = new EngineSet(settings, local: null);
         _tts = new Core.TtsClient(settings);
         _notify = notify;
         _showSettings = showSettings;
@@ -275,23 +273,16 @@ internal sealed class ReadAloudController : IDisposable
             Core.Log.Info("Read aloud: plain prose, no rewrite");
             return text;
         }
-        Func<Task<string>>? call = _settings.EffectiveChatEngine switch
-        {
-            Core.Engine.Gemini when !string.IsNullOrWhiteSpace(_settings.ApiKey) =>
-                () => _gemini.CompleteTextAsync(prompt, text, ct),
-            Core.Engine.OpenAI when !string.IsNullOrWhiteSpace(_settings.OpenAiKey) =>
-                () => _openAi.CompleteTextAsync(prompt, text, ct),
-            // The local model would add seconds to a minute before the first word; the Mac skips on-device too.
-            _ => null,
-        };
-        if (call == null)
+        // The local model would add seconds to a minute before the first word; the Mac skips on-device too (the set has none).
+        var provider = _engines.Check(EngineStep.Chat).MissingKey == null ? _engines.Text(EngineStep.Chat) : null;
+        if (provider == null)
         {
             Core.Log.Info($"Read aloud: no rewrite with chat engine {_settings.EffectiveChatEngine}");
             return text;
         }
         try
         {
-            var rewritten = (await call()).Trim();
+            var rewritten = (await provider.CompleteTextAsync(prompt, text, null, ct)).Trim();
             if (rewritten.Length == 0) return text;
             if (!Core.ReadAloud.RewriteStaysWithinLengthBudget(rewritten, text))
             {
@@ -308,12 +299,15 @@ internal sealed class ReadAloudController : IDisposable
         }
     }
 
-    private string? MissingKeyMessage(Core.TtsModel model) => model.Provider switch
+    private string? MissingKeyMessage(Core.TtsModel model) => _settings.MissingKeyProvider(model.Provider switch
     {
-        Core.TtsProvider.Gemini when string.IsNullOrWhiteSpace(_settings.ApiKey) =>
-            "Trag unter Einstellungen → Konten deinen Google-API-Schlüssel ein, um Vorlesen zu nutzen.",
-        Core.TtsProvider.OpenAI when string.IsNullOrWhiteSpace(_settings.OpenAiKey) =>
-            "Trag unter Einstellungen → Konten deinen OpenAI-API-Schlüssel ein, um Vorlesen zu nutzen, oder wähle unter "
+        Core.TtsProvider.Gemini => Core.Engine.Gemini,
+        Core.TtsProvider.OpenAI => Core.Engine.OpenAI,
+        _ => Core.Engine.Local, // Windows voices: no key
+    }) switch
+    {
+        "Gemini" => "Trag unter Einstellungen → Konten deinen Google-API-Schlüssel ein, um Vorlesen zu nutzen.",
+        "OpenAI" => "Trag unter Einstellungen → Konten deinen OpenAI-API-Schlüssel ein, um Vorlesen zu nutzen, oder wähle unter "
             + "Einstellungen → Vorlesen ein anderes Sprachmodell.",
         _ => null,
     };

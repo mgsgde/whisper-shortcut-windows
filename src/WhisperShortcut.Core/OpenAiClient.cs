@@ -48,6 +48,9 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         _http = http ?? NetworkPolicy.CreateApiClient();
     }
 
+    /// <inheritdoc/>
+    public IReadOnlyList<byte[]> SplitForUpload(byte[] wav) => WavChunker.SplitForOpenAi(wav);
+
     /// <summary>Transcribes a WAV (temperature 0). Returns the raw text, "" if nothing was recognised.</summary>
     /// <param name="wav">WAV bytes.</param>
     /// <param name="glossary">Spelling reference terms; empty list sends no prompt.</param>
