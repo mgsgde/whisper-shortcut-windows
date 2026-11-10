@@ -931,132 +931,105 @@ internal sealed partial class TrayApp : ApplicationContext
         return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(text, mode, timedMarks: timed));
     }
 
-    private async Task ProcessLiveAsync(Take take)
+    private Task ProcessLiveAsync(Take take)
     {
         var live = take.Live!;
         var audio = take.Audio!;
         take.Audio = null;
-        take.Cts = new CancellationTokenSource();
-        var ct = take.Cts.Token;
-        take.BusyStatus = Core.UserCopy.LiveFinishing;
-        take.Phase = TakePhase.Processing;
-        RefreshStatus();
-        _overlay.ShowProcessing(take.BusyStatus);
-        Sounds.Stop();
-        bool done = false;
         byte[]? wav = null;
         double seconds = 0;
-        FailedRun? Failed() => wav == null ? null : take.ToReplay(wav, seconds, null);
         var cancelledAction = LiveClipboardAtEnd(null, false);
 
-        try
-        {
-            wav = await audio.StopAsync();
-            seconds = Core.Wav.DurationSeconds(wav);
-            Core.Log.Info($"Dictate (live): recorded {seconds:0.0} s");
-
-            // A test file arrives whole: cut it like a recording would have been.
-            if (audio is not MicAudioSource && Core.Wav.TryGetPcm16(wav, out var pcm) && pcm.SampleRate == 16000 && pcm.Channels == 1)
-                live.FeedWhole(wav.AsSpan(pcm.DataOffset, pcm.DataLength));
-            live.EndRecording();
-
-            using var registration = ct.Register(live.Session.Cancel);
-            var outcome = await live.FinishAsync(wav);
-
-            string fallback = "";
-            if (outcome.FailedPieces > 0)
+        return ProcessTakeAsync(take, "Dictate (live)", Core.UserCopy.LiveFinishing, Core.FailureContext.Live,
+            failed: () => wav == null ? null : take.ToReplay(wav, seconds, null),
+            // Live differs from the other runs here on purpose: the session is cancelled and the clipboard settled
+            // (EndLive) after the toast, and a cancel keeps no audio for the tray menu.
+            onCancelled: () => _paster.EndLive(cancelledAction, null),
+            onFailed: () =>
             {
-                try
-                {
-                    fallback = Core.TextCleanup.ForDictation(Backstops(Core.TranscribePurpose.LivePiece, await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, ct)));
-                }
-                catch (OperationCanceledException) when (ct.IsCancellationRequested)
-                {
-                    throw;
-                }
-                catch (Exception e)
-                {
-                    Core.Log.Warn($"LIVE-DICTATE: whole-file fallback failed ({e.GetType().Name})");
-                    fallback = "";
-                }
-            }
-
-            var action = LiveClipboardAtEnd(outcome, fallback.Length > 0);
-            _paster.EndLive(action, action switch
+                live.Session.Cancel();
+                _paster.EndLive(cancelledAction, null);
+            },
+            body: async ct =>
             {
-                Core.LiveClipboardEnd.KeepHeld => outcome.HeldText,
-                Core.LiveClipboardEnd.KeepFallback => fallback,
-                _ => outcome.Text,
+                wav = await audio.StopAsync();
+                seconds = Core.Wav.DurationSeconds(wav);
+                Core.Log.Info($"Dictate (live): recorded {seconds:0.0} s");
+
+                // A test file arrives whole: cut it like a recording would have been.
+                if (audio is not MicAudioSource && Core.Wav.TryGetPcm16(wav, out var pcm) && pcm.SampleRate == 16000 && pcm.Channels == 1)
+                    live.FeedWhole(wav.AsSpan(pcm.DataOffset, pcm.DataLength));
+                live.EndRecording();
+
+                using var registration = ct.Register(live.Session.Cancel);
+                var outcome = await live.FinishAsync(wav);
+
+                string fallback = "";
+                if (outcome.FailedPieces > 0)
+                {
+                    try
+                    {
+                        fallback = Core.TextCleanup.ForDictation(Backstops(Core.TranscribePurpose.LivePiece, await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, ct)));
+                    }
+                    catch (OperationCanceledException) when (ct.IsCancellationRequested)
+                    {
+                        throw;
+                    }
+                    catch (Exception e)
+                    {
+                        Core.Log.Warn($"LIVE-DICTATE: whole-file fallback failed ({e.GetType().Name})");
+                        fallback = "";
+                    }
+                }
+
+                var action = LiveClipboardAtEnd(outcome, fallback.Length > 0);
+                _paster.EndLive(action, action switch
+                {
+                    Core.LiveClipboardEnd.KeepHeld => outcome.HeldText,
+                    Core.LiveClipboardEnd.KeepFallback => fallback,
+                    _ => outcome.Text,
+                });
+
+                bool keepCheckpoint = false;
+                string finalText = fallback.Length > 0 ? fallback : outcome.Text;
+                Core.Presentation? shown;
+                if (action == Core.LiveClipboardEnd.KeepFallback)
+                {
+                    shown = Core.Presentation.Notice(Core.UserCopy.LiveTitle,
+                        "Ein Teil des Diktats konnte nicht live eingefügt werden. Der vollständige Text liegt in der Zwischenablage.",
+                        Core.Severity.Warning);
+                }
+                else if (outcome.FailedPieces > 0)
+                {
+                    // Nothing to put on the clipboard: keep the take for a retry (and the crash checkpoint).
+                    keepCheckpoint = true;
+                    shown = Core.Presentation.Notice(Core.UserCopy.LiveTitle, "Ein Teil des Diktats konnte nicht erkannt werden. Bitte den Text prüfen.",
+                        Core.Severity.Error, Core.FollowUp.Retry, keepAudio: true);
+                }
+                else if (outcome.HeldText.Length > 0)
+                {
+                    shown = Core.Presentation.Notice(Core.UserCopy.LiveTitle,
+                        "Das Ende des Diktats wurde nicht eingefügt, weil ein anderes Fenster vorn war. Es liegt in der Zwischenablage: Strg+V drücken.",
+                        Core.Severity.Info);
+                }
+                else if (outcome.Text.Length == 0)
+                {
+                    shown = Core.Presentation.Notice(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, Core.Severity.Info);
+                }
+                else
+                {
+                    shown = Core.Presentation.DonePill(Core.UserCopy.LiveInserted);
+                    _lastLive.Remember(outcome.Text, live.TargetApp);
+                }
+
+                if (finalText.Length > 0) _recent.Add(finalText);
+                if (outcome.FailedPieces == 0) _lastFailed = null;
+                if (!keepCheckpoint) Core.RecordingCheckpoint.DiscardAll();
+
+                if (outcome.FailedPieces == 0 && outcome.Text.Length > 0 && !_fakeGemini)
+                    _ = MeasureLiveDriftAsync(outcome.Text, wav);
+                return shown;
             });
-
-            bool keepCheckpoint = false;
-            string finalText = fallback.Length > 0 ? fallback : outcome.Text;
-            if (action == Core.LiveClipboardEnd.KeepFallback)
-            {
-                Notify(Core.UserCopy.LiveTitle,
-                    "Ein Teil des Diktats konnte nicht live eingefügt werden. Der vollständige Text liegt in der Zwischenablage.",
-                    ToolTipIcon.Warning);
-            }
-            else if (outcome.FailedPieces > 0)
-            {
-                // Nothing to put on the clipboard: keep the take for a retry (and the crash checkpoint).
-                keepCheckpoint = true;
-                NotifyRetryable(Core.UserCopy.LiveTitle, "Ein Teil des Diktats konnte nicht erkannt werden. Bitte den Text prüfen.", Failed());
-            }
-            else if (outcome.HeldText.Length > 0)
-            {
-                Notify(Core.UserCopy.LiveTitle,
-                    "Das Ende des Diktats wurde nicht eingefügt, weil ein anderes Fenster vorn war. Es liegt in der Zwischenablage: Strg+V drücken.",
-                    ToolTipIcon.Info);
-            }
-            else if (outcome.Text.Length == 0)
-            {
-                Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
-            }
-            else
-            {
-                _overlay.ShowDone(Core.UserCopy.LiveInserted);
-                done = true;
-                _lastLive.Remember(outcome.Text, live.TargetApp);
-            }
-
-            if (finalText.Length > 0) _recent.Add(finalText);
-            if (outcome.FailedPieces == 0) _lastFailed = null;
-            if (!keepCheckpoint) Core.RecordingCheckpoint.DiscardAll();
-
-            if (outcome.FailedPieces == 0 && outcome.Text.Length > 0 && !_fakeGemini)
-                _ = MeasureLiveDriftAsync(outcome.Text, wav);
-        }
-        catch (OperationCanceledException) when (ct.IsCancellationRequested)
-        {
-            Core.Log.Info("Dictate (live): cancelled by user");
-            _paster.EndLive(cancelledAction, null);
-            Core.RecordingCheckpoint.DiscardAll();
-        }
-        catch (Exception e) when (e is Core.AudioSilentException or MicrophoneUnavailableException)
-        {
-            Core.Log.Error($"Dictate (live): microphone problem {e.GetType().Name}");
-            Sounds.Error();
-            Notify("Problem mit dem Mikrofon", e.Message, ToolTipIcon.Warning);
-            live.Session.Cancel();
-            _paster.EndLive(cancelledAction, null);
-        }
-        catch (Exception e)
-        {
-            Core.Log.Error("Dictate (live): unexpected error", e);
-            Sounds.Error();
-            NotifyRetryable(Core.UserCopy.ErrorTitle, "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", Failed());
-            live.Session.Cancel();
-            _paster.EndLive(cancelledAction, null);
-        }
-        finally
-        {
-            // Every path above has finished or cancelled the session and settled the clipboard; the take's end only
-            // forgets the live run (a finished session is not cancelled again).
-            EndTake(take);
-            if (!done) _overlay.HideOverlay();
-            RefreshStatus();
-        }
     }
 
     /// <summary>
@@ -1138,254 +1111,159 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     /// <param name="take">The run: a recording to stop (<paramref name="retry"/> null) or a replay of <paramref name="retry"/>.</param>
-    private async Task ProcessAsync(Take take, FailedRun? retry)
+    private Task ProcessAsync(Take take, FailedRun? retry)
     {
         var audio = take.Audio;
         take.Audio = null;
-        take.Cts = new CancellationTokenSource();
-        var ct = take.Cts.Token;
-        take.BusyStatus = take.QuickAction != null ? Core.UserCopy.QuickActionBusy(take.QuickAction)
+        byte[]? wav = null;
+        double seconds = 0;
+        string? selection = null;
+        var busy = take.QuickAction != null ? Core.UserCopy.QuickActionBusy(take.QuickAction)
             : take.Mode == Mode.Dictate ? Core.UserCopy.Transcribing
             : take.Mode == Mode.Template && take.Template != null ? Core.UserCopy.TemplateBusy(take.Template.DisplayName)
             : Core.UserCopy.RecognizingInstruction;
+
+        return ProcessTakeAsync(take, take.Mode.ToString(), busy, Core.FailureContext.Dictation,
+            // What a retry needs; null when the audio itself is lost (then there is nothing to try again).
+            failed: () => wav == null ? null : take.ToReplay(wav, seconds, selection),
+            // Mac: a cancel is one keystroke and can be an accident; keep a dictation for the tray menu (only dictation:
+            // an instruction run again as dictation would paste the instruction).
+            onCancelled: () =>
+            {
+                if (take.Mode == Mode.Dictate && wav is { Length: > 0 })
+                {
+                    _cancelled.Keep(wav, seconds);
+                    Core.Log.Info($"Dictate: kept the cancelled recording ({seconds:0.0} s) for the tray menu");
+                }
+            },
+            onFailed: null,
+            body: async ct =>
+            {
+                if (retry != null)
+                {
+                    (wav, seconds, selection) = (retry.Wav, retry.Seconds, retry.Selection);
+                }
+                else
+                {
+                    try
+                    {
+                        wav = await audio!.StopAsync();
+                    }
+                    catch (Core.AudioSilentException) when (take.QuickAction != null || take.Mode == Mode.Template)
+                    {
+                        // Text marked, Ctrl+1 pressed without a word (or a template run on a selection): the selection alone is the input.
+                        // A silent template run with nothing marked is still a microphone problem.
+                        if (take.QuickAction == null && take.Selection != null) selection = await take.Selection;
+                        if (take.QuickAction == null && !Core.TemplatePrompt.AcceptsEmptyTranscript(selection)) throw;
+                        wav = Array.Empty<byte>();
+                    }
+                    seconds = wav.Length == 0 ? 0 : Core.Wav.DurationSeconds(wav);
+                    Core.Log.Info($"{take.Mode}: recorded {seconds:0.0} s");
+                    // A quick instruction needs no speech: mark text, press the hotkey and right away Ctrl+1.
+                    // A template may format a selection with no speech, so it needs the selection before it can judge "too short".
+                    if (take.Mode == Mode.Template && take.Selection != null && selection == null) selection = await take.Selection;
+                    if (seconds < 0.5 && take.QuickAction == null
+                        && !(take.Mode == Mode.Template && Core.TemplatePrompt.AcceptsEmptyTranscript(selection)))
+                    {
+                        // A double press, not a recording: say so instead of a misleading microphone error.
+                        Core.RecordingCheckpoint.DiscardAll();
+                        return Core.Presentation.Notice("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", Core.Severity.Info);
+                    }
+                    if (take.Mode == Mode.Prompt && take.Selection != null) selection = await take.Selection;
+                }
+
+                string text = take.Mode switch
+                {
+                    Mode.Dictate => await DictateAsync(wav, seconds, ct),
+                    Mode.Template => await TemplateAsync(wav, seconds, selection, retry != null, ct),
+                    _ => await PromptAsync(wav, seconds, selection, retry != null, ct),
+                };
+                ct.ThrowIfCancellationRequested();
+
+                if (text.Length == 0)
+                {
+                    Core.RecordingCheckpoint.DiscardAll();
+                    if (take.Mode == Mode.Dictate && _welcomeForm is { TakesTryResult: true } silentTour && take.PasteTarget == silentTour.Handle) silentTour.ShowTryResult("");
+                    return null; // already reported
+                }
+                _lastFailed = null; // this run worked; the old failure is history
+                Core.RecordingCheckpoint.DiscardAll();
+                _recent.Add(text);
+                // Mac: a template shaped this dictation; for 10 minutes the same audio can run without it.
+                if (take.Mode == Mode.Template && wav is { Length: > 0 } && take.Template != null)
+                {
+                    _templateReplay.Keep(wav, seconds, take.Template.DisplayName, DateTime.UtcNow);
+                    _replayExpiry.Start();
+                }
+
+                // The tour's „Ausprobieren“ step started this dictation in its own window: show the text there.
+                if (take.Mode == Mode.Dictate && retry == null && _welcomeForm is { TakesTryResult: true } tour
+                    && take.PasteTarget != IntPtr.Zero && take.PasteTarget == tour.Handle)
+                {
+                    _paster.KeepOnClipboard(text);
+                    tour.ShowTryResult(text);
+                    return Core.Presentation.DonePill("Es funktioniert");
+                }
+
+                // A quick-action rewrite that lost most of a long selection must not silently replace it. Spoken
+                // instructions are unknown here (Gemini hears them) and "fass zusammen" is a normal request, so
+                // they rely on the MAX_TOKENS check alone.
+                if (take.Mode == Mode.Prompt && selection != null && take.QuickAction != null
+                    && Core.ReplyGuards.AnswerSuspiciouslyShort(selection.Length, text.Length, take.QuickAction))
+                {
+                    Core.Log.Info($"Prompt: answer {text.Length} chars for a selection of {selection.Length}, not pasted");
+                    if (!_paster.KeepOnClipboard(text)) return Core.RunOutcomes.ForPaste(Core.PasteOutcome.Failed, false);
+                    return Core.Presentation.Notice("Bitte prüfen", "Antwort deutlich kürzer als die Markierung – liegt in der Zwischenablage, bitte prüfen.",
+                        Core.Severity.Warning) with { ErrorSound = true };
+                }
+
+                // Like the Mac since 8.75: a retry runs from idle (tray menu or balloon click, recovered recording);
+                // the window in front then is whatever the user did since, so copy only.
+                var keepOnly = !Core.ClipboardPasteGuard.MayAutoPaste(_settings.AutoPaste, clipboardOnlyRun: take.ClipboardOnly);
+                var outcome = keepOnly
+                    ? (_paster.KeepOnClipboard(text) ? Core.PasteOutcome.ClipboardOnlyByChoice : Core.PasteOutcome.Failed)
+                    : await _paster.PasteAsync(text, take.PasteTarget, _settings.ClipboardAfterPaste, ct);
+                Core.Log.Info($"{take.Mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, after paste {Core.Choices.AfterPaste.Token(_settings.ClipboardAfterPaste)}");
+                return Core.RunOutcomes.ForPaste(outcome, take.Unsupported.Count > 0);
+            });
+    }
+
+    /// <summary>
+    /// The one skeleton of a run that has stopped recording (dictation, prompt, template, live): request, processing pill,
+    /// the shared failure ladder (<see cref="Core.RunOutcomes.ForFailure"/>), one <see cref="Present"/>, and the take's end.
+    /// <paramref name="body"/> returns what to tell the user (null: it already did). A cancelled take keeps nothing but what
+    /// <paramref name="onCancelled"/> keeps; <paramref name="onFailed"/> runs after a failure was shown.
+    /// </summary>
+    private async Task ProcessTakeAsync(Take take, string label, string busyStatus, Core.FailureContext context,
+        Func<FailedRun?> failed, Action? onCancelled, Action? onFailed, Func<CancellationToken, Task<Core.Presentation?>> body)
+    {
+        take.Cts = new CancellationTokenSource();
+        var ct = take.Cts.Token;
+        take.BusyStatus = busyStatus;
         take.Phase = TakePhase.Processing;
         RefreshStatus();
         _overlay.ShowProcessing(take.BusyStatus);
         Sounds.Stop();
         bool done = false;
-        byte[]? wav = null;
-        double seconds = 0;
-        string? selection = null;
-        // What a retry needs; null when the audio itself is lost (then there is nothing to try again).
-        FailedRun? Failed() => wav == null ? null : take.ToReplay(wav, seconds, selection);
 
         try
         {
-            if (retry != null)
-            {
-                (wav, seconds, selection) = (retry.Wav, retry.Seconds, retry.Selection);
-            }
-            else
-            {
-                try
-                {
-                    wav = await audio!.StopAsync();
-                }
-                catch (Core.AudioSilentException) when (take.QuickAction != null || take.Mode == Mode.Template)
-                {
-                    // Text marked, Ctrl+1 pressed without a word (or a template run on a selection): the selection alone is the input.
-                    // A silent template run with nothing marked is still a microphone problem.
-                    if (take.QuickAction == null && take.Selection != null) selection = await take.Selection;
-                    if (take.QuickAction == null && !Core.TemplatePrompt.AcceptsEmptyTranscript(selection)) throw;
-                    wav = Array.Empty<byte>();
-                }
-                seconds = wav.Length == 0 ? 0 : Core.Wav.DurationSeconds(wav);
-                Core.Log.Info($"{take.Mode}: recorded {seconds:0.0} s");
-                // A quick instruction needs no speech: mark text, press the hotkey and right away Ctrl+1.
-                // A template may format a selection with no speech, so it needs the selection before it can judge "too short".
-                if (take.Mode == Mode.Template && take.Selection != null && selection == null) selection = await take.Selection;
-                if (seconds < 0.5 && take.QuickAction == null
-                    && !(take.Mode == Mode.Template && Core.TemplatePrompt.AcceptsEmptyTranscript(selection)))
-                {
-                    // A double press, not a recording: say so instead of a misleading microphone error.
-                    Core.RecordingCheckpoint.DiscardAll();
-                    Notify("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", ToolTipIcon.Info);
-                    return;
-                }
-                if (take.Mode == Mode.Prompt && take.Selection != null) selection = await take.Selection;
-            }
-
-            string text = take.Mode switch
-            {
-                Mode.Dictate => await DictateAsync(wav, seconds, ct),
-                Mode.Template => await TemplateAsync(wav, seconds, selection, retry != null, ct),
-                _ => await PromptAsync(wav, seconds, selection, retry != null, ct),
-            };
-            ct.ThrowIfCancellationRequested();
-
-            if (text.Length == 0)
-            {
-                Core.RecordingCheckpoint.DiscardAll();
-                if (take.Mode == Mode.Dictate && _welcomeForm is { TakesTryResult: true } silentTour && take.PasteTarget == silentTour.Handle) silentTour.ShowTryResult("");
-                return; // already reported
-            }
-            _lastFailed = null; // this run worked; the old failure is history
-            Core.RecordingCheckpoint.DiscardAll();
-            _recent.Add(text);
-            // Mac: a template shaped this dictation; for 10 minutes the same audio can run without it.
-            if (take.Mode == Mode.Template && wav is { Length: > 0 } && take.Template != null)
-            {
-                _templateReplay.Keep(wav, seconds, take.Template.DisplayName, DateTime.UtcNow);
-                _replayExpiry.Start();
-            }
-
-            // The tour's „Ausprobieren“ step started this dictation in its own window: show the text there.
-            if (take.Mode == Mode.Dictate && retry == null && _welcomeForm is { TakesTryResult: true } tour
-                && take.PasteTarget != IntPtr.Zero && take.PasteTarget == tour.Handle)
-            {
-                _paster.KeepOnClipboard(text);
-                tour.ShowTryResult(text);
-                _overlay.ShowDone("Es funktioniert");
-                done = true;
-                return;
-            }
-
-            // A quick-action rewrite that lost most of a long selection must not silently replace it. Spoken
-            // instructions are unknown here (Gemini hears them) and "fass zusammen" is a normal request, so
-            // they rely on the MAX_TOKENS check alone.
-            if (take.Mode == Mode.Prompt && selection != null && take.QuickAction != null
-                && Core.ReplyGuards.AnswerSuspiciouslyShort(selection.Length, text.Length, take.QuickAction))
-            {
-                Core.Log.Info($"Prompt: answer {text.Length} chars for a selection of {selection.Length}, not pasted");
-                if (_paster.KeepOnClipboard(text))
-                {
-                    Sounds.Error();
-                    Notify("Bitte prüfen", "Antwort deutlich kürzer als die Markierung – liegt in der Zwischenablage, bitte prüfen.", ToolTipIcon.Warning);
-                }
-                else
-                {
-                    Sounds.Error();
-                    Notify("Einfügen fehlgeschlagen", "Die Zwischenablage war blockiert. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
-                }
-                return;
-            }
-
-            // Like the Mac since 8.75: a retry runs from idle (tray menu or balloon click, recovered recording);
-            // the window in front then is whatever the user did since, so copy only.
-            var keepOnly = !Core.ClipboardPasteGuard.MayAutoPaste(_settings.AutoPaste, clipboardOnlyRun: take.ClipboardOnly);
-            var outcome = keepOnly
-                ? (_paster.KeepOnClipboard(text) ? PasteOutcome.ClipboardOnlyByChoice : PasteOutcome.Failed)
-                : await _paster.PasteAsync(text, take.PasteTarget, _settings.ClipboardAfterPaste, ct);
-            Core.Log.Info($"{take.Mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, after paste {Core.Choices.AfterPaste.Token(_settings.ClipboardAfterPaste)}");
-            switch (outcome)
-            {
-                case PasteOutcome.ClipboardOnlyByChoice when take.Unsupported.Count > 0:
-                    _overlay.ShowWarning(take.Unsupported, pasted: false);
-                    done = true;
-                    break;
-                case PasteOutcome.ClipboardOnlyByChoice:
-                    _overlay.ShowDone("In der Zwischenablage");
-                    done = true;
-                    break;
-                case PasteOutcome.Pasted when take.Unsupported.Count > 0:
-                    _overlay.ShowWarning(take.Unsupported, pasted: true);
-                    done = true;
-                    break;
-                case PasteOutcome.Pasted:
-                    _overlay.ShowDone("Eingefügt");
-                    done = true;
-                    break;
-                case PasteOutcome.ClipboardOnlyElevatedTarget or PasteOutcome.ClipboardOnlyKeysHeld or PasteOutcome.ClipboardOnlyTargetChanged
-                    or PasteOutcome.ClipboardOnlyOwnWindow or PasteOutcome.ClipboardOnlyTargetGone
-                    or PasteOutcome.ClipboardOnlyClipboardChanged when take.Unsupported.Count > 0:
-                    // The balloon would bury the warning; the card says both.
-                    _overlay.ShowWarning(take.Unsupported, pasted: false);
-                    done = true;
-                    break;
-                case PasteOutcome.ClipboardOnlyElevatedTarget:
-                    Notify("Bitte selbst einfügen",
-                        "Das Zielprogramm läuft als Administrator, dorthin darf WhisperShortcut nicht tippen. Der Text liegt in der Zwischenablage: Strg+V drücken.",
-                        ToolTipIcon.Info);
-                    break;
-                case PasteOutcome.ClipboardOnlyKeysHeld:
-                    Notify("Bitte selbst einfügen",
-                        "Strg, Umschalt oder Alt war noch gedrückt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
-                        ToolTipIcon.Info);
-                    break;
-                case PasteOutcome.ClipboardOnlyTargetChanged:
-                    Notify("Bitte selbst einfügen",
-                        "Du hast das Fenster gewechselt. Der Text liegt in der Zwischenablage: Strg+V drücken.",
-                        ToolTipIcon.Info);
-                    break;
-                case PasteOutcome.ClipboardOnlyTargetGone:
-                    Notify("Bitte selbst einfügen",
-                        "Das Fenster, in dem die Aufnahme begann, ist geschlossen. Der Text liegt in der Zwischenablage: Strg+V drücken.",
-                        ToolTipIcon.Info);
-                    break;
-                case PasteOutcome.ClipboardOnlyClipboardChanged:
-                    Notify("Nicht eingefügt",
-                        "Die Zwischenablage hat sich kurz vor dem Einfügen geändert. Den Text gibt es im Menü am Symbol unter „Letzte Transkriptionen“.",
-                        ToolTipIcon.Info);
-                    break;
-                case PasteOutcome.ClipboardOnlyOwnWindow:
-                    Notify("Bitte selbst einfügen",
-                        "Vorn war ein Fenster von WhisperShortcut. Der Text liegt in der Zwischenablage: Strg+V drücken.",
-                        ToolTipIcon.Info);
-                    break;
-                case PasteOutcome.Failed:
-                    Sounds.Error();
-                    Notify("Einfügen fehlgeschlagen", "Die Zwischenablage war blockiert. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
-                    break;
-            }
+            if (await body(ct) is { } shown) done = Present(shown, take, failed());
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
             // The pill disappearing is the feedback; a balloon on top of it would be noise.
-            Core.Log.Info($"{take.Mode}: cancelled by user");
-            // Mac: a cancel is one keystroke and can be an accident; keep a dictation for the tray menu (only dictation:
-            // an instruction run again as dictation would paste the instruction).
-            if (take.Mode == Mode.Dictate && wav is { Length: > 0 })
-            {
-                _cancelled.Keep(wav, seconds);
-                Core.Log.Info($"Dictate: kept the cancelled recording ({seconds:0.0} s) for the tray menu");
-            }
+            Core.Log.Info($"{label}: cancelled by user");
+            onCancelled?.Invoke();
             Core.RecordingCheckpoint.DiscardAll();
-        }
-        catch (SelectionUnreadableException)
-        {
-            // Writing a new text now would overwrite the marked one.
-            Sounds.Error();
-            Notify("Nichts geändert", "Markierter Text konnte nicht gelesen werden. Bitte noch einmal versuchen.", ToolTipIcon.Warning);
-        }
-        catch (OfflineNotReadyException e)
-        {
-            Core.Log.Error($"{take.Mode}: offline model missing");
-            Sounds.Error();
-            Notify(Core.UserCopy.ModelNotDownloadedTitle, e.Message, ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
-        }
-        catch (Core.LocalLlmException e)
-        {
-            Core.Log.Error($"{take.Mode}: local LLM failed", e);
-            Sounds.Error();
-            NotifyRetryable(Core.UserCopy.OfflineModelErrorTitle, e.Message, Failed());
-        }
-        catch (Core.EmptyModelReplyException e)
-        {
-            Core.Log.Error($"{take.Mode}: empty model reply");
-            Sounds.Error();
-            NotifyRetryable(Core.UserCopy.NoReplyTitle, e.Message, Failed());
-        }
-        catch (Core.GeminiException e)
-        {
-            Core.Log.Error($"{take.Mode}: Gemini {e.Kind}");
-            Sounds.Error();
-            if (e.Kind == Core.GeminiErrorKind.Billing)
-            {
-                // Retrying cannot fill an empty account, but the audio stays for "Letzte Aufnahme erneut verarbeiten" after topping up.
-                _lastFailed = Failed();
-                var url = e.BillingUrl;
-                Notify(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, ToolTipIcon.Error,
-                    url == null ? ShowSettings : () => OpenBillingUrl(url), url == null ? Core.UserCopy.ActionOpenSettings : Core.UserCopy.ActionTopUp);
-            }
-            else if (e.Kind is Core.GeminiErrorKind.NoKey or Core.GeminiErrorKind.InvalidKey)
-                Notify(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, ToolTipIcon.Error,
-                    () => ShowSettingsPage(SettingsForm.AccountsPage), Core.UserCopy.ActionOpenSettings);
-            else if (e.Kind is Core.GeminiErrorKind.Network or Core.GeminiErrorKind.Timeout or Core.GeminiErrorKind.Quota or Core.GeminiErrorKind.Server)
-                NotifyRetryable(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, Failed());
-            else
-                Notify(Core.UserCopy.ProviderErrorTitle(e.Kind, e.Provider, e.Message), e.Message, ToolTipIcon.Error);
-        }
-        catch (Exception e) when (e is Core.AudioSilentException or MicrophoneUnavailableException)
-        {
-            Core.Log.Error($"{take.Mode}: microphone problem {e.GetType().Name}");
-            Sounds.Error();
-            Notify("Problem mit dem Mikrofon", e.Message, ToolTipIcon.Warning);
         }
         catch (Exception e)
         {
-            Core.Log.Error($"{take.Mode}: unexpected error", e);
-            Sounds.Error();
-            NotifyRetryable("Fehler", "Etwas ist schiefgelaufen. Details stehen im Protokoll (Rechtsklick auf das Symbol → Protokoll öffnen).", Failed());
+            var line = Core.RunOutcomes.LogLine(e, out var withException);
+            if (line != null) Core.Log.Error($"{label}: {line}", withException ? e : null);
+            var lost = failed();
+            Present(Core.RunOutcomes.ForFailure(e, audioKept: lost != null, context), take, lost);
+            onFailed?.Invoke();
         }
         finally
         {
@@ -1398,26 +1276,47 @@ internal sealed partial class TrayApp : ApplicationContext
         }
     }
 
+    /// <summary>
+    /// Shows one <see cref="Core.Presentation"/>: the pill, the warning card or a toast with its sound and follow-up.
+    /// <paramref name="failed"/> is what a retry would run. True when the overlay shows a result (it must not be hidden).
+    /// </summary>
+    private bool Present(Core.Presentation p, Take take, FailedRun? failed)
+    {
+        switch (p.Kind)
+        {
+            case Core.PresentationKind.Done:
+                _overlay.ShowDone(p.Text);
+                return true;
+            case Core.PresentationKind.Warning:
+                _overlay.ShowWarning(take.Unsupported, p.Pasted);
+                return true;
+            case Core.PresentationKind.Toast:
+                if (p.ErrorSound) Sounds.Error();
+                if (p.KeepAudio) _lastFailed = failed;
+                var icon = p.Icon switch { Core.Severity.Error => ToolTipIcon.Error, Core.Severity.Warning => ToolTipIcon.Warning, _ => ToolTipIcon.Info };
+                var url = p.Url;
+                var (onClick, label) = p.Action switch
+                {
+                    // The audio is gone: nothing to run again.
+                    Core.FollowUp.Retry when failed != null => ((Action?)(() => RetryLast()), Core.UserCopy.ActionRetry),
+                    Core.FollowUp.OpenSettings => ((Action?)ShowSettings, Core.UserCopy.ActionOpenSettings),
+                    Core.FollowUp.OpenAccounts => ((Action?)(() => ShowSettingsPage(SettingsForm.AccountsPage)), Core.UserCopy.ActionOpenSettings),
+                    Core.FollowUp.TopUp when url != null => ((Action?)(() => OpenBillingUrl(url)), Core.UserCopy.ActionTopUp),
+                    _ => ((Action?)null, (string?)null),
+                };
+                Notify(p.Title, p.Text, icon, onClick, label);
+                return false;
+            default:
+                return false;
+        }
+    }
+
     /// <summary>Opens the provider's billing page from the "Guthaben" balloon.</summary>
     private static void OpenBillingUrl(string url)
     {
         if (!Core.NetworkPolicy.IsAllowedBrowserUrl(url)) return;
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); }
         catch (Exception e) { Core.Log.Error($"Opening the billing page failed: {e.GetType().Name}"); }
-    }
-
-    /// <summary>
-    /// Error balloon that, when the audio is still there, keeps the run for a retry and offers it on click.
-    /// </summary>
-    private void NotifyRetryable(string title, string message, FailedRun? run)
-    {
-        if (run == null)
-        {
-            Notify(title, message, ToolTipIcon.Error);
-            return;
-        }
-        _lastFailed = run;
-        Notify(title, message, ToolTipIcon.Error, () => RetryLast(), Core.UserCopy.ActionRetry);
     }
 
     private async Task<string> DictateAsync(byte[] wav, double seconds, CancellationToken ct)
@@ -1672,7 +1571,7 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         if (selection != null || isRetry || !_paster.LateCopyArrived) return;
         Core.Log.Info($"{what}: selection arrived after the deadline, not composing over it");
-        throw new SelectionUnreadableException();
+        throw new Core.SelectionUnreadableException();
     }
 
     /// <summary>The text provider of Dictate Prompt, templates and quick instructions; says "loading" while the local model is not up yet.</summary>
@@ -1858,7 +1757,7 @@ internal sealed partial class TrayApp : ApplicationContext
                     break;
             }
         }
-        catch (SelectionUnreadableException)
+        catch (Core.SelectionUnreadableException)
         {
             Sounds.Error();
             Notify("Nichts geändert", "Markierter Text konnte nicht gelesen werden. Bitte noch einmal versuchen.", ToolTipIcon.Warning);

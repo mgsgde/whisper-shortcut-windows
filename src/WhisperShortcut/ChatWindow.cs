@@ -514,7 +514,7 @@ internal sealed partial class ChatWindow : FastShowForm
             if (IsDisposed) return;
             SetStatus(e.Message, Tone.Bad);
         }
-        catch (Exception e) when (e is OfflineNotReadyException or Core.LocalLlmException)
+        catch (Exception e) when (e is Core.OfflineNotReadyException or Core.LocalLlmException)
         {
             if (IsDisposed) return;
             SetStatus(e.Message + " Unter Einstellungen → Dictate Prompt lässt es sich laden.", Tone.Bad);

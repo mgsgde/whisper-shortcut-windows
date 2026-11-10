@@ -166,7 +166,7 @@ internal sealed class ReadAloudController : IDisposable
         {
             // Stopped by the user.
         }
-        catch (SelectionUnreadableException)
+        catch (Core.SelectionUnreadableException)
         {
             if (run != _run) return;
             Stop();

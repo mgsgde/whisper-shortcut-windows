@@ -3,13 +3,6 @@ using NAudio.Wave;
 
 namespace WhisperShortcut;
 
-/// <summary>No usable microphone.</summary>
-internal sealed class MicrophoneUnavailableException : Exception
-{
-    public MicrophoneUnavailableException(Exception inner)
-        : base("Kein Mikrofon gefunden oder Zugriff gesperrt. Bitte ein Mikrofon anschließen und in Windows als Standardgerät wählen. Zugriff prüfen: Einstellungen → Datenschutz (und Sicherheit) → Mikrofon → Desktop-Apps den Zugriff erlauben.", inner) { }
-}
-
 /// <summary>
 /// Records the chosen microphone (see <see cref="Microphones.DeviceNumber"/>; empty = the Windows
 /// default, WAVE_MAPPER -1, not device 0) as 16 kHz mono 16-bit into an in-memory WAV. Stops itself at <see cref="MaxDuration"/>.

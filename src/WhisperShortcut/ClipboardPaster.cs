@@ -4,34 +4,6 @@ using static WhisperShortcut.NativeMethods;
 
 namespace WhisperShortcut;
 
-internal enum PasteOutcome
-{
-    /// <summary>Ctrl+V was sent; the old clipboard comes back after 3 s.</summary>
-    Pasted,
-    /// <summary>The target runs as administrator (UIPI would drop our keystrokes): text stays on the clipboard.</summary>
-    ClipboardOnlyElevatedTarget,
-    /// <summary>Ctrl/Alt were still held after 3 s: a Ctrl+V now would arrive as Ctrl+Alt+V. Text stays on the clipboard.</summary>
-    ClipboardOnlyKeysHeld,
-    /// <summary>"Automatisch einfügen" is off: the text was only put on the clipboard.</summary>
-    ClipboardOnlyByChoice,
-    /// <summary>The user switched to another window since the recording started and the old one could not be brought back. Text stays on the clipboard.</summary>
-    ClipboardOnlyTargetChanged,
-    /// <summary>The window the recording started in was closed. Text stays on the clipboard.</summary>
-    ClipboardOnlyTargetGone,
-    /// <summary>The window in front is one of our own (settings, a message box): Ctrl+V would vanish there. Text stays on the clipboard.</summary>
-    ClipboardOnlyOwnWindow,
-    /// <summary>Something else wrote the clipboard between our write and Ctrl+V: nothing pasted, the clipboard is left as it is.</summary>
-    ClipboardOnlyClipboardChanged,
-    /// <summary>Could not write the clipboard at all.</summary>
-    Failed,
-}
-
-/// <summary>The clipboard changed after Ctrl+C but its text could not be read: there may be a selection we never saw.</summary>
-internal sealed class SelectionUnreadableException : Exception
-{
-    public SelectionUnreadableException() : base("Selection copied but the clipboard could not be read") { }
-}
-
 /// <summary>
 /// Clipboard + synthetic Ctrl+C / Ctrl+V, the Windows port of the Mac's non-destructive paste.
 /// Runs on the UI thread; waits are awaited, never blocking. The whole clipboard (every memory-based
@@ -139,7 +111,7 @@ internal sealed class ClipboardPaster
     /// back only when nothing, our own window or the taskbar is in front; with another window in front or the
     /// target closed the text stays on the clipboard. <c>IntPtr.Zero</c> means: no target to check.
     /// </summary>
-    public async Task<PasteOutcome> PasteAsync(string text, IntPtr target,
+    public async Task<Core.PasteOutcome> PasteAsync(string text, IntPtr target,
         Core.ClipboardAfterPaste afterPaste = Core.ClipboardAfterPaste.KeepDictation, CancellationToken ct = default)
     {
         // The user may still hold Ctrl+Alt from the hotkey: Ctrl+V would arrive as Ctrl+Alt+V.
@@ -147,7 +119,7 @@ internal sealed class ClipboardPaster
         ct.ThrowIfCancellationRequested(); // cancelled while waiting: leave the clipboard alone
         CancelLateWatch(); // our own write below would look like a late copy
         if (!released)
-            return WriteText(text) ? PasteOutcome.ClipboardOnlyKeysHeld : PasteOutcome.Failed;
+            return WriteText(text) ? Core.PasteOutcome.ClipboardOnlyKeysHeld : Core.PasteOutcome.Failed;
 
         bool hasTarget = target != IntPtr.Zero;
         var action = Core.PasteTargetPolicy.Decide(hasTarget, hasTarget && BelongsToThisProcess(target) && !IsOwnTextTarget(target),
@@ -157,13 +129,13 @@ internal sealed class ClipboardPaster
         {
             case Core.PasteTargetAction.ClipboardOnlyOwnWindow:
                 Core.Log.Info("Paste: target is one of our own windows, leaving text on the clipboard");
-                return WriteText(text) ? PasteOutcome.ClipboardOnlyOwnWindow : PasteOutcome.Failed;
+                return WriteText(text) ? Core.PasteOutcome.ClipboardOnlyOwnWindow : Core.PasteOutcome.Failed;
             case Core.PasteTargetAction.ClipboardOnlyTargetGone:
                 Core.Log.Info("Paste: the recording's window is gone, leaving text on the clipboard");
-                return WriteText(text) ? PasteOutcome.ClipboardOnlyTargetGone : PasteOutcome.Failed;
+                return WriteText(text) ? Core.PasteOutcome.ClipboardOnlyTargetGone : Core.PasteOutcome.Failed;
             case Core.PasteTargetAction.ClipboardOnlyTargetChanged:
                 Core.Log.Info("Paste: another window is in front (or the target is minimised), not taking focus back, leaving text on the clipboard");
-                return WriteText(text) ? PasteOutcome.ClipboardOnlyTargetChanged : PasteOutcome.Failed;
+                return WriteText(text) ? Core.PasteOutcome.ClipboardOnlyTargetChanged : Core.PasteOutcome.Failed;
             case Core.PasteTargetAction.ActivateTargetThenPaste:
             {
                 // Windows may refuse (foreground lock); then the check below simply fails. No input tricks.
@@ -173,7 +145,7 @@ internal sealed class ClipboardPaster
                 {
                     string why = asked ? "target did not come to the front" : "SetForegroundWindow refused";
                     Core.Log.Info($"Paste: could not bring the recording's window back ({why}), leaving text on the clipboard");
-                    return WriteText(text) ? PasteOutcome.ClipboardOnlyTargetChanged : PasteOutcome.Failed;
+                    return WriteText(text) ? Core.PasteOutcome.ClipboardOnlyTargetChanged : Core.PasteOutcome.Failed;
                 }
                 Core.Log.Info("Paste: brought the recording's window back");
                 break;
@@ -184,13 +156,13 @@ internal sealed class ClipboardPaster
         if (ForegroundIsOwnWindow() && !(hasTarget && ForegroundRoot() == target && IsOwnTextTarget(target)))
         {
             Core.Log.Info("Paste: foreground is one of our own windows, leaving text on the clipboard");
-            return WriteText(text) ? PasteOutcome.ClipboardOnlyOwnWindow : PasteOutcome.Failed;
+            return WriteText(text) ? Core.PasteOutcome.ClipboardOnlyOwnWindow : Core.PasteOutcome.Failed;
         }
 
         if (ForegroundIsElevated())
         {
             Core.Log.Info("Paste: foreground window runs elevated, leaving text on the clipboard");
-            return WriteText(text) ? PasteOutcome.ClipboardOnlyElevatedTarget : PasteOutcome.Failed;
+            return WriteText(text) ? Core.PasteOutcome.ClipboardOnlyElevatedTarget : Core.PasteOutcome.Failed;
         }
 
         ClipboardSnapshot? original;
@@ -203,7 +175,7 @@ internal sealed class ClipboardPaster
         {
             original = TrySnapshot();
         }
-        if (!WriteText(text)) return PasteOutcome.Failed;
+        if (!WriteText(text)) return Core.PasteOutcome.Failed;
         uint ourSequence = GetClipboardSequenceNumber();
         _pendingRestore?.Cancel(); // only the latest paste restores
         var restore = new CancellationTokenSource();
@@ -233,7 +205,7 @@ internal sealed class ClipboardPaster
             Core.Log.Info("Paste: clipboard changed before Ctrl+V, not pasting");
             if (_pendingRestore == restore) { _pendingRestore = null; _pendingOriginal = null; }
             restore.Dispose();
-            return PasteOutcome.ClipboardOnlyClipboardChanged;
+            return Core.PasteOutcome.ClipboardOnlyClipboardChanged;
         }
         SendChord(0x56); // V
         Core.Log.Info($"Paste: sent Ctrl+V ({text.Length} chars), afterwards {Core.Choices.AfterPaste.Token(afterPaste)}");
@@ -251,7 +223,7 @@ internal sealed class ClipboardPaster
             _pendingOriginal = null;
             restore.Dispose();
         }
-        return PasteOutcome.Pasted;
+        return Core.PasteOutcome.Pasted;
     }
 
     /// <summary>Puts text on the clipboard without pasting (tray menu: "Letzten Text kopieren").</summary>
@@ -617,7 +589,7 @@ internal sealed class ClipboardPaster
     /// Copies the current selection with Ctrl+C and returns it, or null when nothing was selected.
     /// Only a changed clipboard sequence number counts: an unchanged clipboard still holds an old copy
     /// that has nothing to do with this recording. The user's clipboard is put back afterwards.
-    /// Throws <see cref="SelectionUnreadableException"/> when the clipboard changed but stayed unreadable:
+    /// Throws <see cref="Core.SelectionUnreadableException"/> when the clipboard changed but stayed unreadable:
     /// "no selection" would let a new text overwrite the marked one. Cancelling (Esc) sends no Ctrl+C
     /// when it comes before the keystroke, and puts the clipboard back when it comes after.
     /// After the deadline it keeps watching for 3 s (<see cref="LateCopyArrived"/>), like the Mac.
@@ -673,7 +645,7 @@ internal sealed class ClipboardPaster
                 if (r == Core.CopyPollResult.Unreadable)
                 {
                     Core.Log.Error("Copy: clipboard changed but could not be read");
-                    throw new SelectionUnreadableException();
+                    throw new Core.SelectionUnreadableException();
                 }
                 var trimmed = (copied ?? "").Trim();
                 Core.Log.Info($"Copy: selection {(trimmed.Length == 0 ? "empty" : trimmed.Length + " chars")}");
