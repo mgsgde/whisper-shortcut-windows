@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Http.Headers;
 using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
@@ -17,14 +15,8 @@ public sealed record ChatReply(string Text, IReadOnlyList<ChatSource> Sources);
 /// </summary>
 public sealed class ChatClient
 {
-    private const string GeminiBase = "https://generativelanguage.googleapis.com/v1beta/models/";
-    private const string OpenAiUrl = "https://api.openai.com/v1/chat/completions";
-
     /// <summary>Extra tries after the first one.</summary>
     public const int MaxRetries = 2;
-
-    // Exception.Data marker: the failure came from a transient HTTP status or the network.
-    private const string TransientKey = "chat.transient";
 
     private static readonly JsonSerializerOptions Compact = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
@@ -61,12 +53,9 @@ public sealed class ChatClient
         if (engine == Engine.Local)
             throw new ArgumentException("Der Offline-Motor wird von der App selbst bedient.", nameof(engine));
         var gemini = engine == Engine.Gemini;
-        var provider = gemini ? "Gemini" : "OpenAI";
+        var api = gemini ? CloudApi.Gemini : CloudApi.OpenAi;
         var key = (gemini ? _geminiKey() : _openAiKey())?.Trim();
-        if (string.IsNullOrEmpty(key))
-            throw gemini
-                ? new GeminiException(GeminiErrorKind.NoKey, "Kein API-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.")
-                : new GeminiException("OpenAI", GeminiErrorKind.NoKey, "Kein OpenAI-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.");
+        if (string.IsNullOrEmpty(key)) throw api.NoKey(KeyHint.Settings);
 
         var delivered = false;
         void Deliver(string piece)
@@ -90,31 +79,14 @@ public sealed class ChatClient
                     ? await StreamGeminiAsync(model, key, body, Deliver, ct).ConfigureAwait(false)
                     : await StreamOpenAiAsync(model, key, body, Deliver, ct).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested)
-            {
-                throw;
-            }
             catch (GeminiException ex)
             {
                 failure = ex;
             }
-            catch (OperationCanceledException)
-            {
-                Log.Error($"Chat {provider} {model}: stalled");
-                failure = new GeminiException(provider, GeminiErrorKind.Timeout,
-                    $"Zeitüberschreitung: {provider} hat nicht rechtzeitig geantwortet. Bitte Internetverbindung prüfen.");
-            }
-            catch (Exception ex) when (ex is HttpRequestException or IOException)
-            {
-                Log.Error($"Chat {provider} {model}: network", ex);
-                failure = new GeminiException(provider, GeminiErrorKind.Network,
-                    $"Kein Netz: {provider} ist nicht erreichbar. Bitte Internetverbindung prüfen.", ex);
-            }
 
-            var transient = failure.Kind is GeminiErrorKind.Network or GeminiErrorKind.Timeout || failure.Data.Contains(TransientKey);
-            if (delivered || !transient || attempt > MaxRetries) throw failure;
+            if (delivered || !failure.Retryable || attempt > MaxRetries) throw failure;
             var delay = HttpRetry.Backoff(RetryDelay, attempt);
-            Log.Info($"Chat {provider} {model}: attempt {attempt} failed ({failure.Kind}), retrying in {delay.TotalSeconds:0.#} s");
+            Log.Info($"Chat {api.Name} {model}: attempt {attempt} failed ({failure.Kind}), retrying in {delay.TotalSeconds:0.#} s");
             await Task.Delay(delay, ct).ConfigureAwait(false);
         }
     }
@@ -212,45 +184,33 @@ public sealed class ChatClient
     {
         using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(ct);
         watchdog.CancelAfter(IdleTimeout);
-        using var request = new HttpRequestMessage(HttpMethod.Post, $"{GeminiBase}{model}:streamGenerateContent?alt=sse")
-        {
-            Content = new StringContent(body, Encoding.UTF8, "application/json"),
-        };
-        request.Headers.ExpectContinue = false;
-        request.Headers.Add("x-goog-api-key", key);
-
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, watchdog.Token)
-            .ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            var text = await response.Content.ReadAsStringAsync(watchdog.Token).ConfigureAwait(false);
-            var code = (int)response.StatusCode;
-            Log.Error($"Chat Gemini {model}: HTTP {code} {GeminiClient.GoogleStatus(text)}");
-            throw Mark(GeminiClient.MapStatus(response.StatusCode, text), code, IsDaily(text));
-        }
-
-        var reply = new StringBuilder();
-        var sources = new List<ChatSource>();
-        using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        while (await reader.ReadLineAsync(watchdog.Token).ConfigureAwait(false) is { } line)
-        {
-            watchdog.CancelAfter(IdleTimeout);
-            if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
-            var json = line.Substring(5).Trim();
-            if (json.Length == 0 || json == "[DONE]") continue;
-            var piece = ParseGeminiChunk(json, sources);
-            if (piece.Length == 0) continue;
-            reply.Append(piece);
-            deliver(piece);
-        }
-        if (reply.Length == 0)
-        {
-            Log.Error($"Chat Gemini {model}: 2xx without any text");
-            throw new GeminiException(GeminiErrorKind.Server, "Gemini hat keine Antwort geliefert. Bitte noch einmal versuchen.");
-        }
-        Log.Info($"Chat Gemini {model}: {reply.Length} chars, {sources.Count} sources");
-        return new ChatReply(reply.ToString(), sources);
+        return await CloudHttp.SendAsync(_http, CloudApi.Gemini, $"{CloudApi.Gemini.ApiBase}{model}:streamGenerateContent?alt=sse", key,
+            new StringContent(body, Encoding.UTF8, "application/json"), $"Chat Gemini {model}", watchdog.Token, ct,
+            async response =>
+            {
+                var reply = new StringBuilder();
+                var sources = new List<ChatSource>();
+                using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                while (await reader.ReadLineAsync(watchdog.Token).ConfigureAwait(false) is { } line)
+                {
+                    watchdog.CancelAfter(IdleTimeout);
+                    if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
+                    var json = line.Substring(5).Trim();
+                    if (json.Length == 0 || json == "[DONE]") continue;
+                    var piece = ParseGeminiChunk(json, sources);
+                    if (piece.Length == 0) continue;
+                    reply.Append(piece);
+                    deliver(piece);
+                }
+                if (reply.Length == 0)
+                {
+                    Log.Error($"Chat Gemini {model}: 2xx without any text");
+                    throw new GeminiException(GeminiErrorKind.Server, "Gemini hat keine Antwort geliefert. Bitte noch einmal versuchen.");
+                }
+                Log.Info($"Chat Gemini {model}: {reply.Length} chars, {sources.Count} sources");
+                return new ChatReply(reply.ToString(), sources);
+            }, HttpCompletionOption.ResponseHeadersRead, "stalled").ConfigureAwait(false);
     }
 
     /// <summary>
@@ -268,17 +228,7 @@ public sealed class ChatClient
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return "";
 
-            if (root.TryGetProperty("error", out var err) && err.ValueKind != JsonValueKind.Null)
-            {
-                // The HTTP status was 200, so the code lives in the error object.
-                var code = err.ValueKind == JsonValueKind.Object && err.TryGetProperty("code", out var c)
-                    && c.ValueKind == JsonValueKind.Number && c.TryGetInt32(out var n) && n is >= 400 and <= 599 ? n : 500;
-                Log.Error($"Chat Gemini: stream error object {code} {GeminiClient.GoogleStatus(json)}");
-                throw Mark(GeminiClient.MapStatus((HttpStatusCode)code, json), code, IsDaily(json));
-            }
-            if (root.TryGetProperty("promptFeedback", out var feedback) && feedback.ValueKind == JsonValueKind.Object
-                && feedback.TryGetProperty("blockReason", out var block) && block.ValueKind == JsonValueKind.String)
-                throw new GeminiException(GeminiErrorKind.Server, $"Gemini hat die Anfrage abgelehnt ({block.GetString()}).");
+            if (CloudApi.Gemini.StreamError(root, json, "Chat Gemini", "die Anfrage") is { } streamError) throw streamError;
 
             if (!root.TryGetProperty("candidates", out var candidates) || candidates.ValueKind != JsonValueKind.Array
                 || candidates.GetArrayLength() == 0 || candidates[0].ValueKind != JsonValueKind.Object) return "";
@@ -320,47 +270,33 @@ public sealed class ChatClient
     {
         using var watchdog = CancellationTokenSource.CreateLinkedTokenSource(ct);
         watchdog.CancelAfter(IdleTimeout);
-        using var request = new HttpRequestMessage(HttpMethod.Post, OpenAiUrl)
-        {
-            Content = new StringContent(body, Encoding.UTF8, "application/json"),
-        };
-        request.Headers.ExpectContinue = false;
-        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
-
-        using var response = await _http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, watchdog.Token)
-            .ConfigureAwait(false);
-        if (!response.IsSuccessStatusCode)
-        {
-            var text = await response.Content.ReadAsStringAsync(watchdog.Token).ConfigureAwait(false);
-            var code = (int)response.StatusCode;
-            var errorCode = OpenAiClient.ErrorCode(text);
-            Log.Error($"Chat OpenAI {model}: HTTP {code} {errorCode}");
-            // MapStatus already turns an empty account (insufficient_quota) into Billing, which is not retried.
-            throw Mark(OpenAiClient.MapStatus(code, errorCode), code, false);
-        }
-
-        var reply = new StringBuilder();
-        using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
-        using var reader = new StreamReader(stream, Encoding.UTF8);
-        while (await reader.ReadLineAsync(watchdog.Token).ConfigureAwait(false) is { } line)
-        {
-            watchdog.CancelAfter(IdleTimeout);
-            if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
-            var json = line.Substring(5).Trim();
-            if (json.Length == 0) continue;
-            if (json == "[DONE]") break;
-            var piece = ParseOpenAiChunk(json);
-            if (piece.Length == 0) continue;
-            reply.Append(piece);
-            deliver(piece);
-        }
-        if (reply.Length == 0)
-        {
-            Log.Error($"Chat OpenAI {model}: 2xx without any text");
-            throw new GeminiException("OpenAI", GeminiErrorKind.Server, "OpenAI hat keine Antwort geliefert. Bitte noch einmal versuchen.");
-        }
-        Log.Info($"Chat OpenAI {model}: {reply.Length} chars");
-        return new ChatReply(reply.ToString(), Array.Empty<ChatSource>());
+        return await CloudHttp.SendAsync(_http, CloudApi.OpenAi, CloudApi.OpenAi.ApiBase + "chat/completions", key,
+            new StringContent(body, Encoding.UTF8, "application/json"), $"Chat OpenAI {model}", watchdog.Token, ct,
+            async response =>
+            {
+                var reply = new StringBuilder();
+                using var stream = await response.Content.ReadAsStreamAsync(watchdog.Token).ConfigureAwait(false);
+                using var reader = new StreamReader(stream, Encoding.UTF8);
+                while (await reader.ReadLineAsync(watchdog.Token).ConfigureAwait(false) is { } line)
+                {
+                    watchdog.CancelAfter(IdleTimeout);
+                    if (!line.StartsWith("data:", StringComparison.Ordinal)) continue;
+                    var json = line.Substring(5).Trim();
+                    if (json.Length == 0) continue;
+                    if (json == "[DONE]") break;
+                    var piece = ParseOpenAiChunk(json);
+                    if (piece.Length == 0) continue;
+                    reply.Append(piece);
+                    deliver(piece);
+                }
+                if (reply.Length == 0)
+                {
+                    Log.Error($"Chat OpenAI {model}: 2xx without any text");
+                    throw new GeminiException("OpenAI", GeminiErrorKind.Server, "OpenAI hat keine Antwort geliefert. Bitte noch einmal versuchen.");
+                }
+                Log.Info($"Chat OpenAI {model}: {reply.Length} chars");
+                return new ChatReply(reply.ToString(), Array.Empty<ChatSource>());
+            }, HttpCompletionOption.ResponseHeadersRead, "stalled").ConfigureAwait(false);
     }
 
     /// <summary>One OpenAI SSE object: choices[0].delta.content ("" when none). A top-level error object throws.</summary>
@@ -373,12 +309,7 @@ public sealed class ChatClient
         {
             var root = doc.RootElement;
             if (root.ValueKind != JsonValueKind.Object) return "";
-            if (root.TryGetProperty("error", out var err) && err.ValueKind == JsonValueKind.Object)
-            {
-                var errorCode = OpenAiClient.ErrorCode(json);
-                Log.Error($"Chat OpenAI: stream error object {errorCode}");
-                throw Mark(OpenAiClient.MapStatus(500, errorCode), 500, false);
-            }
+            if (CloudApi.OpenAi.StreamError(root, json, "Chat OpenAI", "") is { } streamError) throw streamError;
             if (root.TryGetProperty("choices", out var choices) && choices.ValueKind == JsonValueKind.Array
                 && choices.GetArrayLength() > 0 && choices[0].ValueKind == JsonValueKind.Object
                 && choices[0].TryGetProperty("delta", out var delta) && delta.ValueKind == JsonValueKind.Object
@@ -387,18 +318,4 @@ public sealed class ChatClient
             return "";
         }
     }
-
-    // ---- helpers ----
-
-    // Flags a mapped HTTP failure as retryable when the status can pass (429 unless the daily quota is gone, 5xx).
-    private static GeminiException Mark(GeminiException ex, int code, bool dailyQuota)
-    {
-        if (HttpRetry.IsTransientStatus(code) && !(code == 429 && dailyQuota)
-            && ex.Kind is GeminiErrorKind.Quota or GeminiErrorKind.Server)
-            ex.Data[TransientKey] = true;
-        return ex;
-    }
-
-    private static bool IsDaily(string body) =>
-        body.Contains("PerDay", StringComparison.OrdinalIgnoreCase) || body.Contains("per day", StringComparison.OrdinalIgnoreCase);
 }

@@ -50,6 +50,15 @@ public sealed class GeminiException : Exception
 
     /// <summary>"Gemini" or "OpenAI", for the notification title.</summary>
     public string Provider { get; }
+
+    /// <summary>A second try can fix this (a timeout, network error, rate limit or failing server). Set by <see cref="CloudApi"/> only.</summary>
+    public bool Retryable { get; internal set; }
+
+    /// <summary>The server itself failed (5xx): such failures get one more attempt.</summary>
+    public bool ServerFault { get; internal set; }
+
+    /// <summary>How long the provider asked us to wait (RetryInfo / Retry-After), or null.</summary>
+    public TimeSpan? RetryAfter { get; internal set; }
 }
 
 /// <summary>Result of <see cref="GeminiClient.CheckKeyAsync"/>.</summary>
@@ -76,7 +85,6 @@ public enum KeyCheck
 /// </summary>
 public sealed class GeminiClient : ISpeechProvider, ITextProvider
 {
-    private const string BaseUrl = "https://generativelanguage.googleapis.com/v1beta/models/";
     private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
 
     private readonly HttpClient _http;
@@ -90,8 +98,6 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// selection gets the whole room the model has instead of whatever the server default allows.
     /// </summary>
     internal const int MaxOutputTokens = 65536;
-
-    private static readonly TimeSpan MaxRetryInfoDelay = HttpRetry.MaxWait;
 
     /// <summary>
     /// Base of the exponential backoff between retries (1.5 s, doubling per attempt, capped at 15 s;
@@ -219,7 +225,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// handshake on the hot path. Failures are ignored: the real request will try again.
     /// </summary>
     public Task PrewarmConnection() =>
-        HttpPrewarm.Connect(_http, "https://generativelanguage.googleapis.com/", "Gemini");
+        HttpPrewarm.Connect(_http, CloudApi.Gemini.Origin, "Gemini");
 
     /// <summary>
     /// Text-only call with a complete <paramref name="systemPrompt"/> and a complete <paramref name="userText"/>
@@ -456,39 +462,8 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// Checks an API key with a cheap models-list request before it is saved. Never throws for
     /// network problems; caller cancellation propagates as <see cref="OperationCanceledException"/>.
     /// </summary>
-    public async Task<KeyCheck> CheckKeyAsync(string key, CancellationToken ct = default)
-    {
-        key = key?.Trim() ?? "";
-        if (key.Length == 0) return KeyCheck.Invalid;
-
-        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(TimeSpan.FromSeconds(10));
-        KeyCheck result;
-        try
-        {
-            // Key goes in the header, not the URL, so it cannot end up in proxy or server logs.
-            using var request = new HttpRequestMessage(HttpMethod.Get, BaseUrl + "?pageSize=1");
-            request.Headers.Add("x-goog-api-key", key);
-            using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
-            result = (int)response.StatusCode switch
-            {
-                200 => KeyCheck.Ok,
-                400 or 401 => KeyCheck.Invalid,
-                403 => KeyCheck.Forbidden,
-                _ => KeyCheck.Other,
-            };
-        }
-        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
-        {
-            result = KeyCheck.NoConnection;
-        }
-        catch (HttpRequestException)
-        {
-            result = KeyCheck.NoConnection;
-        }
-        Log.Info($"Gemini key check: {result}");
-        return result;
-    }
+    public Task<KeyCheck> CheckKeyAsync(string key, CancellationToken ct = default) =>
+        CloudApi.Gemini.CheckKeyAsync(_http, key, ct);
 
     private static ByteArrayContent JsonUtf8Content(byte[] json)
     {
@@ -500,175 +475,50 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     private async Task<string> SendAsync(string model, byte[] json, CancellationToken ct, bool rejectTruncated = false)
     {
         var key = _apiKey()?.Trim();
-        if (string.IsNullOrEmpty(key))
-            throw new GeminiException(GeminiErrorKind.NoKey,
-                "Kein API-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.");
+        if (string.IsNullOrEmpty(key)) throw CloudApi.Gemini.NoKey(KeyHint.Settings);
 
-        var url = $"{BaseUrl}{model}:generateContent";
+        var url = $"{CloudApi.Gemini.ApiBase}{model}:generateContent";
         for (var attempt = 1; ; attempt++)
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             // Upload time scales with the body (~40 kB/s floor, e.g. slow DSL).
             timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(json.Length / 40_000.0));
             GeminiException failure;
-            string kind;
-            var serverError = false;
-            TimeSpan? retryInfo = null;
             try
             {
-                using var request = new HttpRequestMessage(HttpMethod.Post, url)
-                {
-                    Content = JsonUtf8Content(json),
-                };
-                request.Headers.ExpectContinue = false;
-                request.Headers.Add("x-goog-api-key", key);
-                using var response = await _http.SendAsync(request, timeout.Token).ConfigureAwait(false);
-                var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-
-                if (response.IsSuccessStatusCode)
-                {
-                    Log.Info($"Gemini {model}: HTTP {(int)response.StatusCode}, request {json.Length} bytes, answer {text.Length} bytes, attempt {attempt}");
-                    return ExtractText(text, rejectTruncated);
-                }
-
-                var code = (int)response.StatusCode;
-                Log.Error($"Gemini {model}: HTTP {code} {GoogleStatus(text)}");
-                failure = MapStatus(response.StatusCode, text);
-                kind = $"HTTP {code}";
-                // A daily quota will not recover within seconds: fail at once.
-                if (!HttpRetry.IsTransientStatus(code) || (code == 429 && IsDailyQuota(text)))
-                    throw failure;
-                serverError = code >= 500;
-                if (code == 429) retryInfo = ParseRetryInfo(text);
+                return await CloudHttp.SendAsync(_http, CloudApi.Gemini, url, key, JsonUtf8Content(json), $"Gemini {model}",
+                    timeout.Token, ct, async response =>
+                    {
+                        var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+                        Log.Info($"Gemini {model}: HTTP {(int)response.StatusCode}, request {json.Length} bytes, answer {text.Length} bytes, attempt {attempt}");
+                        return ExtractText(text, rejectTruncated);
+                    }).ConfigureAwait(false);
             }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            catch (GeminiException ex) when (ex.Retryable)
             {
-                Log.Error($"Gemini {model}: timeout");
-                failure = new GeminiException(GeminiErrorKind.Timeout,
-                    "Zeitüberschreitung: Gemini hat nicht rechtzeitig geantwortet. Bitte Internetverbindung prüfen.");
-                kind = "timeout";
-            }
-            catch (HttpRequestException ex)
-            {
-                Log.Error($"Gemini {model}: network", ex);
-                failure = new GeminiException(GeminiErrorKind.Network,
-                    "Kein Netz: Gemini ist nicht erreichbar. Bitte Internetverbindung prüfen.", ex);
-                kind = "network";
+                failure = ex;
             }
 
             // Retryable failure: 5 attempts, 6 when the server itself is failing.
-            if (attempt >= (serverError ? HttpRetry.MaxServerErrorAttempts : HttpRetry.MaxAttempts)) throw failure;
+            if (attempt >= (failure.ServerFault ? HttpRetry.MaxServerErrorAttempts : HttpRetry.MaxAttempts)) throw failure;
             TimeSpan delay;
-            if (retryInfo is { } info)
+            if (failure.RetryAfter is { } info)
             {
                 // Google says when the limit lifts; a longer wait is not worth blocking dictation for.
-                if (info > MaxRetryInfoDelay) throw failure;
+                if (info > HttpRetry.MaxWait) throw failure;
                 delay = info + RetryInfoBuffer;
             }
             else
             {
                 delay = HttpRetry.Backoff(RetryDelay, attempt);
             }
-            Log.Info($"Gemini {model}: attempt {attempt} failed ({kind}), retrying in {delay.TotalSeconds:0.#} s");
+            Log.Info($"Gemini {model}: attempt {attempt} failed ({failure.Kind}), retrying in {delay.TotalSeconds:0.#} s");
             await Task.Delay(delay, ct).ConfigureAwait(false);
         }
     }
 
-    /// <summary>True when a 429 body says the per-day quota is used up (retrying within the minute is pointless).</summary>
-    private static bool IsDailyQuota(string body) =>
-        body.Contains("PerDay", StringComparison.OrdinalIgnoreCase)
-        || body.Contains("per day", StringComparison.OrdinalIgnoreCase);
-
     /// <summary>The delay from a Google RetryInfo detail ("55s", "1.5s"), or null when absent.</summary>
-    public static TimeSpan? ParseRetryInfo(string body)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(body);
-            if (!doc.RootElement.TryGetProperty("error", out var e)
-                || !e.TryGetProperty("details", out var details)
-                || details.ValueKind != JsonValueKind.Array) return null;
-            foreach (var d in details.EnumerateArray())
-            {
-                if (d.ValueKind != JsonValueKind.Object
-                    || !d.TryGetProperty("@type", out var t) || t.ValueKind != JsonValueKind.String
-                    || !(t.GetString() ?? "").EndsWith("RetryInfo", StringComparison.Ordinal)
-                    || !d.TryGetProperty("retryDelay", out var r) || r.ValueKind != JsonValueKind.String) continue;
-                var str = (r.GetString() ?? "").Trim().TrimEnd('s');
-                if (double.TryParse(str, System.Globalization.NumberStyles.Float,
-                        System.Globalization.CultureInfo.InvariantCulture, out var secs) && secs >= 0 && secs < 86_400)
-                    return TimeSpan.FromSeconds(secs);
-            }
-        }
-        catch (JsonException) { }
-        return null;
-    }
-
-    /// <summary>
-    /// A 400 body with status FAILED_PRECONDITION, or a message naming billing / free tier / payment (as on the Mac).
-    /// Not "User location is not supported", which is also FAILED_PRECONDITION but no billing problem.
-    /// </summary>
-    private static bool IsBillingProblem(string body)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(body);
-            if (!doc.RootElement.TryGetProperty("error", out var e) || e.ValueKind != JsonValueKind.Object) return false;
-            if (e.TryGetProperty("message", out var lm) && lm.ValueKind == JsonValueKind.String
-                && (lm.GetString() ?? "").Contains("location", StringComparison.OrdinalIgnoreCase)) return false;
-            if (e.TryGetProperty("status", out var st) && st.ValueKind == JsonValueKind.String
-                && st.GetString() == "FAILED_PRECONDITION") return true;
-            if (e.TryGetProperty("message", out var m) && m.ValueKind == JsonValueKind.String)
-            {
-                var msg = m.GetString() ?? "";
-                return msg.Contains("billing", StringComparison.OrdinalIgnoreCase)
-                    || msg.Contains("free tier", StringComparison.OrdinalIgnoreCase)
-                    || msg.Contains("payment", StringComparison.OrdinalIgnoreCase);
-            }
-        }
-        catch (JsonException) { }
-        return false;
-    }
-
-    internal static GeminiException MapStatus(HttpStatusCode status, string body)
-    {
-        var code = (int)status;
-        if (body.Contains("SERVICE_DISABLED") || body.Contains("has not been used in project"))
-            return new GeminiException(GeminiErrorKind.InvalidKey,
-                "Die Gemini-API ist im Google-Projekt dieses Schlüssels nicht aktiviert (Generative Language API).");
-        if (code == 400 && IsBillingProblem(body))
-            return new GeminiException("Gemini", GeminiErrorKind.Billing,
-                "Für diesen Gemini-Schlüssel ist keine Abrechnung eingerichtet.", "https://aistudio.google.com/app/apikey");
-        if (body.Contains("BILLING", StringComparison.Ordinal))
-            return new GeminiException(GeminiErrorKind.InvalidKey,
-                "Für das Google-Projekt dieses Schlüssels ist keine Abrechnung eingerichtet.");
-        if (code is 401 or 403 || (code == 400 &&
-            (body.Contains("API_KEY_INVALID") || body.Contains("API key not valid", StringComparison.OrdinalIgnoreCase))))
-            return new GeminiException(GeminiErrorKind.InvalidKey,
-                "API-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
-        if (code == 429)
-            // Daily quota vs. a per-minute rate limit: only the second one passes by waiting a moment.
-            return new GeminiException(GeminiErrorKind.Quota, IsDailyQuota(body)
-                ? "Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen."
-                : "Gemini ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
-        if (code == 404)
-            return new GeminiException(GeminiErrorKind.Server, UserCopy.ModelGone("Gemini"));
-        return new GeminiException(GeminiErrorKind.Server, UserCopy.ServerBusy("Gemini"));
-    }
-
-    /// <summary>Only the status word (e.g. RESOURCE_EXHAUSTED) of a Google error body, for the log: the message can quote request content.</summary>
-    internal static string GoogleStatus(string body)
-    {
-        try
-        {
-            using var doc = JsonDocument.Parse(body);
-            return doc.RootElement.TryGetProperty("error", out var err)
-                && err.TryGetProperty("status", out var s)
-                && s.ValueKind == JsonValueKind.String
-                ? s.GetString() ?? "" : "";
-        }
-        catch (JsonException) { return ""; }
-    }
+    public static TimeSpan? ParseRetryInfo(string body) => CloudApi.ParseRetryInfo(body);
 
     /// <summary>
     /// Concatenates candidates[0].content.parts[].text; "" when absent. With <paramref name="rejectTruncated"/>
