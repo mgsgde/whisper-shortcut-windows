@@ -153,7 +153,7 @@ internal sealed partial class SettingsForm : FastShowForm
         StartPosition = FormStartPosition.Manual; // centered in Load, after the size is known
         ClientSize = new Size(1100, 780); // Mac: 1100×800 preferred, fitted to the work area in Load
         MinimumSize = new Size(760, 520);
-        MaximizeBox = false;
+        MaximizeBox = true; // resizable window: the maximize button must work (Mac: full screen is available)
         ShowInTaskbar = true;
         Icon = TrayIcons.App;
 
