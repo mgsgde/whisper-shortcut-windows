@@ -2141,13 +2141,11 @@ internal sealed partial class SettingsForm : FastShowForm
             (_settings.ScreenshotHotkey, _settings.ScreenshotHotkeyEnabled) = StoredKey(_screenshotKey.Value, _settings.ScreenshotHotkey);
             (_settings.LiveDictateHotkey, _settings.LiveDictateHotkeyEnabled) = StoredKey(_liveKey.Value, _settings.LiveDictateHotkey);
             (_settings.OpenSettingsHotkey, _settings.OpenSettingsHotkeyEnabled) = StoredKey(_settingsKey.Value, _settings.OpenSettingsHotkey);
-            _settings.Templates = _templates.Select(t => new Core.DictationTemplate
-            {
-                Id = t.Id, Name = t.Name.Trim(), Instructions = t.Instructions.ReplaceLineEndings("\n").Trim(),
-                Hotkey = Hotkey.TryParse(t.Hotkey, out var own) ? own.ToString() : "",
-            }).ToList();
             _settings.TemplateHotkey = Hotkey.TryParse(_templateKey.Value, out var picker) ? picker.ToString() : "";
         }
+        // Names, instructions and the list itself are saved even when a key is invalid; only the keys are held back.
+        _settings.Templates = Core.TemplateSave.Build(_templates, _settings.Templates, keysOk,
+            k => Hotkey.TryParse(k, out var own) ? own.ToString() : null);
         _settings.Glossary = _glossary.Lines.Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList();
         _settings.QuickActions = Core.QuickActionList.Clean(_quick.Select(q => q.Text));
         _settings.DictatePromptTemplate = _template.Text.Trim().Length == 0 ? "" : _template.Text.ReplaceLineEndings("\n").Trim();

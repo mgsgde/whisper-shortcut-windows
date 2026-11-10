@@ -75,9 +75,12 @@ public static class DictationFidelityCheck
     /// Content words of <paramref name="output"/> with no counterpart in any of <paramref name="sources"/>
     /// (the transcript, plus the selected text when there is one). Deduplicated by normalized form, in
     /// order of first occurrence, original spelling from <paramref name="output"/>. Null or blank
-    /// sources are ignored.
+    /// sources are ignored. The template text is deliberately no source: example content written in a
+    /// template must still be flagged. <paramref name="templateInstructions"/> only lets the template's
+    /// label words through (see <see cref="LabelWords"/>).
     /// </summary>
-    public static IReadOnlyList<string> UnsupportedWords(string output, IEnumerable<string?> sources)
+    public static IReadOnlyList<string> UnsupportedWords(string output, IEnumerable<string?> sources,
+        string? templateInstructions = null)
     {
         var sourceForms = new HashSet<string>();
         var sourceStems = new HashSet<string>();
@@ -104,9 +107,10 @@ public static class DictationFidelityCheck
         // "nicht" for a dictated "kein" is a rewording, so any source negation backs any output negation.
         var sourceHasNegation = sourceForms.Overlaps(Negations);
 
+        var extraHeadings = templateInstructions == null ? new HashSet<string>() : LabelWords(templateInstructions);
         var seen = new HashSet<string>();
         var result = new List<string>();
-        foreach (var token in OutputContentTokens(output, sourceForms, sourceStems))
+        foreach (var token in OutputContentTokens(output, sourceForms, sourceStems, extraHeadings))
         {
             var form = Normalize(token);
             var supported = (sourceHasNegation && Negations.Contains(form))
@@ -120,9 +124,35 @@ public static class DictationFidelityCheck
         return result;
     }
 
+    /// <summary>
+    /// Label words from a template's instructions (normalized). A line that starts with "#" or contains
+    /// ":" contributes the words before the first colon (the whole line for a "#" line without one).
+    /// Words after the colon stay out: example content in the template is no heading and is still flagged.
+    /// </summary>
+    public static HashSet<string> LabelWords(string instructions)
+    {
+        var words = new HashSet<string>();
+        foreach (var raw in NewlineSplit.Split(instructions))
+        {
+            var line = raw.Trim(' ', '\t');
+            if (line.Length == 0) continue;
+            var hashHeading = line.StartsWith('#');
+            if (!hashHeading && !line.Contains(':')) continue;
+            var colon = line.IndexOf(':');
+            var labelSource = colon >= 0 ? line[..colon] : line;
+            foreach (var token in Tokens(labelSource))
+            {
+                var form = Normalize(token);
+                if (form.Length > 0) words.Add(form);
+            }
+        }
+        return words;
+    }
+
     // Original-spelling tokens of the output that count as content words: no markers, no heading
     // lines, no heading words, no stopwords, no short noise.
-    private static List<string> OutputContentTokens(string output, HashSet<string> sourceForms, HashSet<string> sourceStems)
+    private static List<string> OutputContentTokens(string output, HashSet<string> sourceForms, HashSet<string> sourceStems,
+        HashSet<string> extraHeadingWords)
     {
         var text = output;
         foreach (var marker in Markers)
@@ -132,7 +162,7 @@ public static class DictationFidelityCheck
         {
             if (IsHeadingLine(line, sourceForms, sourceStems)) continue;
             foreach (var token in Tokens(line))
-                if (IsContent(token)) result.Add(token);
+                if (IsContent(token, extraHeadingWords)) result.Add(token);
         }
         return result;
     }
@@ -183,10 +213,10 @@ public static class DictationFidelityCheck
     }
 
     // Whether a raw token is worth checking at all.
-    private static bool IsContent(string token)
+    private static bool IsContent(string token, HashSet<string> extraHeadingWords)
     {
         var form = Normalize(token);
-        if (HeadingWords.Contains(form)) return false;
+        if (HeadingWords.Contains(form) || extraHeadingWords.Contains(form)) return false;
         if (token.Any(char.IsNumber)) return true;
         if (Stopwords.Contains(form)) return false;
         // Short words are noise ("zu", "bd"), but an uppercase "M" is an abbreviation someone added.

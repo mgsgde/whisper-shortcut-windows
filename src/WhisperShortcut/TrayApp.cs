@@ -21,7 +21,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private sealed record FailedRun(byte[] Wav, Mode Mode, double Seconds, string? Selection, string? QuickAction, IntPtr Target,
         Core.DictationTemplate? Template = null, string StopKey = "", bool ClipboardOnly = false,
-        Core.ScreenshotImage? Screenshot = null);
+        Core.ScreenshotImage? Screenshot = null, bool NoNewTextTemplate = false);
 
 
     private readonly string? _testWav;
@@ -60,6 +60,8 @@ internal sealed partial class TrayApp : ApplicationContext
     private Mode _mode;
     // A copy taken at the start of a template run: editing the settings meanwhile must not change this run.
     private Core.DictationTemplate? _template;
+    // "Nochmal ohne Vorlage": this Dictate Prompt run leaves out the "Vorlage für neue Texte" too (the Mac has none there).
+    private bool _noNewTextTemplate;
     // The stored hotkey that started the run; shown in the overlay hint and the status text.
     private string _stopKey = "";
     private Core.IAudioSource? _audio;
@@ -301,10 +303,12 @@ internal sealed partial class TrayApp : ApplicationContext
         var rec = Core.RecordingCheckpoint.TryRecover();
         if (rec == null) return false;
         var mode = string.Equals(rec.Mode, "Prompt", StringComparison.OrdinalIgnoreCase) ? Mode.Prompt : Mode.Dictate;
+        // A template take is recovered as a plain dictation: the template is not stored with the audio.
+        bool wasTemplate = string.Equals(rec.Mode, nameof(Mode.Template), StringComparison.OrdinalIgnoreCase);
         _lastFailed = new FailedRun(rec.Wav, mode, rec.Seconds, null, null, IntPtr.Zero,
             StopKey: mode == Mode.Prompt ? _settings.PromptHotkey : _settings.DictateHotkey, ClipboardOnly: true);
         Notify("Aufnahme unterbrochen",
-            $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Der Text landet nach dem Transkribieren in der Zwischenablage.",
+            $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Der Text landet nach dem Transkribieren{(wasTemplate ? " ohne Vorlage" : "")} in der Zwischenablage.",
             ToolTipIcon.Warning, RetryLast, "Transkribieren");
         return true;
     }
@@ -862,6 +866,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _mode = mode;
         _stopKey = stored;
         _quickAction = null;
+        _noNewTextTemplate = false;
         // Mac pastes only into the app that was in front now; the hotkey was pressed in the user's window.
         _pasteTarget = ClipboardPaster.ForegroundRoot();
         // Copy the selection right away, while the user's selection is still there. It runs while recording.
@@ -1260,7 +1265,7 @@ internal sealed partial class TrayApp : ApplicationContext
         if (_templateReplay.Current(DateTime.UtcNow) is not { } kept) return;
         Core.Log.Info($"Prompt: running the last template dictation again without its template ({kept.Seconds:0.0} s)");
         RunAgain(new FailedRun(kept.Wav, Mode.Prompt, kept.Seconds, null, null, IntPtr.Zero,
-            StopKey: _settings.PromptHotkey, ClipboardOnly: true));
+            StopKey: _settings.PromptHotkey, ClipboardOnly: true, NoNewTextTemplate: true));
     }
 
     /// <summary>Runs kept audio through the pipeline from idle (retry, cancelled recording, without template).</summary>
@@ -1270,6 +1275,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _template = run.Template;
         _stopKey = run.StopKey;
         _quickAction = run.QuickAction;
+        _noNewTextTemplate = run.NoNewTextTemplate;
         _runShot = Core.ScreenshotPolicy.Allowed(_settings) ? run.Screenshot : null; // switched off or offline since
         _paster.CancelLateWatch(); // a flag from the old recording must not block this run
         _pasteTarget = run.Target;
@@ -1295,7 +1301,7 @@ internal sealed partial class TrayApp : ApplicationContext
         double seconds = 0;
         string? selection = null;
         // What a retry needs; null when the audio itself is lost (then there is nothing to try again).
-        FailedRun? Failed() => wav == null ? null : new FailedRun(wav, _mode, seconds, selection, _quickAction, _pasteTarget, _template, _stopKey, Screenshot: _runShot);
+        FailedRun? Failed() => wav == null ? null : new FailedRun(wav, _mode, seconds, selection, _quickAction, _pasteTarget, _template, _stopKey, Screenshot: _runShot, NoNewTextTemplate: _noNewTextTemplate);
 
         try
         {
@@ -1534,6 +1540,7 @@ internal sealed partial class TrayApp : ApplicationContext
             _selectionCts = null;
             _selection = null;
             _quickAction = null;
+            _noNewTextTemplate = false;
             _runShot = null; // a failed run keeps it in _lastFailed for the retry
             if (!done) _overlay.HideOverlay();
             SetState(State.Idle);
@@ -1590,7 +1597,8 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
 
-        string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt, _settings.DictatePromptTemplate) ?? "";
+        string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt,
+            _noNewTextTemplate ? null : _settings.DictatePromptTemplate) ?? "";
         if (_quickAction != null) return await QuickActionAsync(_quickAction, wav, seconds, selection, systemPrompt, ct);
 
         if (_fakeGemini)
@@ -1600,8 +1608,10 @@ internal sealed partial class TrayApp : ApplicationContext
                 : $"Bearbeitet (Testmodus ohne Gemini): {selection.Length} Zeichen markiert";
         }
 
-        // Only Gemini hears the instruction itself; a local or OpenAI text model gets it transcribed.
-            if (_settings.EffectiveTextEngine != Core.Engine.Gemini) return await PromptFromTranscriptAsync(wav, selection, systemPrompt, ct);
+        // Only Gemini hears the instruction itself, and only up to the Dictate Prompt limit (inline request); a local or
+        // OpenAI text model, or a longer take (a template recording replayed without its template), gets it transcribed.
+        if (Core.DictatePromptText.UsesTranscript(_settings.EffectiveTextEngine, seconds, MicAudioSource.PromptLimit.TotalSeconds))
+            return await PromptFromTranscriptAsync(wav, selection, systemPrompt, ct);
         if (!HasSpeech(wav))
         {
             Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
@@ -1652,9 +1662,8 @@ internal sealed partial class TrayApp : ApplicationContext
         if (wav.Length > 0 && seconds >= 1.0) SetBusy(Core.UserCopy.Transcribing);
         string transcript = wav.Length == 0 || seconds < 1.0 ? ""
             : _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen"
-            // Parakeet gets the glossary as hotwords already; the backstops are for the cloud models.
-            : _settings.EffectiveSpeechEngine == Core.Engine.Local ? await TranscribeAsync(wav, ct)
-            : GlossaryBackstops(await TranscribeAsync(wav, ct));
+            // Parakeet gets the glossary as hotwords, but not the echo strip (no prompt to echo); rejected and term spellings still apply.
+            : GlossaryBackstops(await TranscribeAsync(wav, ct), echoStrip: _settings.EffectiveSpeechEngine != Core.Engine.Local);
         transcript = transcript.Trim();
         if (Core.TextCleanup.LooksLikeRefusal(transcript)) transcript = "";
         Core.Log.Info($"Template: transcript {transcript.Length} chars, selection {selection?.Length ?? 0} chars");
@@ -1691,7 +1700,7 @@ internal sealed partial class TrayApp : ApplicationContext
                     break;
             }
         }
-        string text = Reply(raw, new[] { transcript, selection, template.Instructions });
+        string text = Reply(raw, new[] { transcript, selection }, template.Instructions, keepMarkdown: true);
         Core.Log.Info($"Template: transcript {transcript.Length} chars, selection {selection?.Length ?? 0} chars, answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
         text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
         return text;
@@ -1738,9 +1747,8 @@ internal sealed partial class TrayApp : ApplicationContext
         if (seconds >= 1.0) SetBusy(Core.UserCopy.Transcribing);
         string transcript = seconds < 1.0 ? ""
             : _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen"
-            // Parakeet gets the glossary as hotwords already; the backstops are for the cloud models.
-            : _settings.EffectiveSpeechEngine == Core.Engine.Local ? await TranscribeAsync(wav, ct)
-            : GlossaryBackstops(await TranscribeAsync(wav, ct));
+            // Parakeet gets the glossary as hotwords, but not the echo strip (no prompt to echo); rejected and term spellings still apply.
+            : GlossaryBackstops(await TranscribeAsync(wav, ct), echoStrip: _settings.EffectiveSpeechEngine != Core.Engine.Local);
         var request = Core.QuickActionRequest.Build(quick, selection, transcript);
         Core.Log.Info($"Prompt quick action: transcript {transcript.Trim().Length} chars, selection {selection?.Length ?? 0} chars");
         if (request == null)
@@ -1774,13 +1782,16 @@ internal sealed partial class TrayApp : ApplicationContext
     /// <summary>
     /// Cleans a language-model reply for a plain text field and, when there is a transcript to compare
     /// with, collects the words nobody dictated (<see cref="_unsupported"/>, shown after the paste).
-    /// The template is a source too, so its own wording (greeting, company name) is not flagged.
+    /// The template text is NOT a source: example content in it (a drug, a dose) must still be flagged when
+    /// nobody dictated it. Only a template's label words pass (<paramref name="templateInstructions"/>).
+    /// A template run keeps its Markdown (<paramref name="keepMarkdown"/>), as on the Mac.
     /// </summary>
-    private string Reply(string raw, string?[]? sources)
+    private string Reply(string raw, string?[]? sources, string? templateInstructions = null, bool keepMarkdown = false)
     {
-        string text = Core.TextCleanup.StripMarkdown(Core.TextCleanup.NormalizeReply(raw));
+        string text = Core.TextCleanup.NormalizeReply(raw);
+        if (!keepMarkdown) text = Core.TextCleanup.StripMarkdown(text);
         if (sources == null || text.Length == 0) return text;
-        _unsupported = Core.DictationFidelityCheck.UnsupportedWords(text, sources);
+        _unsupported = Core.DictationFidelityCheck.UnsupportedWords(text, sources, templateInstructions);
         // Count only: the words are patient data and stay out of the log.
         if (_unsupported.Count > 0) Core.Log.Info($"Prompt: {_unsupported.Count} word(s) in the reply are not in the dictation, warning shown");
         return text;
@@ -1875,10 +1886,11 @@ internal sealed partial class TrayApp : ApplicationContext
     /// is cut off, a spelling the user rejected (<c>Claude CLI (not "Cloud CLI")</c>) is corrected, and a
     /// name Gemini wrote the common way ("Gödde" for "goedde") is set to the glossary spelling.
     /// </summary>
-    private string GlossaryBackstops(string raw)
+    private string GlossaryBackstops(string raw, bool echoStrip = true)
     {
         var glossary = _settings.Glossary.ToList();
-        var stripped = Core.TextCleanup.StripTrailingGlossaryEcho(raw, Core.GlossaryPrompt.EchoTerms(glossary));
+        // Parakeet is given no prompt it could echo, so its text skips the strip (Mac: offline template input only gets the spelling fixes).
+        var stripped = echoStrip ? Core.TextCleanup.StripTrailingGlossaryEcho(raw, Core.GlossaryPrompt.EchoTerms(glossary)) : raw;
         var corrected = Core.GlossaryPrompt.CorrectRejectedSpellings(stripped, glossary);
         return Core.GlossaryPrompt.ApplyTermSpellings(corrected, Core.GlossaryPrompt.EchoTerms(glossary));
     }
@@ -2398,6 +2410,13 @@ internal sealed partial class TrayApp : ApplicationContext
             if (nowGlossary != glossary) { glossary = nowGlossary; _offline.GlossaryChanged(); }
             Sounds.Enabled = _settings.Sounds;
             _hotkeyCheckPending = true;
+            // The window may already be out of front (the save runs 500 ms after the last edit, on the UI thread): then the
+            // hotkeys were registered from the old values and nothing else would re-arm them. Registered = not in front.
+            if (_globalHotkeysOn)
+            {
+                RegisterHotkeys(notify: true);
+                _hotkeyCheckPending = false;
+            }
             if (_settings.OfflineMode) _promptMemory.Clear();
             SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
             _offline.Prewarm(); // offline mode may just have been switched on

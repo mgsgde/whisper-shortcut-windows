@@ -37,6 +37,30 @@ public sealed class DictationTemplate
     };
 }
 
+/// <summary>What the settings window stores for the templates.</summary>
+public static class TemplateSave
+{
+    /// <summary>
+    /// The list to store. Names, instructions, order, additions and deletions always come from
+    /// <paramref name="edited"/>. A template's hotkey comes from it only when <paramref name="keysOk"/> (then in the
+    /// canonical form <paramref name="canonical"/> returns, "" when invalid); otherwise the previously stored key of
+    /// the same Id is kept ("" for a template that is new), so one bad key never costs a template edit.
+    /// </summary>
+    public static List<DictationTemplate> Build(IEnumerable<DictationTemplate> edited,
+        IReadOnlyList<DictationTemplate> stored, bool keysOk, Func<string, string?> canonical)
+    {
+        return edited.Select(t => new DictationTemplate
+        {
+            Id = t.Id,
+            Name = t.Name.Trim(),
+            Instructions = t.Instructions.ReplaceLineEndings("\n").Trim(),
+            Hotkey = keysOk
+                ? canonical(t.Hotkey) ?? ""
+                : stored.FirstOrDefault(o => o.Id == t.Id)?.Hotkey ?? "",
+        }).ToList();
+    }
+}
+
 /// <summary>Chooses the template the generic "Vorlage" hotkey applies.</summary>
 public static class TemplatePicker
 {
