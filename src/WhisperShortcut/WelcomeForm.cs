@@ -576,7 +576,7 @@ internal sealed class WelcomeForm : FastShowForm
         long ms = Environment.TickCount64 - _probeStarted;
         // Same bars as the recording overlay: under 1 % after 3 s is a blocked or muted microphone, not a quiet voice.
         if (_probePeak >= 0.05f) SetStatus(_micStatus, "✓ Das Mikrofon hört dich.", Tone.Good);
-        else if (ms > 3000 && _probePeak < 0.01f)
+        else if (Core.LevelMeter.IsSilent(_probePeak, TimeSpan.FromMilliseconds(ms), TimeSpan.FromSeconds(3)))
             SetStatus(_micStatus, "Kein Ton vom Mikrofon. Ist es stumm geschaltet oder unter Windows → Datenschutz gesperrt?", Tone.Caution);
         // Ten seconds are enough; the meter stops so the microphone is not held open while the user reads.
         if (ms > 10000) StopMicTest();

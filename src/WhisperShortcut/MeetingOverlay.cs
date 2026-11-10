@@ -26,7 +26,6 @@ internal sealed class MeetingOverlay : OverlayForm
 
     private const int Bars = 12;
     // Under 1 % peak after 5 s: a muted or blocked microphone, not a quiet room (same bar as the dictation pill).
-    private const float SilentPeak = 0.01f;
     private static readonly TimeSpan SilentAfter = TimeSpan.FromSeconds(5);
 
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 50 };
@@ -37,8 +36,7 @@ internal sealed class MeetingOverlay : OverlayForm
     private Phase _phase = Phase.Hidden;
     private DateTime _started;
     private Func<float>? _level;
-    private float _peakSoFar;
-    private float _smoothed;
+    private readonly Core.LevelMeter _meter = new(0.8f);
     private int _levelHead;
     private int _tick;
     private string _status = "";
@@ -77,8 +75,7 @@ internal sealed class MeetingOverlay : OverlayForm
         _phase = Phase.Recording;
         _started = startedUtc;
         _level = level;
-        _peakSoFar = 0;
-        _smoothed = 0;
+        _meter.Reset();
         Array.Clear(_levels);
         Present();
     }
@@ -135,14 +132,11 @@ internal sealed class MeetingOverlay : OverlayForm
         _tick++;
         if (_phase == Phase.Recording && _level != null)
         {
-            float raw = Math.Clamp(_level(), 0f, 1f);
-            if (raw > _peakSoFar) _peakSoFar = raw;
-            raw = MathF.Sqrt(raw);
-            _smoothed = raw > _smoothed ? raw : _smoothed * 0.8f + raw * 0.2f;
+            float smoothed = _meter.Feed(_level());
             // Bars move every 100 ms: a quieter meter than the dictation pill, it stays on screen for an hour.
             if (_tick % 2 == 0)
             {
-                _levels[_levelHead] = _smoothed;
+                _levels[_levelHead] = smoothed;
                 _levelHead = (_levelHead + 1) % Bars;
             }
         }
@@ -188,7 +182,7 @@ internal sealed class MeetingOverlay : OverlayForm
 
         if (_phase == Phase.Recording)
         {
-            string time = Format(DateTime.UtcNow - _started);
+            string time = Core.Clock.Format(DateTime.UtcNow - _started);
             var timeSize = TextRenderer.MeasureText(g, time, _textFont, Size.Empty, TextFormatFlags.NoPadding);
             float timeX = textX + titleSize.Width + 10 * s;
             TextRenderer.DrawText(g, time, _textFont, new Point((int)timeX, (int)(row1 - timeSize.Height / 2f)), Secondary, TextFormatFlags.NoPadding);
@@ -199,7 +193,7 @@ internal sealed class MeetingOverlay : OverlayForm
 
         string status = _status;
         Color color = _statusWarn ? Amber : Muted;
-        if (_phase == Phase.Recording && _level != null && DateTime.UtcNow - _started > SilentAfter && _peakSoFar < SilentPeak)
+        if (_phase == Phase.Recording && _level != null && Core.LevelMeter.IsSilent(_meter.Peak, DateTime.UtcNow - _started, SilentAfter))
         {
             status = "Kein Ton. Mikrofon stumm oder gesperrt?";
             color = Amber;
@@ -287,8 +281,6 @@ internal sealed class MeetingOverlay : OverlayForm
         base.OnMouseClick(e);
         if (_phase == Phase.Recording && e.Button == MouseButtons.Left && _button.Contains(e.Location)) StopClicked?.Invoke();
     }
-
-    private static string Format(TimeSpan t) => t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : $"{(int)t.TotalMinutes}:{t.Seconds:00}";
 
     protected override void Dispose(bool disposing)
     {

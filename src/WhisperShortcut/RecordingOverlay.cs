@@ -30,7 +30,6 @@ internal sealed class RecordingOverlay : OverlayForm
 
     private const int Bars = 24;
     // Under 1 % peak after 3 s: not a quiet speaker, a muted or blocked microphone (same bar as MicAudioSource).
-    private const float SilentPeak = 0.01f;
     private static readonly TimeSpan SilentAfter = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan LimitWarning = TimeSpan.FromSeconds(60);
     // Long enough to read eight words and compare them with the note; a click closes it earlier.
@@ -83,7 +82,7 @@ internal sealed class RecordingOverlay : OverlayForm
     private DateTime _doneUntil;
     private bool _doneNeutral;
     private int _levelHead;
-    private float _smoothed;
+    private readonly Core.LevelMeter _meter = new(0.82f);
     private IReadOnlyList<string> _quick = Array.Empty<string>();
     private string _quickLabel = "";
     private readonly List<RectangleF> _rowRects = new();
@@ -149,7 +148,7 @@ internal sealed class RecordingOverlay : OverlayForm
         _limit = limit;
         _started = DateTime.UtcNow;
         Array.Clear(_levels);
-        _smoothed = 0;
+        _meter.Reset();
         Present();
     }
 
@@ -338,9 +337,7 @@ internal sealed class RecordingOverlay : OverlayForm
         if (_phase == Phase.Recording && _level != null)
         {
             // Fast attack, slow release, and a square root so normal speech fills the bars.
-            float raw = MathF.Sqrt(Math.Clamp(_level(), 0f, 1f));
-            _smoothed = raw > _smoothed ? raw : _smoothed * 0.82f + raw * 0.18f;
-            _levels[_levelHead] = _smoothed;
+            _levels[_levelHead] = _meter.Feed(_level());
             _levelHead = (_levelHead + 1) % Bars;
         }
         // Recording (bars, clock) and processing (spinner) move all the time; the warning stays 20 s without moving.
@@ -411,7 +408,7 @@ internal sealed class RecordingOverlay : OverlayForm
             var elapsed = now - _started;
             var left = _limit - elapsed;
             bool nearLimit = left <= LimitWarning;
-            string time = Format(elapsed);
+            string time = Core.Clock.Format(elapsed);
             float timeW = MeasureWidth(g, time, _bodyFont!);
             DrawText(g, time, _bodyFont!, nearLimit ? CAmber : CSecondary, right - 24 * s - timeW, headerCy, timeW + 4 * s);
             if (_level != null)
@@ -502,7 +499,7 @@ internal sealed class RecordingOverlay : OverlayForm
     {
         if (_phase == Phase.Recording)
         {
-            if (_peakSoFar != null && DateTime.UtcNow - _started > SilentAfter && _peakSoFar() < SilentPeak)
+            if (_peakSoFar != null && Core.LevelMeter.IsSilent(_peakSoFar(), DateTime.UtcNow - _started, SilentAfter))
             {
                 DrawText(g, "Kein Ton vom Mikrofon. Stumm geschaltet oder gesperrt?", _smallFont!, CAmber, x, cy, maxW);
                 return;
@@ -510,7 +507,7 @@ internal sealed class RecordingOverlay : OverlayForm
             var left = _limit - (DateTime.UtcNow - _started);
             if (left <= LimitWarning && left > TimeSpan.Zero)
             {
-                DrawText(g, $"Endet in {Format(left)} automatisch · Esc bricht ab", _smallFont!, CAmber, x, cy, maxW);
+                DrawText(g, $"Endet in {Core.Clock.Format(left)} automatisch · Esc bricht ab", _smallFont!, CAmber, x, cy, maxW);
                 return;
             }
             x = KeyCap(g, _stopKey, x, cy, s) + 6 * s;
@@ -704,8 +701,6 @@ internal sealed class RecordingOverlay : OverlayForm
         path.CloseFigure();
         return path;
     }
-
-    private static string Format(TimeSpan t) => t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : $"{(int)t.TotalMinutes}:{t.Seconds:00}";
 
     // ---------------- mouse ----------------
 

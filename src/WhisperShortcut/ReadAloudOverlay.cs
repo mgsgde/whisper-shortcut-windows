@@ -279,11 +279,7 @@ internal sealed class ReadAloudOverlay : OverlayForm
         }
     }
 
-    private static string Format(double seconds)
-    {
-        var t = TimeSpan.FromSeconds(Math.Max(0, seconds));
-        return t.TotalHours >= 1 ? t.ToString(@"h\:mm\:ss") : $"{(int)t.TotalMinutes}:{t.Seconds:00}";
-    }
+    private static string Format(double seconds) => Core.Clock.Format(TimeSpan.FromSeconds(Math.Max(0, seconds)));
 
     protected override void Dispose(bool disposing)
     {
