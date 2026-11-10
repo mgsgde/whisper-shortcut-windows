@@ -120,10 +120,14 @@ internal sealed partial class SettingsForm : FastShowForm
         TemplatesPage = "Vorlagen", ScreenshotPage = "Bildschirmfoto", PrivacyPage = "Datenschutz & Berechtigungen", InfoPage = "Über";
 
     // Segoe Fluent Icons (Windows 11) / Segoe MDL2 Assets (Windows 10) glyphs for the navigation.
-    private static readonly (string Name, string Icon)[] Pages =
+    // Grouped under section headers as on the Mac (#381, SettingsTab.section): the order is the Mac's
+    // section order, and SettingsTab.allCases order inside each section.
+    private static readonly (string Name, string Icon, string Section)[] Pages =
     {
-        (General, "\uE713"), (AccountsPage, "\uE8D7"), (DictatePage, "\uE720"), (PromptPage, "\uE70F"),
-        (TemplatesPage, "\uE8A5"), (ScreenshotPage, "\uE722"), (ReadAloudPage, "\uE767"), (ChatPage, "\uE8BD"), (MeetingsPage, "\uE7C8"), (AiAppsPage, "\uE8F2"), (PrivacyPage, "\uEA18"), (InfoPage, "\uE946"),
+        (General, "\uE713", "Allgemein"), (AccountsPage, "\uE8D7", "Allgemein"), (PrivacyPage, "\uEA18", "Allgemein"),
+        (DictatePage, "\uE720", "Diktat"), (PromptPage, "\uE70F", "Diktat"), (TemplatesPage, "\uE8A5", "Diktat"), (ReadAloudPage, "\uE767", "Diktat"),
+        (ChatPage, "\uE8BD", "Chat & Meetings"), (MeetingsPage, "\uE7C8", "Chat & Meetings"),
+        (ScreenshotPage, "\uE722", "Mehr"), (AiAppsPage, "\uE8F2", "Mehr"), (InfoPage, "\uE946", "Mehr"),
     };
 
     // Inset (96 dpi) of a description inside a card row with a control of this width on the right.
@@ -678,7 +682,8 @@ internal sealed partial class SettingsForm : FastShowForm
         BuildInfoPage();
 
         // ================= frame: navigation, page host, buttons =================
-        var nav = new Panel { Dock = DockStyle.Left, Width = 290, Padding = new Padding(8, 12, 8, 8) };
+        // Scrolls when the window is lower than the pages and their section headers.
+        var nav = new Panel { Dock = DockStyle.Left, Width = 290, Padding = new Padding(8, 12, 8, 8), AutoScroll = true };
         var logo = new PictureBox
         {
             Image = new Icon(TrayIcons.App, 64, 64).ToBitmap(), SizeMode = PictureBoxSizeMode.Zoom, Location = new Point(20, 18), Size = new Size(20, 20),
@@ -691,9 +696,23 @@ internal sealed partial class SettingsForm : FastShowForm
         };
         nav.Controls.Add(logo);
         nav.Controls.Add(appTitle);
-        int y = 60;
-        foreach (var (name, icon) in Pages)
+        int y = 56;
+        string? section = null;
+        foreach (var (name, icon, pageSection) in Pages)
         {
+            if (pageSection != section)
+            {
+                // Mac sidebar section header: small secondary text above its group, not a page.
+                if (section != null) y += 8;
+                section = pageSection;
+                nav.Controls.Add(new ThemedLabel
+                {
+                    Text = pageSection, Tone = Tone.Secondary, Font = Theme.Small, AutoSize = false,
+                    Location = new Point(22, y), Size = new Size(256, 22), TextAlign = ContentAlignment.BottomLeft,
+                    AccessibleRole = AccessibleRole.StaticText, UseMnemonic = false,
+                });
+                y += 24;
+            }
             var item = new NavItem(name, icon) { Location = new Point(8, y), Size = new Size(274, 38) };
             item.Picked += (_, _) => ShowPage(name);
             _nav.Add(item);
