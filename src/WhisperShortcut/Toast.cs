@@ -94,6 +94,10 @@ internal sealed class Toast : Form
     private float S => DeviceDpi / 96f;
     private static bool Hc => SystemInformation.HighContrast;
 
+    /// <summary>The balloon icon of a <see cref="Core.Severity"/> (Core decides, the toast draws).</summary>
+    public static ToolTipIcon IconOf(Core.Severity severity) =>
+        severity switch { Core.Severity.Error => ToolTipIcon.Error, Core.Severity.Warning => ToolTipIcon.Warning, _ => ToolTipIcon.Info };
+
     /// <summary>How long a notice stays: null = until it is used or closed (an error with an action, like the Mac).</summary>
     public static TimeSpan? Lifetime(ToolTipIcon kind, bool hasAction) => kind switch
     {

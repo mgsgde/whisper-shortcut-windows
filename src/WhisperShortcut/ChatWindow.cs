@@ -508,22 +508,12 @@ internal sealed partial class ChatWindow : FastShowForm
             }
             SetStatus("Abgebrochen.", Tone.Secondary);
         }
-        catch (Core.GeminiException e)
-        {
-            Core.Log.Error($"Chat: {e.Provider} {e.Kind}");
-            if (IsDisposed) return;
-            SetStatus(e.Message, Tone.Bad);
-        }
-        catch (Exception e) when (e is OfflineNotReadyException or Core.LocalLlmException)
-        {
-            if (IsDisposed) return;
-            SetStatus(e.Message + " Unter Einstellungen → Dictate Prompt lässt es sich laden.", Tone.Bad);
-        }
         catch (Exception e)
         {
-            Core.Log.Error("Chat failed", e);
+            if (e is Core.GeminiException g) Core.Log.Error($"Chat: {g.Provider} {g.Kind}");
+            else if (e is not (Core.OfflineNotReadyException or Core.LocalLlmException)) Core.Log.Error("Chat failed", e);
             if (IsDisposed) return;
-            SetStatus("Die Antwort konnte nicht geladen werden. Details stehen im Protokoll.", Tone.Bad);
+            SetStatus(Core.RunOutcomes.ForFailure(e, audioKept: false, Core.FailureContext.Chat).Text, Tone.Bad);
         }
         finally
         {

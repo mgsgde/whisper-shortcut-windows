@@ -181,10 +181,10 @@ internal sealed class OfflineEngine : IDisposable
         });
     }
 
-    /// <summary>Speech to text with Parakeet. Throws <see cref="OfflineNotReadyException"/> if the model is missing.</summary>
+    /// <summary>Speech to text with Parakeet. Throws <see cref="Core.OfflineNotReadyException"/> if the model is missing.</summary>
     public async Task<string> TranscribeAsync(byte[] wav, CancellationToken ct)
     {
-        if (!SpeechInstalled) throw new OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
+        if (!SpeechInstalled) throw new Core.OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
         var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
         // Decoding cannot be interrupted; a cancel just drops the result (a minute of audio takes ~1 s).
         var text = await Task.Run(async () =>
@@ -209,7 +209,7 @@ internal sealed class OfflineEngine : IDisposable
     /// </summary>
     public async Task<(string Text, bool Timed)> TranscribeSpokenMarksAsync(byte[] wav, CancellationToken ct)
     {
-        if (!SpeechInstalled) throw new OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
+        if (!SpeechInstalled) throw new Core.OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
         var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
         var decode = await Task.Run(async () =>
         {
@@ -234,7 +234,7 @@ internal sealed class OfflineEngine : IDisposable
     /// <summary>A complete system prompt and user turn to the local language model, answer limited to <paramref name="maxTokens"/>.</summary>
     public async Task<string> CompleteAsync(string systemPrompt, string userText, int maxTokens, CancellationToken ct)
     {
-        if (!LlmInstalled(SelectedLlm)) throw new OfflineNotReadyException("Das Offline-Sprachmodell ist noch nicht geladen.");
+        if (!LlmInstalled(SelectedLlm)) throw new Core.OfflineNotReadyException("Das Offline-Sprachmodell ist noch nicht geladen.");
         if (LlmUnsupportedCpu) throw new Core.LocalLlmException(Core.LlamaServerHost.UnsupportedCpuMessage);
         var server = await EnsureServerAsync(ct).ConfigureAwait(false);
         server.MarkUsed();
@@ -435,9 +435,6 @@ internal sealed class OfflineEngine : IDisposable
         public CancellationTokenSource Cancel { get; } = new();
     }
 }
-
-/// <summary>An offline model was needed but has not been downloaded yet.</summary>
-internal sealed class OfflineNotReadyException(string message) : Exception(message);
 
 /// <summary>
 /// Windows job object with KILL_ON_JOB_CLOSE: llama-server is assigned to it, so it dies with the app
