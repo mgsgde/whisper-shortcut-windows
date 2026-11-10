@@ -22,6 +22,13 @@ public class TranscriptionPipelineTests
             GlossaryCalls.Add(glossary.ToList());
             return Task.FromResult(Answers.Count > 0 ? Answers.Dequeue() : "");
         }
+
+        public Task<string> TranscribeAsync(byte[] wav, IReadOnlyList<string> glossary, bool sendKeywords, CancellationToken ct = default) =>
+            TranscribeAsync(wav, glossary, ct);
+
+        public IReadOnlyList<byte[]> SplitForUpload(byte[] wav) => WavChunker.Split(wav);
+
+        public Task PrewarmConnection() => Task.CompletedTask;
     }
 
     private static bool HasSpeech(byte[] wav) => SpeechGate.HasSpeech(wav);
@@ -33,7 +40,7 @@ public class TranscriptionPipelineTests
     {
         var echoTerms = GlossaryPrompt.EchoTerms(glossary);
         return ChunkedTranscription.TranscribeAsync(
-            speech is OpenAiClient ? WavChunker.SplitForOpenAi(wav) : WavChunker.Split(wav),
+            speech.SplitForUpload(wav),
             async (chunk, c) =>
             {
                 if (!HasSpeech(chunk)) return "";
@@ -206,7 +213,7 @@ public class TranscriptionPipelineTests
     [Fact]
     public async Task OpenAiClient_UsesTheLargerOpenAiSplit()
     {
-        // A short recording stays one piece either way; the dispatch is `speech is OpenAiClient`.
+        // A short recording stays one piece either way; the dispatch is `speech.SplitForUpload`.
         var h = new FakeHandler();
         h.Responses.Enqueue((System.Net.HttpStatusCode.OK, "{\"text\":\"ok\"}"));
         var openAi = new OpenAiClient(() => "sk", () => "gpt-4o-transcribe", () => "gpt-6-sol", new HttpClient(h))

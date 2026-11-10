@@ -50,12 +50,8 @@ public static class WelcomeTour
         apiKey.Trim().Length > 0 || openAiKey.Trim().Length > 0 || offlineMode;
 
     /// <summary>Whether a dictation can run with these settings (the engine it uses has its key or its model).</summary>
-    public static bool TranscriptionReady(Settings s, bool speechModelInstalled) => s.EffectiveSpeechEngine switch
-    {
-        Engine.Local => speechModelInstalled,
-        Engine.OpenAI => s.OpenAiKey.Trim().Length > 0,
-        _ => s.ApiKey.Trim().Length > 0,
-    };
+    public static bool TranscriptionReady(Settings s, bool speechModelInstalled) => s.EffectiveSpeechEngine is var engine
+        && (engine == Engine.Local ? speechModelInstalled : s.MissingKeyProvider(engine) == null);
 
     /// <summary>"Weiter" is enabled (Mac canAdvance): the setup step needs a dictation that can run.</summary>
     public static bool CanAdvance(WelcomeStep step, bool transcriptionReady) =>
@@ -94,12 +90,7 @@ public static class WelcomeTour
         if (!HasKey(s, s.TextEngine)) s.TextEngine = preferred.Value;
     }
 
-    private static bool HasKey(Settings s, Engine e) => e switch
-    {
-        Engine.Gemini => s.ApiKey.Trim().Length > 0,
-        Engine.OpenAI => s.OpenAiKey.Trim().Length > 0,
-        _ => false,
-    };
+    private static bool HasKey(Settings s, Engine e) => e != Engine.Local && s.MissingKeyProvider(e) == null;
 
     /// <summary>The closing line of the tour (Mac #346: "You can revisit this tour any time from Welcome Tour… in the menu bar.").</summary>
     public const string RevisitHint = "Du findest die Einführung jederzeit wieder unter „Einführung …“ im Menü des WhisperShortcut-Symbols unten rechts.";

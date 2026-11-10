@@ -33,6 +33,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly Core.GeminiClient _gemini;
     private readonly Core.OpenAiClient _openAi;
     private readonly OfflineEngine _offline;
+    private readonly EngineSet _engines;
     private readonly ToolStripMenuItem _statusItem;
     // Menu rows in the Mac's order (MenuBarController.createMenu); each shows its shortcut on the right.
     private readonly ToolStripMenuItem _stopItem;
@@ -159,6 +160,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _gemini = new Core.GeminiClient(_settings);
         _openAi = new Core.OpenAiClient(_settings);
         _offline = new OfflineEngine(_settings);
+        _engines = new EngineSet(_settings, new LocalEngines(_offline), _gemini, _openAi);
         _offline.Prewarm();
         PrepareSpeechGate();
 
@@ -235,7 +237,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _mcp = new McpService(_settings, _ui, () => _state != State.Idle, () => _settingsForm?.HasUnsavedChanges == true, AfterMcpApply);
         _mcp.StartIfEnabled();
         ScheduleSpareSettings(5000);
-        _readAloud = new ReadAloudController(_settings, _paster, _gemini, _openAi, (t, m, i, a) => Notify(t, m, i, a), () => ShowSettings(), TrySave, _ui);
+        _readAloud = new ReadAloudController(_settings, _paster, (t, m, i, a) => Notify(t, m, i, a), () => ShowSettings(), TrySave, _ui);
         _readAloud.StateChanged += () =>
         {
             if (_state == State.Idle) SetState(State.Idle);
@@ -793,33 +795,17 @@ internal sealed partial class TrayApp : ApplicationContext
     /// The engines a mode uses: Dictate only speech recognition; Dictate Prompt the text engine and
     /// speech recognition too (the instruction is transcribed, or checked for a bare "korrigiere").
     /// </summary>
-    private IEnumerable<Core.Engine> EnginesFor(Mode mode) => mode == Mode.Dictate
-        ? new[] { _settings.EffectiveSpeechEngine }
-        : new[] { _settings.EffectiveSpeechEngine, _settings.EffectiveTextEngine };
+    private static EngineStep StepFor(Mode mode) => mode == Mode.Dictate ? EngineStep.Dictation : EngineStep.Prompt;
 
     /// <summary>HEAD the cloud API origin so TCP+TLS is done before the user presses Stop.</summary>
     private void PrewarmCloudConnections(Mode mode)
     {
         if (_fakeGemini) return;
-        foreach (var engine in EnginesFor(mode).Distinct())
-        {
-            if (engine == Core.Engine.Gemini) _ = _gemini.PrewarmConnection();
-            else if (engine == Core.Engine.OpenAI) _ = _openAi.PrewarmConnection();
-        }
-    }
-
-    /// <summary>The provider whose key a mode needs but lacks (null: all there). Local engines need none.</summary>
-    private string? MissingKeyFor(Mode mode)
-    {
-        if (_fakeGemini) return null;
-        var engines = EnginesFor(mode).ToList();
-        if (engines.Contains(Core.Engine.Gemini) && string.IsNullOrWhiteSpace(_settings.ApiKey)) return "Gemini";
-        if (engines.Contains(Core.Engine.OpenAI) && string.IsNullOrWhiteSpace(_settings.OpenAiKey)) return "OpenAI";
-        return null;
+        _engines.Prewarm(StepFor(mode));
     }
 
     /// <summary>Any mode lacks a key: for the tray tooltip.</summary>
-    private bool MissingKey => MissingKeyFor(Mode.Prompt) != null;
+    private bool MissingKey => _engines.Check(EngineStep.Prompt, checkKeys: !_fakeGemini).MissingKey != null;
 
     private void StartRecording(Mode mode, string stored)
     {
@@ -829,7 +815,8 @@ internal sealed partial class TrayApp : ApplicationContext
             Core.Log.Info($"Hotkey {mode} ignored: waiting for the snip UI");
             return;
         }
-        if (!OfflineModelsReady(mode))
+        var ready = _engines.Check(StepFor(mode), checkKeys: !_fakeGemini);
+        if (ready.ModelsMissing)
         {
             Core.Log.Info($"Hotkey {mode} with a local engine, models missing");
             Sounds.Error();
@@ -843,14 +830,14 @@ internal sealed partial class TrayApp : ApplicationContext
                 ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
         }
-        if (mode != Mode.Dictate && _settings.EffectiveTextEngine == Core.Engine.Local && OfflineEngine.LlmUnsupportedCpu)
+        if (ready.LlmCpuUnsupported)
         {
             Core.Log.Info($"Hotkey {mode} with the local text engine, but this CPU cannot run the language model");
             Sounds.Error();
             Notify(Core.UserCopy.OfflineModelErrorTitle, Core.LlamaServerHost.UnsupportedCpuMessage, ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
         }
-        if (MissingKeyFor(mode) is { } provider)
+        if (ready.MissingKey is { } provider)
         {
             Core.Log.Info($"Hotkey pressed but no {provider} key (Schlüssel fehlt)");
             Sounds.Error();
@@ -1036,10 +1023,10 @@ internal sealed partial class TrayApp : ApplicationContext
         // No TextCleanup.ForDictation per piece: it would capitalise and end every piece with a period.
         var mode = _livePunctuation;
         if (mode != Core.PunctuationMode.SpokenOnly)
-            return GlossaryBackstops(Core.LiveDictation.FinishPiece(await _offline.TranscribeAsync(wav, ct), mode));
+            return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(await _offline.TranscribeAsync(wav, ct), mode));
         // "Nur gesprochen": Parakeet's marks stay only where the token timings show speech time behind them (Mac #339/#347).
         var (text, timed) = await _offline.TranscribeSpokenMarksAsync(wav, ct);
-        return GlossaryBackstops(Core.LiveDictation.FinishPiece(text, mode, timedMarks: timed));
+        return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(text, mode, timedMarks: timed));
     }
 
     /// <summary>Forgets the live session. Does not touch the clipboard.</summary>
@@ -1106,7 +1093,7 @@ internal sealed partial class TrayApp : ApplicationContext
             {
                 try
                 {
-                    fallback = Core.TextCleanup.ForDictation(GlossaryBackstops(await TranscribeOfflineAsync(wav, ct)));
+                    fallback = Core.TextCleanup.ForDictation(Backstops(Core.TranscribePurpose.LivePiece, await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, ct)));
                 }
                 catch (OperationCanceledException) when (ct.IsCancellationRequested)
                 {
@@ -1211,7 +1198,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 Core.Log.Info("LIVE-DICTATE: drift measurement skipped, the app is busy");
                 return;
             }
-            var whole = await TranscribeOfflineAsync(wav, CancellationToken.None);
+            var whole = await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, CancellationToken.None);
             var (insertedWords, wholeWords, distance) = Core.LiveDictation.Drift(inserted, whole);
             Core.Log.Info($"LIVE-DICTATE: drift insertedWords={insertedWords} wholeFileWords={wholeWords} wordEditDistance={distance}");
         }
@@ -1570,12 +1557,10 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private async Task<string> DictateAsync(byte[] wav, double seconds, CancellationToken ct)
     {
-        var punctuation = Core.PunctuationModes.Effective(_settings.PunctuationMode,
-            isOffline: _settings.EffectiveSpeechEngine == Core.Engine.Local, duringMeeting: false);
+        var punctuation = PunctuationFor(Core.TranscribePurpose.Dictation);
         string raw = _fakeGemini
-            ? "das ist ein test diktat aus der virtuellen maschine"
-            : await TranscribeAsync(wav, ct, punctuation, speechGate: true);
-        raw = GlossaryBackstops(raw);
+            ? Backstops(Core.TranscribePurpose.Dictation, "das ist ein test diktat aus der virtuellen maschine")
+            : await TranscribeAsync(Core.TranscribePurpose.Dictation, wav, ct);
         string text = Core.TextCleanup.DiscardImplausible(
             Core.TextCleanup.ForDictation(raw, addTrailingPeriod: punctuation == Core.PunctuationMode.Automatic), seconds);
         // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
@@ -1589,11 +1574,7 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         // A Ctrl+C that came after the 2 s deadline means there is a selection we never read: writing a
         // new text now would replace it. (A retry has its own, finished selection.)
-        if (selection == null && !isRetry && _paster.LateCopyArrived)
-        {
-            Core.Log.Info("Prompt: selection arrived after the deadline, not composing over it");
-            throw new SelectionUnreadableException();
-        }
+        ThrowIfLateCopy("Prompt", selection, isRetry);
         Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
 
         string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt,
@@ -1625,7 +1606,7 @@ internal sealed partial class TrayApp : ApplicationContext
         {
             // Nothing selected and the instruction is only "korrigiere" / "mach das freundlicher":
             // there is nothing to edit, and the model would invent a text. Transcribe in parallel to check.
-            instruction = await TranscribeAsync(wav, ct);
+            instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct);
             if (Core.BareEditCommand.Matches(instruction))
             {
                 Core.Log.Info("Prompt: bare edit command without selection, refused");
@@ -1653,17 +1634,11 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         var template = _template ?? throw new InvalidOperationException("Template run without a template");
         // Same guard as Dictate Prompt: a late Ctrl+C means a selection we never read.
-        if (selection == null && !isRetry && _paster.LateCopyArrived)
-        {
-            Core.Log.Info("Template: selection arrived after the deadline, not composing over it");
-            throw new SelectionUnreadableException();
-        }
+        ThrowIfLateCopy("Template", selection, isRetry);
 
         if (wav.Length > 0 && seconds >= 1.0) SetBusy(Core.UserCopy.Transcribing);
         string transcript = wav.Length == 0 || seconds < 1.0 ? ""
-            : _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen"
-            // Parakeet gets the glossary as hotwords, but not the echo strip (no prompt to echo); rejected and term spellings still apply.
-            : GlossaryBackstops(await TranscribeAsync(wav, ct), echoStrip: _settings.EffectiveSpeechEngine != Core.Engine.Local);
+            : await TranscribeBodyAsync(Core.TranscribePurpose.TemplateBody, wav, ct);
         transcript = transcript.Trim();
         if (Core.TextCleanup.LooksLikeRefusal(transcript)) transcript = "";
         Core.Log.Info($"Template: transcript {transcript.Length} chars, selection {selection?.Length ?? 0} chars");
@@ -1686,19 +1661,7 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         else
         {
-            switch (_settings.EffectiveTextEngine)
-            {
-                case Core.Engine.Local:
-                    if (!_offline.LlmReady) SetBusy(Core.UserCopy.LoadingLlm);
-                    raw = await _offline.CompleteAsync(system, user, Core.LocalLlmClient.TemplateMaxTokens, ct);
-                    break;
-                case Core.Engine.OpenAI:
-                    raw = await _openAi.CompleteTextAsync(system, user, _runShot, ct);
-                    break;
-                default:
-                    raw = await _gemini.CompleteTextAsync(system, user, _runShot, ct);
-                    break;
-            }
+            raw = await PromptProvider().CompleteTextAsync(system, user, _runShot, ct);
         }
         string text = Reply(raw, new[] { transcript, selection }, template.Instructions, keepMarkdown: true);
         Core.Log.Info($"Template: transcript {transcript.Length} chars, selection {selection?.Length ?? 0} chars, answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
@@ -1713,7 +1676,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private async Task<string> PromptFromTranscriptAsync(byte[] wav, string? selection, string systemPrompt, CancellationToken ct)
     {
         SetBusy(Core.UserCopy.Transcribing);
-        string instruction = (await TranscribeAsync(wav, ct)).Trim();
+        string instruction = (await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct)).Trim();
         Core.Log.Info($"Prompt via transcript ({_settings.EffectiveTextEngine}): instruction {instruction.Length} chars");
         if (instruction.Length == 0)
         {
@@ -1746,9 +1709,7 @@ internal sealed partial class TrayApp : ApplicationContext
         // Under a second nothing was said yet; a recognizer would only guess at the silence.
         if (seconds >= 1.0) SetBusy(Core.UserCopy.Transcribing);
         string transcript = seconds < 1.0 ? ""
-            : _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen"
-            // Parakeet gets the glossary as hotwords, but not the echo strip (no prompt to echo); rejected and term spellings still apply.
-            : GlossaryBackstops(await TranscribeAsync(wav, ct), echoStrip: _settings.EffectiveSpeechEngine != Core.Engine.Local);
+            : await TranscribeBodyAsync(Core.TranscribePurpose.QuickActionTranscript, wav, ct);
         var request = Core.QuickActionRequest.Build(quick, selection, transcript);
         Core.Log.Info($"Prompt quick action: transcript {transcript.Trim().Length} chars, selection {selection?.Length ?? 0} chars");
         if (request == null)
@@ -1797,16 +1758,65 @@ internal sealed partial class TrayApp : ApplicationContext
         return text;
     }
 
-    /// <summary>Speech recognition with the chosen engine: Parakeet on this PC, or Gemini / OpenAI.</summary>
-    /// <param name="speechGate">Silero VAD gate in front of the cloud upload (Mac: dictation only; meetings and Dictate Prompt are not gated). Offline never uses it.</param>
-    private Task<string> TranscribeAsync(byte[] wav, CancellationToken ct, Core.PunctuationMode punctuation = Core.PunctuationMode.Automatic,
-        bool meetingChunk = false, bool speechGate = false) =>
-        _settings.EffectiveSpeechEngine switch
-        {
-            Core.Engine.Local => TranscribeOfflineAsync(wav, ct, punctuation),
-            Core.Engine.OpenAI => TranscribeOnlineAsync(_openAi, wav, ct, meetingChunk, speechGate),
-            _ => TranscribeOnlineAsync(_gemini, wav, ct, meetingChunk, speechGate),
-        };
+    /// <summary>
+    /// Speech recognition for a purpose with the chosen engine: Parakeet on this PC, or Gemini / OpenAI, then the
+    /// backstops <see cref="Core.TranscriptionPolicy"/> lists for that purpose and engine.
+    /// </summary>
+    private async Task<string> TranscribeAsync(Core.TranscribePurpose purpose, byte[] wav, CancellationToken ct)
+    {
+        var step = StepFor(purpose);
+        var engine = _engines.SpeechEngine(step);
+        var policy = Core.TranscriptionPolicy.For(purpose, engine);
+        var punctuation = policy.Punctuation(_settings.PunctuationMode, engine);
+        var raw = engine == Core.Engine.Local
+            ? await _engines.Local.TranscribeAsync(wav, punctuation, ct)
+            : await TranscribeOnlineAsync(_engines.Speech(step), wav, ct, policy);
+        return policy.GlossaryBackstops ? GlossaryBackstops(raw, policy.EchoStrip) : raw;
+    }
+
+    /// <summary>The transcript a template or quick instruction works on (test mode: a fixed sentence, no recognizer).</summary>
+    private async Task<string> TranscribeBodyAsync(Core.TranscribePurpose purpose, byte[] wav, CancellationToken ct) =>
+        _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen" : await TranscribeAsync(purpose, wav, ct);
+
+    private static EngineStep StepFor(Core.TranscribePurpose purpose) =>
+        purpose == Core.TranscribePurpose.MeetingChunk ? EngineStep.Meeting : EngineStep.Dictation;
+
+    /// <summary>The engine whose recognizer the purpose uses (Live diktieren always decodes on this PC).</summary>
+    private Core.Engine SpeechEngineFor(Core.TranscribePurpose purpose) =>
+        purpose == Core.TranscribePurpose.LivePiece ? Core.Engine.Local : _engines.SpeechEngine(StepFor(purpose));
+
+    /// <summary>The punctuation mode the purpose transcribes with (the stored one only where the policy takes it, on this PC).</summary>
+    private Core.PunctuationMode PunctuationFor(Core.TranscribePurpose purpose)
+    {
+        var engine = SpeechEngineFor(purpose);
+        return Core.TranscriptionPolicy.For(purpose, engine).Punctuation(_settings.PunctuationMode, engine);
+    }
+
+    /// <summary>The glossary backstops the purpose's policy asks for, on text that was not transcribed here (a live piece, the test sentence).</summary>
+    private string Backstops(Core.TranscribePurpose purpose, string raw)
+    {
+        var policy = Core.TranscriptionPolicy.For(purpose, SpeechEngineFor(purpose));
+        return policy.GlossaryBackstops ? GlossaryBackstops(raw, policy.EchoStrip) : raw;
+    }
+
+    /// <summary>
+    /// A Ctrl+C that came after the 2 s deadline means there is a selection we never read: writing a new text now
+    /// would replace it. (A retry has its own, finished selection.)
+    /// </summary>
+    private void ThrowIfLateCopy(string what, string? selection, bool isRetry)
+    {
+        if (selection != null || isRetry || !_paster.LateCopyArrived) return;
+        Core.Log.Info($"{what}: selection arrived after the deadline, not composing over it");
+        throw new SelectionUnreadableException();
+    }
+
+    /// <summary>The text provider of Dictate Prompt, templates and quick instructions; says "loading" while the local model is not up yet.</summary>
+    private Core.ITextProvider PromptProvider()
+    {
+        if (_settings.EffectiveTextEngine == Core.Engine.Local && !_offline.LlmReady)
+            SetBusy(Core.UserCopy.LoadingLlm);
+        return _engines.Text(EngineStep.Prompt)!;
+    }
 
     /// <summary>
     /// Earlier online edit turns to send with this request. Compose and Offline Mode send none
@@ -1832,17 +1842,7 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         // compose: the target is the fresh transcript, not a selection, so no earlier turns go along.
         var history = compose ? null : HistoryFor(selection);
-        switch (_settings.EffectiveTextEngine)
-        {
-            case Core.Engine.Local:
-                if (!_offline.LlmReady)
-                    SetBusy(Core.UserCopy.LoadingLlm);
-                return _offline.PromptAsync(selection, instruction, systemPrompt, ct);
-            case Core.Engine.OpenAI:
-                return _openAi.PromptTextAsync(selection, instruction, systemPrompt, ct, history, _runShot);
-            default:
-                return _gemini.PromptTextAsync(selection, instruction, systemPrompt, ct, history, _runShot);
-        }
+        return PromptProvider().PromptTextAsync(selection, instruction, systemPrompt, ct, history, _runShot);
     }
 
     /// <summary>
@@ -1850,21 +1850,21 @@ internal sealed partial class TrayApp : ApplicationContext
     /// Pieces are cut in pauses, four at a time: one request would hit Gemini's inline size limit
     /// and take as long as all of it. A piece that comes back as nothing but glossary words (the
     /// model filled a quiet stretch with vocabulary) is asked again once without the glossary, like the Mac.
-    /// With <paramref name="speechGate"/> every piece also passes the Silero VAD gate: no speech skips the
+    /// With <see cref="Core.TranscriptionPolicy.SpeechGate"/> every piece also passes the Silero VAD gate: no speech skips the
     /// request, a long quiet head or tail is cut off (the energy gate above stays first).
     /// </summary>
-    private Task<string> TranscribeOnlineAsync(Core.ISpeechProvider speech, byte[] wav, CancellationToken ct, bool meetingChunk = false, bool speechGate = false)
+    private Task<string> TranscribeOnlineAsync(Core.ISpeechProvider speech, byte[] wav, CancellationToken ct, Core.TranscriptionPolicy policy)
     {
         var glossary = _settings.Glossary.ToList();
         var echoTerms = Core.GlossaryPrompt.EchoTerms(glossary);
         return Core.ChunkedTranscription.TranscribeAsync(
-            speech is Core.OpenAiClient ? Core.WavChunker.SplitForOpenAi(wav) : Core.WavChunker.Split(wav),
+            speech.SplitForUpload(wav),
             async (piece, c) =>
             {
                 // Nothing but room noise: Gemini would answer with the glossary. Also saves the request.
                 if (!HasSpeech(piece)) return "";
                 var chunk = piece;
-                if (speechGate)
+                if (policy.SpeechGate)
                 {
                     // Silero decides next: null = no speech, a copy = quiet ends cut off, same array = unchanged
                     // (also while the model is not loaded yet, or when anything about it fails).
@@ -1873,9 +1873,7 @@ internal sealed partial class TrayApp : ApplicationContext
                     chunk = gated;
                 }
                 // Live-meeting chunks carry loud system audio that gpt-transcribe answers with the keywords themselves.
-                var text = speech is Core.OpenAiClient oa
-                    ? await oa.TranscribeAsync(chunk, glossary, sendKeywords: !meetingChunk, c)
-                    : await speech.TranscribeAsync(chunk, glossary, c);
+                var text = await speech.TranscribeAsync(chunk, glossary, policy.SendKeywords, c);
                 if (text.Trim().Length == 0
                     || Core.TextCleanup.DiscardGlossaryEcho(text, Core.Wav.DurationSeconds(chunk), echoTerms).Length > 0)
                     return text;
@@ -1918,31 +1916,6 @@ internal sealed partial class TrayApp : ApplicationContext
         return Core.GlossaryPrompt.ApplyTermSpellings(corrected, Core.GlossaryPrompt.EchoTerms(glossary));
     }
 
-    /// <summary>
-    /// Parakeet, in 30-second pieces above 40 s, one at a time (the recognizer is serialized anyway).
-    /// Spoken "Doppelpunkt" / "neuer Absatz" become punctuation; Gemini does that itself.
-    /// </summary>
-    private async Task<string> TranscribeOfflineAsync(byte[] wav, CancellationToken ct,
-        Core.PunctuationMode punctuation = Core.PunctuationMode.Automatic)
-    {
-        if (punctuation != Core.PunctuationMode.SpokenOnly)
-        {
-            var joined = await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
-                (chunk, c) => _offline.TranscribeAsync(chunk, c), maxParallel: 1, ct);
-            return Core.SpokenPunctuation.Apply(joined, punctuation);
-        }
-        // "Nur gesprochen" (Mac #339/#347): each piece keeps Parakeet's marks only where the token timings show speech
-        // time behind them; a piece without usable timings falls back to the plain strip. Then, as on the Mac, the
-        // joined text loses only semicolons (timedMarks) before the spoken commands are applied.
-        var spoken = await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
-            async (chunk, c) =>
-            {
-                var (text, timed) = await _offline.TranscribeSpokenMarksAsync(chunk, c);
-                return timed ? text : Core.SpokenPunctuation.StripModelPunctuation(text);
-            }, maxParallel: 1, ct);
-        return Core.SpokenPunctuation.Apply(Core.SpokenPunctuation.StripModelPunctuation(spoken, timedMarks: true), punctuation);
-    }
-
     // ---------------- live meeting ----------------
 
     /// <summary>
@@ -1952,9 +1925,10 @@ internal sealed partial class TrayApp : ApplicationContext
     private string? MeetingUnavailable()
     {
         if (_fakeGemini) return null;
-        if (_settings.EffectiveMeetingSpeechEngine == Core.Engine.Local && !OfflineEngine.SpeechInstalled)
+        var ready = _engines.Check(EngineStep.Meeting);
+        if (ready.SpeechModelMissing)
             return "Die Offline-Spracherkennung ist noch nicht geladen. In den Einstellungen unter „Offline-Modelle“ laden.";
-        if (MeetingMissingKey() is { } provider) // TrayApp.Meetings.cs
+        if (ready.MissingKey is { } provider)
             return $"Noch kein {provider}-Schlüssel eingetragen. Bitte zuerst in den Einstellungen eintragen.";
         return null;
     }
@@ -1966,7 +1940,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private async Task<string> TranscribeMeetingChunkAsync(byte[] wav, CancellationToken ct)
     {
         if (_fakeGemini) return "Das ist ein Testabschnitt aus dem Meeting.";
-        string raw = GlossaryBackstops(await TranscribeMeetingRawAsync(wav, ct)); // TrayApp.Meetings.cs
+        string raw = await TranscribeAsync(Core.TranscribePurpose.MeetingChunk, wav, ct);
         string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), Core.Wav.DurationSeconds(wav));
         return Core.TextCleanup.LooksLikeRefusal(text) ? "" : text;
     }
@@ -2070,9 +2044,6 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     /// <summary>The local models the mode's engines need are on disk (true when it uses none).</summary>
-    private bool OfflineModelsReady(Mode mode) =>
-        (_settings.EffectiveSpeechEngine != Core.Engine.Local || OfflineEngine.SpeechInstalled)
-        && (mode == Mode.Dictate || _settings.EffectiveTextEngine != Core.Engine.Local || OfflineEngine.LlmInstalled(_offline.SelectedLlm));
 
     // ---------------- UI ----------------
 
@@ -2109,7 +2080,7 @@ internal sealed partial class TrayApp : ApplicationContext
             State.Processing => (TrayProcessingStatus(), TrayIcons.Processing),
             _ when _readAloud?.IsActive == true => (_readAloud.StatusText, _readAloud.IsSpeaking ? TrayIcons.Ready : TrayIcons.Processing),
             _ when MissingKey => ("Kein API-Schlüssel eingetragen", TrayIcons.Warning),
-            _ when !OfflineModelsReady(Mode.Dictate) => ("Spracherkennung noch nicht geladen", TrayIcons.Warning),
+            _ when _engines.Check(EngineStep.Dictation, checkKeys: false).ModelsMissing => ("Spracherkennung noch nicht geladen", TrayIcons.Warning),
             _ when _settings.OfflineMode => ("Bereit (offline, nichts verlässt diesen PC)", TrayIcons.Ready),
             _ => (Core.UserCopy.ReadyStatus, TrayIcons.Ready),
         };
