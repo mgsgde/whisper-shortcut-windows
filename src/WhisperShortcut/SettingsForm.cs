@@ -1988,8 +1988,8 @@ internal sealed partial class SettingsForm : FastShowForm
             ShowAdjacentPage(-1);
             return true;
         }
-        // The open-settings hotkey closes the window again (Mac toggleSettings). The global hotkeys are off while this
-        // window is in front, so the window handles the key itself; a hotkey field records it instead.
+        // The open-settings hotkey closes the window again (Mac toggleSettings). The global hotkeys are off only while a
+        // hotkey field is focused, so this branch is a fallback (e.g. a registration that failed); a hotkey field records the key instead.
         if (ActiveControl is not HotkeyBox && Hotkey.TryParse(_settings.ActiveOpenSettingsHotkey, out var toggle)
             && keyData == ToKeys(toggle))
         {
@@ -2422,6 +2422,12 @@ internal sealed partial class SettingsForm : FastShowForm
         catch (Exception e) { Core.Log.Error($"Opening URL failed: {e.GetType().Name}"); }
     }
 
+    /// <summary>A hotkey field has the focus: the global hotkeys are off meanwhile (see TrayApp.SyncGlobalHotkeys).</summary>
+    internal bool RecordingHotkey => ActiveControl is HotkeyBox;
+
+    /// <summary>A hotkey field got or lost the focus.</summary>
+    internal event Action? HotkeyFieldFocusChanged;
+
     /// <summary>Text box that records a key combination instead of text.</summary>
     private sealed class HotkeyBox : TextBox
     {
@@ -2501,6 +2507,19 @@ internal sealed partial class SettingsForm : FastShowForm
         {
             Text = Hotkey.Display(Value);
             base.OnLeave(e);
+        }
+
+        // One place for all hotkey fields: the form tells the tray, which re-evaluates the global hotkeys.
+        protected override void OnGotFocus(EventArgs e)
+        {
+            base.OnGotFocus(e);
+            (FindForm() as SettingsForm)?.HotkeyFieldFocusChanged?.Invoke();
+        }
+
+        protected override void OnLostFocus(EventArgs e)
+        {
+            base.OnLostFocus(e);
+            (FindForm() as SettingsForm)?.HotkeyFieldFocusChanged?.Invoke();
         }
 
         private void Apply(Keys key, Keys modifiers)
