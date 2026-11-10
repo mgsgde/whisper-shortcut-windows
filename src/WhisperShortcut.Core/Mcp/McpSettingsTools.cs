@@ -111,7 +111,7 @@ public sealed class McpSettingsTools(McpToolContext ctx) : IMcpToolProvider
 
         // The state the whole batch leaves, not each item against today's: two shortcuts may not claim the same keys.
         var batchProblem = McpSettingsCatalog.ValidateBatch(catalog, real.Select(r => (r.Setting.Id, (JsonNode?)r.To)).ToList(),
-            McpSettingsCatalog.FixedHotkeys(ctx.Settings));
+            ctx.Settings);
         if (batchProblem != null) return ctx.Reject(tool, "invalid value", batchProblem);
 
         var items = real.Select(r => new McpSettingsChangeItem(

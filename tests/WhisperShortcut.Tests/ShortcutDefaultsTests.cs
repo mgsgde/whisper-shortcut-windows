@@ -39,7 +39,7 @@ public class ShortcutDefaultsTests
         Assert.True(s.RightCtrlDictation);
         // Alt+4 is Read Aloud (Mac ⌃⌥4), on, and no other function uses it.
         Assert.Equal("Alt+4", s.ActiveReadAloudHotkey);
-        Assert.Equal(Settings.DefaultReadAloudHotkey, s.ReadAloudHotkey);
+        Assert.Equal(HotkeySlots.Of(HotkeyAction.ReadAloud).NewDefault, s.ReadAloudHotkey);
         Assert.DoesNotContain("Alt+4", new[] { s.DictateHotkey, s.PromptHotkey, s.ScreenshotHotkey, s.OpenSettingsHotkey,
             s.LiveDictateHotkey, s.GlossaryHotkey });
         Directory.Delete(dir, true);
@@ -217,9 +217,7 @@ public class ShortcutDefaultsTests
     [Theory]
     [InlineData("dictateHotkey")]
     [InlineData("promptHotkey")]
-    [InlineData("glossaryHotkey")]
     [InlineData("screenshotHotkey")]
-    [InlineData("liveDictateHotkey")]
     [InlineData("openSettingsHotkey")]
     [InlineData("meetingHotkey")]
     [InlineData("templateHotkey")]
@@ -229,6 +227,21 @@ public class ShortcutDefaultsTests
         var s = LoadJson(dir, "{\"shortcutDefaultsAltV1\":true,\"" + field + "\":\"Alt+4\"}");
         Assert.False(s.ReadAloudHotkeyEnabled);
         Assert.Equal("", s.ActiveReadAloudHotkey);
+        Directory.Delete(dir, true);
+    }
+
+    [Theory]
+    [InlineData("glossaryHotkey")]
+    [InlineData("liveDictateHotkey")]
+    public void PinnedFile_WithoutReadAloudField_SwitchedOnAlt4_TurnsReadAloudOff_SwitchedOffDoesNotCount(string field)
+    {
+        var dir = NewDir();
+        var on = LoadJson(dir, "{\"shortcutDefaultsAltV1\":true,\"" + field + "\":\"Alt+4\",\"" + field + "Enabled\":true}");
+        Assert.False(on.ReadAloudHotkeyEnabled);
+        // These two ship switched off: a stored key behind a switched-off shortcut is not taken (what the tray registers).
+        var off = LoadJson(dir, "{\"shortcutDefaultsAltV1\":true,\"" + field + "\":\"Alt+4\"}");
+        Assert.True(off.ReadAloudHotkeyEnabled);
+        Assert.Equal("Alt+4", off.ActiveReadAloudHotkey);
         Directory.Delete(dir, true);
     }
 

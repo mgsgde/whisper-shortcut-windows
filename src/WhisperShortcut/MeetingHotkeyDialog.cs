@@ -11,10 +11,10 @@ internal sealed class MeetingHotkeyDialog : Form
 {
     /// <summary>
     /// Shows the dialog. Returns the new stored hotkey, "" when the user removed it, or null when the
-    /// dialog was closed without a change. <paramref name="taken"/> are the stored hotkeys of the other
+    /// dialog was closed without a change. <paramref name="taken"/> are the owners and keys of the other
     /// functions; the same combination cannot be picked twice.
     /// </summary>
-    public static string? Ask(string current, IReadOnlyCollection<string> taken)
+    public static string? Ask(string current, IReadOnlyCollection<(string Owner, string Key)> taken)
     {
         using var dialog = new MeetingHotkeyDialog(current, taken);
         dialog.ShowDialog();
@@ -23,10 +23,10 @@ internal sealed class MeetingHotkeyDialog : Form
 
     private readonly KeyBox _box;
     private readonly ThemedLabel _error;
-    private readonly IReadOnlyCollection<string> _taken;
+    private readonly IReadOnlyCollection<(string Owner, string Key)> _taken;
     private string? _result;
 
-    private MeetingHotkeyDialog(string current, IReadOnlyCollection<string> taken)
+    private MeetingHotkeyDialog(string current, IReadOnlyCollection<(string Owner, string Key)> taken)
     {
         _taken = taken;
         SuspendLayout();
@@ -90,9 +90,9 @@ internal sealed class MeetingHotkeyDialog : Form
             _error.Text = "Bitte in das Feld klicken und die Tasten drücken, z. B. Strg+Umschalt+M.";
             return;
         }
-        if (_taken.Any(t => Hotkey.TryParse(t, out var other) && other == key))
+        if (_taken.FirstOrDefault(t => Core.HotkeySlots.SameKey(t.Key, key.ToString())) is { Owner: { } owner })
         {
-            _error.Text = $"{key.ToDisplayString()} benutzt schon eine andere Funktion. Bitte ein anderes Kürzel wählen.";
+            _error.Text = $"{key.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte ein anderes Kürzel wählen.";
             return;
         }
         _result = key.ToString();

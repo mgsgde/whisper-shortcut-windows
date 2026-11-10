@@ -41,6 +41,7 @@ public sealed partial class Settings
     {
         _path = path;
         _protector = protector;
+        HotkeySlots.ApplyDefaults(this);
     }
 
     /// <summary>Default location: %APPDATA%\WhisperShortcut\settings.json.</summary>
@@ -135,85 +136,38 @@ public sealed partial class Settings
     /// <summary>Product name of the microphone to record from; "" = the Windows default device.</summary>
     public string Microphone { get; set; } = "";
 
-    // Shortcut defaults follow the Mac (ShortcutConfig.default): the same digit for the same function, with Alt as the
-    // Windows modifier (Ctrl+Alt is AltGr on German keyboards). Alt+4 is Read Aloud (Vorlesen).
-    // Installs that ran before keep LegacyShortcuts: see the pin in Load.
-
-    /// <summary>New-install hotkey for plain dictation (Mac ⌃⌥1).</summary>
-    public const string DefaultDictateHotkey = "Alt+1";
-
-    /// <summary>New-install hotkey for Dictate Prompt (Mac ⌃⌥2).</summary>
-    public const string DefaultPromptHotkey = "Alt+2";
-
-    /// <summary>New-install hotkey for Screenshot (Mac ⌃⌥3).</summary>
-    public const string DefaultScreenshotHotkey = "Alt+3";
-
-    /// <summary>New-install hotkey for Read Aloud (Mac ⌃⌥4).</summary>
-    public const string DefaultReadAloudHotkey = "Alt+4";
-
-    /// <summary>Suggested key for Live diktieren (Mac ⌃⌥5); ships disabled.</summary>
-    public const string DefaultLiveDictateHotkey = "Alt+5";
-
-    /// <summary>Suggested key for Markierung ins Glossar (Mac ⌃⌥7); ships disabled.</summary>
-    public const string DefaultGlossaryHotkey = "Alt+7";
-
-    /// <summary>New-install hotkey that opens the settings window (Mac ⌃⌥0).</summary>
-    public const string DefaultOpenSettingsHotkey = "Alt+0";
-
-    /// <summary>Hotkeys every install before the Mac-digit defaults was running on (Mac: legacyCommandDigit).</summary>
-    public static class LegacyShortcuts
-    {
-        /// <summary>Dictate before the switch.</summary>
-        public const string Dictate = "Ctrl+Shift+D";
-
-        /// <summary>Dictate Prompt before the switch.</summary>
-        public const string Prompt = "Ctrl+Shift+P";
-
-        /// <summary>Glossary before the switch (on).</summary>
-        public const string Glossary = "Ctrl+Shift+K";
-
-        /// <summary>Screenshot before the switch: unassigned.</summary>
-        public const string Screenshot = "";
-
-        /// <summary>Live diktieren before the switch: unassigned.</summary>
-        public const string LiveDictate = "";
-
-        /// <summary>Open settings did not exist: unassigned.</summary>
-        public const string OpenSettings = "";
-
-        /// <summary>Read Aloud did not exist: unassigned.</summary>
-        public const string ReadAloud = "";
-    }
+    // Key defaults, legacy keys and the on switches live in HotkeySlots (one table); the constructor applies the new-install
+    // values, Load pins the legacy ones for a file that predates the Mac digits.
 
     /// <summary>Hotkey for plain dictation.</summary>
-    public string DictateHotkey { get; set; } = DefaultDictateHotkey;
+    public string DictateHotkey { get; set; } = "";
 
     /// <summary>Dictate hotkey on (Mac isEnabled). Use <see cref="ActiveDictateHotkey"/> to register.</summary>
-    public bool DictateHotkeyEnabled { get; set; } = true;
+    public bool DictateHotkeyEnabled { get; set; }
 
     /// <summary>Hotkey for Dictate Prompt.</summary>
-    public string PromptHotkey { get; set; } = DefaultPromptHotkey;
+    public string PromptHotkey { get; set; } = "";
 
     /// <summary>Dictate Prompt hotkey on. Use <see cref="ActivePromptHotkey"/> to register.</summary>
-    public bool PromptHotkeyEnabled { get; set; } = true;
+    public bool PromptHotkeyEnabled { get; set; }
 
     /// <summary>Hotkey that appends the selected text to the Glossary. With the flag off it is only the suggestion.</summary>
-    public string GlossaryHotkey { get; set; } = DefaultGlossaryHotkey;
+    public string GlossaryHotkey { get; set; } = "";
 
     /// <summary>Glossary hotkey on. Off for new installs, like the Mac. Use <see cref="ActiveGlossaryHotkey"/> to register.</summary>
     public bool GlossaryHotkeyEnabled { get; set; }
 
     /// <summary>Hotkey that opens the settings window; "" = unassigned.</summary>
-    public string OpenSettingsHotkey { get; set; } = DefaultOpenSettingsHotkey;
+    public string OpenSettingsHotkey { get; set; } = "";
 
     /// <summary>Open-settings hotkey on. Use <see cref="ActiveOpenSettingsHotkey"/> to register.</summary>
-    public bool OpenSettingsHotkeyEnabled { get; set; } = true;
+    public bool OpenSettingsHotkeyEnabled { get; set; }
 
     /// <summary>Hotkey that reads the selected text aloud; "" = unassigned.</summary>
-    public string ReadAloudHotkey { get; set; } = DefaultReadAloudHotkey;
+    public string ReadAloudHotkey { get; set; } = "";
 
     /// <summary>Read Aloud hotkey on. Use <see cref="ActiveReadAloudHotkey"/> to register.</summary>
-    public bool ReadAloudHotkeyEnabled { get; set; } = true;
+    public bool ReadAloudHotkeyEnabled { get; set; }
 
     /// <summary>Read Aloud model id (see <see cref="Core.ReadAloud.Models"/>); unknown ids fall back to the default on load.</summary>
     public string ReadAloudModel { get; set; } = ReadAloud.DefaultModel;
@@ -286,10 +240,10 @@ public sealed partial class Settings
     public bool SendScreenshots { get; set; } = true;
 
     /// <summary>Hotkey that opens the Windows snip UI; "" = unassigned.</summary>
-    public string ScreenshotHotkey { get; set; } = DefaultScreenshotHotkey;
+    public string ScreenshotHotkey { get; set; } = "";
 
     /// <summary>Screenshot hotkey on. Use <see cref="ActiveScreenshotHotkey"/> to register.</summary>
-    public bool ScreenshotHotkeyEnabled { get; set; } = true;
+    public bool ScreenshotHotkeyEnabled { get; set; }
 
     /// <summary>Id of the template the generic hotkey applied last; "" = none yet.</summary>
     public string LastTemplateId { get; set; } = "";
@@ -298,7 +252,7 @@ public sealed partial class Settings
     public string MeetingHotkey { get; set; } = "";
 
     /// <summary>Live diktieren (macOS Dictate Live). "" = unassigned. New installs get the suggestion Alt+5, switched off like the Mac.</summary>
-    public string LiveDictateHotkey { get; set; } = DefaultLiveDictateHotkey;
+    public string LiveDictateHotkey { get; set; } = "";
 
     /// <summary>Live diktieren hotkey on. Off for new installs. Use <see cref="ActiveLiveDictateHotkey"/> to register.</summary>
     public bool LiveDictateHotkeyEnabled { get; set; }
@@ -468,7 +422,7 @@ public sealed partial class Settings
                 : QuickActionList.Clean(dto.QuickActions);
             s.LoadFeatures(dto); // Settings.Features.cs: Vorlesen extras, Meetings, Chat (after the keys it checks against)
             // An update adds the Read Aloud key to a file that never had it. It must not take a key the user already uses.
-            if (dto.ReadAloudHotkey == null && s.ReadAloudHotkeyEnabled && s.ReadAloudKeyClashes())
+            if (dto.ReadAloudHotkey == null && s.ReadAloudHotkeyEnabled && HotkeySlots.Clashes(s, HotkeyAction.ReadAloud))
                 s.ReadAloudHotkeyEnabled = false;
             // A leftover plaintext key field is imported above and must leave the file on the next write.
             if (rewrite)
@@ -485,63 +439,10 @@ public sealed partial class Settings
     }
 
     /// <summary>The shortcuts an install had before the Mac-digit defaults; every flag on, as it behaved then.</summary>
-    private void PinLegacyShortcuts()
-    {
-        DictateHotkey = LegacyShortcuts.Dictate;
-        PromptHotkey = LegacyShortcuts.Prompt;
-        GlossaryHotkey = LegacyShortcuts.Glossary;
-        ScreenshotHotkey = LegacyShortcuts.Screenshot;
-        LiveDictateHotkey = LegacyShortcuts.LiveDictate;
-        OpenSettingsHotkey = LegacyShortcuts.OpenSettings;
-        ReadAloudHotkey = LegacyShortcuts.ReadAloud;
-        DictateHotkeyEnabled = PromptHotkeyEnabled = GlossaryHotkeyEnabled = true;
-        ScreenshotHotkeyEnabled = LiveDictateHotkeyEnabled = OpenSettingsHotkeyEnabled = true;
-        ReadAloudHotkeyEnabled = true;
-    }
+    private void PinLegacyShortcuts() => HotkeySlots.ApplyLegacy(this);
 
-    // True when the Read Aloud key equals any other stored key (app keys and template keys); empty keys never clash.
-    private bool ReadAloudKeyClashes()
-    {
-        if (string.IsNullOrWhiteSpace(ReadAloudHotkey)) return false;
-        var others = new List<string>
-        {
-            DictateHotkey, PromptHotkey, GlossaryHotkey, ScreenshotHotkey, LiveDictateHotkey, OpenSettingsHotkey,
-            MeetingHotkey, TemplateHotkey,
-        };
-        others.AddRange(Templates.Select(t => t.Hotkey));
-        return others.Any(k => SameKey(k, ReadAloudHotkey));
-    }
-
-    // Two stored keys are the same when they normalize to the same text ("alt + 6" == "Alt+6"); falls back to the trimmed string.
-    private static bool SameKey(string? a, string? b)
-    {
-        if (string.IsNullOrWhiteSpace(a) || string.IsNullOrWhiteSpace(b)) return false;
-        string na = Mcp.HotkeyRules.TryNormalize(a, out var x) ? x : a.Trim();
-        string nb = Mcp.HotkeyRules.TryNormalize(b, out var y) ? y : b.Trim();
-        return string.Equals(na, nb, StringComparison.OrdinalIgnoreCase);
-    }
-
-    /// <summary>The new-install shortcuts (same values as the property initializers).</summary>
-    private void ResetShortcutsToDefaults()
-    {
-        var d = new Settings(_path, _protector);
-        DictateHotkey = d.DictateHotkey;
-        PromptHotkey = d.PromptHotkey;
-        GlossaryHotkey = d.GlossaryHotkey;
-        ScreenshotHotkey = d.ScreenshotHotkey;
-        LiveDictateHotkey = d.LiveDictateHotkey;
-        OpenSettingsHotkey = d.OpenSettingsHotkey;
-        ReadAloudHotkey = d.ReadAloudHotkey;
-        DictateHotkeyEnabled = d.DictateHotkeyEnabled;
-        PromptHotkeyEnabled = d.PromptHotkeyEnabled;
-        GlossaryHotkeyEnabled = d.GlossaryHotkeyEnabled;
-        ScreenshotHotkeyEnabled = d.ScreenshotHotkeyEnabled;
-        LiveDictateHotkeyEnabled = d.LiveDictateHotkeyEnabled;
-        OpenSettingsHotkeyEnabled = d.OpenSettingsHotkeyEnabled;
-        ReadAloudHotkeyEnabled = d.ReadAloudHotkeyEnabled;
-        ChatHotkey = d.ChatHotkey;
-        ChatHotkeyEnabled = d.ChatHotkeyEnabled;
-    }
+    /// <summary>The new-install shortcuts.</summary>
+    private void ResetShortcutsToDefaults() => HotkeySlots.ApplyDefaults(this);
 
     // Missing list = old file: no templates. Null entries are skipped; a blank id gets a fresh one.
     private static List<DictationTemplate> LoadTemplates(List<TemplateDto?>? dtos)

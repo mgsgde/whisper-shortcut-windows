@@ -3,8 +3,8 @@ namespace WhisperShortcut;
 /// <summary>
 /// Page „Chat“ (Mac ChatSettingsTab: chat model, web search, system prompt, how to use, under „Erweitert“ the window behaviour)
 /// and the Chat row of the shortcut list on Allgemein. Own file: the main settings file only gets the hook lines (nav entry,
-/// the shortcut row, <see cref="BuildChatPage"/>, <see cref="ChatSnapshot"/>, <see cref="ApplyChat"/> / <see cref="RestoreChat"/>,
-/// <see cref="ChatKeyProblem"/>).
+/// the shortcut row, <see cref="BuildChatPage"/>, <see cref="ChatSnapshot"/>, <see cref="ApplyChat"/> / <see cref="RestoreChat"/>;
+/// the key itself goes through the shortcut table, see <see cref="StoreKeys"/>).
 /// </summary>
 internal sealed partial class SettingsForm
 {
@@ -93,17 +93,15 @@ internal sealed partial class SettingsForm
     private string ChatSnapshot() => string.Join("\u0002", _chatKey.Value, SelectedEngine(_chatEngine), SelectedModel(_chatModel),
         SelectedModel(_chatModelOpenAi), _chatWebSearch.Checked, _chatCloseOnFocusLoss.Checked, _chatPrompt.Value);
 
-    private sealed record ChatState(string Hotkey, bool HotkeyEnabled, Core.Engine Engine, string Model, string ModelOpenAi, bool WebSearch,
+    private sealed record ChatState(Core.Engine Engine, string Model, string ModelOpenAi, bool WebSearch,
         bool CloseOnFocusLoss, string Prompt);
 
     /// <summary>Writes the page into the settings (from TrySave); returns what was there, for <see cref="RestoreChat"/>.</summary>
-    /// <param name="keysOk">All shortcuts valid: only then the chat key is taken over, like the other keys.</param>
-    private ChatState ApplyChat(bool keysOk)
+    private ChatState ApplyChat()
     {
         var s = _settings;
-        var before = new ChatState(s.ChatHotkey, s.ChatHotkeyEnabled, s.ChatEngine, s.ChatModel, s.ChatOpenAiModel, s.ChatWebSearch,
+        var before = new ChatState(s.ChatEngine, s.ChatModel, s.ChatOpenAiModel, s.ChatWebSearch,
             s.ChatCloseOnFocusLoss, s.ChatSystemPrompt);
-        if (keysOk) (s.ChatHotkey, s.ChatHotkeyEnabled) = StoredKey(_chatKey.Value, s.ChatHotkey);
         s.ChatEngine = SelectedEngine(_chatEngine);
         s.ChatModel = SelectedModel(_chatModel);
         s.ChatOpenAiModel = SelectedModel(_chatModelOpenAi);
@@ -117,18 +115,7 @@ internal sealed partial class SettingsForm
     private void RestoreChat(ChatState b)
     {
         var s = _settings;
-        (s.ChatHotkey, s.ChatHotkeyEnabled, s.ChatEngine, s.ChatModel, s.ChatOpenAiModel) = (b.Hotkey, b.HotkeyEnabled, b.Engine, b.Model, b.ModelOpenAi);
+        (s.ChatEngine, s.ChatModel, s.ChatOpenAiModel) = (b.Engine, b.Model, b.ModelOpenAi);
         (s.ChatWebSearch, s.ChatCloseOnFocusLoss, s.ChatSystemPrompt) = (b.WebSearch, b.CloseOnFocusLoss, b.Prompt);
-    }
-
-    /// <summary>The chat key: valid and not taken by a key checked before it; then it is taken, too.</summary>
-    private string? ChatKeyProblem(List<(string Owner, Hotkey Key)> taken, string rule)
-    {
-        if (_chatKey.Value.Length == 0) return null;
-        if (!Hotkey.TryParse(_chatKey.Value, out var key) || !IsSafe(key)) return "Kürzel für den Chat: " + rule;
-        if (taken.FirstOrDefault(k => k.Key == key) is { Owner: { } owner })
-            return $"{key.ToDisplayString()} ist schon für „{owner}“ vergeben. Bitte für den Chat ein anderes Kürzel wählen.";
-        taken.Add(("Chat", key));
-        return null;
     }
 }

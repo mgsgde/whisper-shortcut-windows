@@ -13,12 +13,6 @@ internal sealed partial class TrayApp
     /// <summary>The tray row „Chat“ (Mac menu: „Chat“ ⌥Space, above Settings).</summary>
     private ToolStripMenuItem ChatMenuItem() => _chatItem ??= new ToolStripMenuItem("Chat", null, (_, _) => ShowChat());
 
-    private void UpdateChatRow()
-    {
-        if (_chatItem == null) return;
-        _chatItem.ShortcutKeyDisplayString = _settings.ActiveChatHotkey.Length > 0 ? Hotkey.Display(_settings.ActiveChatHotkey) : "";
-    }
-
     private ChatWindow ChatWindow()
     {
         if (_chatWindow is { IsDisposed: false } w) return w;

@@ -206,10 +206,8 @@ internal sealed partial class TrayApp : ApplicationContext
         // Popups sit above the recording pill while it is on screen (Mac centerBottomPillClearance).
         _toast.AvoidBounds = () => _overlay.Visible ? _overlay.Bounds : null;
         _meeting = new MeetingController(_settings, _ui, TranscribeMeetingChunkAsync, SummarizeMeetingAsync, MeetingUnavailable,
-            (title, text, icon, open) => Notify(title, text, icon, open, open == null ? null : Core.UserCopy.ActionOpenFolder), TrySave, () => new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveGlossaryHotkey,
-                    _settings.ActiveScreenshotHotkey, _settings.TemplateHotkey, _settings.ActiveLiveDictateHotkey,
-                    _settings.ActiveOpenSettingsHotkey, _settings.ActiveReadAloudHotkey, _settings.ActiveChatHotkey }
-                .Concat(_settings.Templates.Select(t => t.Hotkey)).Where(k => k.Length > 0).ToArray(),
+            (title, text, icon, open) => Notify(title, text, icon, open, open == null ? null : Core.UserCopy.ActionOpenFolder), TrySave,
+            () => Core.HotkeySlots.Assignments(_settings).Where(a => a.Action != Core.HotkeyAction.Meeting).Select(a => (a.Owner, a.Key)).ToList(),
             suspend => { if (suspend) { _hotkeys.UnregisterAll(); _globalHotkeysOn = false; } else SyncGlobalHotkeys(notify: true); },
             fakeAudio: testWav != null || fakeGemini);
         var menu = new ContextMenuStrip();
@@ -338,55 +336,32 @@ internal sealed partial class TrayApp : ApplicationContext
         _globalHotkeysOn = true;
         _hotkeys.UnregisterAll();
         var failed = new List<string>();
-        // Active* is "" when a shortcut is switched off (Mac isEnabled) or unassigned; those are not registered.
-        var keys = new List<(string, Action)>
+        // Assignments holds only the shortcuts that are on and assigned (Mac isEnabled); those are registered.
+        var assignments = Core.HotkeySlots.Assignments(_settings).ToList();
+        foreach (var a in assignments.Where(a => a.Action is not (Core.HotkeyAction.TemplatePicker or Core.HotkeyAction.Template) && !a.IsRightCtrlSwitch))
         {
-            (_settings.ActiveDictateHotkey, () => OnHotkey(Mode.Dictate)),
-            (_settings.ActivePromptHotkey, () => OnHotkey(Mode.Prompt)),
-            (_settings.ActiveGlossaryHotkey, () => _ = AddSelectionToGlossaryAsync()),
-            // No meeting hotkey by default: the tray menu starts a meeting.
-            (_settings.MeetingHotkey, _meeting.Toggle),
-            // Live diktieren ships switched off (Mac: disabled).
-            (_settings.ActiveLiveDictateHotkey, OnLiveHotkey),
-            (_settings.ActiveScreenshotHotkey, OnScreenshotHotkey),
-            (_settings.ActiveReadAloudHotkey, OnReadAloudHotkey),
-            (_settings.ActiveChatHotkey, ToggleChat), // TrayApp.Chat.cs
-            (_settings.ActiveOpenSettingsHotkey, ToggleSettings),
-        };
-        foreach (var (stored, action) in keys)
-        {
-            if (string.IsNullOrWhiteSpace(stored)) continue;
             // RightCtrl alone needs the keyboard hook, which RegisterHotKey is not: report it instead of registering
             // a bare VK_RCONTROL.
-            if (!Hotkey.TryParse(stored, out var key) || key.IsRightCtrl || !_hotkeys.Register(key, action))
-                failed.Add(Hotkey.Display(stored));
+            if (!Hotkey.TryParse(a.Key, out var key) || key.IsRightCtrl || !_hotkeys.Register(key, ActionFor(a.Action)))
+                failed.Add(Hotkey.Display(a.Key));
         }
         // Right Ctrl alone = the Mac's Fn key (on by default, Mac fnKeyDictation).
         if (_settings.RightCtrlDictation && !_hotkeys.RegisterRightCtrl(_rightCtrl))
             failed.Add(Core.HotkeyText.RightCtrlDisplay);
 
         // Template keys come after the app's own, which win on a clash (see TemplateHotkeys).
-        var appHotkeys = new (string Name, string Hotkey)[]
-        {
-            ("Diktieren", _settings.ActiveDictateHotkey),
-            ("Text bearbeiten", _settings.ActivePromptHotkey),
-            ("Glossar", _settings.ActiveGlossaryHotkey),
-            ("Screenshot", _settings.ActiveScreenshotHotkey),
-            ("Vorlesen", _settings.ActiveReadAloudHotkey),
-            ("Chat", _settings.ActiveChatHotkey),
-            ("Live Meeting", _settings.MeetingHotkey),
-            ("Live diktieren", _settings.ActiveLiveDictateHotkey),
-            ("Einstellungen", _settings.ActiveOpenSettingsHotkey),
-        };
+        var appHotkeys = assignments
+            .Where(a => a.Action is not (Core.HotkeyAction.TemplatePicker or Core.HotkeyAction.Template) && !a.IsRightCtrlSwitch)
+            .Select(a => (a.Owner, a.Key)).ToArray();
         var templates = _settings.Templates;
-        var pickerActive = Core.TemplateHotkeys.PickerIsActive(_settings.TemplateHotkey, templates, appHotkeys, CanonicalHotkey);
+        var pickerActive = Core.TemplateHotkeys.PickerIsActive(_settings.TemplateHotkey, templates, appHotkeys, Core.HotkeySlots.Normalize);
         if (pickerActive)
         {
             var stored = _settings.TemplateHotkey;
             if (!Hotkey.TryParse(stored, out var key) || !_hotkeys.Register(key, () => OnTemplateHotkey(null, stored)))
                 failed.Add(Hotkey.Display(stored));
         }
-        var bindings = Core.TemplateHotkeys.ActiveBindings(templates, appHotkeys, _settings.TemplateHotkey, CanonicalHotkey);
+        var bindings = Core.TemplateHotkeys.ActiveBindings(templates, appHotkeys, _settings.TemplateHotkey, Core.HotkeySlots.Normalize);
         foreach (var (template, stored) in bindings)
         {
             var id = template.Id;
@@ -395,7 +370,7 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         // Counts and positions only: template names are the user's own words.
         var skipped = templates.Select((t, i) => (t, i))
-            .Where(x => x.t.IsUsable && CanonicalHotkey(x.t.Hotkey) != null && !bindings.Any(b => b.Template.Id == x.t.Id))
+            .Where(x => x.t.IsUsable && Core.HotkeySlots.Normalize(x.t.Hotkey) != null && !bindings.Any(b => b.Template.Id == x.t.Id))
             .Select(x => x.i + 1).ToList();
         if (skipped.Count > 0)
             Core.Log.Info($"Template hotkeys: {skipped.Count} skipped, key already owned (template position {string.Join(", ", skipped)})");
@@ -414,6 +389,21 @@ internal sealed partial class TrayApp : ApplicationContext
         }
     }
 
+    /// <summary>What a registered shortcut does.</summary>
+    private Action ActionFor(Core.HotkeyAction action) => action switch
+    {
+        Core.HotkeyAction.Dictate => () => OnHotkey(Mode.Dictate),
+        Core.HotkeyAction.Prompt => () => OnHotkey(Mode.Prompt),
+        Core.HotkeyAction.Glossary => () => _ = AddSelectionToGlossaryAsync(),
+        Core.HotkeyAction.Meeting => _meeting.Toggle, // no meeting key by default: the tray menu starts a meeting
+        Core.HotkeyAction.LiveDictate => OnLiveHotkey,
+        Core.HotkeyAction.Screenshot => OnScreenshotHotkey,
+        Core.HotkeyAction.ReadAloud => OnReadAloudHotkey,
+        Core.HotkeyAction.Chat => ToggleChat, // TrayApp.Chat.cs
+        Core.HotkeyAction.OpenSettings => ToggleSettings,
+        _ => throw new ArgumentOutOfRangeException(nameof(action)),
+    };
+
     /// <summary>
     /// The menu rows as the Mac shows them (makeItem, updateUI): every action row is clickable and shows its shortcut
     /// when it is on; Diktieren and Dictate Prompt read „… beenden“ while their own recording runs; „Stopp“ and the
@@ -429,16 +419,15 @@ internal sealed partial class TrayApp : ApplicationContext
         _welcomeItem.Visible = _settings.WelcomeCompleted; // Mac: „Einführung …“ hides while „Einrichtung abschließen …“ shows
         bool recording = _state == State.Recording;
         _dictateItem.Text = recording && _mode == Mode.Dictate && _live == null ? "Diktat beenden" : "Diktieren";
-        _dictateItem.ShortcutKeyDisplayString = Key(_settings.ActiveDictateHotkey);
         _promptItem.Text = recording && _mode == Mode.Prompt ? "Prompt-Diktat beenden" : "Dictate Prompt";
-        _promptItem.ShortcutKeyDisplayString = Key(_settings.ActivePromptHotkey);
-        _screenshotItem.ShortcutKeyDisplayString = Key(_settings.ActiveScreenshotHotkey);
         _readAloudItem.Text = _readAloud?.IsActive == true ? "Vorlesen beenden" : "Vorlesen";
-        _readAloudItem.ShortcutKeyDisplayString = Key(_settings.ActiveReadAloudHotkey);
-        UpdateChatRow();
-        _glossaryItem.ShortcutKeyDisplayString = Key(_settings.ActiveGlossaryHotkey);
-        _liveItem.ShortcutKeyDisplayString = Key(_settings.ActiveLiveDictateHotkey);
-        _settingsItem.ShortcutKeyDisplayString = Key(_settings.ActiveOpenSettingsHotkey);
+        foreach (var (action, item) in new[]
+        {
+            (Core.HotkeyAction.Dictate, _dictateItem), (Core.HotkeyAction.Prompt, _promptItem), (Core.HotkeyAction.Screenshot, _screenshotItem),
+            (Core.HotkeyAction.ReadAloud, _readAloudItem), (Core.HotkeyAction.Glossary, _glossaryItem), (Core.HotkeyAction.LiveDictate, _liveItem),
+            (Core.HotkeyAction.Chat, _chatItem), (Core.HotkeyAction.OpenSettings, _settingsItem),
+        })
+            if (item != null) item.ShortcutKeyDisplayString = Key(Core.HotkeySlots.Of(action).Active(_settings));
         // Mac: both history rows hide while the history is empty.
         _copyLast.Visible = _recent.Latest != null;
         _recentMenu.Visible = _recent.Items.Count > 0;
@@ -496,8 +485,8 @@ internal sealed partial class TrayApp : ApplicationContext
 
     /// <summary>A key press (key plus held modifiers) that is one of our own shortcuts: it must not erase the last-insertion memory.</summary>
     private bool IsOwnShortcut(Keys pressed) =>
-        new[] { _settings.ActiveDictateHotkey, _settings.ActivePromptHotkey, _settings.ActiveLiveDictateHotkey }
-            .Any(stored => Hotkey.TryParse(stored, out var h) && (h.Key
+        Core.HotkeySlots.Assignments(_settings).Where(a => !a.IsRightCtrlSwitch)
+            .Any(a => Hotkey.TryParse(a.Key, out var h) && (h.Key
                 | ((h.Modifiers & NativeMethods.MOD_CONTROL) != 0 ? Keys.Control : 0)
                 | ((h.Modifiers & NativeMethods.MOD_ALT) != 0 ? Keys.Alt : 0)
                 | ((h.Modifiers & NativeMethods.MOD_SHIFT) != 0 ? Keys.Shift : 0)) == pressed);
@@ -633,9 +622,6 @@ internal sealed partial class TrayApp : ApplicationContext
         if (_state != before && Hotkey.TryParse(stored, out var key))
             ArmPressGate(key.Key, now);
     }
-
-    /// <summary>The comparable form of a stored hotkey, or null when blank or unparseable.</summary>
-    private static string? CanonicalHotkey(string stored) => Hotkey.TryParse(stored, out var h) ? h.ToString() : null;
 
     /// <summary>
     /// The press that changed the state is still down for a moment. Polling its key tells the gate when
