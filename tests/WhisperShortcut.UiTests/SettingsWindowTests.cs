@@ -159,16 +159,16 @@ public sealed class SettingsWindowTests : IDisposable
             var path = Path.Combine(_dir, "settings.json");
             var stored = Core.Settings.Load(path, new Core.PlainSecretProtector());
             stored.OpenAiKey = "sk-test";
-            stored.SpeechEngine = Core.Engine.OpenAI;
-            stored.TextEngine = Core.Engine.OpenAI;
+            stored.Dictate = stored.Dictate with { Engine = Core.Engine.OpenAI };
+            stored.Prompt = stored.Prompt with { Engine = Core.Engine.OpenAI };
             stored.PunctuationMode = Core.PunctuationMode.SpokenOnly;
             stored.DictateMode = Core.DictateMode.Live;
             stored.ClipboardAfterPaste = Core.ClipboardAfterPaste.Clear;
             stored.Save();
 
             using var form = OpenSettings();
-            Assert.Equal(Core.Engine.OpenAI, ComboValue(form, "_speechEngine"));
-            Assert.Equal(Core.Engine.OpenAI, ComboValue(form, "_textEngine"));
+            Assert.Equal(Core.Engine.OpenAI, ComboValue(form, "_dictateStep.Engine"));
+            Assert.Equal(Core.Engine.OpenAI, ComboValue(form, "_promptStep.Engine"));
             Assert.Equal(Core.PunctuationMode.SpokenOnly, ComboValue(form, "_punctuation"));
             Assert.Equal(Core.DictateMode.Live, ComboValue(form, "_dictateMode"));
             Assert.Equal(Core.ClipboardAfterPaste.Clear, ComboValue(form, "_afterPaste"));
@@ -187,14 +187,14 @@ public sealed class SettingsWindowTests : IDisposable
             seed.Save();
 
             using var form = OpenSettings();
-            SetCombo(form, "_speechEngine", Core.Engine.OpenAI);
+            SetCombo(form, "_dictateStep.Engine", Core.Engine.OpenAI);
             SetCombo(form, "_punctuation", Core.PunctuationMode.SpokenOnly);
             SetCombo(form, "_afterPaste", Core.ClipboardAfterPaste.Clear);
             SetCombo(form, "_dictateMode", Core.DictateMode.Live);
             Assert.True((bool)typeof(SettingsForm).GetMethod("TrySave", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null)!);
 
             var fresh = Core.Settings.Load(path, new Core.PlainSecretProtector());
-            Assert.Equal(Core.Engine.OpenAI, fresh.SpeechEngine);
+            Assert.Equal(Core.Engine.OpenAI, fresh.Dictate.Engine);
             Assert.Equal(Core.PunctuationMode.SpokenOnly, fresh.PunctuationMode);
             Assert.Equal(Core.ClipboardAfterPaste.Clear, fresh.ClipboardAfterPaste);
             Assert.Equal(Core.DictateMode.Live, fresh.DictateMode);
@@ -240,8 +240,14 @@ public sealed class SettingsWindowTests : IDisposable
         return (string)box.GetType().GetProperty("Value")!.GetValue(box)!;
     }
 
-    private static ComboBox Combo(SettingsForm form, string field) =>
-        (ComboBox)typeof(SettingsForm).GetField(field, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+    /// <summary>A combo field of the form, or "_step.Property" for a combo of a model step's controls.</summary>
+    private static ComboBox Combo(SettingsForm form, string field)
+    {
+        var parts = field.Split('.');
+        var value = typeof(SettingsForm).GetField(parts[0], BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(form)!;
+        if (parts.Length > 1) value = value.GetType().GetProperty(parts[1])!.GetValue(value)!;
+        return (ComboBox)value;
+    }
 
     /// <summary>The Value of the combo's selected ChoiceItem (a private record, hence reflection).</summary>
     private static object? ComboValue(SettingsForm form, string field) =>

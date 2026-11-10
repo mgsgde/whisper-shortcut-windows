@@ -105,7 +105,7 @@ public class McpSettingsTests
         var gem = s.Tool("update_settings", A($"{{\"changes\":{{\"dictation.engine\":\"openai\"}},{R}}}"));
         Assert.True(gem.IsError);
         Assert.Contains("No OpenAI API key", gem.Text);
-        s.Settings.SpeechEngine = Engine.OpenAI;
+        s.Settings.Dictate = s.Settings.Dictate with { Engine = Engine.OpenAI };
         var back = s.Tool("update_settings", A($"{{\"changes\":{{\"dictation.engine\":\"gemini\"}},{R}}}"));
         Assert.True(back.IsError);
         Assert.Contains("No Gemini API key", back.Text);
@@ -114,7 +114,7 @@ public class McpSettingsTests
         s.Host.SpeechModelInstalled = true;
         Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"dictation.engine\":\"gemini\"}},{R}}}"))["status"]!.GetValue<string>());
         Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"dictation.engine\":\"local\"}},{R}}}"))["status"]!.GetValue<string>());
-        Assert.Equal(Engine.Local, s.ReloadSettings().SpeechEngine);
+        Assert.Equal(Engine.Local, s.ReloadSettings().Dictate.Engine);
     }
 
     [Theory]
@@ -165,7 +165,7 @@ public class McpSettingsTests
         Assert.Equal("applied", o["status"]!.GetValue<string>());
         var disk = s.ReloadSettings();
         Assert.False(disk.Sounds);
-        Assert.Equal("gemini-3.5-flash-lite", disk.PromptModel);
+        Assert.Equal("gemini-3.5-flash-lite", disk.Prompt.Gemini);
         Assert.Equal("2 Einstellungen geändert", s.Changes.Changes[0].Title);
         Assert.False(s.Tool("update_settings", A($"{{\"changes\":{{\"general.sounds\":true}},{R}}}")).IsError);
         Assert.Equal("Einstellung: Signaltöne Aus → An", s.Changes.Changes[0].Title);
@@ -215,13 +215,13 @@ public class McpSettingsTests
     {
         using var s = new McpStack(McpAccessLevel.Propose);
         s.Settings.ApiKey = "AIzaKEY";
-        s.Settings.SpeechEngine = Engine.OpenAI;
+        s.Settings.Dictate = s.Settings.Dictate with { Engine = Engine.OpenAI };
         s.Settings.OpenAiKey = "sk-1";
         var o = s.ToolJson("update_settings", A($"{{\"changes\":{{\"dictation.engine\":\"gemini\"}},{R}}}"));
         s.Settings.ApiKey = ""; // the user removed the key meanwhile
         var ex = Assert.Throws<McpConfigException>(() => s.Proposals.Accept(o["id"]!.GetValue<string>()));
         Assert.Contains("nicht mehr möglich", ex.Message);
-        Assert.Equal(Engine.OpenAI, s.Settings.SpeechEngine);
+        Assert.Equal(Engine.OpenAI, s.Settings.Dictate.Engine);
         Assert.Single(s.Proposals.Pending);
     }
 

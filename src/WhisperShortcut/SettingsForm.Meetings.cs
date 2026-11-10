@@ -12,8 +12,7 @@ internal sealed partial class SettingsForm
 {
     public const string MeetingsPage = "Meetings";
 
-    private FluentCombo _meetingSpeechEngine = null!, _meetingModel = null!, _meetingModelOpenAi = null!;
-    private FluentCombo _meetingTextEngine = null!, _meetingSummaryModel = null!, _meetingSummaryModelOpenAi = null!;
+    private ModelStepControls _meetingSpeechStep = null!, _meetingTextStep = null!;
     private FluentCombo _meetingChunk = null!, _meetingSafeguard = null!;
 
     private sealed record ChoiceItem(int Value, string Label)
@@ -43,24 +42,16 @@ internal sealed partial class SettingsForm
         page.Controls.Add(Section("Modell für Meeting-Transkription", subtitle: "Welches Modell die Meeting-Aufnahme in Text verwandelt. "
             + "Glossar und Anweisungen kommen von Diktieren."));
         _meetingSpeechEngineShown = _settings.ConfiguredMeetingSpeechEngine;
-        _meetingSpeechEngine = EngineChoice(_meetingSpeechEngineShown, "Meeting-Transkription", "Auf diesem PC (Parakeet)");
-        _meetingModel = ModelChoice(Core.GeminiModels.Transcription, _settings.MeetingTranscriptionModel);
-        _meetingModelOpenAi = ModelChoice(Core.OpenAiModels.Transcription, _settings.MeetingOpenAiTranscriptionModel);
-        page.Controls.Add(Hidden(_meetingSpeechEngine, _meetingModel, _meetingModelOpenAi));
-        page.Controls.Add(ModelPicker("Modell für Meeting-Transkription", () => Core.ModelPickers.Transcription("Parakeet"),
-            models => Core.ModelPickers.Recommended(models, Core.Settings.DefaultTranscriptionModel, Core.OpenAiModels.DefaultTranscriptionModel),
-            _meetingSpeechEngine, _meetingModel, _meetingModelOpenAi, () => OfflineEngine.SpeechInstalled));
+        _meetingSpeechStep = new ModelStepControls(Core.ModelStep.Transcription, _settings.MeetingTranscription with { Engine = _meetingSpeechEngineShown },
+            "Meeting-Transkription", "Auf diesem PC (Parakeet)");
+        page.Controls.Add(_meetingSpeechStep.Hide());
+        page.Controls.Add(ModelPicker("Modell für Meeting-Transkription", _meetingSpeechStep));
 
         // --- summary model ---
         page.Controls.Add(Section("Modell für Meeting-Zusammenfassungen", subtitle: "Modell für die Zusammenfassung am Ende des Meetings."));
-        _meetingTextEngine = EngineChoice(_settings.MeetingTextEngine, "Meeting-Zusammenfassung", "Auf diesem PC (Sprachmodell)");
-        _meetingSummaryModel = ModelChoice(Core.GeminiModels.Prompt, _settings.MeetingSummaryModel);
-        _meetingSummaryModelOpenAi = ModelChoice(Core.OpenAiModels.Prompt, _settings.MeetingOpenAiSummaryModel);
-        page.Controls.Add(Hidden(_meetingTextEngine, _meetingSummaryModel, _meetingSummaryModelOpenAi));
-        page.Controls.Add(ModelPicker("Modell für Meeting-Zusammenfassungen", () => Core.ModelPickers.Prompt(LocalLlmName),
-            models => Core.ModelPickers.Recommended(models, Core.MeetingOptions.DefaultSummaryModel, Core.OpenAiModels.DefaultPromptModel),
-            _meetingTextEngine, _meetingSummaryModel, _meetingSummaryModelOpenAi,
-            () => _llmChoice != null && OfflineEngine.LlmInstalled(SelectedLlmChoice)));
+        _meetingTextStep = new ModelStepControls(Core.ModelStep.Text, _settings.MeetingText, "Meeting-Zusammenfassung", "Auf diesem PC (Sprachmodell)");
+        page.Controls.Add(_meetingTextStep.Hide());
+        page.Controls.Add(ModelPicker("Modell für Meeting-Zusammenfassungen", _meetingTextStep, Core.MeetingOptions.DefaultSummaryModel));
 
         // --- Claude & KI-Apps pointer ---
         page.Controls.Add(Section("Meetings in Claude", subtitle: "Claude und andere KI-Apps auf diesem PC können deine Meetings lesen, auch "
@@ -108,30 +99,24 @@ internal sealed partial class SettingsForm
     }
 
     /// <summary>The page's state for <c>Snapshot()</c>.</summary>
-    private string MeetingsSnapshot() => string.Join("\u0002", SelectedEngine(_meetingSpeechEngine), SelectedModel(_meetingModel),
-        SelectedModel(_meetingModelOpenAi), SelectedEngine(_meetingTextEngine), SelectedModel(_meetingSummaryModel),
-        SelectedModel(_meetingSummaryModelOpenAi), SelectedChoice(_meetingChunk), SelectedChoice(_meetingSafeguard));
+    private string MeetingsSnapshot() => string.Join("\u0002", _meetingSpeechStep.Snapshot, _meetingTextStep.Snapshot,
+        SelectedChoice(_meetingChunk), SelectedChoice(_meetingSafeguard));
 
     // The engine the page showed when it was built; a different pick on save makes the choice explicit (else meetings follow Diktieren).
     private Core.Engine _meetingSpeechEngineShown;
 
-    private sealed record MeetingsState(Core.Engine Speech, bool SpeechExplicit, string Model, string ModelOpenAi, Core.Engine Text, string Summary,
-        string SummaryOpenAi, int Chunk, int Safeguard);
+    private sealed record MeetingsState(Core.ModelSelection Speech, bool SpeechExplicit, Core.ModelSelection Text, int Chunk, int Safeguard);
 
     /// <summary>Writes the page into the settings (from TrySave); returns what was there, for <see cref="RestoreMeetings"/>.</summary>
     private MeetingsState ApplyMeetings()
     {
         var s = _settings;
-        var before = new MeetingsState(s.MeetingSpeechEngine, s.MeetingSpeechEngineExplicit, s.MeetingTranscriptionModel, s.MeetingOpenAiTranscriptionModel,
-            s.MeetingTextEngine, s.MeetingSummaryModel, s.MeetingOpenAiSummaryModel, s.MeetingChunkSeconds, s.MeetingSafeguardMinutes);
-        var pickedSpeech = SelectedEngine(_meetingSpeechEngine);
-        if (pickedSpeech != _meetingSpeechEngineShown) s.MeetingSpeechEngineExplicit = true;
-        if (s.MeetingSpeechEngineExplicit) s.MeetingSpeechEngine = pickedSpeech;
-        s.MeetingTranscriptionModel = SelectedModel(_meetingModel);
-        s.MeetingOpenAiTranscriptionModel = SelectedModel(_meetingModelOpenAi);
-        s.MeetingTextEngine = SelectedEngine(_meetingTextEngine);
-        s.MeetingSummaryModel = SelectedModel(_meetingSummaryModel);
-        s.MeetingOpenAiSummaryModel = SelectedModel(_meetingSummaryModelOpenAi);
+        var before = new MeetingsState(s.MeetingTranscription, s.MeetingSpeechEngineExplicit, s.MeetingText, s.MeetingChunkSeconds, s.MeetingSafeguardMinutes);
+        var pickedSpeech = _meetingSpeechStep.Selected;
+        if (pickedSpeech.Engine != _meetingSpeechEngineShown) s.MeetingSpeechEngineExplicit = true;
+        // Until the engine was picked, the stored engine stays (meetings follow Diktieren); the models are always stored.
+        s.MeetingTranscription = s.MeetingSpeechEngineExplicit ? pickedSpeech : pickedSpeech with { Engine = s.MeetingTranscription.Engine };
+        s.MeetingText = _meetingTextStep.Selected;
         s.MeetingChunkSeconds = SelectedChoice(_meetingChunk);
         s.MeetingSafeguardMinutes = SelectedChoice(_meetingSafeguard);
         return before;
@@ -141,9 +126,7 @@ internal sealed partial class SettingsForm
     private void RestoreMeetings(MeetingsState b)
     {
         var s = _settings;
-        (s.MeetingSpeechEngine, s.MeetingSpeechEngineExplicit) = (b.Speech, b.SpeechExplicit);
-        (s.MeetingTranscriptionModel, s.MeetingOpenAiTranscriptionModel) = (b.Model, b.ModelOpenAi);
-        (s.MeetingTextEngine, s.MeetingSummaryModel, s.MeetingOpenAiSummaryModel) = (b.Text, b.Summary, b.SummaryOpenAi);
+        (s.MeetingTranscription, s.MeetingSpeechEngineExplicit, s.MeetingText) = (b.Speech, b.SpeechExplicit, b.Text);
         (s.MeetingChunkSeconds, s.MeetingSafeguardMinutes) = (b.Chunk, b.Safeguard);
     }
 }

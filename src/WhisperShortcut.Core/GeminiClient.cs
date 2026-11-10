@@ -116,7 +116,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
 
     /// <summary>Creates a client reading key and models from <paramref name="settings"/> on every call.</summary>
     public GeminiClient(Settings settings, HttpClient? http = null)
-        : this(() => settings.ApiKey, () => settings.TranscriptionModel, () => settings.PromptModel, http, () => settings.DictateSystemPrompt)
+        : this(() => settings.ApiKey, () => settings.Dictate.Gemini, () => settings.Prompt.Gemini, http, () => settings.DictateSystemPrompt)
     {
         TranscriptionTemperature = () => settings.TranscriptionTemperature;
         TranscriptionThinking = () => settings.TranscriptionThinking;

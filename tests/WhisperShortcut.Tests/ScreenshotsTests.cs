@@ -224,15 +224,15 @@ public class ScreenshotsTests
     [Fact]
     public void Policy_OnAndOnline_Allowed()
     {
-        Assert.True(ScreenshotPolicy.Allowed(Make(s => { s.SendScreenshots = true; s.TextEngine = Engine.Gemini; })));
-        Assert.True(ScreenshotPolicy.Allowed(Make(s => { s.SendScreenshots = true; s.TextEngine = Engine.OpenAI; })));
+        Assert.True(ScreenshotPolicy.Allowed(Make(s => { s.SendScreenshots = true; s.Prompt = s.Prompt with { Engine = Engine.Gemini }; })));
+        Assert.True(ScreenshotPolicy.Allowed(Make(s => { s.SendScreenshots = true; s.Prompt = s.Prompt with { Engine = Engine.OpenAI }; })));
     }
 
     [Fact]
     public void Policy_OfflineModeOrLocalEngine_Denied()
     {
         Assert.False(ScreenshotPolicy.Allowed(Make(s => { s.SendScreenshots = true; s.OfflineMode = true; })));
-        Assert.False(ScreenshotPolicy.Allowed(Make(s => { s.SendScreenshots = true; s.TextEngine = Engine.Local; })));
+        Assert.False(ScreenshotPolicy.Allowed(Make(s => { s.SendScreenshots = true; s.Prompt = s.Prompt with { Engine = Engine.Local }; })));
     }
 
     // ---- SnipWatch ----

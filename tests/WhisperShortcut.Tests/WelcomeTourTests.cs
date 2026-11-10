@@ -80,7 +80,7 @@ public class WelcomeTourTests
         Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
 
         // An earlier explicit cloud pick is given up by the Offline answer.
-        s.MeetingSpeechEngine = Engine.Gemini;
+        s.MeetingTranscription = s.MeetingTranscription with { Engine = Engine.Gemini };
         s.MeetingSpeechEngineExplicit = true;
         WelcomeTour.ChooseOffline(s);
         Assert.Equal(Engine.Local, s.EffectiveMeetingSpeechEngine);
@@ -91,18 +91,18 @@ public class WelcomeTourTests
     {
         var s = Settings.Load(NewPath(), new PlainSecretProtector());
         s.OfflineMode = true;
-        s.SpeechEngine = Engine.Local;
+        s.Dictate = s.Dictate with { Engine = Engine.Local };
         s.OpenAiKey = "sk-test";
         WelcomeTour.ChooseCloud(s);
         Assert.False(s.OfflineMode);
-        Assert.Equal(Engine.OpenAI, s.SpeechEngine);
-        Assert.Equal(Engine.OpenAI, s.TextEngine); // Gemini had no key
+        Assert.Equal(Engine.OpenAI, s.Dictate.Engine);
+        Assert.Equal(Engine.OpenAI, s.Prompt.Engine); // Gemini had no key
         Assert.True(WelcomeTour.TranscriptionReady(s, speechModelInstalled: false));
 
         s.ApiKey = "AIza-test";
-        s.SpeechEngine = Engine.OpenAI;
+        s.Dictate = s.Dictate with { Engine = Engine.OpenAI };
         WelcomeTour.ChooseCloud(s);
-        Assert.Equal(Engine.OpenAI, s.SpeechEngine); // a step that can run stays
+        Assert.Equal(Engine.OpenAI, s.Dictate.Engine); // a step that can run stays
     }
 
     [Fact]

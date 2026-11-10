@@ -28,11 +28,19 @@ internal sealed partial class SettingsForm
     private (bool, bool, string)? _pickerModelState;
     private const int TileWidth = 214, TileHeight = 52;
 
-    /// <summary>A model picker card for one step; <paramref name="engine"/> and the model combos are its stored state.</summary>
-    private Card ModelPicker(string name, Func<IReadOnlyList<Core.PickerModel>> models,
-        Func<IReadOnlyList<Core.PickerModel>, IReadOnlyList<Core.PickerModel>> recommended,
-        FluentCombo engine, FluentCombo gemini, FluentCombo openAi, Func<bool> localReady)
+    /// <summary>
+    /// A model picker card for one step; the step's provider and model combos are its stored state. The offered models, the
+    /// offline model and the OpenAI recommendation follow from the step; <paramref name="recommendedGemini"/> overrides the
+    /// step's default Gemini recommendation (the meeting summary has its own).
+    /// </summary>
+    private Card ModelPicker(string name, ModelStepControls step, string? recommendedGemini = null)
     {
+        bool speech = step.Step == Core.ModelStep.Transcription;
+        Func<IReadOnlyList<Core.PickerModel>> models = speech ? () => Core.ModelPickers.Transcription("Parakeet") : () => Core.ModelPickers.Prompt(LocalLlmName);
+        var recommendedOpenAi = speech ? Core.OpenAiModels.DefaultTranscriptionModel : Core.OpenAiModels.DefaultPromptModel;
+        recommendedGemini ??= Core.ModelSelection.Default(step.Step).Gemini;
+        Func<bool> localReady = speech ? () => OfflineEngine.SpeechInstalled : () => _llmChoice != null && OfflineEngine.LlmInstalled(SelectedLlmChoice);
+
         // WHY no wrapping: a table cell measures a wrapping flow panel as if every tile broke onto its own row, and keeps
         // that height. The top row has at most four tiles (narrower then), the rest is a list like the Mac's.
         var tiles = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0), AccessibleName = name, AccessibleRole = AccessibleRole.Grouping };
@@ -49,8 +57,9 @@ internal sealed partial class SettingsForm
         card.AddRow(block);
         var picker = new Picker
         {
-            Tiles = tiles, More = more, MoreToggle = toggle, Description = description, Models = models, Recommended = recommended,
-            Engine = engine, Gemini = gemini, OpenAi = openAi, LocalReady = localReady,
+            Tiles = tiles, More = more, MoreToggle = toggle, Description = description, Models = models,
+            Recommended = list => Core.ModelPickers.Recommended(list, recommendedGemini, recommendedOpenAi),
+            Engine = step.Engine, Gemini = step.Gemini, OpenAi = step.OpenAi, LocalReady = localReady,
         };
         toggle.LinkClicked += (_, _) => { picker.MoreOpen = !picker.MoreOpen; RefreshPicker(picker); };
         _pickers.Add(picker);

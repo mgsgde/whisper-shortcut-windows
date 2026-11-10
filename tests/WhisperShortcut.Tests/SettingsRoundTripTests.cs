@@ -26,20 +26,19 @@ public class SettingsRoundTripTests
 
     private static string Other(IReadOnlyList<ModelInfo> list, string current) => list.First(m => m.Id != current).Id;
 
+    private static ModelSelection Different(ModelStep step, ModelSelection d) =>
+        new(Engine.OpenAI, Other(step.GeminiCatalog(), d.Gemini), Other(step.OpenAiCatalog(), d.OpenAi));
+
     // Values for properties the generic rule (bool flip, enum other value, string Text, one-element string list) cannot or
     // should not guess: normalised or range-limited fields. Gets the fresh default so the value always differs from it.
     private static readonly Dictionary<string, Func<Settings, object>> Overrides = new()
     {
-        [nameof(Settings.TranscriptionModel)] = d => Other(GeminiModels.Transcription, d.TranscriptionModel),
-        [nameof(Settings.PromptModel)] = d => Other(GeminiModels.Prompt, d.PromptModel),
-        [nameof(Settings.MeetingTranscriptionModel)] = d => Other(GeminiModels.Transcription, d.MeetingTranscriptionModel),
-        [nameof(Settings.MeetingSummaryModel)] = d => Other(GeminiModels.Prompt, d.MeetingSummaryModel),
-        [nameof(Settings.ChatModel)] = d => Other(GeminiModels.Prompt, d.ChatModel),
-        [nameof(Settings.OpenAiTranscriptionModel)] = d => Other(OpenAiModels.Transcription, d.OpenAiTranscriptionModel),
-        [nameof(Settings.MeetingOpenAiTranscriptionModel)] = d => Other(OpenAiModels.Transcription, d.MeetingOpenAiTranscriptionModel),
-        [nameof(Settings.OpenAiPromptModel)] = d => Other(OpenAiModels.Prompt, d.OpenAiPromptModel),
-        [nameof(Settings.MeetingOpenAiSummaryModel)] = d => Other(OpenAiModels.Prompt, d.MeetingOpenAiSummaryModel),
-        [nameof(Settings.ChatOpenAiModel)] = d => Other(OpenAiModels.Prompt, d.ChatOpenAiModel),
+        // Provider and both model ids change together, so one case covers the three flat keys of a step.
+        [nameof(Settings.Dictate)] = d => Different(ModelStep.Transcription, d.Dictate),
+        [nameof(Settings.Prompt)] = d => Different(ModelStep.Text, d.Prompt),
+        [nameof(Settings.MeetingTranscription)] = d => Different(ModelStep.Transcription, d.MeetingTranscription),
+        [nameof(Settings.MeetingText)] = d => Different(ModelStep.Text, d.MeetingText),
+        [nameof(Settings.Chat)] = d => Different(ModelStep.Text, d.Chat),
         [nameof(Settings.ReadAloudModel)] = d => ReadAloud.Models.First(m => m.Id != d.ReadAloudModel).Id,
         [nameof(Settings.ReadAloudVoiceGemini)] = d => ReadAloud.Voices(TtsProvider.Gemini).First(v => v.Id != d.ReadAloudVoiceGemini).Id,
         [nameof(Settings.ReadAloudVoiceOpenAi)] = d => ReadAloud.Voices(TtsProvider.OpenAI).First(v => v.Id != d.ReadAloudVoiceOpenAi).Id,

@@ -47,12 +47,12 @@ public static class McpProblemReport
         sb.Append($"- Version: {appVersion}\n");
         sb.Append($"- Windows: {Environment.OSVersion.VersionString} ({RuntimeInformation.OSArchitecture})\n");
         sb.Append($"- Modus: {(settings.OfflineMode ? "offline" : "online")}\n");
-        sb.Append($"- Spracherkennung: {EngineName(settings.SpeechEngine)}\n");
-        sb.Append($"- Texte bearbeiten: {EngineName(settings.TextEngine)}\n");
-        sb.Append($"- Diktat-Modell (Gemini): {settings.TranscriptionModel}\n");
-        sb.Append($"- Diktat-Modell (OpenAI): {settings.OpenAiTranscriptionModel}\n");
-        sb.Append($"- Prompt-Modell (Gemini): {settings.PromptModel}\n");
-        sb.Append($"- Prompt-Modell (OpenAI): {settings.OpenAiPromptModel}\n");
+        sb.Append($"- Spracherkennung: {EngineName(settings.Dictate.Engine)}\n");
+        sb.Append($"- Texte bearbeiten: {EngineName(settings.Prompt.Engine)}\n");
+        sb.Append($"- Diktat-Modell (Gemini): {settings.Dictate.Gemini}\n");
+        sb.Append($"- Diktat-Modell (OpenAI): {settings.Dictate.OpenAi}\n");
+        sb.Append($"- Prompt-Modell (Gemini): {settings.Prompt.Gemini}\n");
+        sb.Append($"- Prompt-Modell (OpenAI): {settings.Prompt.OpenAi}\n");
         sb.Append($"- Offline-Sprachmodell: {(settings.OfflineLlmId.Length == 0 ? "-" : settings.OfflineLlmId)}\n\n");
         sb.Append(Footer).Append('\n');
 

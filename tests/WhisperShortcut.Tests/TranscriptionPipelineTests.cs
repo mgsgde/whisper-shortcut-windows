@@ -201,8 +201,8 @@ public class TranscriptionPipelineTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        s.SpeechEngine = Engine.OpenAI;
-        s.TextEngine = Engine.Gemini;
+        s.Dictate = s.Dictate with { Engine = Engine.OpenAI };
+        s.Prompt = s.Prompt with { Engine = Engine.Gemini };
         Assert.Equal(Engine.OpenAI, s.EffectiveSpeechEngine);
         Assert.Equal(Engine.Gemini, s.EffectiveTextEngine);
         s.OfflineMode = true;
