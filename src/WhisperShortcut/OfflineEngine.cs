@@ -163,6 +163,13 @@ internal sealed class OfflineEngine : IDisposable
         });
     }
 
+    /// <summary>
+    /// Downloads (once, pinned) and loads the Silero VAD of the cloud speech gate in the background.
+    /// Own folder, own marker, so it is independent of the offline mode's downloads.
+    /// </summary>
+    public void PrepareSpeechGate() =>
+        _ = Task.Run(() => Core.SpeechActivityGate.PrepareAsync(_downloader)); // never throws, logs its own failure
+
     /// <summary>Starts the language model while the user is still speaking the instruction.</summary>
     public void PrewarmLlm()
     {

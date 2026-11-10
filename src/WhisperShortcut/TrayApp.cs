@@ -160,6 +160,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _openAi = new Core.OpenAiClient(_settings);
         _offline = new OfflineEngine(_settings);
         _offline.Prewarm();
+        PrepareSpeechGate();
 
         _hotkeys = new HotkeyService();
         _rightCtrl = new Core.RightCtrlDictationToggle(new RightCtrlBridge(this), () => Environment.TickCount64);
@@ -1576,7 +1577,7 @@ internal sealed partial class TrayApp : ApplicationContext
             isOffline: _settings.EffectiveSpeechEngine == Core.Engine.Local, duringMeeting: false);
         string raw = _fakeGemini
             ? "das ist ein test diktat aus der virtuellen maschine"
-            : await TranscribeAsync(wav, ct, punctuation);
+            : await TranscribeAsync(wav, ct, punctuation, speechGate: true);
         raw = GlossaryBackstops(raw);
         string text = Core.TextCleanup.DiscardImplausible(
             Core.TextCleanup.ForDictation(raw, addTrailingPeriod: punctuation == Core.PunctuationMode.Automatic), seconds);
@@ -1800,13 +1801,14 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     /// <summary>Speech recognition with the chosen engine: Parakeet on this PC, or Gemini / OpenAI.</summary>
+    /// <param name="speechGate">Silero VAD gate in front of the cloud upload (Mac: dictation only; meetings and Dictate Prompt are not gated). Offline never uses it.</param>
     private Task<string> TranscribeAsync(byte[] wav, CancellationToken ct, Core.PunctuationMode punctuation = Core.PunctuationMode.Automatic,
-        bool meetingChunk = false) =>
+        bool meetingChunk = false, bool speechGate = false) =>
         _settings.EffectiveSpeechEngine switch
         {
             Core.Engine.Local => TranscribeOfflineAsync(wav, ct, punctuation),
-            Core.Engine.OpenAI => TranscribeOnlineAsync(_openAi, wav, ct, meetingChunk),
-            _ => TranscribeOnlineAsync(_gemini, wav, ct, meetingChunk),
+            Core.Engine.OpenAI => TranscribeOnlineAsync(_openAi, wav, ct, meetingChunk, speechGate),
+            _ => TranscribeOnlineAsync(_gemini, wav, ct, meetingChunk, speechGate),
         };
 
     /// <summary>
@@ -1851,17 +1853,28 @@ internal sealed partial class TrayApp : ApplicationContext
     /// Pieces are cut in pauses, four at a time: one request would hit Gemini's inline size limit
     /// and take as long as all of it. A piece that comes back as nothing but glossary words (the
     /// model filled a quiet stretch with vocabulary) is asked again once without the glossary, like the Mac.
+    /// With <paramref name="speechGate"/> every piece also passes the Silero VAD gate: no speech skips the
+    /// request, a long quiet head or tail is cut off (the energy gate above stays first).
     /// </summary>
-    private Task<string> TranscribeOnlineAsync(Core.ISpeechProvider speech, byte[] wav, CancellationToken ct, bool meetingChunk = false)
+    private Task<string> TranscribeOnlineAsync(Core.ISpeechProvider speech, byte[] wav, CancellationToken ct, bool meetingChunk = false, bool speechGate = false)
     {
         var glossary = _settings.Glossary.ToList();
         var echoTerms = Core.GlossaryPrompt.EchoTerms(glossary);
         return Core.ChunkedTranscription.TranscribeAsync(
             speech is Core.OpenAiClient ? Core.WavChunker.SplitForOpenAi(wav) : Core.WavChunker.Split(wav),
-            async (chunk, c) =>
+            async (piece, c) =>
             {
                 // Nothing but room noise: Gemini would answer with the glossary. Also saves the request.
-                if (!HasSpeech(chunk)) return "";
+                if (!HasSpeech(piece)) return "";
+                var chunk = piece;
+                if (speechGate)
+                {
+                    // Silero decides next: null = no speech, a copy = quiet ends cut off, same array = unchanged
+                    // (also while the model is not loaded yet, or when anything about it fails).
+                    var gated = Core.SpeechActivityGate.Apply(piece);
+                    if (gated == null) return "";
+                    chunk = gated;
+                }
                 // Live-meeting chunks carry loud system audio that gpt-transcribe answers with the keywords themselves.
                 var text = speech is Core.OpenAiClient oa
                     ? await oa.TranscribeAsync(chunk, glossary, sendKeywords: !meetingChunk, c)
@@ -1872,6 +1885,17 @@ internal sealed partial class TrayApp : ApplicationContext
                 Core.Log.Info("Dictate: glossary echo discarded, asking again without the glossary");
                 return await speech.TranscribeAsync(chunk, Array.Empty<string>(), c);
             }, maxParallel: 4, ct);
+    }
+
+    /// <summary>
+    /// Silero VAD for the cloud speech gate: fetched and loaded in the background, only with a cloud speech
+    /// engine (Mac: FullApp, utility priority). Runs once per launch; a dictation never waits for it, until
+    /// it is ready the recording uploads as before.
+    /// </summary>
+    private void PrepareSpeechGate()
+    {
+        if (_fakeGemini || _settings.EffectiveSpeechEngine == Core.Engine.Local) return;
+        _offline.PrepareSpeechGate();
     }
 
     /// <summary>Speech gate for a recording or chunk going to Gemini or OpenAI; the file source of --test-wav passes through here too.</summary>
@@ -2313,6 +2337,7 @@ internal sealed partial class TrayApp : ApplicationContext
         if (_settings.OfflineMode && (fromSettingsWindow || d.OfflineModeChanged)) _promptMemory.Clear();
         SetState(_state); // key may have been added: tooltip "Bereit" instead of "Kein API-Schlüssel"
         _offline.Prewarm(); // offline mode or the engine may just have been switched to this PC
+        PrepareSpeechGate(); // ... or away from it
         DropScreenshotIfNotAllowed(); // a local text engine must not get a held screenshot later
         _mcp.SyncOfflineMode();
         AfterOfflineMaybeChanged();
