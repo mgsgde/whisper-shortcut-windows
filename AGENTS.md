@@ -53,6 +53,8 @@ Same split as sabaki.dance and the macOS app; the full wording and the daily cap
 `~/.claude/CLAUDE.md`. Magnus, 2026-10-02: „Opus 5.5 fürs Planen und fürs Evaluieren und für die UI …
 stupide Tätigkeiten wie Typing: Grok oder Sonnet“.
 
+- **Fable 5.2 only for the hard thinking, on Magnus's word or an accepted proposal** (2026-11-13, replaces „no Fable"): „entweder ich sage Opus 5.5 … für das und das möchte ich, dass du Fable 5.2 nutzt, weil es wichtig ist, oder Opus 5.5 soll mir den Vorschlag machen und ich akzeptiere". Opus proposes in one line and waits for the yes (important UI component or screen, hard-to-reverse decision, strategy, a problem it failed at twice; never tweaks), then one `Agent` subagent with `model: "fable"` as consultant on a full brief; Opus builds. Never switch a running session to Fable. Full wording: `~/.claude/CLAUDE.md` → Models.
+
 | Job | Who |
 |---|---|
 | Plan, spec, review, judge, talk to Magnus | Opus 5.5 session |
