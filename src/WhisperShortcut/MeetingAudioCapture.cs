@@ -32,6 +32,8 @@ internal sealed class MeetingAudioCapture : IDisposable
     private bool _loopbackFloat;
     private int _loopbackToken;
     private volatile int _restarting;
+    /// <summary>Which start or rebuild set <see cref="_restarting"/>. An older attempt must not clear a newer one.</summary>
+    private int _restartGeneration;
     private volatile bool _loopbackDied;
     private volatile bool _systemActive;
     private volatile float _level;
@@ -106,16 +108,28 @@ internal sealed class MeetingAudioCapture : IDisposable
         };
         _waveIn = waveIn;
 
+        // Notifications before the first loopback, so a device change during start is not missed.
         // The loopback goes first so the mixer already has system audio when the first mic buffer arrives.
         // _restarting makes a stop that lands during this start count as a failed start (retried below)
-        // instead of a second rebuild scheduled from the callback.
+        // instead of a second rebuild scheduled from the callback. Generation 0 is this start; a rebuild
+        // that begins during it owns a higher generation and must not have its flag cleared here.
         if (_mixSystemAudio)
         {
-            _restarting = 1;
+            StartNotifications();
+            lock (_gate)
+            {
+                _restartGeneration = 0;
+                _restarting = 1;
+            }
             bool started;
             try { started = StartLoopback(null); }
-            finally { _restarting = 0; }
-            StartNotifications();
+            finally
+            {
+                lock (_gate)
+                {
+                    if (_restartGeneration == 0) _restarting = 0;
+                }
+            }
             if (!started || _loopbackDied) ScheduleInitialRetry();
         }
 
@@ -266,6 +280,7 @@ internal sealed class MeetingAudioCapture : IDisposable
             lock (_gate)
             {
                 if (_stopped || generation != _rebuildGeneration) return;
+                _restartGeneration = generation;
                 _restarting = 1;
                 _loopbackDied = false;
                 attempt = _rebuild.Failures + 1;
@@ -288,7 +303,11 @@ internal sealed class MeetingAudioCapture : IDisposable
             }
             finally
             {
-                _restarting = 0;
+                // A newer attempt may already own the flag. Clearing it here would hide that attempt's death.
+                lock (_gate)
+                {
+                    if (_restartGeneration == generation) _restarting = 0;
+                }
             }
 
             lock (_gate)
@@ -357,9 +376,15 @@ internal sealed class MeetingAudioCapture : IDisposable
         StreamResampler resampler;
         WaveFormat format;
         WaveFormatEncoding encoding;
+        string? deviceId = null;
         try
         {
-            loopback = new WasapiLoopbackCapture();
+            // One read: the capture and the id we compare on the next device change come from the same endpoint.
+            // AudioClient activates its own COM object, so the device can be disposed once the capture exists.
+            using var enumerator = new MMDeviceEnumerator();
+            using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
+            deviceId = device.ID;
+            loopback = new WasapiLoopbackCapture(device);
             format = loopback.WaveFormat;
             encoding = format is WaveFormatExtensible ext ? ext.ToStandardWaveFormat().Encoding : format.Encoding;
             if (encoding == WaveFormatEncoding.IeeeFloat && format.BitsPerSample == 32)
@@ -396,6 +421,7 @@ internal sealed class MeetingAudioCapture : IDisposable
                 _loopbackFloat = isFloat;
                 _resampler = resampler;
                 _loopback = loopback;
+                _loopbackDeviceId = deviceId;
                 try
                 {
                     loopback.StartRecording();
@@ -420,6 +446,7 @@ internal sealed class MeetingAudioCapture : IDisposable
                     _loopback = null;
                     _resampler = null;
                     _systemActive = false;
+                    _loopbackDeviceId = null;
                     Interlocked.Increment(ref _loopbackToken);
                 }
             }
@@ -433,11 +460,6 @@ internal sealed class MeetingAudioCapture : IDisposable
             return false;
         }
 
-        var deviceId = TryDefaultRenderId();
-        lock (_gate)
-        {
-            if (ReferenceEquals(_loopback, loopback)) _loopbackDeviceId = deviceId;
-        }
         Log.Info($"Meeting: PC audio capture started ({format.SampleRate} Hz, {format.Channels} ch, {encoding})");
         return true;
     }
@@ -447,12 +469,12 @@ internal sealed class MeetingAudioCapture : IDisposable
         try
         {
             if (error == null || token != Volatile.Read(ref _loopbackToken)) return;
+            // Before the _restarting check. AttemptAsync clears that flag in finally, then looks at
+            // _loopbackDied under the lock: a death in that window has to be visible or the attempt
+            // is counted as a success and never rebuilt.
+            _loopbackDied = true;
             _systemActive = false;
-            if (_restarting != 0)
-            {
-                _loopbackDied = true;
-                return;
-            }
+            if (_restarting != 0) return;
             lock (_gate)
             {
                 if (_stopped || token != Volatile.Read(ref _loopbackToken)) return;
@@ -499,21 +521,6 @@ internal sealed class MeetingAudioCapture : IDisposable
         if (loopback == null) return;
         try { loopback.StopRecording(); } catch { }
         try { loopback.Dispose(); } catch { }
-    }
-
-    private static string? TryDefaultRenderId()
-    {
-        try
-        {
-            using var enumerator = new MMDeviceEnumerator();
-            using var device = enumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            return device.ID;
-        }
-        catch (Exception e)
-        {
-            Log.Warn($"Meeting: default output id unreadable ({e.GetType().Name})");
-            return null;
-        }
     }
 
     private void OnLoopbackData(object? sender, WaveInEventArgs e)
@@ -580,8 +587,19 @@ public sealed class MeetingOutputNotificationClient : IMMNotificationClient
     public void OnDeviceRemoved(string deviceId) { }
 
     /// <inheritdoc/>
-    public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId) =>
-        _owner.OnDefaultOutputChanged(flow, role, defaultDeviceId);
+    public void OnDefaultDeviceChanged(DataFlow flow, Role role, string defaultDeviceId)
+    {
+        // IMMNotificationClient runs on the MMDevice thread and must not wait on our locks.
+        try
+        {
+            ThreadPool.UnsafeQueueUserWorkItem(
+                _ => _owner.OnDefaultOutputChanged(flow, role, defaultDeviceId), null);
+        }
+        catch
+        {
+            // Never throw back into COM.
+        }
+    }
 
     /// <inheritdoc/>
     public void OnPropertyValueChanged(string pwstrDeviceId, PropertyKey key) { }
