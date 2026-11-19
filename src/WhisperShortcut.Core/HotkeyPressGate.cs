@@ -69,11 +69,19 @@ public static class RecordingHotkeyPolicy
 {
     /// <summary>
     /// Idle always starts (the bounce gate does not apply). Recording stops only in the same mode
-    /// and only when <paramref name="gateOpen"/>. Processing cancels when the gate is open.
+    /// and only when <paramref name="gateOpen"/>. Processing cancels when the gate is open, except while
+    /// Live diktieren is still inserting its last pieces (<paramref name="liveFinishing"/>, Mac #396):
+    /// that press is ignored, because cancelling would drop text that has not reached the cursor.
+    /// A press while Live is still recording stops, as usual.
     /// </summary>
-    public static RecordingHotkeyDecision Decide(bool recording, bool processing, bool sameMode, bool gateOpen)
+    public static RecordingHotkeyDecision Decide(bool recording, bool processing, bool sameMode, bool gateOpen,
+        bool liveFinishing = false)
     {
-        if (processing) return gateOpen ? RecordingHotkeyDecision.Cancel : RecordingHotkeyDecision.Ignore;
+        if (processing)
+        {
+            if (!gateOpen || liveFinishing) return RecordingHotkeyDecision.Ignore;
+            return RecordingHotkeyDecision.Cancel;
+        }
         if (recording)
         {
             if (!sameMode) return RecordingHotkeyDecision.Ignore;

@@ -115,15 +115,33 @@ public static class LiveDictation
     public static readonly TimeSpan PrePasteDelay = TimeSpan.FromMilliseconds(50);
 
     /// <summary>
-    /// Mac <c>RotationPolicy.live</c> (min 1.5 s, cut after 0.6 s of silence = three 0.2 s windows); the 30 s max is
-    /// ours (the Mac has none; it keeps a piece decodable when someone talks without a pause).
+    /// Env <c>WSW_LIVE_SOFT_CUT=0</c> restores the old live policy (Mac UserDefaults <c>liveSoftCutDisabled</c>):
+    /// a piece ends only after 0.6 s below the pause threshold, or at the 30 s hard cut.
+    /// </summary>
+    public static bool SoftCutDisabled => SoftCutDisabledValue(Environment.GetEnvironmentVariable("WSW_LIVE_SOFT_CUT"));
+
+    /// <summary>True only for the kill-switch value <c>0</c>.</summary>
+    public static bool SoftCutDisabledValue(string? env) => env == "0";
+
+    /// <summary>
+    /// Mac <c>RotationPolicy.live</c> (min 1.5 s, cut after 0.6 s of silence = three 0.2 s windows). From 5 s on,
+    /// two quiet 0.2 s windows under the threshold plus 10 dB (capped at −20 dB) also cut (Mac #483,
+    /// <see cref="LivePieceCut"/>). The 30 s max is ours (the Mac has none; it keeps a piece decodable when
+    /// someone talks without a pause) and stays the backstop when the soft rule finds no quiet window.
     /// The -45 dB threshold is the Mac's ChunkedDictateRecorder.silenceThresholdDB; -40 counted quiet speech as a pause
     /// and cut pieces mid-sentence (1-2 character pieces).
     /// Windows difference: the threshold follows the noise floor (floor + 12 dB, between -60 and -45 dB). A quiet
     /// headset (speech 17-20 dB below the Mac recordings) otherwise had its quiet speech cut and dropped as silence.
+    /// The soft rule adds its 10 dB on top of that adaptive threshold.
     /// </summary>
-    public static MeetingChunkPolicy ChunkPolicy { get; } = new(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1.5),
-        TimeSpan.FromSeconds(0.6), -45f, TimeSpan.FromSeconds(0.2), NoiseFloorMarginDb: 12f, LowestThresholdDb: -60f);
+    public static MeetingChunkPolicy ChunkPolicy => ChunkPolicyFor(SoftCutDisabled);
+
+    /// <summary>The live policy with the soft rule on or off. Tests pass the flag; the app reads <see cref="SoftCutDisabled"/>.</summary>
+    public static MeetingChunkPolicy ChunkPolicyFor(bool softCutDisabled) => new(TimeSpan.FromSeconds(30),
+        TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(0.6), -45f, TimeSpan.FromSeconds(0.2),
+        NoiseFloorMarginDb: 12f, LowestThresholdDb: -60f,
+        SoftCutAfter: softCutDisabled ? null : TimeSpan.FromSeconds(5),
+        SoftCutSilence: TimeSpan.FromSeconds(0.4), SoftCutBoostDb: 10f, MaxSoftCutThresholdDb: -20f);
 
     /// <summary>
     /// A piece the chunker calls silent is still decoded when its loudest 0.2 s window reaches this level: that is quiet
@@ -182,30 +200,70 @@ public static class LiveDictation
     /// ("neuer Absatz" at the very end of a piece) are kept: <see cref="LiveChunkJoiner"/> relies on them to lay out
     /// the next piece without adding a space after. <paramref name="timedMarks"/>: the piece's commas, periods, "?" and
     /// "!" were already filtered by token timing, so Strip removes only semicolons.
+    /// Last, the GdB token is normalised (<see cref="GdBSpelling"/>) and quantity number words become
+    /// digits (<see cref="GermanNumberWords"/>). Spelling runs first, in every punctuation mode, so
+    /// "EinzelgdB" is already the token "GdB" when the value rule looks for it. Spoken commands have
+    /// already run, so "drei Pünktchen" is already "…" and "zwei Komma fünf" already "2,5".
     /// </summary>
     public static string FinishPiece(string text, PunctuationMode mode, bool timedMarks = false)
     {
         var withoutFillers = RemovingFillers(text);
+        var unglued = mode == PunctuationMode.SpokenOnly ? SplittingGluedTrailingPunkt(withoutFillers) : withoutFillers;
         var source = mode == PunctuationMode.SpokenOnly
-            ? SpokenPunctuation.StripModelPunctuation(withoutFillers, timedMarks)
-            : withoutFillers;
-        return SpokenPunctuation.Apply(source, mode, keepsEdgeBreaks: true);
+            ? SpokenPunctuation.StripModelPunctuation(unglued, timedMarks)
+            : unglued;
+        var punctuated = SpokenPunctuation.Apply(source, mode, keepsEdgeBreaks: true, timedMarks: timedMarks);
+        var spelled = GdBSpelling.Normalize(punctuated);
+        return GermanNumberWords.DigitizingQuantities(spelled);
     }
 
-    // "hmm" is two or more m's; "hm" is the single one. Longer forms come first so a word boundary
-    // still decides, and "ähm" is not eaten as "äh".
-    private static readonly System.Text.RegularExpressions.Regex FillerRegex = new(
-        @"[ \t]*\b(?:mm-hmm|mmhmm|m-hm|mhm|hm{2,}|hm|ähm|äh|öhm|ehm)\b[,.;]?[ \t]*",
+    /// <summary>
+    /// Parakeet glues a spoken "Punkt" before a pause onto the last word of the piece
+    /// ("Die Haut ist trockenpunkt"). This splits it back to "trocken Punkt". Only the piece's last
+    /// word is looked at. Real "-punkt" compounds stay via <see cref="SpokenPunctuation.IsRealPunktCompound"/>.
+    /// The mid-piece glue is split by the spoken-punctuation rule, not here.
+    /// </summary>
+    public static string SplittingGluedTrailingPunkt(string text)
+    {
+        var match = GluedTrailingPunktRegex.Match(text);
+        if (!match.Success) return text;
+        var word = match.Groups[1].Value;
+        var lower = word.ToLowerInvariant();
+        if (lower is "punkt" or "doppelpunkt" or "strichpunkt") return text;
+        if (SpokenPunctuation.IsRealPunktCompound(lower)) return text;
+        var stem = match.Groups[2].Value;
+        var at = match.Groups[1].Index;
+        return string.Concat(text.AsSpan(0, at), stem, " Punkt", text.AsSpan(at + match.Groups[1].Length));
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex GluedTrailingPunktRegex = new(
+        @"((\p{L}{2,})punkt)[.,;:!?…]*\s*$",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    // Parakeet hears the breath before a lone spoken command as "Oh," ("Oh, Doppelpunkt." for a piece
+    // that is only "Doppelpunkt"), which turned the colon into "Oh:". "Oh" stays a real word
+    // everywhere else; it goes only at the start of a piece, right before a spoken colon.
+    private static readonly System.Text.RegularExpressions.Regex LeadingOhRegex = new(
+        @"^[ \t]*oh[,.]?[ \t]+(?=doppel[ \t-]?(?:punkt|gun)\b)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    // "hmm" is two or more m's; "hm" is the single one. Longer forms come first so a word boundary
+    // still decides, and "ähm" is not eaten as "äh". TextCleanup.RemovingFillers uses this same
+    // pattern for cloud transcripts (Mac #507); this method stays the live-piece behaviour.
+    internal static readonly System.Text.RegularExpressions.Regex FillerRegex = new(
+        @"[ \t]*\b(?:mm-hmm|mmhmm|m-hm|mhm|hm{2,}|hm|ähm|äh|öhm|ehm)\b[,.;]?[ \t]*",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex FillerSpaceRun = new(@"[ \t]{2,}");
 
     /// <summary>
     /// Parakeet writes fillers ("Mm-hmm", "Ähm") into the record. Whole word, case-insensitive, plus one comma, period or
     /// semicolon glued on, and the spaces around them. "Um", "ah", "aha", "achso" and "oh" stay: they are real German
-    /// words. A piece of only fillers comes back "".
+    /// words. A piece of only fillers comes back "". A leading "Oh" right before a spoken colon is the
+    /// exception (see <see cref="LeadingOhRegex"/>).
     /// </summary>
     private static string RemovingFillers(string text)
     {
+        text = LeadingOhRegex.Replace(text, "");
         if (!FillerRegex.IsMatch(text)) return text;
         var replaced = FillerRegex.Replace(text, " ");
         return FillerSpaceRun.Replace(replaced, " ").Trim(' ', '\t');
@@ -321,8 +379,12 @@ public static class LiveDictation
 /// <item><b>Spacing:</b> one space between pieces, none at the very start. The seed is the character already before the
 /// caret: a letter takes that leading space ("Basistherapie" + "Ah" -> " Ah"), whitespace or a line break there does
 /// not, and an unknown caret keeps the plain start. Also none after a line break, none before a piece that starts with
-/// a line break (spoken "neuer Absatz" becomes one) or with closing punctuation, none on either side of a slash
-/// ("Schrägstrich" said in one piece and the next word in another must still read "L4/L5").</item>
+/// a line break (spoken "neuer Absatz" becomes one) or with closing punctuation, none after "(" (the piece ended on
+/// "Klammer auf"), none on either side of a slash ("Schrägstrich" said in one piece and the next word in another must
+/// still read "L4/L5").</item>
+/// <item><b>The same mark on both sides of a piece boundary</b> (".", ",", "?", "!", ";", ":"): when the text so far
+/// ends with that mark (trailing spaces aside), the leading copy is dropped, and one space after it too
+/// ("ganz gut." + "." stays "ganz gut.", "Müller," + ", ganz lieben Dank").</item>
 /// <item><b>A period at a breath:</b> Parakeet punctuates each piece on its own, so a pause mid-sentence can end a
 /// piece with "." although the sentence goes on. A piece's final period is therefore held back and emitted with
 /// the next piece: dropped when that piece starts with a lowercase letter (the sentence clearly continued), kept
@@ -354,6 +416,19 @@ public sealed class LiveChunkJoiner
     /// <summary>Characters that never get a space in front.</summary>
     public static readonly HashSet<char> ClosingPunctuation = new() { ',', '.', ';', ':', '!', '?', ')', ']', '»', '“', '…' };
 
+    private static readonly HashSet<char> BoundaryMarks = new() { '.', ',', '?', '!', ';', ':' };
+
+    /// <summary>Drops a leading mark the text so far already ends with, and one space after that mark.</summary>
+    private static string DroppingDuplicateLeadingMark(string body, string prior)
+    {
+        if (body.Length == 0 || !BoundaryMarks.Contains(body[0])) return body;
+        var end = prior.TrimEnd(' ', '\t');
+        if (end.Length == 0 || end[^1] != body[0]) return body;
+        var rest = body[1..];
+        if (rest.StartsWith(' ')) rest = rest[1..];
+        return rest;
+    }
+
     /// <summary>The character already before the caret. Start of text and unknown leave the first piece unspaced.</summary>
     public void Seed(CaretContext context) =>
         _precedingText = context.Kind == CaretKind.Character ? context.Character.ToString() : "";
@@ -365,6 +440,11 @@ public sealed class LiveChunkJoiner
         var body = piece.Trim(' ', '\t');
         if (body.Length == 0) return "";
 
+        // Across a piece boundary at most one blank line: "neuer Absatz" at the end of one piece and
+        // "neue Zeile" at the start of the next must not stack up to three breaks.
+        body = LimitingBreaks(body, _precedingText + _inserted);
+        if (body.Length == 0) return "";
+
         if (!HoldsPeriods) body = LowercaseLeadingFunctionWord(body, _precedingText + _inserted);
 
         var output = new System.Text.StringBuilder();
@@ -373,11 +453,20 @@ public sealed class LiveChunkJoiner
             _heldPeriod = false;
             if (!StartsWithLowercaseLetter(body)) output.Append('.');
         }
+        // After the held period, so a period just emitted still counts as "already ends with '.'".
+        body = DroppingDuplicateLeadingMark(body, _precedingText + _inserted + output);
+        if (body.Length == 0)
+        {
+            if (output.Length == 0) return "";
+            var only = output.ToString();
+            _inserted += only;
+            return only;
+        }
         var before = _precedingText + _inserted + output;
         char first = body[0];
-        // Whitespace (a space or a line break already in the field, or a break this joiner wrote) already separates
-        // the next piece, so it must not gain a second space.
-        if (before.Length > 0 && !char.IsWhiteSpace(before[^1]) && before[^1] != '/'
+        // Whitespace already separates the next piece, so it must not gain a second space. "(" neither:
+        // the next word is inside the parentheses.
+        if (before.Length > 0 && !char.IsWhiteSpace(before[^1]) && before[^1] != '/' && before[^1] != '('
             && !IsNewline(first) && first != '/' && !ClosingPunctuation.Contains(first))
             output.Append(' ');
         if (HoldsPeriods && HoldsFinalPeriod(body))
@@ -403,21 +492,64 @@ public sealed class LiveChunkJoiner
     internal static bool IsNewline(char c) =>
         c is '\n' or '\r' or '\u000B' or '\u000C' or '\u0085' or '\u2028' or '\u2029';
 
+    /// <summary>
+    /// Caps the line breaks where <paramref name="body"/> meets the text so far at two ("\n\n"):
+    /// the breaks already at the end of <paramref name="prior"/> count, and surplus ones at the start of
+    /// <paramref name="body"/> are dropped.
+    /// </summary>
+    private static string LimitingBreaks(string body, string prior)
+    {
+        var lead = 0;
+        while (lead < body.Length && (IsNewline(body[lead]) || body[lead] is ' ' or '\t')) lead++;
+        var leadBreaks = 0;
+        for (var i = 0; i < lead; i++)
+            if (IsNewline(body[i])) leadBreaks++;
+        if (leadBreaks == 0) return body;
+        var priorBreaks = 0;
+        for (var i = prior.Length - 1; i >= 0; i--)
+        {
+            if (IsNewline(prior[i])) priorBreaks++;
+            else if (prior[i] != ' ' && prior[i] != '\t') break;
+        }
+        var allowed = Math.Max(0, 2 - priorBreaks);
+        if (leadBreaks <= allowed) return body;
+        return new string('\n', allowed) + body[lead..];
+    }
+
     // Parakeet capitalises the first word after a pause. Mid-sentence, in spoken-only mode, that capital belongs only
-    // on a noun or a verb.
+    // on a noun or a verb. After a line break the last real mark decides: a comma (the salutation's) makes the word
+    // lower-case again unless it may be a noun; after ". ! ? :" or with no mark before, it stays capital.
     private static string LowercaseLeadingFunctionWord(string body, string inserted)
     {
         var prior = inserted.Trim(' ', '\t');
+        var lead = 0;
+        var leadHasNewline = false;
+        while (lead < body.Length && (IsNewline(body[lead]) || body[lead] is ' ' or '\t'))
+        {
+            if (IsNewline(body[lead])) leadHasNewline = true;
+            lead++;
+        }
+        if (leadHasNewline || (prior.Length > 0 && IsNewline(prior[^1])))
+        {
+            var beforeBreak = inserted.Trim();
+            if (beforeBreak.Length == 0 || beforeBreak[^1] != ',' || lead >= body.Length) return body;
+            var wordEnd = lead;
+            while (wordEnd < body.Length && char.IsLetter(body[wordEnd])) wordEnd++;
+            if (wordEnd == lead) return body;
+            var lowered = SpokenPunctuation.LowercasingAfterSalutationComma(body[lead..wordEnd]);
+            if (lowered == null) return body;
+            return body[..lead] + lowered + body[wordEnd..];
+        }
         if (prior.Length == 0) return body;
         var last = prior[^1];
-        if (IsNewline(last) || last is '.' or '!' or '?' or ':') return body;
+        if (last is '.' or '!' or '?' or ':') return body;
         var split = -1;
         for (var i = 0; i < body.Length; i++)
             if (char.IsWhiteSpace(body[i])) { split = i; break; }
         var word = split < 0 ? body : body[..split];
-        var lowered = SpokenPunctuation.LowercasingFunctionWord(word);
-        if (lowered == null) return body;
-        return split < 0 ? lowered : lowered + body[split..];
+        var loweredWord = SpokenPunctuation.LowercasingFunctionWord(word);
+        if (loweredWord == null) return body;
+        return split < 0 ? loweredWord : loweredWord + body[split..];
     }
 
     /// <summary>True for a letter that is lower case.</summary>

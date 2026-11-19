@@ -64,7 +64,7 @@ public class TranscriptionPipelineTests
     private static string Dictate(string raw, double seconds, IReadOnlyList<string> glossary)
     {
         raw = GlossaryBackstops(raw, glossary);
-        var text = TextCleanup.DiscardImplausible(TextCleanup.ForDictation(raw), seconds);
+        var text = TextCleanup.DiscardImplausible(TextCleanup.ForDictation(raw, audioSeconds: seconds), seconds);
         if (TextCleanup.LooksLikeRefusal(text)) text = "";
         return text;
     }

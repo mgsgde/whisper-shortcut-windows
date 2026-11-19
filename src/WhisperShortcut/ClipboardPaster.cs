@@ -420,8 +420,8 @@ internal sealed class ClipboardPaster
     }
 
     /// <summary>
-    /// Types <paramref name="text"/> into the window in front as Unicode key events (Enter for line breaks), each chunk
-    /// in one SendInput call. Returns the chunk count, or -1 when SendInput failed.
+    /// Types <paramref name="text"/> into the window in front as Unicode key events (Shift+Return for line breaks,
+    /// Mac #396), each chunk in one SendInput call. Returns the chunk count, or -1 when SendInput failed.
     /// </summary>
     private static int TypeText(string text)
     {
@@ -431,8 +431,10 @@ internal sealed class ClipboardPaster
             var inputs = new List<INPUT>();
             if (chunks[i].IsNewline)
             {
-                inputs.Add(Key(VK_RETURN, false));
-                inputs.Add(Key(VK_RETURN, true));
+                // Shift+Return, not Return: in a browser a bare Return submits a single-line input and sends in
+                // chat-like web apps. Shift+Return breaks the line in a textarea and does nothing in an input.
+                foreach (var step in Core.LiveTextTyping.LineBreakSteps)
+                    inputs.Add(Key(step.Key == Core.LiveTextTyping.LineBreakKey.Shift ? VK_SHIFT : VK_RETURN, step.Up));
             }
             else
             {

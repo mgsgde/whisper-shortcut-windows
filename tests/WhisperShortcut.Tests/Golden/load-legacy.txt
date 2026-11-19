@@ -17,7 +17,7 @@ ChatSystemPrompt = ""
 ChatWebSearch = True
 ClipboardAfterPaste = KeepDictation
 ConfiguredMeetingSpeechEngine = OpenAI
-Dictate = ModelSelection { Engine = OpenAI, Gemini = gemini-3.1-flash-lite, OpenAi = gpt-4o-transcribe }
+Dictate = ModelSelection { Engine = OpenAI, Gemini = gemini-3.1-flash-lite, OpenAi = gpt-transcribe }
 DictateHotkey = "Ctrl+Shift+D"
 DictateHotkeyEnabled = True
 DictateMode = Dictate
@@ -43,7 +43,7 @@ MeetingSafeguardMinutes = 90
 MeetingSpeechEngineExplicit = False
 MeetingSummary = True
 MeetingText = ModelSelection { Engine = Gemini, Gemini = gemini-3.5-flash-lite, OpenAi = gpt-6-sol }
-MeetingTranscription = ModelSelection { Engine = OpenAI, Gemini = gemini-3.1-flash-lite, OpenAi = gpt-4o-transcribe }
+MeetingTranscription = ModelSelection { Engine = OpenAI, Gemini = gemini-3.1-flash-lite, OpenAi = gpt-transcribe }
 Microphone = ""
 MoveOfferDismissed = []
 OfflineLlmId = ""

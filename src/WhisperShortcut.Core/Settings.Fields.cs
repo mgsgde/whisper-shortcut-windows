@@ -316,8 +316,11 @@ public sealed partial class Settings
         return rewrite;
     }
 
-    /// <summary>Applies the explicit fields that need the table's values: the clipboard choice, the meeting-engine flag, the key clashes.</summary>
-    private void ApplyDerived(Dto dto)
+    /// <summary>
+    /// Applies the explicit fields that need the table's values: the clipboard choice, the meeting-engine flag, the key clashes.
+    /// Returns true when a retired Read Aloud model was moved, so the caller writes the file.
+    /// </summary>
+    private bool ApplyDerived(Dto dto)
     {
         // Missing "clipboardAfterPaste" = the old "restoreClipboard" switch decides; both missing = restore (older files did).
         ClipboardAfterPaste = Choices.AfterPasteFromFile(dto.ClipboardAfterPaste, dto.RestoreClipboard);
@@ -330,6 +333,13 @@ public sealed partial class Settings
         // Same for the Read Aloud key (checked after the chat key has been placed).
         if (dto.ReadAloudHotkey == null && ReadAloudHotkeyEnabled && HotkeySlots.Clashes(this, HotkeyAction.ReadAloud))
             ReadAloudHotkeyEnabled = false;
+        // gpt-4o-mini-tts is retired (shutdown 2027-01-06). Move it once, at load. The save that
+        // follows stores the replacement, so a later Gemini key does not move the user off the
+        // Windows voice (Mac: retiredReadAloudReplacement, no fallback record).
+        var replacement = ReadAloud.RetiredReplacement(ReadAloudModel, !string.IsNullOrWhiteSpace(ApiKey));
+        if (replacement == null) return false;
+        ReadAloudModel = replacement;
+        return true;
     }
 
     /// <summary>Writes the explicit fields onto the Dto (the table writes the rest).</summary>

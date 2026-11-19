@@ -50,8 +50,8 @@ internal sealed partial class SettingsForm
         page.Controls.Add(Section("Sprachmodell", first: true, subtitle: "Welcher Anbieter die Sprachausgabe erzeugt. Die Stimme wählst du unten."));
         _readAloudModel = ModelChoice(Core.ReadAloud.Models.Select(m => new Core.ModelInfo(m.Id, m.Name, m.Description)).ToList(),
             _settings.ReadAloudModel);
-        page.Controls.Add(ModelCard(_readAloudModel, "Sprachmodell", "Gemini-Stimmen brauchen den Google-API-Schlüssel, GPT-4o mini TTS "
-            + "den OpenAI-Schlüssel (Konten); der markierte Text geht dann an diesen Anbieter. Die Windows-Stimmen laufen auf diesem PC und "
+        page.Controls.Add(ModelCard(_readAloudModel, "Sprachmodell", "Gemini-Stimmen brauchen den Google-API-Schlüssel (Konten); "
+            + "der markierte Text geht dann an diesen Anbieter. Die Windows-Stimmen laufen auf diesem PC und "
             + "sind im Offline-Modus automatisch gewählt."));
 
         // --- voice, per provider ---

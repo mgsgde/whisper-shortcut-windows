@@ -13,8 +13,18 @@ namespace WhisperShortcut.Core;
 /// quiet room then still tells its quiet speech from its pauses.
 /// </param>
 /// <param name="LowestThresholdDb">Lower bound of the relative threshold.</param>
+/// <param name="SoftCutAfter">
+/// Once a piece is this long, <paramref name="SoftCutSilence"/> below the threshold raised by
+/// <paramref name="SoftCutBoostDb"/> (never above <paramref name="MaxSoftCutThresholdDb"/>) ends it.
+/// Null: no soft rule (meetings, and Live with the kill switch). Mac #483.
+/// </param>
+/// <param name="SoftCutSilence">How long the relaxed silence must last. Ignored when <paramref name="SoftCutAfter"/> is null.</param>
+/// <param name="SoftCutBoostDb">Added to the pause threshold for the soft rule (Mac: +10 dB, so −45 becomes −35).</param>
+/// <param name="MaxSoftCutThresholdDb">The relaxed threshold never goes above this (Mac: −20 dB), so it stays under speech.</param>
 public sealed record MeetingChunkPolicy(TimeSpan MaxChunk, TimeSpan MinChunk, TimeSpan SilenceDuration,
-    float SilenceThresholdDb, TimeSpan MeterWindow, float? NoiseFloorMarginDb = null, float LowestThresholdDb = -60f)
+    float SilenceThresholdDb, TimeSpan MeterWindow, float? NoiseFloorMarginDb = null, float LowestThresholdDb = -60f,
+    TimeSpan? SoftCutAfter = null, TimeSpan SoftCutSilence = default, float SoftCutBoostDb = 10f,
+    float MaxSoftCutThresholdDb = -20f)
 {
     /// <summary>60 s max, 10 s min, 1.5 s of silence below -40 dB, 0.3 s windows.</summary>
     public static MeetingChunkPolicy Default { get; } = new(TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(10),
@@ -28,13 +38,16 @@ public sealed record MeetingChunkPolicy(TimeSpan MaxChunk, TimeSpan MinChunk, Ti
 /// <param name="Wav">16-bit mono WAV bytes.</param>
 /// <param name="Silent">No meter window of the chunk ever reached the threshold, so there is nothing to transcribe.</param>
 /// <param name="LoudestWindowDb">RMS level (dBFS) of the chunk's loudest meter window.</param>
+/// <param name="SoftCut">True when the relaxed rule after <see cref="MeetingChunkPolicy.SoftCutAfter"/> ended the piece.</param>
 public sealed record MeetingAudioChunk(int Index, double StartSeconds, double DurationSeconds, byte[] Wav, bool Silent,
-    float LoudestWindowDb = MeetingChunker.FloorDb);
+    float LoudestWindowDb = MeetingChunker.FloorDb, bool SoftCut = false);
 
 /// <summary>
 /// Cuts a continuous 16-bit mono stream into chunks, deterministically by sample count (not wall clock).
 /// Level is measured per meter window (RMS dB). A chunk ends when it reaches the max length, or when it is at
-/// least the min length and the last windows were silent for the silence duration in a row.
+/// least the min length and the last windows were silent for the silence duration in a row. A policy with
+/// <see cref="MeetingChunkPolicy.SoftCutAfter"/> also ends it earlier on a shorter, less-deep pause
+/// (<see cref="LivePieceCut"/>).
 /// Silent = no window of the chunk ever reached the threshold. Single-threaded: the caller serializes Write/Flush.
 /// The threshold is fixed unless the policy sets <see cref="MeetingChunkPolicy.NoiseFloorMarginDb"/>.
 /// </summary>
@@ -54,7 +67,6 @@ public sealed class MeetingChunker
     private readonly int _maxSamples;
     private readonly int _minSamples;
     private readonly int _windowSamples;
-    private readonly int _silenceWindows;
     private readonly int _flushMinSamples;
 
     private short[] _buffer;
@@ -63,6 +75,7 @@ public sealed class MeetingChunker
     private long _totalSamples;
     private int _windowFill;
     private int _silentRun;
+    private bool _softCut;
     private float _chunkLoudestDb = FloorDb;
     private int _nextIndex;
     // 1 dB bins from FloorDb to 0 dBFS over every full window fed: the noise floor without keeping the windows.
@@ -84,9 +97,6 @@ public sealed class MeetingChunker
         _maxSamples = Math.Max(1, (int)Math.Round(_policy.MaxChunk.TotalSeconds * sampleRate));
         _minSamples = (int)Math.Round(_policy.MinChunk.TotalSeconds * sampleRate);
         _windowSamples = Math.Max(1, (int)Math.Round(_policy.MeterWindow.TotalSeconds * sampleRate));
-        var silenceSamples = (int)Math.Round(_policy.SilenceDuration.TotalSeconds * sampleRate);
-        // Integer ceiling: floating-point division of 1.5 / 0.3 can land just above 5.
-        _silenceWindows = Math.Max(1, (silenceSamples + _windowSamples - 1) / _windowSamples);
         _flushMinSamples = sampleRate / 2;
         _buffer = new short[Math.Min(_maxSamples, sampleRate * 10)];
     }
@@ -168,15 +178,23 @@ public sealed class MeetingChunker
                 _windowFill = 0;
                 RecordLevel(db);
                 if (db > _chunkLoudestDb) _chunkLoudestDb = db;
-                if (db >= SilenceThresholdDb)
+                // Under the minimum, keep counting against the hard threshold so a pause that started
+                // early still completes once the piece is long enough. The soft rule only applies later.
+                var pieceSeconds = (double)_chunkSamples / SampleRate;
+                var criterion = LivePieceCut.Criterion(_policy, pieceSeconds, SilenceThresholdDb);
+                var threshold = pieceSeconds + 1e-9 >= _policy.MinChunk.TotalSeconds
+                    ? criterion.ThresholdDb
+                    : SilenceThresholdDb;
+                if (db < threshold) _silentRun++;
+                else _silentRun = 0;
+                if (pieceSeconds + 1e-9 >= _policy.MinChunk.TotalSeconds && _silentRun >= criterion.DecisionsNeeded)
                 {
-                    _silentRun = 0;
+                    rotate = true;
+                    _softCut = criterion.IsSoft;
+                    if (criterion.IsSoft)
+                        Log.Info(FormattableString.Invariant(
+                            $"LIVE-DICTATE: soft-cut pieceSec={pieceSeconds:0.0} levelDB={db:0.0} thresholdDB={criterion.ThresholdDb:0.0}"));
                 }
-                else
-                {
-                    _silentRun++;
-                }
-                rotate = _chunkSamples >= _minSamples && _silentRun >= _silenceWindows;
             }
 
             if (rotate) (done ??= new()).Add(Complete());
@@ -217,7 +235,7 @@ public sealed class MeetingChunker
         // Judged with the threshold at the end: a relative threshold may only have settled after the chunk began.
         var span = _buffer.AsSpan(0, _chunkSamples);
         var chunk = new MeetingAudioChunk(_nextIndex++, CurrentChunkStartSeconds, (double)_chunkSamples / SampleRate,
-            Wav.Encode16(span, SampleRate), _chunkLoudestDb < SilenceThresholdDb, _chunkLoudestDb);
+            Wav.Encode16(span, SampleRate), _chunkLoudestDb < SilenceThresholdDb, _chunkLoudestDb, _softCut);
         ResetChunk();
         return chunk;
     }
@@ -228,6 +246,7 @@ public sealed class MeetingChunker
         _chunkSamples = 0;
         _windowFill = 0;
         _silentRun = 0;
+        _softCut = false;
         _chunkLoudestDb = FloorDb;
     }
 }

@@ -96,6 +96,24 @@ public class RecordingHotkeyPolicyTests
         Assert.Equal(RecordingHotkeyDecision.Cancel, RecordingHotkeyPolicy.Decide(false, true, sameMode: true, gateOpen: true));
         Assert.Equal(RecordingHotkeyDecision.Ignore, RecordingHotkeyPolicy.Decide(false, true, sameMode: true, gateOpen: false));
     }
+
+    [Fact]
+    public void LiveFinishing_IgnoresAPress_InsteadOfCancelling()
+    {
+        // Mac #396: the last pieces are still decoding. Cancelling would drop them.
+        Assert.Equal(RecordingHotkeyDecision.Ignore,
+            RecordingHotkeyPolicy.Decide(false, true, sameMode: true, gateOpen: true, liveFinishing: true));
+        Assert.Equal(RecordingHotkeyDecision.Ignore,
+            RecordingHotkeyPolicy.Decide(false, true, sameMode: false, gateOpen: true, liveFinishing: true));
+        // While still recording, the press is the normal Stop.
+        Assert.Equal(RecordingHotkeyDecision.Stop,
+            RecordingHotkeyPolicy.Decide(true, false, sameMode: true, gateOpen: true, liveFinishing: true));
+        // Without a live session a press during processing still cancels.
+        Assert.Equal(RecordingHotkeyDecision.Cancel,
+            RecordingHotkeyPolicy.Decide(false, true, sameMode: true, gateOpen: true, liveFinishing: false));
+        Assert.Equal(RecordingHotkeyDecision.Cancel,
+            RecordingHotkeyPolicy.Decide(false, true, sameMode: false, gateOpen: true));
+    }
 }
 
 public class CaptureWatchdogTests

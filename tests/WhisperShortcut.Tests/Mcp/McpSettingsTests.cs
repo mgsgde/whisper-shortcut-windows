@@ -267,7 +267,7 @@ public class McpSettingsTests
         Assert.Equal("shortcut", hot["type"]!.GetValue<string>());
         var model = all.First(x => x!["id"]!.GetValue<string>() == "read_aloud.model")!;
         Assert.Equal("models", model["category"]!.GetValue<string>());
-        Assert.Equal(4, model["options"]!.AsArray().Count); // Gemini Flash-Lite, Gemini Flash, GPT-4o mini, Windows
+        Assert.Equal(3, model["options"]!.AsArray().Count); // Gemini Flash-Lite, Gemini Flash, Windows
     }
 
     [Fact]
@@ -291,19 +291,20 @@ public class McpSettingsTests
     }
 
     [Fact]
-    public void ReadAloud_OpenAiModelNeedsAnOpenAiKey()
+    public void ReadAloud_RetiredMiniTts_IsRejected()
     {
         using var s = new McpStack();
         var refused = s.Tool("update_settings", A($"{{\"changes\":{{\"read_aloud.model\":\"gpt-4o-mini-tts\"}},{R}}}"));
         Assert.True(refused.IsError);
-        Assert.Contains("No OpenAI API key", refused.Text);
+        Assert.Contains("Unknown option", refused.Text);
 
         Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"read_aloud.model\":\"gemini-3.8-flash-tts\"}},{R}}}"))["status"]!.GetValue<string>());
         Assert.Equal("gemini-3.8-flash-tts", s.ReloadSettings().ReadAloudModel);
 
         s.Settings.OpenAiKey = "sk-test";
-        Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"read_aloud.model\":\"gpt-4o-mini-tts\"}},{R}}}"))["status"]!.GetValue<string>());
-        Assert.Equal("gpt-4o-mini-tts", s.ReloadSettings().ReadAloudModel);
+        var still = s.Tool("update_settings", A($"{{\"changes\":{{\"read_aloud.model\":\"gpt-4o-mini-tts\"}},{R}}}"));
+        Assert.True(still.IsError);
+        Assert.Equal("gemini-3.8-flash-tts", s.ReloadSettings().ReadAloudModel);
     }
 
     [Fact]

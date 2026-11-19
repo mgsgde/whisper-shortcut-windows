@@ -254,4 +254,66 @@ public class ParakeetPunctuationTimingTests
         };
         Assert.Equal(new[] { false }, Spoken(tokens, 2));
     }
+
+    // "Leukozyten 11,8 , Natrium": the comma token is glued to the digit token.
+    private static ParakeetPunctuationTiming.Token[] CommaAfterDigitTokens(double gap) =>
+    [
+        Word("11,8", 0.0, 0.6), Mark(",", 0.6, 0.62),
+        Word("Natrium", 0.62 + gap, 1.1 + gap),
+    ];
+
+    [Fact]
+    public void CommaAfterDigitSurvivesAShortGap()
+    {
+        Assert.Equal(new[] { true }, Spoken(CommaAfterDigitTokens(0.07), 3));
+        Assert.Equal(new[] { false }, Spoken(CommaAfterDigitTokens(0.02), 3));
+        Assert.Equal(new[] { false }, Spoken(CommaTokens(0.07), 2));
+    }
+
+    [Fact]
+    public void TimingFallbackKeepsSpokenMarks()
+    {
+        // Count mismatch: commas, "?" and "!" stay, only semicolons go.
+        Assert.Equal("Sehr geehrte Frau Müller, vielen Dank. Stimmt das? Ja! ok",
+            ParakeetPunctuationTiming.FallbackWithoutTiming(
+                "Sehr geehrte Frau Müller, vielen Dank. Stimmt das? Ja!; ok"));
+    }
+
+    [Fact]
+    public void TimingFallbackSpacesGluedComma() =>
+        Assert.Equal("50, Merkzeichen", ParakeetPunctuationTiming.FallbackWithoutTiming("50,Merkzeichen"));
+
+    [Fact]
+    public void DigitHyphenIsReportedWithItsTimingNeverItsText()
+    {
+        ParakeetPunctuationTiming.Token[] tokens =
+        [
+            Word("Bescheid", 0.0, 0.5), Word("vom", 0.5, 0.7), Word("6", 0.8, 1.0),
+            Mark("-", 1.3, 1.35), Mark("2", 1.4, 1.5), Mark("5", 1.5, 1.6),
+        ];
+        var found = ParakeetPunctuationTiming.DigitHyphens(tokens);
+        var hyphen = Assert.Single(found);
+        Assert.Equal(new ParakeetPunctuationTiming.DigitHyphen(true, 50, 400, 1, 2), hyphen);
+        Assert.Equal("LIVE-DICTATE: digit-hyphen own=true durMs=50 gapMs=400 left=1 right=2", hyphen.LogLine);
+        Assert.Empty(ParakeetPunctuationTiming.DigitHyphens(
+            [Word("Covid", 0, 0.4), Mark("-", 0.4, 0.45), Mark("19", 0.45, 0.6)]));
+        Assert.Empty(ParakeetPunctuationTiming.DigitHyphens(
+            [Word("L4", 0, 0.4), Mark("-", 0.4, 0.45), Word("L5", 0.5, 0.6)]));
+    }
+
+    [Fact]
+    public void EllipsisMismatchStillFallsBackWithMarks()
+    {
+        var tokens = new[]
+        {
+            new ParakeetPunctuationTiming.Token("▁Also", 0.1, 0.4),
+            new ParakeetPunctuationTiming.Token("...", 0.4, 0.5),
+            new ParakeetPunctuationTiming.Token("▁gut", 0.9, 1.1),
+            new ParakeetPunctuationTiming.Token(",", 1.1, 1.4),
+            new ParakeetPunctuationTiming.Token("▁weiter", 1.6, 2.0),
+        };
+        const string text = "Also... gut, weiter";
+        Assert.Null(ParakeetPunctuationTiming.Filter(text, tokens, 2.6));
+        Assert.Equal(text, ParakeetPunctuationTiming.FallbackWithoutTiming(text));
+    }
 }

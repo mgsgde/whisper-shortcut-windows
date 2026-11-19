@@ -130,7 +130,13 @@ public sealed class LocalLlmClient
                 Log.Error("local LLM answer cut off at max_tokens");
                 throw new LocalLlmException("Der Text ist für das Offline-Modell zu lang. Bitte kürzer diktieren oder einen kürzeren Abschnitt markieren.");
             }
-            return Think.Replace(content, "").Trim();
+            var reply = Think.Replace(content, "");
+            // Qwen writes Cyrillic look-alikes inside German words. Fold them before the paste.
+            // A word that is only Cyrillic is left alone (Mac #508).
+            var homoglyphs = TextCleanup.FoldCyrillicHomoglyphs(reply);
+            if (homoglyphs.Folded > 0)
+                Log.Info($"PROMPT-MODE-LOCAL: Folded {homoglyphs.Folded} Cyrillic look-alike letter(s)");
+            return homoglyphs.Text.Trim();
         }
         catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException or InvalidOperationException)
         {

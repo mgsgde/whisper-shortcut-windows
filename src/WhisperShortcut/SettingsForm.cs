@@ -184,8 +184,13 @@ internal sealed partial class SettingsForm : FastShowForm
         // Live diktieren (macOS Dictate Live): off until the user picks a key (Mac: shortcut ships disabled).
         _liveKey = new HotkeyBox(settings.ActiveLiveDictateHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Live diktieren" };
         _settingsKey = new HotkeyBox(settings.ActiveOpenSettingsHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Einstellungen öffnen" };
+        // Mac: „Also dictate with 🌐 Fn“. Windows has no Fn key; the right Ctrl takes its place (same toggle rules).
+        // Mac #511: it sits right under Diktieren, the shortcut it is an alternative to.
+        _rightCtrl = new ToggleSwitch { Checked = settings.RightCtrlDictation, AccessibleName = "Auch mit der rechten Strg-Taste diktieren" };
         var keysCard = new Card();
         keysCard.AddRow(KeyRow("Diktieren", null, _dictateKey));
+        keysCard.AddRow(SettingRow("Auch mit der rechten Strg-Taste diktieren", "Rechte Strg einmal drücken zum Starten, noch einmal zum "
+            + "Stoppen. Zusammen mit einer anderen Taste bleibt sie die normale Strg-Taste.", _rightCtrl, ToggleWidth, out _));
         keysCard.AddRow(KeyRow("Dictate Prompt", "Markierten Text per Sprache bearbeiten. Ein Druck während der Verarbeitung bricht ab.", _promptKey));
         keysCard.AddRow(KeyRow("Bildschirmfoto", "Bereich aufziehen; das Bild landet in der Zwischenablage.", _screenshotKey));
         keysCard.AddRow(ReadAloudKeyRow()); // SettingsForm.ReadAloud.cs
@@ -194,10 +199,6 @@ internal sealed partial class SettingsForm : FastShowForm
             + "Spracherkennung auf diesem PC (Parakeet).", _liveKey));
         keysCard.AddRow(ChatKeyRow()); // SettingsForm.Chat.cs; Mac order: after Live diktieren, before Einstellungen
         keysCard.AddRow(KeyRow("Einstellungen öffnen", "Öffnet dieses Fenster, ein zweiter Druck schließt es.", _settingsKey));
-        // Mac: „Also dictate with 🌐 Fn“. Windows has no Fn key; the right Ctrl takes its place (same toggle rules).
-        _rightCtrl = new ToggleSwitch { Checked = settings.RightCtrlDictation, AccessibleName = "Auch mit der rechten Strg-Taste diktieren" };
-        keysCard.AddRow(SettingRow("Auch mit der rechten Strg-Taste diktieren", "Rechte Strg einmal drücken zum Starten, noch einmal zum "
-            + "Stoppen. Zusammen mit einer anderen Taste bleibt sie die normale Strg-Taste.", _rightCtrl, ToggleWidth, out _));
         general.Controls.Add(keysCard);
 
         // --- start ---
@@ -409,8 +410,8 @@ internal sealed partial class SettingsForm : FastShowForm
         tuningCard.AddRow(SettingRow("Temperatur", "Niedriger heißt wörtlicher. WhisperShortcut nutzt 0,0, das gibt wieder, was gesagt wurde. "
             + "Höhere Werte sind die häufigste Ursache für erfundene oder vertauschte Wörter.", _temperature, ComboWidth, out _));
         tuningCard.AddRow(SettingRow("Denkaufwand", "Mehr Denkaufwand hilft bei schwierigem Ton, Akzenten und ungewöhnlichem Vokabular, "
-            + "kostet aber Zeit: bei Flash-Lite fast nichts, bei Pro etwa das Doppelte. Gemini 3.7/3.8 Flash und Pro laufen nicht unter "
-            + "„Niedrig“ und werden darauf angehoben.", _thinking, ComboWidth, out _));
+            + "kostet aber Zeit: bei Flash-Lite fast nichts, bei Pro etwa das Doppelte. Nur Flash-Lite kann „Minimal“; die anderen "
+            + "Gemini-Modelle werden auf „Niedrig“ angehoben.", _thinking, ComboWidth, out _));
         AddAdvanced(dictate,
             Section("Genauigkeit", subtitle: "Wie frei das Modell vom Gehörten abweichen darf und wie lange es vorher nachdenken darf. "
                 + "Gilt nur für Gemini; OpenAI und Parakeet nehmen diese Werte nicht.", first: true), tuningCard);
