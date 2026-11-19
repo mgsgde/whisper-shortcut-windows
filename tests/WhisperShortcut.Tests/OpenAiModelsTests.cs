@@ -9,18 +9,21 @@ public class OpenAiModelsTests
     {
         Assert.Contains(OpenAiModels.Transcription, m => m.Id == OpenAiModels.DefaultTranscriptionModel);
         Assert.Contains(OpenAiModels.Prompt, m => m.Id == OpenAiModels.DefaultPromptModel);
-        Assert.Equal("gpt-4o-transcribe", OpenAiModels.DefaultTranscriptionModel);
+        Assert.Equal("gpt-transcribe", OpenAiModels.DefaultTranscriptionModel);
         Assert.Equal("gpt-6-sol", OpenAiModels.DefaultPromptModel);
+        Assert.DoesNotContain(OpenAiModels.Transcription, m => m.Id == OpenAiModels.RetiredTranscriptionModel);
+        Assert.Contains(OpenAiModels.Transcription, m => m.Id == "gpt-4o-mini-transcribe");
     }
 
     [Theory]
     [InlineData("gpt-4o-mini-transcribe", "gpt-4o-mini-transcribe")]
     [InlineData("gpt-transcribe", "gpt-transcribe")]
-    [InlineData(" gpt-4o-transcribe ", "gpt-4o-transcribe")]
-    [InlineData("whisper-1", "gpt-4o-transcribe")]
-    [InlineData("gemini-3.1-flash-lite", "gpt-4o-transcribe")]
-    [InlineData("", "gpt-4o-transcribe")]
-    [InlineData(null, "gpt-4o-transcribe")]
+    [InlineData(" gpt-4o-transcribe ", "gpt-transcribe")]
+    [InlineData("gpt-4o-transcribe", "gpt-transcribe")]
+    [InlineData("whisper-1", "gpt-transcribe")]
+    [InlineData("gemini-3.1-flash-lite", "gpt-transcribe")]
+    [InlineData("", "gpt-transcribe")]
+    [InlineData(null, "gpt-transcribe")]
     public void NormalizeTranscription(string? id, string expected) =>
         Assert.Equal(expected, OpenAiModels.NormalizeTranscription(id));
 

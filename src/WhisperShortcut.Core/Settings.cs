@@ -374,7 +374,9 @@ public sealed partial class Settings
     {
         var rewrite = ApplyKeys(dto, protector, exact); // Settings.Fields.cs: pin reset and API keys first
         foreach (var field in Fields) field.Apply(this, dto, exact);
-        ApplyDerived(dto); // the few values that need the loaded rows: clipboard choice, meeting flag, key clashes
+        // True when a retired Read Aloud model moved: Load then writes the replacement, so a later
+        // Gemini key does not move the user off the Windows voice (Mac #481).
+        if (ApplyDerived(dto)) rewrite = true;
         return rewrite;
     }
 
