@@ -321,8 +321,12 @@ public static class LiveDictation
 /// <item><b>Spacing:</b> one space between pieces, none at the very start. The seed is the character already before the
 /// caret: a letter takes that leading space ("Basistherapie" + "Ah" -> " Ah"), whitespace or a line break there does
 /// not, and an unknown caret keeps the plain start. Also none after a line break, none before a piece that starts with
-/// a line break (spoken "neuer Absatz" becomes one) or with closing punctuation, none on either side of a slash
-/// ("Schrägstrich" said in one piece and the next word in another must still read "L4/L5").</item>
+/// a line break (spoken "neuer Absatz" becomes one) or with closing punctuation, none after "(" (the piece ended on
+/// "Klammer auf"), none on either side of a slash ("Schrägstrich" said in one piece and the next word in another must
+/// still read "L4/L5").</item>
+/// <item><b>The same mark on both sides of a piece boundary</b> (".", ",", "?", "!", ";", ":"): when the text so far
+/// ends with that mark (trailing spaces aside), the leading copy is dropped, and one space after it too
+/// ("ganz gut." + "." stays "ganz gut.", "Müller," + ", ganz lieben Dank").</item>
 /// <item><b>A period at a breath:</b> Parakeet punctuates each piece on its own, so a pause mid-sentence can end a
 /// piece with "." although the sentence goes on. A piece's final period is therefore held back and emitted with
 /// the next piece: dropped when that piece starts with a lowercase letter (the sentence clearly continued), kept
@@ -354,6 +358,19 @@ public sealed class LiveChunkJoiner
     /// <summary>Characters that never get a space in front.</summary>
     public static readonly HashSet<char> ClosingPunctuation = new() { ',', '.', ';', ':', '!', '?', ')', ']', '»', '“', '…' };
 
+    private static readonly HashSet<char> BoundaryMarks = new() { '.', ',', '?', '!', ';', ':' };
+
+    /// <summary>Drops a leading mark the text so far already ends with, and one space after that mark.</summary>
+    private static string DroppingDuplicateLeadingMark(string body, string prior)
+    {
+        if (body.Length == 0 || !BoundaryMarks.Contains(body[0])) return body;
+        var end = prior.TrimEnd(' ', '\t');
+        if (end.Length == 0 || end[^1] != body[0]) return body;
+        var rest = body[1..];
+        if (rest.StartsWith(' ')) rest = rest[1..];
+        return rest;
+    }
+
     /// <summary>The character already before the caret. Start of text and unknown leave the first piece unspaced.</summary>
     public void Seed(CaretContext context) =>
         _precedingText = context.Kind == CaretKind.Character ? context.Character.ToString() : "";
@@ -373,11 +390,20 @@ public sealed class LiveChunkJoiner
             _heldPeriod = false;
             if (!StartsWithLowercaseLetter(body)) output.Append('.');
         }
+        // After the held period, so a period just emitted still counts as "already ends with '.'".
+        body = DroppingDuplicateLeadingMark(body, _precedingText + _inserted + output);
+        if (body.Length == 0)
+        {
+            if (output.Length == 0) return "";
+            var only = output.ToString();
+            _inserted += only;
+            return only;
+        }
         var before = _precedingText + _inserted + output;
         char first = body[0];
-        // Whitespace (a space or a line break already in the field, or a break this joiner wrote) already separates
-        // the next piece, so it must not gain a second space.
-        if (before.Length > 0 && !char.IsWhiteSpace(before[^1]) && before[^1] != '/'
+        // Whitespace already separates the next piece, so it must not gain a second space. "(" neither:
+        // the next word is inside the parentheses.
+        if (before.Length > 0 && !char.IsWhiteSpace(before[^1]) && before[^1] != '/' && before[^1] != '('
             && !IsNewline(first) && first != '/' && !ClosingPunctuation.Contains(first))
             output.Append(' ');
         if (HoldsPeriods && HoldsFinalPeriod(body))

@@ -14,8 +14,8 @@ public static class PunctuationModes
 
 /// <summary>
 /// Turns spoken layout commands into layout in offline transcripts. Exact port of the Mac app's
-/// SpokenPunctuation.swift: Parakeet writes a spoken "Doppelpunkt" or "neuer Absatz" out as words,
-/// where cloud models already produce the punctuation.
+/// SpokenPunctuation.swift: Parakeet writes a spoken "Doppelpunkt", "Klammer auf" or "neuer Absatz"
+/// out as words, where cloud models already produce the punctuation.
 /// Deliberately narrow: "Punkt", "Komma" and "Fragezeichen" are ordinary German words and stay.
 /// The exception is the "Only when spoken" punctuation mode (<see cref="PunctuationMode.SpokenOnly"/>):
 /// there the user has opted in to saying the marks, so "Punkt", "Komma", "Fragezeichen",
@@ -38,39 +38,69 @@ public static class SpokenPunctuation
     {
         "doppelpunkt", "komma", "punkt", "fragezeichen", "ausrufezeichen", "schragstrich",
         "schraegstrich", "schreckstrich", "semikolon", "strichpunkt", "punktchen", "puenktchen",
-        "auslassungspunkte", "absatz", "zeile",
+        "auslassungspunkte", "absatz", "zeile", "klammer", "klammerauf", "klammerzu",
+        "neuzeile", "neuezeile",
     };
+
+    /// <summary>
+    /// "Klammer auf", also glued or hyphenated ("Klammerauf", "Klammer-auf"). An article right after
+    /// it is the noun ("eine Klammer auf die Wunde"), not the command.
+    /// </summary>
+    private const string OpeningParen =
+        @"\bklammer[ \t-]*auf\b(?![ \t,.;]*(?:die|der|den|dem|das|eine|einen|einer|einem)\b)";
+
+    private const string ClosingParen = @"\bklammer[ \t-]*zu\b";
 
     private sealed record Rule(Regex Regex, string Template);
 
     private static Rule MakeRule(string pattern, string template) => new(new Regex(pattern, Opts), template);
 
     // Order matters: the colon runs first so "Befund Doppelpunkt neuer Absatz" keeps its colon when
-    // the paragraph rule then strips the stray space before the break.
+    // the paragraph rule then strips the stray space before the break. Brackets run before the
+    // breaks, so a following "neue Zeile" still sees the parenthesis.
     private static readonly Rule[] Rules =
     {
         // The colon is already there: a model reply that kept the spoken word after its own heading
         // ("Befund: Doppelpunkt Druckschmerz", "Anamnese:\nDoppelpunkt Patientin"). Drop the word only.
-        MakeRule(@"(:[ \t]*\n?[ \t]*)\bdoppelpunkt\b[ \t,.;:]*", "$1"),
+        // "Doppel Punkt" and "Doppel-Punkt" are the same command split or hyphenated by Parakeet.
+        MakeRule(@"(:[ \t]*\n?[ \t]*)\bdoppel[ \t-]?punkt\b[ \t,.;:]*", "$1"),
         // "Anamnese Doppelpunkt Patient" / "Befund, Doppelpunkt. Inspektion" -> "Befund: Inspektion".
-        // Eats the punctuation the ASR put around the word on both sides.
-        MakeRule(@"[ \t,.;]*\bdoppelpunkt\b[ \t,.;:]*", ": "),
+        // Eats the punctuation the ASR put around the words on both sides. Inflections
+        // ("Doppelpunkte") stay: the word boundary after "punkt" fails.
+        MakeRule(@"[ \t,.;]*\bdoppel[ \t-]?punkt\b[ \t,.;:]*", ": "),
         // Parakeet sometimes glues the command onto the next word ("Befund Doppelpunktdruckschmerz").
         // The following word's first letter is upper-cased afterwards (CapitalizeAfterGluedColon).
         // Inflections of the noun itself ("Doppelpunkte", "-en", "-es", "-s") are left alone.
-        MakeRule(@"[ \t,.;]*\bdoppelpunkt(?!(?:e|en|es|s)\b)(?=\p{L})", ": \u0001"),
+        MakeRule(@"[ \t,.;]*\bdoppel[ \t-]?punkt(?!(?:e|en|es|s)\b)(?=\p{L})", ": \u0001"),
+        // "(" keeps one space before it and none after, except at the start of the text or a line.
+        // Stray ASR commas and periods around the words go.
+        MakeRule($@"(^|\n)[ \t,.;]*{OpeningParen}[ \t,.;]*", "$1("),
+        MakeRule($@"[ \t,.;]*{OpeningParen}[ \t,.;]*", " ("),
+        // ")" has no space before it. A comma the ASR put after it goes; a period after it stays
+        // ("Anlage Klammer zu."). The period and comma before it go.
+        MakeRule($@"[ \t,.;]*{ClosingParen}[ \t]*,[ \t]*", ") "),
+        MakeRule($@"[ \t,.;]*{ClosingParen}", ")"),
         // A comma before a spoken paragraph break is the ASR marking the pause; the sentence ended.
-        MakeRule(@"[ \t]*,[ \t]*\bneue[rn][ \t]+absatz\b[ \t,.;:!?]*", ".\n\n"),
+        // No capital marker: this stays ".\n\n", and the next word keeps the case it was spoken with.
+        // "Neuerabsatz" / "Neuenabsatz" are the glued forms (no space).
+        MakeRule(@"[ \t]*,[ \t]*\bneue[rn][ \t]*absatz\b[ \t,.;:!?]*", ".\n\n"),
         // The model already ended the sentence ("Anamnese. Neuer Absatz, die Klägerin"): the next word
         // starts the new paragraph or line, so it gets a capital (marker, CapitalizeAfterGluedColon).
-        MakeRule(@"(?<=[.!?])[ \t]*\bneue[rn][ \t]+absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
-        MakeRule(@"(?<=[.!?])[ \t]*\bneue[ \t]+zeile\b[ \t,.;:!?]*", "\n\u0001"),
-        // Paragraph break. A sentence end before it (". ! ? :") is kept, a stray comma is not.
-        MakeRule(@"[ \t,;]*\bneue[rn][ \t]+absatz\b[ \t,.;:!?]*", "\n\n"),
-        MakeRule(@"[ \t,;]*\bneue[ \t]+zeile\b[ \t,.;:!?]*", "\n"),
-        // Parakeet glues this one onto the next word too ("neue Zeileinspektion"). "neue Zeilen..." is
-        // left alone: that is the plural or a compound, said literally.
-        MakeRule(@"[ \t,;]*\bneue[ \t]+zeile(?!n)(?=\p{L})", "\n\u0001"),
+        // "Neuzeile" / "Neuezeile" are "neue Zeile" glued into one word. "Neuzeilen" does not match.
+        MakeRule(@"(?<=[.!?])[ \t]*\bneue[rn][ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
+        MakeRule(@"(?<=[.!?])[ \t]*\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
+        // Paragraph break without a sentence mark before it. The next word still starts the new
+        // paragraph, so it gets a capital too.
+        MakeRule(@"[ \t,;]*\bneue[rn][ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
+        // A comma or semicolon before "neue Zeile" is the pause Parakeet wrote. Eating it stops
+        // "Befund, neue Zeile Inspektion" from staying "Befund,\nInspektion". No capital marker.
+        MakeRule(@"[ \t]*[,;][ \t,;]*\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n"),
+        // Line break without a sentence mark or a pause comma before it. The next word starts the
+        // new line, so it gets a capital.
+        MakeRule(@"[ \t;]*\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
+        // Parakeet glues this one onto the next word too ("neue Zeileinspektion", "Neuzeileinspektion").
+        // "neue Zeilen…" is left alone: the "n" is the plural or a compound, said literally.
+        MakeRule(@"[ \t,;]*\bneu(?:e[ \t]*)?zeile(?!n)(?=\p{L})", "\n\u0001"),
     };
 
     // Only in PunctuationMode.SpokenOnly, where the model adds no punctuation of its own. The mark
@@ -175,16 +205,26 @@ public static class SpokenPunctuation
         return char.ToLowerInvariant(word[0]) + word.Substring(1);
     }
 
-    /// <summary>Lower-case forms of function words and adverbs that are never nouns. "sie" is omitted on purpose.</summary>
+    /// <summary>
+    /// Lower-case forms of function words and adverbs that are never nouns. "sie", "ihr" and "ihnen"
+    /// are omitted on purpose — see <see cref="LowercasingFunctionWord"/>.
+    /// </summary>
     public static readonly IReadOnlySet<string> FunctionWords = new HashSet<string>(StringComparer.Ordinal)
     {
         "und", "oder", "aber", "sondern", "denn", "weil", "dass", "ob", "wenn", "als", "wie",
         "mit", "bei", "nach", "von", "vor", "zu", "zum", "zur", "aus", "auf", "an", "am",
-        "im", "in", "über", "unter", "seit", "für", "durch", "gegen", "ohne", "um",
+        "im", "in", "über", "unter", "seit", "für", "durch", "gegen", "ohne", "um", "bis",
         "ist", "sind", "war", "waren", "hat", "haben", "wird", "wurde", "sich", "nicht",
         "auch", "noch", "schon", "sehr", "er", "es", "wir", "man",
         "der", "die", "das", "den", "dem", "des",
         "ein", "eine", "einen", "einem", "einer",
+        "diese", "dieser", "diesen", "diesem", "dieses",
+        "mein", "meine", "meinen", "meinem", "meiner", "meines",
+        "dein", "deine",
+        "seine", "seinen", "seinem", "seiner",
+        "unser", "unsere", "unseren", "unserem", "unserer",
+        "jeder", "jede", "jeden", "jedem", "jedes",
+        "kein", "keine", "keinen", "keinem", "keiner",
         "weiter", "dann", "jetzt", "hier", "da", "dort", "so", "nur", "mal", "wieder", "bitte",
         "doch", "eben", "gerade", "eigentlich", "vielleicht", "also", "dabei", "dazu", "damit",
         "daher", "deshalb", "trotzdem", "bereits", "immer", "nie", "oft", "etwas", "sonst", "zwar",
@@ -198,6 +238,13 @@ public static class SpokenPunctuation
     // counts as whitespace between them, so it is not what separates two marks, and the marker
     // after the last copy is left in place for CapitalizeAfterGluedColon ("Ende. Weiter").
     private static readonly Rule RepeatedMarks = MakeRule("([.,!?])(?:[ \\t\u0001]*\\1)+", "$1");
+
+    /// <summary>
+    /// A spoken "Komma" becomes a comma only in the spoken-only rules, after the break was inserted
+    /// ("Komma neue Zeile vielen" → ",\n\u0001vielen"). Drop that capital marker so the next word
+    /// keeps the case it was spoken with.
+    /// </summary>
+    private static readonly Rule CommaKeepsFollowingCase = MakeRule("(,[ \\t]*\\n+)\u0001", "$1");
 
     private const string NumberWordBody = "null|eins|ein|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun";
     private static readonly Dictionary<string, string> NumberWordDigits = new()
@@ -263,7 +310,8 @@ public static class SpokenPunctuation
             changed = true;
         }
         // Before CapitalizeAfterGluedColon: the marker has to still be in the text, and a marker
-        // between two copies of a mark has to count as the space that separates them.
+        // between two copies of a mark has to count as the space that separates them. A spoken
+        // "Komma" has just become a comma in front of the break; drop its marker first.
         if (mode == PunctuationMode.SpokenOnly)
         {
             var collapsed = RepeatedMarks.Regex.Replace(result, RepeatedMarks.Template);
@@ -274,6 +322,7 @@ public static class SpokenPunctuation
             }
         }
         if (!changed) return text;
+        result = CommaKeepsFollowingCase.Regex.Replace(result, CommaKeepsFollowingCase.Template);
         result = CapitalizeAfterGluedColon(result);
         result = TrailingSpaceBeforeBreak.Regex.Replace(result, TrailingSpaceBeforeBreak.Template);
         result = ExcessBreaks.Regex.Replace(result, ExcessBreaks.Template);

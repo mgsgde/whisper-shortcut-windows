@@ -37,8 +37,12 @@ public class SpokenPunctuationTests
     }
 
     [Fact]
-    public void LineBreak() =>
-        Assert.Equal("Erste Zeile\nzweite Zeile", A("Erste Zeile neue Zeile zweite Zeile"));
+    public void LineBreak()
+    {
+        // A spoken break starts the next line even without ".!?" before it, so the next word
+        // gains a capital. It used to stay lower-case ("zweite").
+        Assert.Equal("Erste Zeile\nZweite Zeile", A("Erste Zeile neue Zeile zweite Zeile"));
+    }
 
     [Fact]
     public void FullNote()
@@ -82,7 +86,8 @@ public class SpokenPunctuationTests
     {
         Assert.Equal("Anamnese: Schmerzen.\n\nBefund: Tonus erhöht",
             A("Anamnese Doppelpunkt Schmerzen. Neuer Absatz. Befund Doppelpunkt Tonus erhöht"));
-        Assert.Equal("Erstens\nzweitens", A("Erstens neue Zeile zweitens"));
+        // Capital after the break: the next line starts a sentence even without ".!?".
+        Assert.Equal("Erstens\nZweitens", A("Erstens neue Zeile zweitens"));
         Assert.Equal("Doppelpunkte zählen", A("Doppelpunkte zählen"));
     }
 
@@ -282,6 +287,9 @@ public class SpokenPunctuationTests
     {
         var text = "Bitte zwei neue Zeilen einfügen, neue Zeilenumbrüche vermeiden.";
         Assert.Equal(text, A(text));
+        // "Neuzeilen" is the plural glued into one word, not the command. "Neue Teile" is a real phrase.
+        Assert.Equal("Neuzeilen bleiben.", A("Neuzeilen bleiben."));
+        Assert.Equal("Neue Teile bestellen.", A("Neue Teile bestellen."));
     }
 
     [Fact]
@@ -408,9 +416,110 @@ public class SpokenPunctuationTests
     {
         Assert.Contains("doppelpunkt", SpokenPunctuation.CommandWords);
         Assert.Contains("zeile", SpokenPunctuation.CommandWords);
+        Assert.Contains("klammer", SpokenPunctuation.CommandWords);
         Assert.Equal("und", SpokenPunctuation.LowercasingFunctionWord("Und"));
+        Assert.Equal("diese", SpokenPunctuation.LowercasingFunctionWord("Diese"));
+        Assert.Equal("keine", SpokenPunctuation.LowercasingFunctionWord("Keine"));
+        Assert.Equal("bis", SpokenPunctuation.LowercasingFunctionWord("Bis"));
         Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Sie"));
+        Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Ihr"));
+        Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Ihnen"));
         Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Dosis"));
         Assert.Null(SpokenPunctuation.LowercasingFunctionWord("und"));
+    }
+}
+
+/// <summary>Brackets, Parakeet's glued "Neuzeile" / "Neuerabsatz", and a capital after a break (Mac #385).</summary>
+public class SpokenPunctuationBracketTests
+{
+    private static string Apply(string text, PunctuationMode mode = PunctuationMode.Automatic) =>
+        SpokenPunctuation.Apply(text, mode);
+
+    [Fact]
+    public void BracketsInBothModes()
+    {
+        (string Spoken, string Written)[] cases =
+        [
+            (
+                "Durch die Updates ist es Klammer auf soweit ich das beurteilen kann Klammer zu deutlich besser geworden.",
+                "Durch die Updates ist es (soweit ich das beurteilen kann) deutlich besser geworden."
+            ),
+            (
+                "Sobald ich Klammer auf wahrscheinlich morgen Klammer zu mehr arbeite.",
+                "Sobald ich (wahrscheinlich morgen) mehr arbeite."
+            ),
+            ("Siehe unten Klammer auf Anlage Klammer zu.", "Siehe unten (Anlage)."),
+            ("Klammer auf siehe Anlage Klammer zu", "(siehe Anlage)"),
+            ("es, Klammer auf, soweit, Klammer zu, deutlich", "es (soweit) deutlich"),
+        ];
+        foreach (var mode in new[] { PunctuationMode.Automatic, PunctuationMode.SpokenOnly })
+            foreach (var (spoken, written) in cases)
+                Assert.Equal(written, Apply(spoken, mode));
+    }
+
+    [Fact]
+    public void BracketsGluedAndHyphenated()
+    {
+        Assert.Equal("Siehe (Anlage).", Apply("Siehe Klammerauf Anlage Klammer-zu."));
+        Assert.Equal("es (soweit) deutlich", Apply("es Klammer-auf soweit Klammerzu deutlich"));
+    }
+
+    [Fact]
+    public void BracketsStayNouns()
+    {
+        foreach (var text in new[]
+        {
+            "Die Hautklammer wurde entfernt.",
+            "Zwei Klammern auf der Wunde.",
+            "Eine Klammer auf die Wunde gesetzt.",
+        })
+        {
+            Assert.Equal(text, Apply(text));
+            Assert.Equal(text, Apply(text, PunctuationMode.SpokenOnly));
+        }
+    }
+
+    [Fact]
+    public void OpeningParenSurvivesEdgeTrim() =>
+        Assert.Equal("ist es (",
+            SpokenPunctuation.Apply("ist es Klammer auf", PunctuationMode.SpokenOnly, keepsEdgeBreaks: true));
+
+    [Fact]
+    public void GluedBreaks()
+    {
+        Assert.Equal("Update.\nDie Fehler habe ich bewusst gelassen.",
+            Apply("Update. Neuzeile die Fehler habe ich bewusst gelassen."));
+        // The command is the whole trailing word, so only the line break is left and then trimmed.
+        Assert.Equal("einen schönen Sonntag", Apply("einen schönen Sonntag Neuezeile"));
+        Assert.Equal("Befund\n\nTherapie", Apply("Befund Neuerabsatz Therapie"));
+        Assert.Equal("Befund\n\nTherapie", Apply("Befund Neuenabsatz Therapie"));
+    }
+
+    [Fact]
+    public void CapitalAfterPlainBreak()
+    {
+        Assert.Equal("Liebe Grüße und einen schönen Sonntag\nWie gesagt",
+            Apply("Liebe Grüße und einen schönen Sonntag neue Zeile wie gesagt"));
+        // The model's pause comma is eaten; the next word keeps the case it was spoken with.
+        const string comma = "Hallo Herr Müller, neue Zeile vielen Dank";
+        const string eaten = "Hallo Herr Müller\nvielen Dank";
+        Assert.Equal(eaten, Apply(comma));
+        Assert.Equal(eaten, Apply(comma, PunctuationMode.SpokenOnly));
+        Assert.Equal("Befund\nInspektion", Apply("Befund, neue Zeile Inspektion"));
+        // Spoken "Komma" becomes the comma only in spoken-only mode, after the break was inserted.
+        Assert.Equal("Hallo Herr Müller,\nvielen Dank",
+            Apply("Hallo Herr Müller Komma neue Zeile vielen Dank", PunctuationMode.SpokenOnly));
+        // ", neuer Absatz" still ends the sentence with a period and does not add its own capital.
+        Assert.Equal("Schmerzen.\n\nbefund", Apply("Schmerzen, neuer Absatz befund"));
+    }
+
+    [Fact]
+    public void SplitDoppelPunktIsAColon()
+    {
+        const string spoken = "Befund Doppel Punkt Druckschmerz";
+        const string written = "Befund: Druckschmerz";
+        Assert.Equal(written, Apply(spoken));
+        Assert.Equal(written, Apply(spoken, PunctuationMode.SpokenOnly));
+        Assert.Equal(written, Apply("Befund Doppel-Punkt Druckschmerz", PunctuationMode.SpokenOnly));
     }
 }
