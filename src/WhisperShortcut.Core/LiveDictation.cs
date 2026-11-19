@@ -115,15 +115,33 @@ public static class LiveDictation
     public static readonly TimeSpan PrePasteDelay = TimeSpan.FromMilliseconds(50);
 
     /// <summary>
-    /// Mac <c>RotationPolicy.live</c> (min 1.5 s, cut after 0.6 s of silence = three 0.2 s windows); the 30 s max is
-    /// ours (the Mac has none; it keeps a piece decodable when someone talks without a pause).
+    /// Env <c>WSW_LIVE_SOFT_CUT=0</c> restores the old live policy (Mac UserDefaults <c>liveSoftCutDisabled</c>):
+    /// a piece ends only after 0.6 s below the pause threshold, or at the 30 s hard cut.
+    /// </summary>
+    public static bool SoftCutDisabled => SoftCutDisabledValue(Environment.GetEnvironmentVariable("WSW_LIVE_SOFT_CUT"));
+
+    /// <summary>True only for the kill-switch value <c>0</c>.</summary>
+    public static bool SoftCutDisabledValue(string? env) => env == "0";
+
+    /// <summary>
+    /// Mac <c>RotationPolicy.live</c> (min 1.5 s, cut after 0.6 s of silence = three 0.2 s windows). From 5 s on,
+    /// two quiet 0.2 s windows under the threshold plus 10 dB (capped at −20 dB) also cut (Mac #483,
+    /// <see cref="LivePieceCut"/>). The 30 s max is ours (the Mac has none; it keeps a piece decodable when
+    /// someone talks without a pause) and stays the backstop when the soft rule finds no quiet window.
     /// The -45 dB threshold is the Mac's ChunkedDictateRecorder.silenceThresholdDB; -40 counted quiet speech as a pause
     /// and cut pieces mid-sentence (1-2 character pieces).
     /// Windows difference: the threshold follows the noise floor (floor + 12 dB, between -60 and -45 dB). A quiet
     /// headset (speech 17-20 dB below the Mac recordings) otherwise had its quiet speech cut and dropped as silence.
+    /// The soft rule adds its 10 dB on top of that adaptive threshold.
     /// </summary>
-    public static MeetingChunkPolicy ChunkPolicy { get; } = new(TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(1.5),
-        TimeSpan.FromSeconds(0.6), -45f, TimeSpan.FromSeconds(0.2), NoiseFloorMarginDb: 12f, LowestThresholdDb: -60f);
+    public static MeetingChunkPolicy ChunkPolicy => ChunkPolicyFor(SoftCutDisabled);
+
+    /// <summary>The live policy with the soft rule on or off. Tests pass the flag; the app reads <see cref="SoftCutDisabled"/>.</summary>
+    public static MeetingChunkPolicy ChunkPolicyFor(bool softCutDisabled) => new(TimeSpan.FromSeconds(30),
+        TimeSpan.FromSeconds(1.5), TimeSpan.FromSeconds(0.6), -45f, TimeSpan.FromSeconds(0.2),
+        NoiseFloorMarginDb: 12f, LowestThresholdDb: -60f,
+        SoftCutAfter: softCutDisabled ? null : TimeSpan.FromSeconds(5),
+        SoftCutSilence: TimeSpan.FromSeconds(0.4), SoftCutBoostDb: 10f, MaxSoftCutThresholdDb: -20f);
 
     /// <summary>
     /// A piece the chunker calls silent is still decoded when its loudest 0.2 s window reaches this level: that is quiet
