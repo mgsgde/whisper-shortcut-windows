@@ -192,6 +192,13 @@ public static class LiveDictation
         return SpokenPunctuation.Apply(source, mode, keepsEdgeBreaks: true, timedMarks: timedMarks);
     }
 
+    // Parakeet hears the breath before a lone spoken command as "Oh," ("Oh, Doppelpunkt." for a piece
+    // that is only "Doppelpunkt"), which turned the colon into "Oh:". "Oh" stays a real word
+    // everywhere else; it goes only at the start of a piece, right before a spoken colon.
+    private static readonly System.Text.RegularExpressions.Regex LeadingOhRegex = new(
+        @"^[ \t]*oh[,.]?[ \t]+(?=doppel[ \t-]?(?:punkt|gun)\b)",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
     // "hmm" is two or more m's; "hm" is the single one. Longer forms come first so a word boundary
     // still decides, and "ähm" is not eaten as "äh".
     private static readonly System.Text.RegularExpressions.Regex FillerRegex = new(
@@ -202,10 +209,12 @@ public static class LiveDictation
     /// <summary>
     /// Parakeet writes fillers ("Mm-hmm", "Ähm") into the record. Whole word, case-insensitive, plus one comma, period or
     /// semicolon glued on, and the spaces around them. "Um", "ah", "aha", "achso" and "oh" stay: they are real German
-    /// words. A piece of only fillers comes back "".
+    /// words. A piece of only fillers comes back "". A leading "Oh" right before a spoken colon is the
+    /// exception (see <see cref="LeadingOhRegex"/>).
     /// </summary>
     private static string RemovingFillers(string text)
     {
+        text = LeadingOhRegex.Replace(text, "");
         if (!FillerRegex.IsMatch(text)) return text;
         var replaced = FillerRegex.Replace(text, " ");
         return FillerSpaceRun.Replace(replaced, " ").Trim(' ', '\t');

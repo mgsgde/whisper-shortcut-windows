@@ -36,7 +36,7 @@ public static class SpokenPunctuation
     /// </summary>
     public static readonly IReadOnlySet<string> CommandWords = new HashSet<string>(StringComparer.Ordinal)
     {
-        "doppelpunkt", "komma", "punkt", "fragezeichen", "ausrufezeichen", "schragstrich",
+        "doppelpunkt", "doppelgun", "komma", "punkt", "fragezeichen", "ausrufezeichen", "schragstrich",
         "schraegstrich", "schreckstrich", "semikolon", "strichpunkt", "punktchen", "puenktchen",
         "auslassungspunkte", "absatz", "zeile", "klammer", "klammerauf", "klammerzu",
         "neuzeile", "neuezeile",
@@ -104,11 +104,12 @@ public static class SpokenPunctuation
             // The colon is already there: a model reply that kept the spoken word after its own heading
             // ("Befund: Doppelpunkt Druckschmerz", "Anamnese:\nDoppelpunkt Patientin"). Drop the word only.
             // "Doppel Punkt" and "Doppel-Punkt" are the same command split or hyphenated by Parakeet.
-            MakeRule(@"(:[ \t]*\n?[ \t]*)\bdoppel[ \t-]?punkt\b[ \t,.;:]*", "$1"),
+            // "Doppelgun" is Parakeet's mishearing of the same command (Mac #453).
+            MakeRule(@"(:[ \t]*\n?[ \t]*)\bdoppel[ \t-]?(?:punkt|gun)\b[ \t,.;:]*", "$1"),
             // "Anamnese Doppelpunkt Patient" / "Befund, Doppelpunkt. Inspektion" -> "Befund: Inspektion".
             // Eats the punctuation the ASR put around the words on both sides. Inflections
             // ("Doppelpunkte") stay: the word boundary after "punkt" fails.
-            MakeRule(@"[ \t,.;]*\bdoppel[ \t-]?punkt\b[ \t,.;:]*", ": "),
+            MakeRule(@"[ \t,.;]*\bdoppel[ \t-]?(?:punkt|gun)\b[ \t,.;:]*", ": "),
             // Parakeet sometimes glues the command onto the next word ("Befund Doppelpunktdruckschmerz").
             // The following word's first letter is upper-cased afterwards (CapitalizeAfterGluedColon).
             // Inflections of the noun itself ("Doppelpunkte", "-en", "-es", "-s") are left alone.

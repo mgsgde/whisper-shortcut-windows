@@ -661,6 +661,30 @@ public class SpokenPunctuationPilotTests
     }
 }
 
+/// <summary>Spoken colon, Parakeet mishearings (Mac #453, live capture 2026-11-10).</summary>
+public class SpokenColonMishearingTests
+{
+    [Fact]
+    public void DoppelgunIsTheColonCommand() =>
+        Assert.Equal("Symptome: Kopfschmerzen.",
+            LiveDictation.FinishPiece("Symptome, Doppelgun, Kopfschmerzen.", PunctuationMode.SpokenOnly));
+
+    [Fact]
+    public void LeadingOhBeforeALoneColonIsJustTheColon() =>
+        Assert.Equal(":",
+            LiveDictation.FinishPiece("Oh, Doppelpunkt.", PunctuationMode.SpokenOnly).Trim());
+
+    [Fact]
+    public void RealWordsStay()
+    {
+        Assert.Equal("Oh das ist gut.",
+            LiveDictation.FinishPiece("Oh, das ist gut.", PunctuationMode.SpokenOnly));
+        Assert.Equal("Der Doppelgänger kam", SpokenPunctuation.Apply("Der Doppelgänger kam"));
+        Assert.Equal("Die Doppelpunkte fehlen", SpokenPunctuation.Apply("Die Doppelpunkte fehlen"));
+        Assert.Contains("doppelgun", SpokenPunctuation.CommandWords);
+    }
+}
+
 /// <summary>False-positive guards from Mac #408 (R194).</summary>
 public class SpokenPunctuationGuardTests
 {
