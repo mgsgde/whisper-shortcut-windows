@@ -375,6 +375,7 @@ public sealed class MeetingStore
     /// Writes summary.md and the sidecar that records which transcript it was built from.
     /// <paramref name="meta"/> is that transcript (taken before the model ran). Without it the sidecar
     /// matches the file as it is now, so a chunk that arrived during generation would look covered.
+    /// A success clears a previous failure: the written sidecar is this transcript, not <c>failed</c>.
     /// </summary>
     public void SaveSummary(string id, string markdown, MeetingSummaryMeta? meta = null)
     {
@@ -386,6 +387,44 @@ public sealed class MeetingStore
                 ParseTranscript(ReadText(Path.Combine(folder, TranscriptFile)) ?? ""));
             WriteTextAtomic(Path.Combine(folder, SummaryMetaFile), JsonSerializer.Serialize(source, Json));
         }
+    }
+
+    /// <summary>
+    /// The summary was requested and did not land. Writes only the sidecar (<c>failed</c> plus
+    /// <c>attempts</c>), so a later start can retry it. A meeting with no sidecar was never asked.
+    /// </summary>
+    public void SaveSummaryFailure(string id, MeetingSummaryMeta meta)
+    {
+        var folder = FolderOf(id);
+        lock (_gate)
+        {
+            var recorded = meta with { Failed = true };
+            WriteTextAtomic(Path.Combine(folder, SummaryMetaFile), JsonSerializer.Serialize(recorded, Json));
+        }
+    }
+
+    /// <summary>
+    /// Counts one recovery attempt for a missing summary and persists it before the model call, so a
+    /// crash or a persistent error still uses up the attempt. Returns false when there is nothing to
+    /// retry (no recorded failure, or <see cref="MeetingSummaryFreshness.MaxAttempts"/> already
+    /// reached). A meeting that already has a summary is the stale-sidecar case: nothing is counted
+    /// and the caller goes ahead.
+    /// </summary>
+    public bool NoteSummaryRecoveryAttempt(string id)
+    {
+        var info = Get(id);
+        if (info == null) return false;
+        if (info.HasSummary) return true;
+        var current = ReadSummaryMeta(id);
+        if (current is not { Failed: true } || current.Attempts >= MeetingSummaryFreshness.MaxAttempts)
+            return false;
+        var next = MeetingSummaryMeta.FromChunks(ReadChunks(id)) with
+        {
+            Failed = true,
+            Attempts = current.Attempts + 1,
+        };
+        SaveSummaryFailure(id, next);
+        return true;
     }
 
     /// <summary>The sidecar next to summary.md, or null when there is none or it cannot be read.</summary>
@@ -409,7 +448,8 @@ public sealed class MeetingStore
     {
         var info = Get(id);
         if (info == null) return false;
-        var meta = info.HasSummary ? ReadSummaryMeta(id) : null;
+        // The failure sidecar is the only record when summary.md was never written.
+        var meta = ReadSummaryMeta(id);
         return MeetingSummaryFreshness.NeedsNewSummary(
             info.Status, info.HasSummary, meta, ReadChunks(id), info.PendingAudioChunks);
     }

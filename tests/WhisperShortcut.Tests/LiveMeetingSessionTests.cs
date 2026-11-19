@@ -210,6 +210,10 @@ public class LiveMeetingSessionTests : IDisposable
         Assert.IsType<InvalidOperationException>(result.SummaryError);
         Assert.Equal(MeetingStatus.Ended, _store.Get(s.Meeting.Id)!.Status);
         Assert.Null(_store.ReadSummary(s.Meeting.Id));
+        var meta = _store.ReadSummaryMeta(s.Meeting.Id);
+        Assert.NotNull(meta);
+        Assert.True(meta.Failed);
+        Assert.Equal(1, meta.Attempts);
         Assert.True(_store.NeedsNewSummary(s.Meeting.Id));
     }
 

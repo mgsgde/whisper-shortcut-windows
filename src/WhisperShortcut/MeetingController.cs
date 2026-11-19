@@ -557,9 +557,9 @@ internal sealed class MeetingController : IDisposable
 
     /// <summary>
     /// Writes a summary again when <see cref="Core.MeetingStore.NeedsNewSummary"/> says so: the transcript
-    /// grew after the summary (a backlog splice) or the summary is missing on an ended meeting. One at a
-    /// time, and not for the meeting that is recording now. No overlay: this runs from the tray retry
-    /// and from the next start, not from Stop.
+    /// grew after the summary (a backlog splice), or a summary was requested at stop and failed (at most
+    /// three attempts). A meeting with no sidecar is left alone. One at a time, and not for the meeting
+    /// that is recording now. No overlay: this runs from the tray retry and from the next start, not from Stop.
     /// </summary>
     private async Task RecoverSummariesAsync()
     {
@@ -594,6 +594,8 @@ internal sealed class MeetingController : IDisposable
         try
         {
             if (id == _session?.Meeting.Id || !_store.NeedsNewSummary(id)) return;
+            // Persist the attempt before the paid call. A stale sidecar is not counted here.
+            if (!_store.NoteSummaryRecoveryAttempt(id)) return;
             var body = Core.MeetingStore.TextForSummary(_store.ReadTranscript(id));
             if (body == null) return;
             // Snapshot before the model runs, so a chunk that lands during the call stays flagged stale.

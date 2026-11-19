@@ -6,6 +6,7 @@ namespace WhisperShortcut.Tests;
 /// <summary>
 /// Mac MeetingSummaryMetaTests (PR #412, R208): a summary records the transcript it was built from,
 /// and a later chunk — appended or spliced — makes it stale. No sidecar means "already current".
+/// A missing summary is regenerated only when the sidecar says the request failed, at most three times.
 /// </summary>
 public class MeetingSummaryMetaTests
 {
@@ -56,7 +57,13 @@ public class MeetingSummaryMetaTests
         var json = JsonSerializer.Serialize(meta);
         Assert.Contains("\"chunkCount\":3", json.Replace(" ", ""));
         Assert.Contains("\"lastChunkStart\":125", json.Replace(" ", ""));
+        Assert.DoesNotContain("failed", json);
         Assert.Equal(meta, JsonSerializer.Deserialize<MeetingSummaryMeta>(json));
+        var failed = meta with { Failed = true, Attempts = 3 };
+        var failedJson = JsonSerializer.Serialize(failed).Replace(" ", "");
+        Assert.Contains("\"failed\":true", failedJson);
+        Assert.Contains("\"attempts\":3", failedJson);
+        Assert.Equal(failed, JsonSerializer.Deserialize<MeetingSummaryMeta>(JsonSerializer.Serialize(failed)));
     }
 
     [Fact]
@@ -70,11 +77,27 @@ public class MeetingSummaryMetaTests
     }
 
     [Fact]
-    public void Missing_summary_on_an_ended_meeting_needs_a_new_one()
+    public void An_old_meeting_without_a_sidecar_is_not_regenerated()
     {
         var chunks = Chunks(Transcript);
-        Assert.True(MeetingSummaryFreshness.NeedsNewSummary(MeetingStatus.Ended, false, null, chunks, 0));
-        Assert.True(MeetingSummaryFreshness.NeedsNewSummary(MeetingStatus.Interrupted, false, null, chunks, 0));
+        Assert.False(MeetingSummaryFreshness.NeedsNewSummary(MeetingStatus.Ended, false, null, chunks, 0));
+        Assert.False(MeetingSummaryFreshness.NeedsNewSummary(MeetingStatus.Interrupted, false, null, chunks, 0));
+        // summary.md deleted, successful sidecar left behind: that was not a failed request.
+        Assert.False(MeetingSummaryFreshness.NeedsNewSummary(
+            MeetingStatus.Ended, false, new MeetingSummaryMeta(2, 60), chunks, 0));
+    }
+
+    [Fact]
+    public void A_failed_summary_is_retried_until_three_attempts()
+    {
+        var chunks = Chunks(Transcript);
+        var failed = new MeetingSummaryMeta(2, 60, Failed: true, Attempts: 1);
+        Assert.True(MeetingSummaryFreshness.NeedsNewSummary(MeetingStatus.Ended, false, failed, chunks, 0));
+        Assert.True(MeetingSummaryFreshness.NeedsNewSummary(
+            MeetingStatus.Ended, false, failed with { Attempts = 2 }, chunks, 0));
+        Assert.False(MeetingSummaryFreshness.NeedsNewSummary(
+            MeetingStatus.Ended, false, failed with { Attempts = 3 }, chunks, 0));
+        Assert.False(MeetingSummaryFreshness.NeedsNewSummary(MeetingStatus.Ended, false, failed, chunks, 1));
     }
 
     [Fact]
@@ -133,7 +156,7 @@ public class MeetingSummaryStoreTests : IDisposable
         _store.AppendChunk(m.Id, 0, "Hello");
         _store.AppendChunk(m.Id, 60, "World");
         _store.MarkEnded(m.Id, T0.AddMinutes(5));
-        Assert.True(_store.NeedsNewSummary(m.Id));
+        Assert.False(_store.NeedsNewSummary(m.Id));
 
         var meta = MeetingSummaryMeta.FromChunks(_store.ReadChunks(m.Id));
         _store.SaveSummary(m.Id, "## Punkte\n- eins", meta);
@@ -142,6 +165,9 @@ public class MeetingSummaryStoreTests : IDisposable
 
         _store.AppendChunk(m.Id, 30, "Late");
         Assert.True(_store.NeedsNewSummary(m.Id));
+        // A stale sidecar is regenerated, and that retry is not a failed-summary attempt.
+        Assert.True(_store.NoteSummaryRecoveryAttempt(m.Id));
+        Assert.Equal(meta, _store.ReadSummaryMeta(m.Id));
         Assert.Equal(new[] { "Hello", "Late", "World" }, _store.ReadChunks(m.Id).Select(c => c.Text));
     }
 
@@ -169,7 +195,7 @@ public class MeetingSummaryStoreTests : IDisposable
     }
 
     [Fact]
-    public void Pending_audio_and_a_recording_do_not_need_a_summary_yet()
+    public void Pending_audio_a_recording_and_an_ended_meeting_without_a_failure_do_not_need_a_summary()
     {
         var m = _store.Create(T0, "mic");
         _store.AppendChunk(m.Id, 0, "Hello");
@@ -178,7 +204,33 @@ public class MeetingSummaryStoreTests : IDisposable
         _store.MarkEnded(m.Id, T0.AddMinutes(1));
         Assert.False(_store.NeedsNewSummary(m.Id));
         _store.RemovePendingAudio(m.Id, 30);
+        Assert.False(_store.NeedsNewSummary(m.Id));
+    }
+
+    [Fact]
+    public void A_failed_sidecar_retries_until_three_attempts_and_a_meeting_without_one_does_not()
+    {
+        var m = _store.Create(T0, "mic");
+        _store.AppendChunk(m.Id, 0, "Hello");
+        _store.MarkEnded(m.Id, T0.AddMinutes(1));
+        Assert.False(_store.NeedsNewSummary(m.Id));
+
+        _store.SaveSummaryFailure(m.Id, new MeetingSummaryMeta(1, 0, Failed: true, Attempts: 1));
+        Assert.Null(_store.ReadSummary(m.Id));
         Assert.True(_store.NeedsNewSummary(m.Id));
+        var sidecar = File.ReadAllText(Path.Combine(m.Folder, "summary.meta.json")).Replace(" ", "");
+        Assert.Contains("\"failed\":true", sidecar);
+        Assert.Contains("\"attempts\":1", sidecar);
+
+        Assert.True(_store.NoteSummaryRecoveryAttempt(m.Id));
+        Assert.Equal(2, _store.ReadSummaryMeta(m.Id)!.Attempts);
+        Assert.True(_store.NoteSummaryRecoveryAttempt(m.Id));
+        Assert.Equal(3, _store.ReadSummaryMeta(m.Id)!.Attempts);
+        Assert.False(_store.NeedsNewSummary(m.Id));
+        Assert.False(_store.NoteSummaryRecoveryAttempt(m.Id));
+
+        _store.SaveSummaryFailure(m.Id, new MeetingSummaryMeta(1, 0, Failed: true, Attempts: 3));
+        Assert.False(_store.NeedsNewSummary(m.Id));
     }
 
     [Fact]

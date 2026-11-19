@@ -216,6 +216,21 @@ public sealed class LiveMeetingSession : IDisposable
         Exception? summaryError = null;
         if (summarize != null)
         {
+            // Only a request that did not land is retried later. No sidecar means "never asked"
+            // (summaries were off, or there was nothing to summarize).
+            void RecordFailure()
+            {
+                try
+                {
+                    var failed = MeetingSummaryMeta.FromChunks(_store.ReadChunks(id)) with { Failed = true, Attempts = 1 };
+                    _store.SaveSummaryFailure(id, failed);
+                }
+                catch (Exception writeEx)
+                {
+                    Log.Warn($"Meeting: summary failure not recorded ({writeEx.GetType().Name})");
+                }
+            }
+
             try
             {
                 var body = MeetingStore.TextForSummary(_store.ReadTranscript(id));
@@ -230,12 +245,14 @@ public sealed class LiveMeetingSession : IDisposable
                         _store.SaveSummary(id, summary, meta);
                         summarySaved = true;
                     }
+                    else RecordFailure();
                 }
             }
             catch (Exception ex)
             {
                 summaryError = ex;
                 Log.Error("Meeting: summary failed", ex);
+                RecordFailure();
             }
         }
 
