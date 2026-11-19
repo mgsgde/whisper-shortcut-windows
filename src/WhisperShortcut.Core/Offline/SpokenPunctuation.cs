@@ -123,17 +123,17 @@ public static class SpokenPunctuation
             MakeRule($@"{openGuard}[ \t,.;]*{ClosingParen}", ")"),
             // A comma before a spoken paragraph break is the ASR marking the pause; the sentence ended.
             // No capital marker: this stays ".\n\n", and the next word keeps the case it was spoken with.
-            // "Neuerabsatz" / "Neuenabsatz" are the glued forms (no space).
+            // "Neuerabsatz" / "Neuenabsatz" / "Neuabsatz" are the glued forms (no space).
             // With token timing a leftover comma was spoken ("Herren, neuer Absatz"): it stays, as ",\n\n".
-            MakeRule(@"[ \t]*,[ \t]*\bneue[rn][ \t]*absatz\b[ \t,.;:!?]*", timed ? ",\n\n" : ".\n\n"),
+            MakeRule(@"[ \t]*,[ \t]*\bneu(?:e[rn])?[ \t]*absatz\b[ \t,.;:!?]*", timed ? ",\n\n" : ".\n\n"),
             // The model already ended the sentence ("Anamnese. Neuer Absatz, die Klägerin"): the next word
             // starts the new paragraph or line, so it gets a capital (marker, CapitalizeAfterGluedColon).
             // "Neuzeile" / "Neuezeile" are "neue Zeile" glued into one word. "Neuzeilen" does not match.
-            MakeRule(@"(?<=[.!?])[ \t]*\bneue[rn][ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
+            MakeRule(@"(?<=[.!?])[ \t]*\bneu(?:e[rn])?[ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
             MakeRule($@"(?<=[.!?])[ \t]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
             // Paragraph break without a sentence mark before it. The next word still starts the new
             // paragraph, so it gets a capital too.
-            MakeRule(@"[ \t,;]*\bneue[rn][ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
+            MakeRule(@"[ \t,;]*\bneu(?:e[rn])?[ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
             // A comma or semicolon before "neue Zeile" is the pause Parakeet wrote. Eating it stops
             // "Befund, neue Zeile Inspektion" from staying "Befund,\nInspektion". No capital marker.
             // With token timing the comma was spoken ("Müller, neue Zeile vielen Dank"), so it stays.

@@ -493,6 +493,8 @@ public class SpokenPunctuationBracketTests
         Assert.Equal("einen schönen Sonntag", Apply("einen schönen Sonntag Neuezeile"));
         Assert.Equal("Befund\n\nTherapie", Apply("Befund Neuerabsatz Therapie"));
         Assert.Equal("Befund\n\nTherapie", Apply("Befund Neuenabsatz Therapie"));
+        Assert.Equal("Termin ist geplant.\n\nMit freundlichen Grüßen",
+            Apply("Termin ist geplant. Neuabsatz mit freundlichen Grüßen"));
     }
 
     [Fact]
