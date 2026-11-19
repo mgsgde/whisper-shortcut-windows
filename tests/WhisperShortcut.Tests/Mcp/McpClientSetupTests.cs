@@ -91,6 +91,22 @@ public class McpClientSetupTests
     }
 
     [Fact]
+    public void WriteWithBackup_KeepsTheOriginal_AcrossLaterConnects()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "wsw-setup-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(dir, "config.json");
+        McpClientSetup.WriteWithBackup(path, old => McpClientSetup.MergeClaudeCode(old, Url, "original"));
+        var original = File.ReadAllText(path);
+        McpClientSetup.WriteWithBackup(path, old => McpClientSetup.MergeClaudeCode(old, Url, "second"));
+        McpClientSetup.WriteWithBackup(path, old => McpClientSetup.MergeClaudeCode(old, Url, "third"));
+
+        Assert.Equal(original, File.ReadAllText(path + McpClientSetup.BackupSuffix));
+        Assert.Contains("Bearer third", File.ReadAllText(path));
+        Assert.DoesNotContain("Bearer third", File.ReadAllText(path + McpClientSetup.BackupSuffix));
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
     public void ClaudeDesktopConfigPath_PrefersAnExistingMsixFolder()
     {
         var root = Path.Combine(Path.GetTempPath(), "wsw-paths-" + Guid.NewGuid().ToString("N"));

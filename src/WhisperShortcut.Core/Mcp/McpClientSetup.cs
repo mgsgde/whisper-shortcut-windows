@@ -127,9 +127,10 @@ public static class McpClientSetup
     }
 
     /// <summary>
-    /// Reads <paramref name="path"/> (if present), keeps a copy at path + <see cref="BackupSuffix"/>, and writes merge(existing)
-    /// atomically (tmp + move), creating the folder. The merge runs first, so an invalid file stays untouched and an older
-    /// good backup is not overwritten by it. Throws <see cref="McpConfigException"/> / IOException.
+    /// Reads <paramref name="path"/> (if present), keeps a copy at path + <see cref="BackupSuffix"/> the first time only,
+    /// and writes merge(existing) atomically (tmp + move), creating the folder. The merge runs first, so an invalid file
+    /// stays untouched. A later Connect must not replace that first copy: it is the user's original (Mac #409).
+    /// Throws <see cref="McpConfigException"/> / IOException.
     /// </summary>
     public static void WriteWithBackup(string path, Func<string?, string> merge)
     {
@@ -142,7 +143,8 @@ public static class McpClientSetup
         }
         var dir = Path.GetDirectoryName(path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-        if (existing != null) File.Copy(path, path + BackupSuffix, overwrite: true);
+        var backup = path + BackupSuffix;
+        if (existing != null && !File.Exists(backup)) File.Copy(path, backup, overwrite: false);
         var tmp = path + ".tmp";
         File.WriteAllText(tmp, merged, new UTF8Encoding(false));
         File.Move(tmp, path, overwrite: true);
