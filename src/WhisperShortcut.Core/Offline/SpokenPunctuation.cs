@@ -253,7 +253,7 @@ public static class SpokenPunctuation
 
     /// <summary>
     /// Lower-case forms of function words and adverbs that are never nouns. "sie", "ihr" and "ihnen"
-    /// are omitted on purpose — see <see cref="LowercasingFunctionWord"/>.
+    /// are omitted on purpose — see <see cref="LowercasingFunctionWord"/>. "ich" is in: never a noun.
     /// </summary>
     public static readonly IReadOnlySet<string> FunctionWords = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -261,7 +261,7 @@ public static class SpokenPunctuation
         "mit", "bei", "nach", "von", "vor", "zu", "zum", "zur", "aus", "auf", "an", "am",
         "im", "in", "über", "unter", "seit", "für", "durch", "gegen", "ohne", "um", "bis",
         "ist", "sind", "war", "waren", "hat", "haben", "wird", "wurde", "sich", "nicht",
-        "auch", "noch", "schon", "sehr", "er", "es", "wir", "man",
+        "auch", "noch", "schon", "sehr", "ich", "er", "es", "wir", "man",
         "der", "die", "das", "den", "dem", "des",
         "ein", "eine", "einen", "einem", "einer",
         "diese", "dieser", "diesen", "diesem", "dieses",

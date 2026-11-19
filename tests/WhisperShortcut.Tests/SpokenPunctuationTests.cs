@@ -421,6 +421,7 @@ public class SpokenPunctuationTests
         Assert.Equal("diese", SpokenPunctuation.LowercasingFunctionWord("Diese"));
         Assert.Equal("keine", SpokenPunctuation.LowercasingFunctionWord("Keine"));
         Assert.Equal("bis", SpokenPunctuation.LowercasingFunctionWord("Bis"));
+        Assert.Equal("ich", SpokenPunctuation.LowercasingFunctionWord("Ich"));
         Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Sie"));
         Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Ihr"));
         Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Ihnen"));
@@ -636,6 +637,17 @@ public class SpokenPunctuationPilotTests
         Assert.Equal("Befund\nVielen Dank", Pipeline("Befund", "neue Zeile vielen Dank"));
         Assert.Equal("Guten Tag,\nHerr Schmidt kommt",
             Pipeline("Guten Tag,", "neue Zeile Herr Schmidt kommt"));
+    }
+
+    [Fact]
+    public void IchAfterSalutationCommaIsLowercaseAtAPieceSeam()
+    {
+        Assert.Equal("Sehr geehrte Damen und Herren, ich nehme Stellung.",
+            Pipeline("Sehr geehrte Damen und Herren,", "Ich nehme Stellung."));
+        Assert.Equal("Sehr geehrte Damen und Herren,\nich nehme Stellung.",
+            Pipeline("Sehr geehrte Damen und Herren,", "neue Zeile Ich nehme Stellung."));
+        Assert.Equal("Sehr geehrte Damen und Herren. Ich nehme Stellung.",
+            Pipeline("Sehr geehrte Damen und Herren.", "Ich nehme Stellung."));
     }
 
     [Fact]
