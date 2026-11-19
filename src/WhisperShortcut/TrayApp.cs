@@ -491,7 +491,17 @@ internal sealed partial class TrayApp : ApplicationContext
 
         public bool IsProcessing() => app._take is { Phase: TakePhase.Processing, Mode: Mode.Dictate };
 
-        public void CancelProcessing() => app._take?.Cts?.Cancel();
+        public void CancelProcessing()
+        {
+            // Same rule as the Dictate hotkey (Mac #396): a second press while Live is still inserting
+            // its last pieces must not throw that text away. A normal dictation still cancels.
+            if (app._take?.Kind == Core.RecordingKindName.Live)
+            {
+                Core.Log.Info("LIVE-DICTATE: shortcut ignored — the last pieces are still being inserted");
+                return;
+            }
+            app._take?.Cts?.Cancel();
+        }
     }
 
     private void OnLiveHotkey()
@@ -553,14 +563,18 @@ internal sealed partial class TrayApp : ApplicationContext
             Core.Log.Info($"Hotkey {label} in state {PhaseName} ignored: a {_take!.Mode} run is active");
             return;
         }
+        var liveFinishing = _take?.Kind == Core.RecordingKindName.Live;
         var decision = Core.RecordingHotkeyPolicy.Decide(
             recording: IsRecording,
             processing: IsProcessing,
             sameMode: mode == _take?.Mode,
-            gateOpen: gateOpen);
+            gateOpen: gateOpen,
+            liveFinishing: liveFinishing);
         if (decision == Core.RecordingHotkeyDecision.Ignore)
         {
-            Core.Log.Info($"Hotkey {label} in state {PhaseName} ignored: other mode is already running");
+            Core.Log.Info(IsProcessing && liveFinishing
+                ? "LIVE-DICTATE: shortcut ignored — the last pieces are still being inserted"
+                : $"Hotkey {label} in state {PhaseName} ignored: other mode is already running");
             return;
         }
         var before = PhaseName;
