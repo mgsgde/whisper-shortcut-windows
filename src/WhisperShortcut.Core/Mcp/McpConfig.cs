@@ -18,7 +18,7 @@ public sealed record McpConnectedClient(string Name, string Version, McpAccess A
 /// </summary>
 public sealed class McpConfig
 {
-    /// <summary>Default port of the local server.</summary>
+    /// <summary>Default port of the local server. The next <see cref="McpPorts.FallbackCount"/> ports are the fallback window.</summary>
     public const int DefaultPort = 47823;
 
     /// <summary>Most clients remembered.</summary>
@@ -121,7 +121,11 @@ public sealed class McpConfig
         set { if (Update(() => { var ch = _enabled != value; _enabled = value; return ch; })) Changed?.Invoke(); }
     }
 
-    /// <summary>TCP port on 127.0.0.1. Saved when set; <see cref="Load"/> replaces invalid stored values with the default.</summary>
+    /// <summary>
+    /// TCP port on 127.0.0.1. Saved when set; <see cref="Load"/> replaces invalid stored values with the default.
+    /// A value inside the fallback window other than <see cref="DefaultPort"/> is the port that last worked when the
+    /// default was taken, and is tried first next time. A value outside that window is used alone.
+    /// </summary>
     public int Port
     {
         get { lock (_gate) return _port; }
@@ -255,5 +259,48 @@ public sealed class McpConfig
             File.WriteAllText(tmp, json);
             File.Move(tmp, _path, overwrite: true);
         }
+    }
+}
+
+/// <summary>
+/// Which loopback ports the MCP server tries (Mac MCPServer.candidatePorts). An explicit override is used
+/// alone. Otherwise a sticky port inside the window is tried first, then <see cref="McpConfig.DefaultPort"/>
+/// through the next <see cref="FallbackCount"/> ports.
+/// </summary>
+public static class McpPorts
+{
+    /// <summary>Ports after the default: 47824–47839.</summary>
+    public const int FallbackCount = 16;
+
+    /// <summary>Last port of the window, inclusive.</summary>
+    public static int LastPort => McpConfig.DefaultPort + FallbackCount;
+
+    /// <summary>
+    /// Ports to try, in order. <paramref name="portOverride"/> in 1…65535 is the only candidate.
+    /// With fallback off, only the default. Otherwise <paramref name="sticky"/> first when it lies in the
+    /// window, then the default, then the rest. Duplicates are dropped.
+    /// </summary>
+    public static IReadOnlyList<int> CandidatePorts(int portOverride, int sticky, bool fallbackEnabled)
+    {
+        if (portOverride is >= 1 and <= 65535) return new[] { portOverride };
+        if (!fallbackEnabled) return new[] { McpConfig.DefaultPort };
+        var ports = new List<int>();
+        if (sticky >= McpConfig.DefaultPort && sticky <= LastPort) ports.Add(sticky);
+        for (var value = McpConfig.DefaultPort; value <= LastPort; value++)
+            if (!ports.Contains(value)) ports.Add(value);
+        return ports;
+    }
+
+    /// <summary>
+    /// The saved <see cref="McpConfig.Port"/>: outside the window it is an override (tried alone); inside it,
+    /// other than the default, it is the sticky port (tried first).
+    /// </summary>
+    public static IReadOnlyList<int> ForConfigured(int configuredPort)
+    {
+        if (configuredPort is >= 1 and <= 65535 && (configuredPort < McpConfig.DefaultPort || configuredPort > LastPort))
+            return CandidatePorts(configuredPort, sticky: 0, fallbackEnabled: true);
+        var sticky = configuredPort >= McpConfig.DefaultPort && configuredPort <= LastPort && configuredPort != McpConfig.DefaultPort
+            ? configuredPort : 0;
+        return CandidatePorts(0, sticky, fallbackEnabled: true);
     }
 }

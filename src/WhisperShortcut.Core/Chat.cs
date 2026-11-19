@@ -473,7 +473,26 @@ Style:
 - Text the user will paste elsewhere (a message, an email, a translation) goes in one ```markdown block, with explanations outside it.
 """;
 
-    /// <summary><paramref name="custom"/> when it has text, else the default for the online or offline engine.</summary>
+    /// <summary>
+    /// <paramref name="custom"/> when it has text, else the default for the online or offline engine,
+    /// with today's date and zone at the top (Mac ChatDateContext.stableLine). The clock is not here:
+    /// <see cref="AppendCurrentTime"/> adds it after the meeting context, so the prefix stays cacheable.
+    /// </summary>
     public static string Effective(string? custom, bool offline) =>
+        Effective(custom, offline, DateTimeOffset.Now, TimeZoneInfo.Local, ChatDateContext.German);
+
+    /// <summary>Same as <see cref="Effective(string?, bool)"/> with a fixed clock, for tests.</summary>
+    public static string Effective(string? custom, bool offline, DateTimeOffset now, TimeZoneInfo timeZone, CultureInfo locale) =>
+        ChatDateContext.StableLine(now, timeZone, locale) + "\n\n" + Body(custom, offline);
+
+    /// <summary>The clock time at the end of a system prompt (Mac ChatDateContext.timeOfDayLine).</summary>
+    public static string AppendCurrentTime(string prompt) =>
+        AppendCurrentTime(prompt, DateTimeOffset.Now, TimeZoneInfo.Local, ChatDateContext.German);
+
+    /// <summary>Same as <see cref="AppendCurrentTime(string)"/> with a fixed clock, for tests.</summary>
+    public static string AppendCurrentTime(string prompt, DateTimeOffset now, TimeZoneInfo timeZone, CultureInfo locale) =>
+        prompt + "\n\n" + ChatDateContext.TimeOfDayLine(now, timeZone, locale);
+
+    private static string Body(string? custom, bool offline) =>
         !string.IsNullOrWhiteSpace(custom) ? custom : offline ? DefaultOfflineSystemPrompt : DefaultSystemPrompt;
 }

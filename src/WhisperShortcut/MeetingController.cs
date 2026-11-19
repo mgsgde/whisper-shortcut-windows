@@ -46,6 +46,7 @@ internal sealed class MeetingController : IDisposable
     private Task<Core.MeetingStopResult>? _stopTask;
     private CancellationTokenSource? _stopCts;
     private bool _retrying;
+    private bool _recoveringSummaries;
     private bool _failureShown;
     private string? _lastFolder;
 
@@ -282,7 +283,12 @@ internal sealed class MeetingController : IDisposable
     private async Task<string> SummarizeAsync(string transcript, CancellationToken ct)
     {
         _ui.Post(_ => _overlay.ShowFinishing("Zusammenfassung wird erstellt …"), null);
-        var raw = (await _summarize(transcript, ct)).Trim();
+        return FormatSummary(await _summarize(transcript, ct));
+    }
+
+    private static string FormatSummary(string? raw)
+    {
+        raw = (raw ?? "").Trim();
         return raw.Length == 0 ? "" : $"# Zusammenfassung\n\n{raw}\n";
     }
 
@@ -535,6 +541,9 @@ internal sealed class MeetingController : IDisposable
             _retrying = false;
             RefreshMenu();
         }
+        // After the splice, and for an ended meeting whose summary never landed: summary.md otherwise
+        // keeps the incomplete text, or stays missing. Pending audio is skipped until this retry.
+        await RecoverSummariesAsync();
         Core.Log.Info($"Meeting: backlog retry, {recovered} recovered, {still} still pending");
         if (!announce && recovered == 0) return;
         if (still == 0 && recovered > 0)
@@ -544,6 +553,67 @@ internal sealed class MeetingController : IDisposable
                 $"{Count(still)} weiterhin offen{(recovered > 0 ? $", {Count(recovered)} geschafft" : "")}. Der Ton bleibt gespeichert. "
                 + (error is Core.GeminiException g ? g.Message : ""),
                 ToolTipIcon.Warning, null);
+    }
+
+    /// <summary>
+    /// Writes a summary again when <see cref="Core.MeetingStore.NeedsNewSummary"/> says so: the transcript
+    /// grew after the summary (a backlog splice), or a summary was requested at stop and failed (at most
+    /// three attempts). A meeting with no sidecar is left alone. One at a time, and not for the meeting
+    /// that is recording now. No overlay: this runs from the tray retry and from the next start, not from Stop.
+    /// </summary>
+    private async Task RecoverSummariesAsync()
+    {
+        if (_recoveringSummaries || !_settings.MeetingSummary) return;
+        _recoveringSummaries = true;
+        try
+        {
+            List<string> ids;
+            try
+            {
+                ids = _store.List().Select(m => m.Id).Where(id => _store.NeedsNewSummary(id)).ToList();
+            }
+            catch (Exception e)
+            {
+                Core.Log.Error("Meeting: summary recovery scan failed", e);
+                return;
+            }
+            foreach (var id in ids)
+            {
+                if (id == _session?.Meeting.Id) continue;
+                await RegenerateSummaryAsync(id);
+            }
+        }
+        finally
+        {
+            _recoveringSummaries = false;
+        }
+    }
+
+    private async Task RegenerateSummaryAsync(string id)
+    {
+        try
+        {
+            if (id == _session?.Meeting.Id || !_store.NeedsNewSummary(id)) return;
+            // Persist the attempt before the paid call. A stale sidecar is not counted here.
+            if (!_store.NoteSummaryRecoveryAttempt(id)) return;
+            var body = Core.MeetingStore.TextForSummary(_store.ReadTranscript(id));
+            if (body == null) return;
+            // Snapshot before the model runs, so a chunk that lands during the call stays flagged stale.
+            var meta = Core.MeetingSummaryMeta.FromChunks(_store.ReadChunks(id));
+            var markdown = FormatSummary(await _summarize(body, CancellationToken.None));
+            if (markdown.Length == 0)
+            {
+                Core.Log.Warn($"Meeting: summary regeneration produced no text for {id}");
+                return;
+            }
+            if (id == _session?.Meeting.Id) return;
+            _store.SaveSummary(id, markdown, meta);
+            Core.Log.Info($"Meeting: summary regenerated for {id} ({meta.ChunkCount} chunks)");
+        }
+        catch (Exception e)
+        {
+            Core.Log.Error($"Meeting: summary regeneration failed for {id}", e);
+        }
     }
 
     // ---------------- test mode ----------------

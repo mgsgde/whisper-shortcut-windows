@@ -91,6 +91,77 @@ public class McpClientSetupTests
     }
 
     [Fact]
+    public void WriteWithBackup_KeepsTheOriginal_AcrossLaterConnects()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "wsw-setup-" + Guid.NewGuid().ToString("N"));
+        var path = Path.Combine(dir, "config.json");
+        McpClientSetup.WriteWithBackup(path, old => McpClientSetup.MergeClaudeCode(old, Url, "original"));
+        var original = File.ReadAllText(path);
+        McpClientSetup.WriteWithBackup(path, old => McpClientSetup.MergeClaudeCode(old, Url, "second"));
+        McpClientSetup.WriteWithBackup(path, old => McpClientSetup.MergeClaudeCode(old, Url, "third"));
+
+        Assert.Equal(original, File.ReadAllText(path + McpClientSetup.BackupSuffix));
+        Assert.Contains("Bearer third", File.ReadAllText(path));
+        Assert.DoesNotContain("Bearer third", File.ReadAllText(path + McpClientSetup.BackupSuffix));
+        Directory.Delete(dir, true);
+    }
+
+    [Fact]
+    public void RewriteOwnUrl_MovesOurLoopbackPort_AndLeavesAForeignUrl()
+    {
+        const string current = "http://127.0.0.1:47824/mcp";
+        const string old = "http://127.0.0.1:47823/mcp";
+        var code = McpClientSetup.MergeClaudeCode(null, old, "writeTok");
+        var rewritten = McpClientSetup.RewriteOwnUrl(code, current, "writeTok", claudeCode: true);
+        Assert.NotNull(rewritten);
+        var entry = JsonNode.Parse(rewritten)!["mcpServers"]![McpClientSetup.ServerName]!;
+        Assert.Equal(current, entry["url"]!.GetValue<string>());
+        Assert.Equal("Bearer writeTok", entry["headers"]!["Authorization"]!.GetValue<string>());
+        Assert.Null(McpClientSetup.RewriteOwnUrl(rewritten, current, "writeTok", claudeCode: true));
+        Assert.Null(McpClientSetup.RewriteOwnUrl(
+            McpClientSetup.MergeClaudeCode(null, "http://example.com/mcp", "writeTok"), current, "writeTok", claudeCode: true));
+
+        var desktop = McpClientSetup.MergeClaudeDesktop(null, old, "writeTok");
+        var desktopOut = McpClientSetup.RewriteOwnUrl(desktop, current, "writeTok", claudeCode: false);
+        Assert.NotNull(desktopOut);
+        var args = JsonNode.Parse(desktopOut)!["mcpServers"]![McpClientSetup.ServerName]!["args"]!.AsArray()
+            .Select(a => a!.GetValue<string>()).ToArray();
+        Assert.Contains(current, args);
+        Assert.DoesNotContain(old, args);
+    }
+
+    [Fact]
+    public void RewriteOwnUrl_KeepsTheTokenAlreadyInTheEntry()
+    {
+        const string current = "http://127.0.0.1:47824/mcp";
+        const string old = "http://127.0.0.1:47823/mcp";
+        var code = McpClientSetup.MergeClaudeCode(null, old, "userTok");
+        var rewritten = McpClientSetup.RewriteOwnUrl(code, current, "currentLevelTok", claudeCode: true);
+        Assert.NotNull(rewritten);
+        var entry = JsonNode.Parse(rewritten)!["mcpServers"]![McpClientSetup.ServerName]!;
+        Assert.Equal(current, entry["url"]!.GetValue<string>());
+        Assert.Equal("Bearer userTok", entry["headers"]!["Authorization"]!.GetValue<string>());
+        Assert.DoesNotContain("currentLevelTok", rewritten);
+
+        var desktop = McpClientSetup.MergeClaudeDesktop(null, old, "desktopTok");
+        var desktopOut = McpClientSetup.RewriteOwnUrl(desktop, current, "currentLevelTok", claudeCode: false);
+        Assert.NotNull(desktopOut);
+        Assert.Equal("Bearer desktopTok",
+            JsonNode.Parse(desktopOut)!["mcpServers"]![McpClientSetup.ServerName]!["env"]!["AUTH_HEADER"]!.GetValue<string>());
+        Assert.DoesNotContain("currentLevelTok", desktopOut);
+    }
+
+    [Theory]
+    [InlineData("http://127.0.0.1:47823/mcp", true)]
+    [InlineData("http://localhost:47839/mcp", true)]
+    [InlineData("http://127.0.0.1:47840/mcp", false)]
+    [InlineData("http://127.0.0.1:47822/mcp", false)]
+    [InlineData("http://example.com/mcp", false)]
+    [InlineData("http://127.0.0.1:47823/mcp/", false)]
+    public void OwnLoopbackUrl_IsTheDefaultPort_AndTheNext16(string url, bool own) =>
+        Assert.Equal(own, McpClientSetup.IsOwnLoopbackMcpUrl(url));
+
+    [Fact]
     public void ClaudeDesktopConfigPath_PrefersAnExistingMsixFolder()
     {
         var root = Path.Combine(Path.GetTempPath(), "wsw-paths-" + Guid.NewGuid().ToString("N"));

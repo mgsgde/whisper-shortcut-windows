@@ -1,3 +1,5 @@
+using System.Runtime.InteropServices;
+
 namespace WhisperShortcut;
 
 /// <summary>
@@ -462,6 +464,8 @@ internal sealed partial class ChatWindow : FastShowForm
         var modelName = ModelName;
         var system = Core.ChatPrompts.Effective(_settings.ChatSystemPrompt, offline: engine == Core.Engine.Local);
         system = WithMeetingContext(system, session); // ChatWindow.Meeting.cs
+        // Clock last, after the meeting text: the date line at the top of Effective stays cacheable for the day (Mac #353).
+        system = Core.ChatPrompts.AppendCurrentTime(system);
         var window = Core.ChatText.Window(session.Messages, engine == Core.Engine.Local ? Core.ChatText.LocalWindowChars : 200_000);
 
         var cts = _cts = new CancellationTokenSource();
@@ -517,10 +521,12 @@ internal sealed partial class ChatWindow : FastShowForm
         }
         finally
         {
+            // Captured before the rebuild: a reader who scrolled up, or who is selecting text, stays there (Mac #364).
+            bool follow = !IsDisposed && ShouldFollow();
             if (_cts == cts) { _cts = null; _runningEngine = null; }
             cts.Dispose();
             if (!IsDisposed) _send.Enabled = true;
-            if (!IsDisposed && _session == session) Render();
+            if (!IsDisposed && _session == session) Render(follow);
         }
     }
 
@@ -666,8 +672,15 @@ internal sealed partial class ChatWindow : FastShowForm
     // True while Render rebuilds the whole transcript: the runs neither scroll nor paint one by one.
     private bool _rendering;
 
-    private void Render()
+    private void Render(bool pinToEnd = true)
     {
+        int anchor = -1, selStart = 0, selLen = 0;
+        if (!pinToEnd && _transcript.IsHandleCreated && _transcript.TextLength > 0)
+        {
+            anchor = _transcript.GetCharIndexFromPosition(new Point(1, 1));
+            selStart = _transcript.SelectionStart;
+            selLen = _transcript.SelectionLength;
+        }
         _rendering = true;
         // WHY redraw off: every run selected, scrolled and repainted the box; a long chat repainted it hundreds of times.
         SetRedraw(_transcript, false);
@@ -677,7 +690,14 @@ internal sealed partial class ChatWindow : FastShowForm
             _rendering = false;
             SetRedraw(_transcript, true);
         }
-        ScrollToEnd();
+        if (pinToEnd || anchor < 0) ScrollToEnd();
+        else
+        {
+            _transcript.Select(Math.Clamp(anchor, 0, _transcript.TextLength), 0);
+            _transcript.ScrollToCaret();
+            if (selLen > 0 && selStart >= 0 && selStart + selLen <= _transcript.TextLength)
+                _transcript.Select(selStart, selLen);
+        }
         _transcript.Invalidate();
     }
 
@@ -732,12 +752,57 @@ internal sealed partial class ChatWindow : FastShowForm
 
     private void AppendRun(string text, Font font, Color color, Color? back = null)
     {
-        _transcript.Select(_transcript.TextLength, 0);
-        _transcript.SelectionFont = font;
-        _transcript.SelectionColor = color;
-        _transcript.SelectionBackColor = back ?? _transcript.BackColor;
-        _transcript.SelectedText = text.ReplaceLineEndings("\n");
-        if (!_rendering) ScrollToEnd();
+        // Streaming used to scroll and clear the selection on every piece. Follow only while the
+        // reader is already at the bottom and is not selecting text (Mac #364).
+        bool follow = _rendering || ShouldFollow();
+        int selStart = 0, selLen = 0;
+        var scroll = default(POINT);
+        if (!follow)
+        {
+            selStart = _transcript.SelectionStart;
+            selLen = _transcript.SelectionLength;
+            scroll = GetScrollPoint();
+            SetRedraw(_transcript, false);
+        }
+        try
+        {
+            _transcript.Select(_transcript.TextLength, 0);
+            _transcript.SelectionFont = font;
+            _transcript.SelectionColor = color;
+            _transcript.SelectionBackColor = back ?? _transcript.BackColor;
+            _transcript.SelectedText = text.ReplaceLineEndings("\n");
+            if (follow && !_rendering) ScrollToEnd();
+        }
+        finally
+        {
+            if (!follow)
+            {
+                if (selStart >= 0 && selStart + selLen <= _transcript.TextLength)
+                    _transcript.Select(selStart, selLen);
+                SetScrollPoint(scroll);
+                SetRedraw(_transcript, true);
+                _transcript.Invalidate();
+            }
+        }
+    }
+
+    // At the bottom, and not in the middle of a selection. A selection is left alone: ScrollToEnd moves the caret.
+    private bool ShouldFollow()
+    {
+        if (_transcript.SelectionLength > 0) return false;
+        return IsNearBottom();
+    }
+
+    // How far above the bottom still counts as following. A wheel notch must not drop the follow (Mac: 40 pt).
+    private const int FollowSlack = 40;
+
+    private bool IsNearBottom()
+    {
+        if (!_transcript.IsHandleCreated || _transcript.TextLength == 0) return true;
+        var info = new SCROLLINFO { cbSize = (uint)Marshal.SizeOf<SCROLLINFO>(), fMask = SIF_RANGE | SIF_PAGE | SIF_POS };
+        if (!GetScrollInfo(_transcript.Handle, SB_VERT, ref info)) return true;
+        if (info.nPage == 0 || info.nMax - info.nMin + 1 <= (int)info.nPage) return true;
+        return info.nPos + (int)info.nPage + FollowSlack > info.nMax;
     }
 
     private void ScrollToEnd()
@@ -745,6 +810,40 @@ internal sealed partial class ChatWindow : FastShowForm
         _transcript.Select(_transcript.TextLength, 0);
         _transcript.ScrollToCaret();
     }
+
+    private POINT GetScrollPoint()
+    {
+        var point = default(POINT);
+        if (_transcript.IsHandleCreated) SendMessagePoint(_transcript.Handle, EM_GETSCROLLPOS, IntPtr.Zero, ref point);
+        return point;
+    }
+
+    private void SetScrollPoint(POINT point)
+    {
+        if (_transcript.IsHandleCreated) SendMessagePoint(_transcript.Handle, EM_SETSCROLLPOS, IntPtr.Zero, ref point);
+    }
+
+    private const int SB_VERT = 1;
+    private const int SIF_RANGE = 0x1, SIF_PAGE = 0x2, SIF_POS = 0x4;
+    private const int EM_GETSCROLLPOS = 0x04DD, EM_SETSCROLLPOS = 0x04DE;
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X, Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct SCROLLINFO
+    {
+        public uint cbSize, fMask;
+        public int nMin, nMax;
+        public uint nPage;
+        public int nPos, nTrackPos;
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetScrollInfo(IntPtr hwnd, int bar, ref SCROLLINFO info);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessagePoint(IntPtr hWnd, int msg, IntPtr wParam, ref POINT lParam);
 
     private void CopyLastAnswer(bool blockOnly)
     {

@@ -197,6 +197,11 @@ public sealed class McpProposalStore
                 {
                     var setting = applier.Catalog.FirstOrDefault(s => s.Id == item.Id)
                         ?? throw new McpConfigException($"Die Einstellung „{item.Title}“ gibt es nicht mehr.");
+                    // Same rule as glossary and prompt proposals: the user may have changed it by hand since (Mac #410).
+                    JsonNode? from;
+                    try { from = JsonNode.Parse(item.FromJson); }
+                    catch (JsonException) { throw new McpConfigException(Stale); }
+                    if (!McpSettingsCatalog.SameValue(setting.Read(), from)) throw new McpConfigException(Stale);
                     JsonNode? value;
                     try { value = JsonNode.Parse(item.ToJson); }
                     catch (JsonException) { throw new McpConfigException($"Der Wert für „{item.Title}“ ist ungültig."); }

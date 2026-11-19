@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using WhisperShortcut.Core;
 
@@ -463,11 +464,34 @@ public class ChatTests : IDisposable
     [Fact]
     public void Effective_prefers_a_custom_prompt_and_ignores_blank_ones()
     {
-        Assert.Equal("Eigener", ChatPrompts.Effective("Eigener", offline: false));
-        Assert.Equal("Eigener", ChatPrompts.Effective("Eigener", offline: true));
-        Assert.Equal(ChatPrompts.DefaultSystemPrompt, ChatPrompts.Effective(null, offline: false));
-        Assert.Equal(ChatPrompts.DefaultSystemPrompt, ChatPrompts.Effective("   ", offline: false));
-        Assert.Equal(ChatPrompts.DefaultOfflineSystemPrompt, ChatPrompts.Effective("", offline: true));
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_793_814_120);
+        var berlin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+        var german = CultureInfo.GetCultureInfo("de-DE");
+        string Prefix(string body) => "Current date: Mittwoch, 4. November 2026 (Europe/Berlin).\n\n" + body;
+
+        Assert.Equal(Prefix("Eigener"), ChatPrompts.Effective("Eigener", offline: false, now, berlin, german));
+        Assert.Equal(Prefix("Eigener"), ChatPrompts.Effective("Eigener", offline: true, now, berlin, german));
+        Assert.Equal(Prefix(ChatPrompts.DefaultSystemPrompt), ChatPrompts.Effective(null, offline: false, now, berlin, german));
+        Assert.Equal(Prefix(ChatPrompts.DefaultSystemPrompt), ChatPrompts.Effective("   ", offline: false, now, berlin, german));
+        Assert.Equal(Prefix(ChatPrompts.DefaultOfflineSystemPrompt), ChatPrompts.Effective("", offline: true, now, berlin, german));
+        // The clock stays out of the prefix; it is appended after the meeting context.
+        Assert.DoesNotContain("18:42", ChatPrompts.Effective(null, offline: false, now, berlin, german));
+    }
+
+    [Fact]
+    public void The_clock_goes_after_the_meeting_context_and_the_date_prefix_stays_stable()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_793_814_120);
+        var later = now.AddHours(3);
+        var berlin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+        var german = CultureInfo.GetCultureInfo("de-DE");
+        var prompt = ChatPrompts.Effective("Eigener", offline: false, now, berlin, german);
+        var full = ChatPrompts.AppendCurrentTime(MeetingChatContext.Append(prompt, "MEETING"), now, berlin, german);
+
+        Assert.StartsWith("Current date: Mittwoch, 4. November 2026 (Europe/Berlin).\n\nEigener\n\n---\n\nMEETING\n\n", full);
+        Assert.EndsWith("Current time: 18:42 (Europe/Berlin).", full);
+        Assert.Equal(ChatDateContext.StableLine(now, berlin, german), ChatDateContext.StableLine(later, berlin, german));
+        Assert.NotEqual(ChatDateContext.TimeOfDayLine(now, berlin, german), ChatDateContext.TimeOfDayLine(later, berlin, german));
     }
 
     [Fact]

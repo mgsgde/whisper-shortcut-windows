@@ -226,6 +226,20 @@ public class McpSettingsTests
     }
 
     [Fact]
+    public void AcceptSettings_AfterTheUserChangedIt_IsRefused()
+    {
+        using var s = new McpStack(McpAccessLevel.Propose);
+        Assert.True(s.Settings.Sounds);
+        var o = s.ToolJson("update_settings", A($"{{\"changes\":{{\"general.sounds\":false}},{R}}}"));
+        s.Settings.Sounds = false; // the user changed the same setting by hand
+        var ex = Assert.Throws<McpConfigException>(() => s.Proposals.Accept(o["id"]!.GetValue<string>()));
+        Assert.Contains("inzwischen geändert", ex.Message);
+        Assert.False(s.Settings.Sounds);
+        Assert.Single(s.Proposals.Pending);
+        Assert.Empty(s.Changes.Changes);
+    }
+
+    [Fact]
     public void LaunchAtLogin_FailureIsReported_AndNothingIsSaved()
     {
         using var s = new McpStack(McpAccessLevel.Propose);

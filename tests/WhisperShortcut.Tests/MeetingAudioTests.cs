@@ -43,6 +43,74 @@ public class MeetingAudioTests
     }
 
     [Fact]
+    public void Rebuild_delays_match_the_Mac_and_then_stop()
+    {
+        Assert.Equal(0.5, SystemAudioRebuild.RetryDelaySeconds(0));
+        Assert.Equal(1, SystemAudioRebuild.RetryDelaySeconds(1));
+        Assert.Equal(2, SystemAudioRebuild.RetryDelaySeconds(2));
+        Assert.Null(SystemAudioRebuild.RetryDelaySeconds(3));
+        Assert.Null(SystemAudioRebuild.RetryDelaySeconds(-1));
+        Assert.Equal(1, SystemAudioRebuild.DeviceChangeDebounceSeconds);
+    }
+
+    [Fact]
+    public void A_failed_attempt_retries_three_times_then_stops()
+    {
+        var state = new SystemAudioRebuild.State(0, true, false);
+        double?[] expected = { 0.5, 1, 2, null };
+        for (var i = 0; i < expected.Length; i++)
+        {
+            var step = SystemAudioRebuild.AttemptFinished(state, started: false);
+            Assert.Equal(expected[i], step.WaitSeconds);
+            state = step.State;
+        }
+        Assert.True(state.BudgetSpent);
+        Assert.Equal(SystemAudioRebuild.MaxAttempts, state.Failures);
+        Assert.Null(SystemAudioRebuild.CaptureStopped(state, 0).WaitSeconds);
+    }
+
+    [Fact]
+    public void A_spent_budget_is_not_a_latch()
+    {
+        var spent = new SystemAudioRebuild.State(SystemAudioRebuild.MaxAttempts, false, true);
+        var again = SystemAudioRebuild.DeviceChanged(spent);
+        Assert.False(again.State.BudgetSpent);
+        Assert.Equal(0, again.State.Failures);
+        Assert.True(again.State.InFlight);
+        Assert.Equal(SystemAudioRebuild.DeviceChangeDebounceSeconds, again.WaitSeconds);
+    }
+
+    [Fact]
+    public void A_stop_while_a_rebuild_is_scheduled_does_not_start_another()
+    {
+        var (state, wait) = SystemAudioRebuild.DeviceChanged(SystemAudioRebuild.Idle);
+        Assert.Equal(SystemAudioRebuild.DeviceChangeDebounceSeconds, wait);
+        var during = SystemAudioRebuild.CaptureStopped(state, 0);
+        Assert.Equal(state, during.State);
+        Assert.Null(during.WaitSeconds);
+    }
+
+    [Fact]
+    public void A_young_stop_continues_the_budget_and_a_mature_one_starts_over()
+    {
+        var running = SystemAudioRebuild.AttemptFinished(
+            new SystemAudioRebuild.State(2, true, false), started: true);
+        Assert.False(running.State.InFlight);
+        Assert.Equal(2, running.State.Failures);
+        Assert.Null(running.WaitSeconds);
+
+        var young = SystemAudioRebuild.CaptureStopped(running.State, 0.1);
+        Assert.Equal(2, young.WaitSeconds);
+        Assert.Equal(3, young.State.Failures);
+        Assert.True(young.State.InFlight);
+
+        var matured = SystemAudioRebuild.CaptureStopped(running.State, 30);
+        Assert.Equal(SystemAudioRebuild.DeviceChangeDebounceSeconds, matured.WaitSeconds);
+        Assert.Equal(0, matured.State.Failures);
+        Assert.False(matured.State.BudgetSpent);
+    }
+
+    [Fact]
     public void Labels_and_metadata_names()
     {
         Assert.Equal("Mikrofon + PC-Ton", MeetingAudioRouting.Label(true));
