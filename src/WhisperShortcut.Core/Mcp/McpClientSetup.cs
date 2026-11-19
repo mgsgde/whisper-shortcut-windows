@@ -103,7 +103,9 @@ public static class McpClientSetup
     /// <summary>
     /// New config text when our entry's URL is one of our loopback ports but not <paramref name="currentUrl"/>.
     /// Null when there is nothing to change: no entry, the URL is already current, a foreign URL, or the file
-    /// does not parse. The written entry uses <paramref name="currentUrl"/> and <paramref name="token"/>.
+    /// does not parse. The written entry uses <paramref name="currentUrl"/> and the bearer token already in
+    /// the entry. <paramref name="token"/> is only the fallback when the entry has none — a port change must
+    /// not replace the token the user connected with (that one follows the access level they chose then).
     /// </summary>
     public static string? RewriteOwnUrl(string? existingJson, string currentUrl, string token, bool claudeCode)
     {
@@ -114,8 +116,22 @@ public static class McpClientSetup
         if (root?["mcpServers"]?[ServerName] is not JsonObject entry) return null;
         var found = EntryUrl(entry);
         if (found == null || found == currentUrl || !IsOwnLoopbackMcpUrl(found)) return null;
-        return claudeCode ? MergeClaudeCode(existingJson, currentUrl, token) : MergeClaudeDesktop(existingJson, currentUrl, token);
+        var kept = EntryToken(entry) ?? token;
+        return claudeCode ? MergeClaudeCode(existingJson, currentUrl, kept) : MergeClaudeDesktop(existingJson, currentUrl, kept);
     }
+
+    /// <summary>Bearer token already stored on our entry (Claude Code header or Claude Desktop env), without the prefix.</summary>
+    private static string? EntryToken(JsonObject entry)
+    {
+        var header = TokenText(entry["headers"]?["Authorization"]) ?? TokenText(entry["env"]?["AUTH_HEADER"]);
+        const string prefix = "Bearer ";
+        if (header == null || !header.StartsWith(prefix, StringComparison.Ordinal)) return null;
+        var value = header[prefix.Length..];
+        return value.Length == 0 ? null : value;
+    }
+
+    private static string? TokenText(JsonNode? node) =>
+        node is JsonValue value && value.TryGetValue<string>(out var text) && text.Length > 0 ? text : null;
 
     private static string? EntryUrl(JsonObject entry)
     {

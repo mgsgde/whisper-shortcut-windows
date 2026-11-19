@@ -130,6 +130,27 @@ public class McpClientSetupTests
         Assert.DoesNotContain(old, args);
     }
 
+    [Fact]
+    public void RewriteOwnUrl_KeepsTheTokenAlreadyInTheEntry()
+    {
+        const string current = "http://127.0.0.1:47824/mcp";
+        const string old = "http://127.0.0.1:47823/mcp";
+        var code = McpClientSetup.MergeClaudeCode(null, old, "userTok");
+        var rewritten = McpClientSetup.RewriteOwnUrl(code, current, "currentLevelTok", claudeCode: true);
+        Assert.NotNull(rewritten);
+        var entry = JsonNode.Parse(rewritten)!["mcpServers"]![McpClientSetup.ServerName]!;
+        Assert.Equal(current, entry["url"]!.GetValue<string>());
+        Assert.Equal("Bearer userTok", entry["headers"]!["Authorization"]!.GetValue<string>());
+        Assert.DoesNotContain("currentLevelTok", rewritten);
+
+        var desktop = McpClientSetup.MergeClaudeDesktop(null, old, "desktopTok");
+        var desktopOut = McpClientSetup.RewriteOwnUrl(desktop, current, "currentLevelTok", claudeCode: false);
+        Assert.NotNull(desktopOut);
+        Assert.Equal("Bearer desktopTok",
+            JsonNode.Parse(desktopOut)!["mcpServers"]![McpClientSetup.ServerName]!["env"]!["AUTH_HEADER"]!.GetValue<string>());
+        Assert.DoesNotContain("currentLevelTok", desktopOut);
+    }
+
     [Theory]
     [InlineData("http://127.0.0.1:47823/mcp", true)]
     [InlineData("http://localhost:47839/mcp", true)]

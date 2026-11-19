@@ -138,10 +138,10 @@ internal sealed class McpService : IMcpHost, IDisposable
                 _server = new LoopbackHttpServer(port, Handle, reason => _ui.Post(_ => OnServerFailed(reason), null));
                 break;
             }
-            catch (SocketException e) when (e.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            catch (SocketException e) when (e.SocketErrorCode is SocketError.AddressAlreadyInUse or SocketError.AccessDenied)
             {
                 inUse = e;
-                Core.Log.Info($"MCP: port {port} is in use, trying the next");
+                Core.Log.Info($"MCP: port {port} is not available ({e.SocketErrorCode}), trying the next");
             }
             catch (SocketException e)
             {
