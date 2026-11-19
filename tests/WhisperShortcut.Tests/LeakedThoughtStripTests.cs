@@ -30,6 +30,14 @@ public class LeakedThoughtStripTests
     }
 
     [Fact]
+    public void ACrLfAfterTheClosingMarkerIsTrimmedToo()
+    {
+        Assert.Equal(
+            "Thanks Mark, I'll send the notes.",
+            TextCleanup.StripLeakedThought("start_thought plan end_thought\r\nThanks Mark, I'll send the notes."));
+    }
+
+    [Fact]
     public void AnEndThoughtWithNoOpenerDropsThePrefix()
     {
         var leaked = """

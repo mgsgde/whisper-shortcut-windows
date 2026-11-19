@@ -103,7 +103,7 @@ public static class TextCleanup
     /// Drops a leaked Gemini reasoning block (<c>start_thought</c> … <c>end_thought</c>), content
     /// included. An <c>end_thought</c> with no opener drops the prefix; an unclosed
     /// <c>start_thought</c> drops the tail (still streaming, or truncated). Leading spaces and
-    /// newlines are trimmed. Port of LeakedThoughtStrip.strip (Mac #443). Thought parts are already
+    /// line breaks (LF or CRLF) are trimmed. Port of LeakedThoughtStrip.strip (Mac #443). Thought parts are already
     /// skipped where the response is parsed; this catches the marker text inside a visible part.
     /// </summary>
     public static string StripLeakedThought(string? text)
@@ -140,7 +140,7 @@ public static class TextCleanup
             }
         }
         // The markers normally sit at the very start; drop the whitespace they leave behind there.
-        while (cleaned.Length > 0 && (cleaned[0] == ' ' || cleaned[0] == '\n'))
+        while (cleaned.Length > 0 && (cleaned[0] == ' ' || cleaned[0] == '\r' || cleaned[0] == '\n'))
             cleaned = cleaned[1..];
         return cleaned;
     }
