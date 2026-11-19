@@ -33,16 +33,17 @@ internal sealed class LocalEngines(OfflineEngine offline) : Core.ISpeechProvider
                 (chunk, c) => Offline.TranscribeAsync(chunk, c), maxParallel: 1, ct);
             return Core.SpokenPunctuation.Apply(joined, punctuation);
         }
-        // "Nur gesprochen" (Mac #339/#347): each piece keeps Parakeet's marks only where the token timings show speech
-        // time behind them; a piece without usable timings falls back to the plain strip. Then, as on the Mac, the
-        // joined text loses only semicolons (timedMarks) before the spoken commands are applied.
+        // "Nur gesprochen" (Mac #339/#347/#393): each piece keeps Parakeet's marks only where the token timings
+        // show speech time behind them. A piece whose marks cannot be matched keeps the model's commas, "?" and
+        // "!" and drops only semicolons. The joined text is Parakeet's, so a comma before a spoken break stays.
         var spoken = await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
             async (chunk, c) =>
             {
-                var (text, timed) = await Offline.TranscribeSpokenMarksAsync(chunk, c);
-                return timed ? text : Core.SpokenPunctuation.StripModelPunctuation(text);
+                var (text, _) = await Offline.TranscribeSpokenMarksAsync(chunk, c);
+                return text;
             }, maxParallel: 1, ct);
-        return Core.SpokenPunctuation.Apply(Core.SpokenPunctuation.StripModelPunctuation(spoken, timedMarks: true), punctuation);
+        return Core.SpokenPunctuation.Apply(
+            Core.SpokenPunctuation.StripModelPunctuation(spoken, timedMarks: true), punctuation, timedMarks: true);
     }
 
     public Task<string> PromptTextAsync(string? selection, string instruction, string? customSystemPrompt,

@@ -259,6 +259,29 @@ public class LiveDictationTests
     }
 
     [Fact]
+    public void QuantityNumberWordsBecomeDigitsInAFinishedPiece()
+    {
+        foreach (var mode in new[] { Spoken, Auto })
+        {
+            Assert.Equal("Blutdruck 140 zu 90",
+                LiveDictation.FinishPiece("Blutdruck 140 zu neunzig", mode, timedMarks: true));
+            Assert.Equal("Einzel-GdB Psyche 20.",
+                LiveDictation.FinishPiece("Einzel GdB Psyche zwanzig.", mode, timedMarks: true));
+            Assert.Equal("Um zehn Uhr kam die Patientin",
+                LiveDictation.FinishPiece("Um zehn Uhr kam die Patientin", mode, timedMarks: true));
+            Assert.Equal(mode == Auto,
+                LiveDictation.FinishPiece("Gesamt GdB drei Pünktchen und dann weiter", mode, timedMarks: true)
+                    .Contains("drei"));
+        }
+        Assert.Equal("Sie hat drei Punkte erreicht.",
+            LiveDictation.FinishPiece("Sie hat drei Punkte erreicht Punkt", Spoken, timedMarks: true));
+        Assert.Equal("Gesamt-GdB 50, Merkzeichen G",
+            LiveDictation.FinishPiece("Gesamt GdB fünfzig Komma Merkzeichen G", Spoken, timedMarks: true));
+        Assert.Equal("Ramipril 2,5 mg",
+            LiveDictation.FinishPiece("Ramipril zwei Komma fünf mg", Spoken, timedMarks: true));
+    }
+
+    [Fact]
     public void Timed_marks_keep_the_spoken_comma_without_timings_the_old_rule_strips_it()
     {
         Assert.Equal("Gangbild, geht weiter.", LiveDictation.FinishPiece("Gangbild, geht weiter.", Spoken, timedMarks: true));
@@ -370,6 +393,15 @@ public class LiveDictationTests
     }
 
     [Fact]
+    public void Spoken_only_Diese_at_a_piece_boundary_is_lowercased_mid_sentence()
+    {
+        var joiner = new LiveChunkJoiner { HoldsPeriods = false };
+        Assert.Equal("Ich habe das System", joiner.Next("Ich habe das System"));
+        Assert.Equal(" diese Woche nicht genutzt.", joiner.Next("Diese Woche nicht genutzt."));
+        Assert.Equal("Ich habe das System diese Woche nicht genutzt.", joiner.Inserted);
+    }
+
+    [Fact]
     public void Spoken_only_a_kept_model_period_lets_the_next_piece_keep_its_capital()
     {
         var j = new LiveChunkJoiner { HoldsPeriods = false };
@@ -460,6 +492,46 @@ public class LiveDictationTests
         Assert.Equal("L4", beforeSlash.Next("L4"));
         Assert.Equal("/L5", beforeSlash.Next("/L5"));
         Assert.Equal("L4/L5", beforeSlash.Inserted);
+    }
+
+    [Fact]
+    public void No_space_after_an_opening_parenthesis_from_Klammer_auf()
+    {
+        Assert.Equal("ist es (", LiveDictation.FinishPiece("ist es Klammer auf", Spoken));
+        var joiner = new LiveChunkJoiner();
+        Assert.Equal("es (", joiner.Next("es ("));
+        Assert.Equal("soweit ich kann)", joiner.Next("soweit ich kann)"));
+        Assert.Equal(" deutlich", joiner.Next("deutlich"));
+        Assert.Equal("es (soweit ich kann) deutlich", joiner.Inserted);
+    }
+
+    [Fact]
+    public void A_mark_already_ending_the_text_is_not_repeated_at_the_next_piece()
+    {
+        // "gut" is shorter than five letters, so the period is not held in either mode.
+        foreach (var holds in new[] { false, true })
+        {
+            var period = new LiveChunkJoiner { HoldsPeriods = holds };
+            Assert.Equal("ganz gut.", period.Next("ganz gut."));
+            Assert.Equal("", period.Next("."));
+            Assert.Equal("ganz gut.", period.Inserted);
+
+            var comma = new LiveChunkJoiner { HoldsPeriods = holds };
+            Assert.Equal("Hallo Herr Müller,", comma.Next("Hallo Herr Müller,"));
+            Assert.Equal(" ganz lieben Dank", comma.Next(", ganz lieben Dank"));
+            Assert.Equal("Hallo Herr Müller, ganz lieben Dank", comma.Inserted);
+        }
+        // A period that IS held is still emitted once when the next piece is only that mark.
+        var held = new LiveChunkJoiner();
+        Assert.Equal("über Schmerzen", held.Next("über Schmerzen."));
+        Assert.Equal(".", held.Next("."));
+        Assert.Equal("über Schmerzen.", held.Inserted);
+        Assert.Equal("", held.Finish());
+
+        var spoken = new LiveChunkJoiner { HoldsPeriods = false };
+        Assert.Equal("über Schmerzen.", spoken.Next("über Schmerzen."));
+        Assert.Equal("", spoken.Next("."));
+        Assert.Equal("über Schmerzen.", spoken.Inserted);
     }
 
     [Fact]
@@ -694,4 +766,19 @@ public class LiveDictationTests
     {
         Assert.Equal(LiveClipboardEnd.RestoreBefore, LiveDictation.ClipboardAtEnd(false, false, Outcome(), false));
     }
+}
+
+/// <summary>A spoken Schrägstrich between two numbers (Mac #482).</summary>
+public class LiveSlashBetweenNumbersTests
+{
+    [Theory]
+    [InlineData("sechs Schrägstrich fünfundzwanzig", "6/25")]
+    [InlineData("6 Schrägstrich 25", "6/25")]
+    [InlineData("6 Schrägstrich fünfundzwanzig", "6/25")]
+    [InlineData("sechs-Schrägstrich-fünfundzwanzig", "6/25")]
+    [InlineData("6-Schrägstrich-25", "6/25")]
+    [InlineData("6Schrägstrich25", "6/25")]
+    [InlineData("Bescheid vom sechs Schrägstrich fünfundzwanzig Punkt", "Bescheid vom 6/25.")]
+    public void SlashBetweenNumbers(string raw, string expected) =>
+        Assert.Equal(expected, LiveDictation.FinishPiece(raw, PunctuationMode.SpokenOnly));
 }

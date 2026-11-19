@@ -540,7 +540,17 @@ internal sealed partial class TrayApp : ApplicationContext
 
         public bool IsProcessing() => app._take is { Phase: TakePhase.Processing, Mode: Mode.Dictate };
 
-        public void CancelProcessing() => app._take?.Cts?.Cancel();
+        public void CancelProcessing()
+        {
+            // Same rule as the Dictate hotkey (Mac #396): a second press while Live is still inserting
+            // its last pieces must not throw that text away. A normal dictation still cancels.
+            if (app._take?.Kind == Core.RecordingKindName.Live)
+            {
+                Core.Log.Info("LIVE-DICTATE: shortcut ignored — the last pieces are still being inserted");
+                return;
+            }
+            app._take?.Cts?.Cancel();
+        }
     }
 
     private void OnLiveHotkey()
@@ -602,14 +612,18 @@ internal sealed partial class TrayApp : ApplicationContext
             Core.Log.Info($"Hotkey {label} in state {PhaseName} ignored: a {_take!.Mode} run is active");
             return;
         }
+        var liveFinishing = _take?.Kind == Core.RecordingKindName.Live;
         var decision = Core.RecordingHotkeyPolicy.Decide(
             recording: IsRecording,
             processing: IsProcessing,
             sameMode: mode == _take?.Mode,
-            gateOpen: gateOpen);
+            gateOpen: gateOpen,
+            liveFinishing: liveFinishing);
         if (decision == Core.RecordingHotkeyDecision.Ignore)
         {
-            Core.Log.Info($"Hotkey {label} in state {PhaseName} ignored: other mode is already running");
+            Core.Log.Info(IsProcessing && liveFinishing
+                ? "LIVE-DICTATE: shortcut ignored — the last pieces are still being inserted"
+                : $"Hotkey {label} in state {PhaseName} ignored: other mode is already running");
             return;
         }
         var before = PhaseName;
@@ -975,9 +989,11 @@ internal sealed partial class TrayApp : ApplicationContext
         // No TextCleanup.ForDictation per piece: it would capitalise and end every piece with a period.
         if (mode != Core.PunctuationMode.SpokenOnly)
             return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(await _offline.TranscribeAsync(wav, ct), mode));
-        // "Nur gesprochen": Parakeet's marks stay only where the token timings show speech time behind them (Mac #339/#347).
-        var (text, timed) = await _offline.TranscribeSpokenMarksAsync(wav, ct);
-        return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(text, mode, timedMarks: timed));
+        // "Nur gesprochen": Parakeet's marks stay where the token timings show speech time behind them
+        // (Mac #339/#347). A mismatch keeps the model's commas, "?" and "!" (Mac #393), and the piece is
+        // finished as timed either way: the transcribe step already decided which marks stay.
+        var (text, _) = await _offline.TranscribeSpokenMarksAsync(wav, ct);
+        return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(text, mode, timedMarks: true));
     }
 
     private Task ProcessLiveAsync(Take take)

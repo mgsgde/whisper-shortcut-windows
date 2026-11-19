@@ -14,8 +14,8 @@ public static class PunctuationModes
 
 /// <summary>
 /// Turns spoken layout commands into layout in offline transcripts. Exact port of the Mac app's
-/// SpokenPunctuation.swift: Parakeet writes a spoken "Doppelpunkt" or "neuer Absatz" out as words,
-/// where cloud models already produce the punctuation.
+/// SpokenPunctuation.swift: Parakeet writes a spoken "Doppelpunkt", "Klammer auf" or "neuer Absatz"
+/// out as words, where cloud models already produce the punctuation.
 /// Deliberately narrow: "Punkt", "Komma" and "Fragezeichen" are ordinary German words and stay.
 /// The exception is the "Only when spoken" punctuation mode (<see cref="PunctuationMode.SpokenOnly"/>):
 /// there the user has opted in to saying the marks, so "Punkt", "Komma", "Fragezeichen",
@@ -36,42 +36,186 @@ public static class SpokenPunctuation
     /// </summary>
     public static readonly IReadOnlySet<string> CommandWords = new HashSet<string>(StringComparer.Ordinal)
     {
-        "doppelpunkt", "komma", "punkt", "fragezeichen", "ausrufezeichen", "schragstrich",
+        "doppelpunkt", "doppelgun", "komma", "punkt", "fragezeichen", "ausrufezeichen", "schragstrich",
         "schraegstrich", "schreckstrich", "semikolon", "strichpunkt", "punktchen", "puenktchen",
-        "auslassungspunkte", "absatz", "zeile",
+        "auslassungspunkte", "absatz", "zeile", "klammer", "klammerauf", "klammerzu",
+        "neuzeile", "neuezeile",
     };
+
+    /// <summary>
+    /// "Klammer auf", also glued or hyphenated ("Klammerauf", "Klammer-auf"). An article right after
+    /// it is the noun ("eine Klammer auf die Wunde"), not the command.
+    /// </summary>
+    private const string OpeningParenGuarded =
+        @"\bklammer[ \t-]*auf\b(?![ \t,.;]*(?:die|der|den|dem|das|eine|einen|einer|einem)\b)";
+
+    /// <summary>
+    /// In "Only when spoken" a "Klammer zu" in the same text proves "Klammer auf" is the command,
+    /// whatever article follows ("Klammer auf die Laborwerte … Klammer zu").
+    /// </summary>
+    private const string OpeningParenPlain = @"\bklammer[ \t-]*auf\b";
+
+    private const string ClosingParen = @"\bklammer[ \t-]*zu\b";
+
+    private static readonly Regex ParenPairRegex = new(
+        @"\bklammer[ \t-]*auf\b[\s\S]*\bklammer[ \t-]*zu\b", Opts);
 
     private sealed record Rule(Regex Regex, string Template);
 
     private static Rule MakeRule(string pattern, string template) => new(new Regex(pattern, Opts), template);
 
     // Order matters: the colon runs first so "Befund Doppelpunkt neuer Absatz" keeps its colon when
-    // the paragraph rule then strips the stray space before the break.
-    private static readonly Rule[] Rules =
+    // the paragraph rule then strips the stray space before the break. Brackets run before the
+    // breaks, so a following "neue Zeile" still sees the parenthesis.
+    // Index = (timed ? 2 : 0) + (parenAlways ? 1 : 0). timed = a comma left in front of a break was
+    // spoken and stays. parenAlways = "Klammer auf" converts even before an article.
+    private static readonly Rule[][] RuleSets =
     {
-        // The colon is already there: a model reply that kept the spoken word after its own heading
-        // ("Befund: Doppelpunkt Druckschmerz", "Anamnese:\nDoppelpunkt Patientin"). Drop the word only.
-        MakeRule(@"(:[ \t]*\n?[ \t]*)\bdoppelpunkt\b[ \t,.;:]*", "$1"),
-        // "Anamnese Doppelpunkt Patient" / "Befund, Doppelpunkt. Inspektion" -> "Befund: Inspektion".
-        // Eats the punctuation the ASR put around the word on both sides.
-        MakeRule(@"[ \t,.;]*\bdoppelpunkt\b[ \t,.;:]*", ": "),
-        // Parakeet sometimes glues the command onto the next word ("Befund Doppelpunktdruckschmerz").
-        // The following word's first letter is upper-cased afterwards (CapitalizeAfterGluedColon).
-        // Inflections of the noun itself ("Doppelpunkte", "-en", "-es", "-s") are left alone.
-        MakeRule(@"[ \t,.;]*\bdoppelpunkt(?!(?:e|en|es|s)\b)(?=\p{L})", ": \u0001"),
-        // A comma before a spoken paragraph break is the ASR marking the pause; the sentence ended.
-        MakeRule(@"[ \t]*,[ \t]*\bneue[rn][ \t]+absatz\b[ \t,.;:!?]*", ".\n\n"),
-        // The model already ended the sentence ("Anamnese. Neuer Absatz, die Klägerin"): the next word
-        // starts the new paragraph or line, so it gets a capital (marker, CapitalizeAfterGluedColon).
-        MakeRule(@"(?<=[.!?])[ \t]*\bneue[rn][ \t]+absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
-        MakeRule(@"(?<=[.!?])[ \t]*\bneue[ \t]+zeile\b[ \t,.;:!?]*", "\n\u0001"),
-        // Paragraph break. A sentence end before it (". ! ? :") is kept, a stray comma is not.
-        MakeRule(@"[ \t,;]*\bneue[rn][ \t]+absatz\b[ \t,.;:!?]*", "\n\n"),
-        MakeRule(@"[ \t,;]*\bneue[ \t]+zeile\b[ \t,.;:!?]*", "\n"),
-        // Parakeet glues this one onto the next word too ("neue Zeileinspektion"). "neue Zeilen..." is
-        // left alone: that is the plural or a compound, said literally.
-        MakeRule(@"[ \t,;]*\bneue[ \t]+zeile(?!n)(?=\p{L})", "\n\u0001"),
+        MakeLayoutRules(timed: false, parenAlways: false),
+        MakeLayoutRules(timed: false, parenAlways: true),
+        MakeLayoutRules(timed: true, parenAlways: false),
+        MakeLayoutRules(timed: true, parenAlways: true),
     };
+
+    /// <summary>
+    /// Automatic mode: "Klammer zu" is a command only after an unmatched "(". Spoken-only keeps it
+    /// unguarded, because Dictate Live can deliver the closing half in a later piece.
+    /// </summary>
+    private static readonly Rule[] AutomaticRules =
+        MakeLayoutRules(timed: false, parenAlways: false, requiresOpenParen: true);
+
+    /// <summary>A "(" earlier in the text with no ")" in between.</summary>
+    private const string OpenParenBefore = @"(?<=\([^()]{0,2000})";
+
+    /// <summary>
+    /// "neue Zeile" right after an article or determiner is the noun phrase ("eine neue Zeile in
+    /// der Tabelle"), not the command. Placed directly before "\bneu".
+    /// </summary>
+    private const string NotAfterDeterminer =
+        @"(?<!\b(?:eine|einer|einen|einem|die|der|den|dem|jede|jeder|jeden|keine|keiner|diese|dieser|ihre|seine|meine|deine|unsere)[ \t])";
+
+    private static Rule[] MakeLayoutRules(bool timed, bool parenAlways, bool requiresOpenParen = false)
+    {
+        var opening = parenAlways ? OpeningParenPlain : OpeningParenGuarded;
+        var openGuard = requiresOpenParen ? OpenParenBefore : "";
+        var zeile = NotAfterDeterminer;
+        return
+        [
+            // The colon is already there: a model reply that kept the spoken word after its own heading
+            // ("Befund: Doppelpunkt Druckschmerz", "Anamnese:\nDoppelpunkt Patientin"). Drop the word only.
+            // "Doppel Punkt" and "Doppel-Punkt" are the same command split or hyphenated by Parakeet.
+            // "Doppelgun" is Parakeet's mishearing of the same command (Mac #453).
+            MakeRule(@"(:[ \t]*\n?[ \t]*)\bdoppel[ \t-]?(?:punkt|gun)\b[ \t,.;:]*", "$1"),
+            // "Anamnese Doppelpunkt Patient" / "Befund, Doppelpunkt. Inspektion" -> "Befund: Inspektion".
+            // Eats the punctuation the ASR put around the words on both sides. Inflections
+            // ("Doppelpunkte") stay: the word boundary after "punkt" fails.
+            MakeRule(@"[ \t,.;]*\bdoppel[ \t-]?(?:punkt|gun)\b[ \t,.;:]*", ": "),
+            // Parakeet sometimes glues the command onto the next word ("Befund Doppelpunktdruckschmerz").
+            // The following word's first letter is upper-cased afterwards (CapitalizeAfterGluedColon).
+            // Inflections of the noun itself ("Doppelpunkte", "-en", "-es", "-s") are left alone.
+            MakeRule(@"[ \t,.;]*\bdoppel[ \t-]?punkt(?!(?:e|en|es|s)\b|setzung|zeichen|taste|symbol)(?=\p{L})", ": \u0001"),
+            // "(" keeps one space before it and none after, except at the start of the text or a line.
+            // Stray ASR commas and periods around the words go.
+            MakeRule($@"(^|\n)[ \t,.;]*{opening}[ \t,.;]*", "$1("),
+            MakeRule($@"[ \t,.;]*{opening}[ \t,.;]*", " ("),
+            // ")" has no space before it. A comma the ASR put after it goes; a period after it stays
+            // ("Anlage Klammer zu."). The period and comma before it go.
+            MakeRule($@"{openGuard}[ \t,.;]*{ClosingParen}[ \t]*,[ \t]*", ") "),
+            MakeRule($@"{openGuard}[ \t,.;]*{ClosingParen}", ")"),
+            // A comma before a spoken paragraph break is the ASR marking the pause; the sentence ended.
+            // No capital marker: this stays ".\n\n", and the next word keeps the case it was spoken with.
+            // "Neuerabsatz" / "Neuenabsatz" / "Neueabsatz" / "Neuabsatz" are the glued forms (no space).
+            // "Neue Absatz" (no -r or -n) is the same command.
+            // With token timing a leftover comma was spoken ("Herren, neuer Absatz"): it stays, as ",\n\n".
+            MakeRule(@"[ \t]*,[ \t]*\bneu(?:e[rn]?)?[ \t]*absatz\b[ \t,.;:!?]*", timed ? ",\n\n" : ".\n\n"),
+            // The model already ended the sentence ("Anamnese. Neuer Absatz, die Klägerin"): the next word
+            // starts the new paragraph or line, so it gets a capital (marker, CapitalizeAfterGluedColon).
+            // "Neuzeile" / "Neuezeile" are "neue Zeile" glued into one word. "Neuzeilen" does not match.
+            MakeRule(@"(?<=[.!?])[ \t]*\bneu(?:e[rn]?)?[ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
+            MakeRule($@"(?<=[.!?])[ \t]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
+            // Paragraph break without a sentence mark before it. The next word still starts the new
+            // paragraph, so it gets a capital too.
+            MakeRule(@"[ \t,;]*\bneu(?:e[rn]?)?[ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
+            // A comma or semicolon before "neue Zeile" is the pause Parakeet wrote. Eating it stops
+            // "Befund, neue Zeile Inspektion" from staying "Befund,\nInspektion". No capital marker.
+            // With token timing the comma was spoken ("Müller, neue Zeile vielen Dank"), so it stays.
+            timed
+                ? MakeRule($@"[ \t]*,[ \t,;]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", ",\n")
+                : MakeRule($@"[ \t]*[,;][ \t,;]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n"),
+            // Line break without a sentence mark or a pause comma before it. The next word starts the
+            // new line, so it gets a capital.
+            MakeRule($@"[ \t;]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
+            // Parakeet glues this one onto the next word too ("neue Zeileinspektion", "Neuzeileinspektion").
+            // "neue Zeilen…" is left alone: the "n" is the plural or a compound, said literally.
+            MakeRule($@"[ \t,;]*{zeile}\bneu(?:e[ \t]*)?zeile(?!n)(?=\p{{L}})", "\n\u0001"),
+        ];
+    }
+
+    /// <summary>
+    /// Lowercase real German words ending in "Punkt". A spoken "Punkt" glued onto the previous word
+    /// ("Rollatorpunkt") is the command; these are not. A longer word that ends in one stays whole
+    /// too ("Untersuchungszeitpunkt"), except <see cref="WholeWordOnlyPunktCompounds"/>: a glued
+    /// "Blutdruck" + "punkt" ends in "druckpunkt" and must still split. A stem ending in a real
+    /// Fugen-s ("…ungs", "…ts", "…gs") stays a compound in the rule itself.
+    /// </summary>
+    public static readonly HashSet<string> RealPunktCompounds = new(StringComparer.Ordinal)
+    {
+        "schwerpunkt", "zeitpunkt", "standpunkt", "höhepunkt", "mittelpunkt", "treffpunkt",
+        "ausgangspunkt", "gesichtspunkt", "wendepunkt", "knackpunkt", "brennpunkt", "tiefpunkt",
+        "bezugspunkt", "schnittpunkt", "anknüpfungspunkt", "kritikpunkt", "programmpunkt",
+        "tagesordnungspunkt", "druckpunkt", "triggerpunkt", "schmerzpunkt", "messpunkt", "endpunkt",
+        "nullpunkt", "siedepunkt", "gefrierpunkt", "blickpunkt", "haltepunkt", "startpunkt",
+        "kernpunkt", "streitpunkt", "anhaltspunkt", "berührungspunkt", "angelpunkt", "doppelpunkt",
+        "strichpunkt", "prozentpunkt", "akupunkturpunkt", "druckschmerzpunkt", "fixpunkt", "eckpunkt",
+        "scheitelpunkt", "sammelpunkt", "tiefstpunkt", "höchstpunkt", "nadelpunkt", "kontaktpunkt",
+        "umkehrpunkt", "wassersiedepunkt",
+        "tenderpunkt", "akupressurpunkt", "knotenpunkt", "schmelzpunkt", "hauptpunkt", "pluspunkt",
+        "minuspunkt", "stützpunkt", "ankerpunkt", "kontrollpunkt", "drehpunkt", "aussichtspunkt",
+        "fluchtpunkt", "gipfelpunkt", "grenzpunkt", "sternpunkt", "zielpunkt", "zugangspunkt",
+        "einstichpunkt", "insertionspunkt", "ansatzpunkt", "auslösepunkt", "maximalpunkt",
+        "sattelpunkt", "lotpunkt", "fußpunkt", "reizpunkt", "knickpunkt", "taupunkt", "schwachpunkt",
+        "schlusspunkt", "kontrapunkt", "diskussionspunkt", "prüfpunkt", "hochpunkt", "lichtpunkt",
+        "einstiegspunkt", "verbindungspunkt", "orientierungspunkt", "gesprächspunkt",
+        "verhandlungspunkt", "abschlusspunkt", "wiedereinstiegspunkt", "kreuzungspunkt",
+    };
+
+    /// <summary>
+    /// In <see cref="RealPunktCompounds"/>, but a longer word that only ends in one of these is still
+    /// the command ("Blutdruckpunkt", "Juckreizpunkt", "stechendpunkt").
+    /// </summary>
+    public static readonly HashSet<string> WholeWordOnlyPunktCompounds = new(StringComparer.Ordinal)
+    {
+        "endpunkt", "druckpunkt", "eckpunkt", "hochpunkt", "lichtpunkt", "reizpunkt",
+    };
+
+    /// <summary>
+    /// True when <paramref name="word"/> must stay unsplit: it equals a <see cref="RealPunktCompounds"/>
+    /// entry, or it ends in one that is not <see cref="WholeWordOnlyPunktCompounds"/>.
+    /// </summary>
+    public static bool IsRealPunktCompound(string word)
+    {
+        var lower = word.ToLowerInvariant();
+        if (RealPunktCompounds.Contains(lower)) return true;
+        foreach (var compound in RealPunktCompounds)
+        {
+            if (lower.Length > compound.Length
+                && lower.EndsWith(compound, StringComparison.Ordinal)
+                && !WholeWordOnlyPunktCompounds.Contains(compound))
+                return true;
+        }
+        return false;
+    }
+
+    private static readonly Rule GluedPunktRule = MakeRule(BuildGluedPunktPattern(), "$1. \u0001");
+
+    private static string BuildGluedPunktPattern()
+    {
+        var whole = string.Join("|", WholeWordOnlyPunktCompounds.OrderBy(w => w, StringComparer.Ordinal).Select(Regex.Escape));
+        var suffixes = string.Join("|",
+            RealPunktCompounds.Except(WholeWordOnlyPunktCompounds).OrderBy(w => w, StringComparer.Ordinal).Select(Regex.Escape));
+        return @"\b(?!(?:" + whole + @")\b)(?!\p{L}*(?:" + suffixes
+            + @")\b)(\p{L}{2,}(?<!(?:ung|ion|heit|keit|tät|t|g|ch)s))punkt\b[ \t,.;]*";
+    }
 
     // Only in PunctuationMode.SpokenOnly, where the model adds no punctuation of its own. The mark
     // attaches to the previous word with one space after; after ". ? !" the next word is
@@ -83,7 +227,10 @@ public static class SpokenPunctuation
         // it go; a period stays ("usw. Schrägstrich b" -> "usw./b"). "Schrägstriche" (plural) does not
         // match; the glued form ("Schrägstrichsage") does. Spoken-only: in automatic mode, and in
         // Dictate Prompt instructions, the word is an ordinary noun.
-        MakeRule(@"[ \t,;]*\bschr(?:ä|ae|e)(?:g|ck)[ \t-]?strich\b[ \t,.;]*", "/"),
+        // Parakeet also hyphen-joins the word to neighbouring numbers ("6-Schrägstrich-25"): the hyphens
+        // go with it. A number glued on both sides ("6Schrägstrich25") is a slash too.
+        MakeRule(@"[ \t,;-]*\bschr(?:ä|ae|e)(?:g|ck)[ \t-]?strich\b[ \t,.;-]*", "/"),
+        MakeRule(@"(?<=\d)schr(?:ä|ae|e)(?:g|ck)[ \t-]?strich(?=\d)", "/"),
         MakeRule(@"[ \t,;]*\bschr(?:ä|ae|e)(?:g|ck)[ \t-]?strich(?!(?:e|en|es|s)\b)(?=\p{L})", "/"),
         // Parakeet glues the word onto the word before it: "Arbeitsmarktschrägstrich im ADL" ->
         // "Arbeitsmarkt/im ADL". Needs a letter directly before, so it never overlaps the rules above.
@@ -105,6 +252,10 @@ public static class SpokenPunctuation
         // same mark. A comma the model put on either side is the pause, and goes. A period before the
         // word stays ("usw. Semikolon"), the same way "Komma" leaves one.
         MakeRule(@"[ \t,]*\b(?:semikolon|strichpunkt)\b[ \t,.;]*", "; "),
+        // Parakeet glues a spoken "Punkt" onto the word before it ("Rollatorpunkt", "anpunkt").
+        // A listed compound stays, including a longer word that ends in one; the whole-word-only
+        // endings ("druckpunkt", "endpunkt", …) stay only as the whole word. A real Fugen-s stays.
+        GluedPunktRule,
         // "drei Pünktchen", "drei Puenktchen", "Auslassungspunkte" -> "…", attached to the previous
         // word. Spaces and a stray comma or semicolon before it go; comma, period and semicolon after
         // it go too. Not "drei Punkte" (a score). Before "Punkt", so "Pünktchen" is not read as one.
@@ -118,7 +269,7 @@ public static class SpokenPunctuation
         // Not the noun: "Punkt 3", "Punkt drei", "Siehe Punkt 2.1", "zu Punkt", "der wichtigste Punkt".
         // A following number word counts as the number, same as a digit ("Unter Punkt drei steht").
         MakeRule(
-            @"[ \t,;]*(?<!\b(?:zu|unter|im|in|der|den|dem|des|einen|einem|ein|jeden|letzten|wichtigste|wichtigsten)[ \t])\bpunkt\b(?![ \t]*(?:\d|(?:eins|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun|zehn|elf|zwölf|zwoelf)\b))[ \t,.;]*",
+            @"[ \t,;]*(?<!\b(?:zu|um|unter|im|in|der|den|dem|des|einen|einem|ein|jeden|letzten|wichtigste|wichtigsten)[ \t])\bpunkt\b(?![ \t]*(?:\d|(?:eins|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun|zehn|elf|zwölf|zwoelf)\b))[ \t,.;]*",
             ". \u0001"),
         MakeRule(@"[ \t,;]*\bkomma\b[ \t,.;]*", ", "),
     };
@@ -175,16 +326,26 @@ public static class SpokenPunctuation
         return char.ToLowerInvariant(word[0]) + word.Substring(1);
     }
 
-    /// <summary>Lower-case forms of function words and adverbs that are never nouns. "sie" is omitted on purpose.</summary>
+    /// <summary>
+    /// Lower-case forms of function words and adverbs that are never nouns. "sie", "ihr" and "ihnen"
+    /// are omitted on purpose — see <see cref="LowercasingFunctionWord"/>. "ich" is in: never a noun.
+    /// </summary>
     public static readonly IReadOnlySet<string> FunctionWords = new HashSet<string>(StringComparer.Ordinal)
     {
         "und", "oder", "aber", "sondern", "denn", "weil", "dass", "ob", "wenn", "als", "wie",
         "mit", "bei", "nach", "von", "vor", "zu", "zum", "zur", "aus", "auf", "an", "am",
-        "im", "in", "über", "unter", "seit", "für", "durch", "gegen", "ohne", "um",
+        "im", "in", "über", "unter", "seit", "für", "durch", "gegen", "ohne", "um", "bis",
         "ist", "sind", "war", "waren", "hat", "haben", "wird", "wurde", "sich", "nicht",
-        "auch", "noch", "schon", "sehr", "er", "es", "wir", "man",
+        "auch", "noch", "schon", "sehr", "ich", "er", "es", "wir", "man",
         "der", "die", "das", "den", "dem", "des",
         "ein", "eine", "einen", "einem", "einer",
+        "diese", "dieser", "diesen", "diesem", "dieses",
+        "mein", "meine", "meinen", "meinem", "meiner", "meines",
+        "dein", "deine",
+        "seine", "seinen", "seinem", "seiner",
+        "unser", "unsere", "unseren", "unserem", "unserer",
+        "jeder", "jede", "jeden", "jedem", "jedes",
+        "kein", "keine", "keinen", "keinem", "keiner",
         "weiter", "dann", "jetzt", "hier", "da", "dort", "so", "nur", "mal", "wieder", "bitte",
         "doch", "eben", "gerade", "eigentlich", "vielleicht", "also", "dabei", "dazu", "damit",
         "daher", "deshalb", "trotzdem", "bereits", "immer", "nie", "oft", "etwas", "sonst", "zwar",
@@ -192,12 +353,90 @@ public static class SpokenPunctuation
         "kaum", "fast", "ganz",
     };
 
+    /// <summary>
+    /// Words that open the line after a salutation ("Sehr geehrte Frau Müller,⏎vielen Dank").
+    /// Parakeet capitalises them at the start of a piece; after a comma they are lower-case.
+    /// </summary>
+    private static readonly HashSet<string> SalutationFollowers = new(StringComparer.Ordinal)
+    {
+        "vielen", "ich", "anbei", "danke", "hiermit", "gerne", "gern", "leider", "herzlichen",
+    };
+
+    /// <summary>
+    /// Like <see cref="LowercasingFunctionWord"/>, for the first word after a line break that follows a comma
+    /// (the salutation's): function words plus the usual openers. Nouns keep their capital.
+    /// </summary>
+    public static string? LowercasingAfterSalutationComma(string word)
+    {
+        if (word.Length == 0 || !char.IsUpper(word[0])) return null;
+        var lower = word.ToLowerInvariant();
+        if (!FunctionWords.Contains(lower) && !SalutationFollowers.Contains(lower)) return null;
+        return char.ToLowerInvariant(word[0]) + word.Substring(1);
+    }
+
+    private const string PunktNumberWords =
+        "eins|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun|zehn|elf|zwölf|zwoelf";
+
+    /// <summary>
+    /// Words that make "ein/zu/in Punkt" the command even when they are capitalised ("ein Punkt Ihre").
+    /// Not part of <see cref="FunctionWords"/>: that set also lower-cases a word at a piece seam,
+    /// which would turn "Sehr geehrte Frau X, Ihre …" into "ihre".
+    /// </summary>
+    public static readonly HashSet<string> PunktCommandPronouns = new(StringComparer.Ordinal)
+    {
+        "ihre", "ihr", "ihren", "ihrem", "ihrer", "ihres",
+        "seine", "sein", "seinen", "seinem", "seiner",
+        "sie", "er", "es", "wir", "ich",
+        "dies", "dieser", "diese",
+        "dabei", "danach", "daher", "dann", "zudem", "außerdem",
+    };
+
+    /// <summary>
+    /// After "ein/zu/in/einen" the word "Punkt" is the command, unless a number or a noun follows.
+    /// A capitalised word that is not a function word and not a <see cref="PunktCommandPronouns"/>
+    /// entry counts as a noun. Runs after the general "Punkt" rule, which already refuses these particles.
+    /// </summary>
+    private static readonly Rule PunktAfterParticleRule = MakeRule(
+        @"[ \t,;]*(?<=\b(?:zu|ein|in|einen)[ \t])\bpunkt\b(?![ \t]*(?:\d|(?:" + PunktNumberWords
+        + @")\b|mehr\b|weniger\b|(?!(?:" + PunktParticleWords() + @")\b)(?-i:\p{Lu})))[ \t,.;]*",
+        ". \u0001");
+
+    private static string PunktParticleWords() =>
+        string.Join("|", FunctionWords.Concat(PunktCommandPronouns).Distinct(StringComparer.Ordinal)
+            .OrderBy(w => w, StringComparer.Ordinal).Select(Regex.Escape));
+
     private static readonly Rule TrailingSpaceBeforeBreak = MakeRule(@"[ \t]+(?=\n|$)", "");
     private static readonly Rule ExcessBreaks = MakeRule(@"\n{3,}", "\n\n");
     // "Punkt Punkt" leaves ". \u0001. \u0001". The copies collapse to one mark. The capital marker
     // counts as whitespace between them, so it is not what separates two marks, and the marker
     // after the last copy is left in place for CapitalizeAfterGluedColon ("Ende. Weiter").
     private static readonly Rule RepeatedMarks = MakeRule("([.,!?])(?:[ \\t\u0001]*\\1)+", "$1");
+
+    /// <summary>
+    /// <see cref="RepeatedMarks"/>, except an ellipsis of three or more dots with nothing between them
+    /// ("usw... und so") stays. Duplicates the rules produce (". .", ",,") still collapse.
+    /// </summary>
+    private static string CollapsingRepeatedMarks(string text)
+    {
+        var matches = RepeatedMarks.Regex.Matches(text);
+        if (matches.Count == 0) return text;
+        var result = text;
+        for (var i = matches.Count - 1; i >= 0; i--)
+        {
+            var run = matches[i].Value;
+            if (run.Length >= 3 && run.All(ch => ch == '.')) continue;
+            var start = matches[i].Index;
+            result = result.Remove(start, matches[i].Length).Insert(start, run[0].ToString());
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// A spoken "Komma" becomes a comma only in the spoken-only rules, after the break was inserted
+    /// ("Komma neue Zeile vielen" → ",\n\u0001vielen"). Drop that capital marker so the next word
+    /// keeps the case it was spoken with.
+    /// </summary>
+    private static readonly Rule CommaKeepsFollowingCase = MakeRule("(,[ \\t]*\\n+)\u0001", "$1");
 
     private const string NumberWordBody = "null|eins|ein|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun";
     private static readonly Dictionary<string, string> NumberWordDigits = new()
@@ -240,13 +479,111 @@ public static class SpokenPunctuation
         return changed ? result : null;
     }
 
+    // Case-sensitive on purpose: an all-caps prefix is 1–4 letters ("LWK4-5"); "abc4-5" stays.
+    private const RegexOptions SlashOpts = RegexOptions.CultureInvariant;
+    private static readonly Regex SlashBetweenNumberWordsRegex = new(
+        @"\b(\p{L}+)[ \t-]*\bschr(?:ä|ae|e)(?:g|ck)[ \t-]?strich\b[ \t-]*(\p{L}+)\b", Opts);
+    private static readonly Regex DigitHyphenChainRegex = new(
+        @"(?:(?<![\p{L}\d])|(?<=(?<!\p{L})\p{Lu}{1,4}))\d+(?:[ ]?[-–−][ ]?\d+)+(?![\p{L}\d])", SlashOpts);
+    private static readonly Regex IsoDateRegex = new(@"^\d{4}-\d{2}-\d{2}$", SlashOpts);
+    private static readonly Regex HalfConvertedHyphenRegex = new(
+        @"(?<![\p{L}\d])(\d+|\p{L}+)[ ]?[-–−][ ]?(\d+|\p{L}+)(?![\p{L}\d])", SlashOpts);
+
+    /// <summary>
+    /// "sechs Schrägstrich fünfundzwanzig" -> "6/25". Both sides must be German cardinal words;
+    /// anything else is left to the plain slash rules. Null when nothing matched.
+    /// </summary>
+    private static string? SlashBetweenNumberWords(string text)
+    {
+        var matches = SlashBetweenNumberWordsRegex.Matches(text);
+        if (matches.Count == 0) return null;
+        var result = text;
+        var changed = false;
+        for (var i = matches.Count - 1; i >= 0; i--)
+        {
+            var match = matches[i];
+            if (GermanNumberWords.Value(match.Groups[1].Value) is not int left) continue;
+            if (GermanNumberWords.Value(match.Groups[2].Value) is not int right) continue;
+            result = result.Remove(match.Index, match.Length)
+                .Insert(match.Index, left.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + "/" + right.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            changed = true;
+        }
+        return changed ? result : null;
+    }
+
+    /// <summary>
+    /// A hyphen (or en dash, minus sign, with single spaces) between plain digit groups is a spoken
+    /// "Schrägstrich" Parakeet swallowed ("6-25", "12-24", "4-5", "LWK4-5"). An ISO date stays.
+    /// Also "6-fünfundzwanzig" / "sechs-25": one side a digit group, the other a number word.
+    /// Null when unchanged.
+    /// </summary>
+    private static string? SlashBetweenNumbers(string text)
+    {
+        var result = text;
+        var changed = false;
+        var chains = DigitHyphenChainRegex.Matches(result);
+        for (var i = chains.Count - 1; i >= 0; i--)
+        {
+            var chain = chains[i].Value;
+            if (IsoDateRegex.IsMatch(chain)) continue;
+            result = result.Remove(chains[i].Index, chains[i].Length).Insert(chains[i].Index, DigitGroupsJoined(chain));
+            changed = true;
+        }
+        var halves = HalfConvertedHyphenRegex.Matches(result);
+        for (var i = halves.Count - 1; i >= 0; i--)
+        {
+            var match = halves[i];
+            var leftText = match.Groups[1].Value;
+            var rightText = match.Groups[2].Value;
+            var leftDigits = leftText.Length > 0 && leftText.All(char.IsDigit);
+            var rightDigits = rightText.Length > 0 && rightText.All(char.IsDigit);
+            if (leftDigits == rightDigits) continue;
+            int? left = leftDigits
+                ? (int.TryParse(leftText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var l) ? l : null)
+                : GermanNumberWords.Value(leftText);
+            int? right = rightDigits
+                ? (int.TryParse(rightText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var r) ? r : null)
+                : GermanNumberWords.Value(rightText);
+            if (left == null || right == null) continue;
+            result = result.Remove(match.Index, match.Length)
+                .Insert(match.Index, left.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + "/" + right.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            changed = true;
+        }
+        return changed ? result : null;
+    }
+
+    private static string DigitGroupsJoined(string chain)
+    {
+        var parts = new List<string>();
+        var i = 0;
+        while (i < chain.Length)
+        {
+            if (char.IsDigit(chain[i]))
+            {
+                var start = i;
+                while (i < chain.Length && char.IsDigit(chain[i])) i++;
+                parts.Add(chain.Substring(start, i - start));
+            }
+            else i++;
+        }
+        return string.Join("/", parts);
+    }
+
     /// <summary>
     /// Text with no command in it comes back unchanged (same string, whitespace included).
     /// <paramref name="keepsEdgeBreaks"/> trims only spaces and tabs at the start/end, not line breaks:
     /// for a piece in Dictate Live, where a trailing "neuer Absatz" must leave its "\n\n" for
     /// LiveChunkJoiner to lay out the next piece against; the default trims newlines too.
     /// </summary>
-    public static string Apply(string text, PunctuationMode mode = PunctuationMode.Automatic, bool keepsEdgeBreaks = false)
+    /// <param name="timedMarks">
+    /// The text is Parakeet's, already filtered by token timing, so a comma left in front of
+    /// "neuer Absatz" / "neue Zeile" was spoken and stays (spoken-only mode only).
+    /// </param>
+    public static string Apply(
+        string text, PunctuationMode mode = PunctuationMode.Automatic, bool keepsEdgeBreaks = false,
+        bool timedMarks = false)
     {
         var result = text;
         var changed = false;
@@ -255,7 +592,20 @@ public static class SpokenPunctuation
             result = decimals;
             changed = true;
         }
-        var rules = mode == PunctuationMode.SpokenOnly ? Rules.Concat(SpokenOnlyRules) : Rules;
+        if (mode == PunctuationMode.SpokenOnly && SlashBetweenNumbers(result) is { } hyphenSlashes)
+        {
+            result = hyphenSlashes;
+            changed = true;
+        }
+        if (mode == PunctuationMode.SpokenOnly && SlashBetweenNumberWords(result) is { } wordSlashes)
+        {
+            result = wordSlashes;
+            changed = true;
+        }
+        var rules = mode == PunctuationMode.SpokenOnly
+            ? RuleSets[(timedMarks ? 2 : 0) + (ParenPairRegex.IsMatch(result) ? 1 : 0)]
+                .Concat(SpokenOnlyRules).Append(PunktAfterParticleRule)
+            : AutomaticRules;
         foreach (var rule in rules)
         {
             if (!rule.Regex.IsMatch(result)) continue;
@@ -263,10 +613,11 @@ public static class SpokenPunctuation
             changed = true;
         }
         // Before CapitalizeAfterGluedColon: the marker has to still be in the text, and a marker
-        // between two copies of a mark has to count as the space that separates them.
+        // between two copies of a mark has to count as the space that separates them. A spoken
+        // "Komma" has just become a comma in front of the break; drop its marker first.
         if (mode == PunctuationMode.SpokenOnly)
         {
-            var collapsed = RepeatedMarks.Regex.Replace(result, RepeatedMarks.Template);
+            var collapsed = CollapsingRepeatedMarks(result);
             if (collapsed != result)
             {
                 result = collapsed;
@@ -274,6 +625,7 @@ public static class SpokenPunctuation
             }
         }
         if (!changed) return text;
+        result = CommaKeepsFollowingCase.Regex.Replace(result, CommaKeepsFollowingCase.Template);
         result = CapitalizeAfterGluedColon(result);
         result = TrailingSpaceBeforeBreak.Regex.Replace(result, TrailingSpaceBeforeBreak.Template);
         result = ExcessBreaks.Regex.Replace(result, ExcessBreaks.Template);

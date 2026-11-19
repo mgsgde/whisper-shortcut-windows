@@ -75,4 +75,13 @@ public class LiveTextTypingTests
         Assert.Single(chunks);
         Assert.True(chunks[0].IsNewline);
     }
+
+    [Fact]
+    public void A_typed_line_break_is_Shift_Return()
+    {
+        // Mac #396: bare Return submits a single-line web input. Paste (Ctrl+V) does not use this chord.
+        Assert.Equal(
+            new[] { "Shift down", "Return down", "Return up", "Shift up" },
+            LiveTextTyping.LineBreakSteps.Select(s => $"{s.Key} {(s.Up ? "up" : "down")}"));
+    }
 }

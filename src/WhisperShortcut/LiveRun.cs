@@ -73,7 +73,8 @@ internal sealed class LiveRun : IDisposable
         while (!_closed && _feed.TryTake(out var cut))
         {
             var chunk = cut.Chunk;
-            var reason = chunk.DurationSeconds >= Core.LiveDictation.ChunkPolicy.MaxChunk.TotalSeconds - 0.01 ? "Max" : "Pause";
+            var reason = chunk.SoftCut ? "Soft"
+                : chunk.DurationSeconds >= Core.LiveDictation.ChunkPolicy.MaxChunk.TotalSeconds - 0.01 ? "Max" : "Pause";
             Session.Add(chunk.Wav, chunk.Silent, new Core.LivePieceInfo(reason, cut.Cut));
         }
     }

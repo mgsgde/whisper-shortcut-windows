@@ -9,12 +9,31 @@ namespace WhisperShortcut.Core;
 /// </summary>
 public static class LiveTextTyping
 {
-    /// <summary>One key-event sized piece of a live piece: a text run, or a line break (Enter).</summary>
+    /// <summary>One key-event sized piece of a live piece: a text run, or a line break (Shift+Return).</summary>
     public readonly record struct Chunk(string? Text)
     {
         public bool IsNewline => Text == null;
         public static Chunk Newline => new(null);
     }
+
+    /// <summary>A key in the typed line-break chord.</summary>
+    public enum LineBreakKey { Shift, Return }
+
+    /// <summary>One half of a key event: down, then up.</summary>
+    public readonly record struct LineBreakStep(LineBreakKey Key, bool Up);
+
+    /// <summary>
+    /// Line breaks typed into Chromium (Mac #396). A bare Return submits a single-line web input and sends in
+    /// chat-like boxes; Shift+Return is a line break in a textarea and does nothing in an input. Ctrl+V paste
+    /// does not use this chord.
+    /// </summary>
+    public static readonly LineBreakStep[] LineBreakSteps =
+    [
+        new(LineBreakKey.Shift, false),
+        new(LineBreakKey.Return, false),
+        new(LineBreakKey.Return, true),
+        new(LineBreakKey.Shift, true),
+    ];
 
     /// <summary>Most UTF-16 units of text per SendInput call (Mac maxUnitsPerChunk).</summary>
     public const int MaxUnitsPerChunk = 20;

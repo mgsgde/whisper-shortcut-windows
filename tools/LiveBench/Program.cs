@@ -110,8 +110,8 @@ internal static class Program
         var d = p.TranscribeDetailed(wav);
         decodeSeconds = sw.Elapsed.TotalSeconds;
         // As TrayApp.DecodeLivePieceAsync: marks kept by token timing, then FinishPiece.
-        var kept = ParakeetPunctuationTiming.KeepSpokenMarks(d.Text, d.Tokens, d.AudioSeconds, out var timed);
-        return LiveDictation.FinishPiece(kept, mode, timedMarks: timed);
+        var kept = ParakeetPunctuationTiming.KeepSpokenMarks(d.Text, d.Tokens, d.AudioSeconds, out _);
+        return LiveDictation.FinishPiece(kept, mode, timedMarks: true);
     }
 
     // Normal Diktieren with Parakeet in "Nur gesprochen", as TrayApp.TranscribeOfflineAsync + DictateAsync
@@ -125,12 +125,13 @@ internal static class Program
             var sw = Stopwatch.StartNew();
             var d = p.TranscribeDetailed(chunk);
             decodeSeconds += sw.Elapsed.TotalSeconds;
-            var kept = ParakeetPunctuationTiming.KeepSpokenMarks(d.Text, d.Tokens, d.AudioSeconds, out var timed);
-            var piece = timed ? kept : SpokenPunctuation.StripModelPunctuation(kept);
+            var kept = ParakeetPunctuationTiming.KeepSpokenMarks(d.Text, d.Tokens, d.AudioSeconds, out _);
+            var piece = kept;
             if (piece.Trim().Length > 0) parts.Add(piece.Trim());
         }
         var spoken = string.Join(" ", parts);
-        var raw = SpokenPunctuation.Apply(SpokenPunctuation.StripModelPunctuation(spoken, timedMarks: true), PunctuationMode.SpokenOnly);
+        var raw = SpokenPunctuation.Apply(
+            SpokenPunctuation.StripModelPunctuation(spoken, timedMarks: true), PunctuationMode.SpokenOnly, timedMarks: true);
         return TextCleanup.DiscardImplausible(TextCleanup.ForDictation(raw, addTrailingPeriod: false, audioSeconds: Wav.DurationSeconds(wav)), Wav.DurationSeconds(wav));
     }
 

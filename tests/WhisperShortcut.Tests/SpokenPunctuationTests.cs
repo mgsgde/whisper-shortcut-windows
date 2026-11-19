@@ -37,8 +37,12 @@ public class SpokenPunctuationTests
     }
 
     [Fact]
-    public void LineBreak() =>
-        Assert.Equal("Erste Zeile\nzweite Zeile", A("Erste Zeile neue Zeile zweite Zeile"));
+    public void LineBreak()
+    {
+        // A spoken break starts the next line even without ".!?" before it, so the next word
+        // gains a capital. It used to stay lower-case ("zweite").
+        Assert.Equal("Erste Zeile\nZweite Zeile", A("Erste Zeile neue Zeile zweite Zeile"));
+    }
 
     [Fact]
     public void FullNote()
@@ -82,7 +86,8 @@ public class SpokenPunctuationTests
     {
         Assert.Equal("Anamnese: Schmerzen.\n\nBefund: Tonus erhöht",
             A("Anamnese Doppelpunkt Schmerzen. Neuer Absatz. Befund Doppelpunkt Tonus erhöht"));
-        Assert.Equal("Erstens\nzweitens", A("Erstens neue Zeile zweitens"));
+        // Capital after the break: the next line starts a sentence even without ".!?".
+        Assert.Equal("Erstens\nZweitens", A("Erstens neue Zeile zweitens"));
         Assert.Equal("Doppelpunkte zählen", A("Doppelpunkte zählen"));
     }
 
@@ -282,6 +287,9 @@ public class SpokenPunctuationTests
     {
         var text = "Bitte zwei neue Zeilen einfügen, neue Zeilenumbrüche vermeiden.";
         Assert.Equal(text, A(text));
+        // "Neuzeilen" is the plural glued into one word, not the command. "Neue Teile" is a real phrase.
+        Assert.Equal("Neuzeilen bleiben.", A("Neuzeilen bleiben."));
+        Assert.Equal("Neue Teile bestellen.", A("Neue Teile bestellen."));
     }
 
     [Fact]
@@ -408,9 +416,437 @@ public class SpokenPunctuationTests
     {
         Assert.Contains("doppelpunkt", SpokenPunctuation.CommandWords);
         Assert.Contains("zeile", SpokenPunctuation.CommandWords);
+        Assert.Contains("klammer", SpokenPunctuation.CommandWords);
         Assert.Equal("und", SpokenPunctuation.LowercasingFunctionWord("Und"));
+        Assert.Equal("diese", SpokenPunctuation.LowercasingFunctionWord("Diese"));
+        Assert.Equal("keine", SpokenPunctuation.LowercasingFunctionWord("Keine"));
+        Assert.Equal("bis", SpokenPunctuation.LowercasingFunctionWord("Bis"));
+        Assert.Equal("ich", SpokenPunctuation.LowercasingFunctionWord("Ich"));
         Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Sie"));
+        Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Ihr"));
+        Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Ihnen"));
         Assert.Null(SpokenPunctuation.LowercasingFunctionWord("Dosis"));
         Assert.Null(SpokenPunctuation.LowercasingFunctionWord("und"));
+    }
+}
+
+/// <summary>Brackets, Parakeet's glued "Neuzeile" / "Neuerabsatz", and a capital after a break (Mac #385).</summary>
+public class SpokenPunctuationBracketTests
+{
+    private static string Apply(string text, PunctuationMode mode = PunctuationMode.Automatic) =>
+        SpokenPunctuation.Apply(text, mode);
+
+    [Fact]
+    public void BracketsInBothModes()
+    {
+        (string Spoken, string Written)[] cases =
+        [
+            (
+                "Durch die Updates ist es Klammer auf soweit ich das beurteilen kann Klammer zu deutlich besser geworden.",
+                "Durch die Updates ist es (soweit ich das beurteilen kann) deutlich besser geworden."
+            ),
+            (
+                "Sobald ich Klammer auf wahrscheinlich morgen Klammer zu mehr arbeite.",
+                "Sobald ich (wahrscheinlich morgen) mehr arbeite."
+            ),
+            ("Siehe unten Klammer auf Anlage Klammer zu.", "Siehe unten (Anlage)."),
+            ("Klammer auf siehe Anlage Klammer zu", "(siehe Anlage)"),
+            ("es, Klammer auf, soweit, Klammer zu, deutlich", "es (soweit) deutlich"),
+        ];
+        foreach (var mode in new[] { PunctuationMode.Automatic, PunctuationMode.SpokenOnly })
+            foreach (var (spoken, written) in cases)
+                Assert.Equal(written, Apply(spoken, mode));
+    }
+
+    [Fact]
+    public void BracketsGluedAndHyphenated()
+    {
+        Assert.Equal("Siehe (Anlage).", Apply("Siehe Klammerauf Anlage Klammer-zu."));
+        Assert.Equal("es (soweit) deutlich", Apply("es Klammer-auf soweit Klammerzu deutlich"));
+    }
+
+    [Fact]
+    public void BracketsStayNouns()
+    {
+        foreach (var text in new[]
+        {
+            "Die Hautklammer wurde entfernt.",
+            "Zwei Klammern auf der Wunde.",
+            "Eine Klammer auf die Wunde gesetzt.",
+        })
+        {
+            Assert.Equal(text, Apply(text));
+            Assert.Equal(text, Apply(text, PunctuationMode.SpokenOnly));
+        }
+    }
+
+    [Fact]
+    public void OpeningParenSurvivesEdgeTrim() =>
+        Assert.Equal("ist es (",
+            SpokenPunctuation.Apply("ist es Klammer auf", PunctuationMode.SpokenOnly, keepsEdgeBreaks: true));
+
+    [Fact]
+    public void GluedBreaks()
+    {
+        Assert.Equal("Update.\nDie Fehler habe ich bewusst gelassen.",
+            Apply("Update. Neuzeile die Fehler habe ich bewusst gelassen."));
+        // The command is the whole trailing word, so only the line break is left and then trimmed.
+        Assert.Equal("einen schönen Sonntag", Apply("einen schönen Sonntag Neuezeile"));
+        Assert.Equal("Befund\n\nTherapie", Apply("Befund Neuerabsatz Therapie"));
+        Assert.Equal("Befund\n\nTherapie", Apply("Befund Neuenabsatz Therapie"));
+        Assert.Equal("Termin ist geplant.\n\nMit freundlichen Grüßen",
+            Apply("Termin ist geplant. Neuabsatz mit freundlichen Grüßen"));
+    }
+
+    [Fact]
+    public void CapitalAfterPlainBreak()
+    {
+        Assert.Equal("Liebe Grüße und einen schönen Sonntag\nWie gesagt",
+            Apply("Liebe Grüße und einen schönen Sonntag neue Zeile wie gesagt"));
+        // The model's pause comma is eaten; the next word keeps the case it was spoken with.
+        const string comma = "Hallo Herr Müller, neue Zeile vielen Dank";
+        const string eaten = "Hallo Herr Müller\nvielen Dank";
+        Assert.Equal(eaten, Apply(comma));
+        Assert.Equal(eaten, Apply(comma, PunctuationMode.SpokenOnly));
+        Assert.Equal("Befund\nInspektion", Apply("Befund, neue Zeile Inspektion"));
+        // Spoken "Komma" becomes the comma only in spoken-only mode, after the break was inserted.
+        Assert.Equal("Hallo Herr Müller,\nvielen Dank",
+            Apply("Hallo Herr Müller Komma neue Zeile vielen Dank", PunctuationMode.SpokenOnly));
+        // ", neuer Absatz" still ends the sentence with a period and does not add its own capital.
+        Assert.Equal("Schmerzen.\n\nbefund", Apply("Schmerzen, neuer Absatz befund"));
+    }
+
+    [Fact]
+    public void SplitDoppelPunktIsAColon()
+    {
+        const string spoken = "Befund Doppel Punkt Druckschmerz";
+        const string written = "Befund: Druckschmerz";
+        Assert.Equal(written, Apply(spoken));
+        Assert.Equal(written, Apply(spoken, PunctuationMode.SpokenOnly));
+        Assert.Equal(written, Apply("Befund Doppel-Punkt Druckschmerz", PunctuationMode.SpokenOnly));
+    }
+}
+
+/// <summary>
+/// Pilot-path fixes from Mac #393: a spoken comma before a break, "Klammer auf" plus an article when
+/// "Klammer zu" follows, "ein/zu/in/einen Punkt", lower case after a salutation break, and at most
+/// two line breaks across a piece seam. Glossary-guard cases are not ported.
+/// </summary>
+public class SpokenPunctuationPilotTests
+{
+    private static string Pipeline(params string[] pieces)
+    {
+        var joiner = new LiveChunkJoiner { HoldsPeriods = false };
+        var text = "";
+        foreach (var piece in pieces)
+            text += joiner.Next(LiveDictation.FinishPiece(piece, PunctuationMode.SpokenOnly, timedMarks: true));
+        return text + joiner.Finish();
+    }
+
+    [Fact]
+    public void CommaBeforeBreakStaysWhenTimed()
+    {
+        Assert.Equal("Sehr geehrte Frau Müller,\nvielen Dank für Ihre Nachricht.",
+            Pipeline("Sehr geehrte Frau Müller, neue Zeile vielen Dank für Ihre Nachricht."));
+        Assert.Equal("Sehr geehrte Damen und Herren,\n\nwir haben Ihre Patientin gesehen.",
+            Pipeline("Sehr geehrte Damen und Herren, neuer Absatz wir haben Ihre Patientin gesehen."));
+        Assert.Equal("Sehr geehrte Damen und Herren,\n\nwir haben Ihre Patientin gesehen.",
+            Pipeline("Sehr geehrte Damen und Herren Komma neuer Absatz wir haben Ihre Patientin gesehen Punkt"));
+        Assert.Equal("Sehr geehrte Damen und Herren,\n\n",
+            LiveDictation.FinishPiece("Sehr geehrte Damen und Herren, neuer Absatz.", PunctuationMode.SpokenOnly, timedMarks: true));
+        Assert.Equal("Müller,\nvielen Dank",
+            LiveDictation.FinishPiece("Müller, neue Zeile vielen Dank", PunctuationMode.SpokenOnly, timedMarks: true));
+    }
+
+    [Fact]
+    public void CommaBeforeBreakWithoutTimingKeepsTheOldBehaviour()
+    {
+        Assert.Equal("Müller\nVielen Dank",
+            LiveDictation.FinishPiece("Müller, neue Zeile vielen Dank", PunctuationMode.SpokenOnly));
+        Assert.Equal("Herren\n\nWir",
+            LiveDictation.FinishPiece("Herren, neuer Absatz wir", PunctuationMode.SpokenOnly));
+        Assert.Equal("Herren.\n\nwir",
+            LiveDictation.FinishPiece("Herren, neuer Absatz wir", PunctuationMode.Automatic, timedMarks: true));
+    }
+
+    [Fact]
+    public void BracketWithArticleNeedsClosingBracket()
+    {
+        Assert.Equal("Der Befund (die Laborwerte liegen bei) ist unauffällig.",
+            Pipeline("Der Befund Klammer auf die Laborwerte liegen bei Klammer zu ist unauffällig Punkt"));
+        Assert.Equal("Wir empfehlen (eine Kontrolle in drei Monaten).",
+            Pipeline("Wir empfehlen Klammer auf eine Kontrolle in drei Monaten Klammer zu Punkt"));
+        Assert.Equal("Zustand nach Hüft-TEP (links).",
+            Pipeline("Zustand nach Hüft-TEP Klammer auf links Klammer zu Punkt"));
+        Assert.Equal("Medikation (Ramipril, Metformin), weiterhin unverändert",
+            Pipeline("Medikation Klammer auf Ramipril Komma Metformin Klammer zu Komma weiterhin unverändert"));
+        Assert.Equal("Medikation (Ramipril).",
+            Pipeline("Medikation Klammer auf", "Ramipril Klammer zu", "Punkt"));
+        Assert.Equal("Medikation (Ramipril).",
+            Pipeline("Medikation, Klammer auf. Ramipril, Klammer zu."));
+        Assert.Equal("Eine Klammer auf die Wunde gesetzt.",
+            SpokenPunctuation.Apply("Eine Klammer auf die Wunde gesetzt.", PunctuationMode.SpokenOnly));
+        Assert.Equal("Klammer auf die Wunde", Pipeline("Klammer auf die Wunde"));
+    }
+
+    [Fact]
+    public void PunktAfterParticleIsAMarkUnlessNumberOrNounFollows()
+    {
+        Assert.Equal("Bitte nehmen Sie die Tablette morgens ein.",
+            Pipeline("Bitte nehmen Sie die Tablette morgens ein Punkt"));
+        Assert.Equal("Bitte senden Sie uns den Befund zu.",
+            Pipeline("Bitte senden Sie uns den Befund zu Punkt"));
+        Assert.Equal("Die Patientin stellt sich in drei Monaten wieder vor. Die Werte sind in.",
+            Pipeline("Die Patientin stellt sich in drei Monaten wieder vor Punkt Die Werte sind in Punkt"));
+        Assert.Equal("Bitte nehmen Sie die Tablette morgens ein.",
+            Pipeline("Bitte nehmen Sie die Tablette morgens ein", "Punkt"));
+        foreach (var (text, expected) in new[]
+        {
+            ("morgens ein Punkt", "morgens ein."),
+            ("den Befund zu Punkt", "den Befund zu."),
+            ("wieder in Punkt Die Werte", "wieder in. Die Werte"),
+            ("das ist ein Punkt mehr", "das ist ein Punkt mehr"),
+            ("siehe in Punkt 3", "siehe in Punkt 3"),
+            ("wir kommen zu Punkt drei", "wir kommen zu Punkt drei"),
+            ("das ist ein Punkt Frage", "das ist ein Punkt Frage"),
+        })
+            Assert.Equal(expected, SpokenPunctuation.Apply(text, PunctuationMode.SpokenOnly));
+    }
+
+    [Fact]
+    public void SalutationFollowersAfterBreakAreLowercase()
+    {
+        Assert.Equal("Sehr geehrte Frau Müller,\nvielen Dank",
+            Pipeline("Sehr geehrte Frau Müller,", "neue Zeile vielen Dank"));
+        Assert.Equal("Sehr geehrte Frau Müller,\nvielen Dank",
+            Pipeline("Sehr geehrte Frau Müller, neue Zeile", "Vielen Dank"));
+        Assert.Equal("Sehr geehrte Frau Müller,\nwir freuen uns",
+            Pipeline("Sehr geehrte Frau Müller Komma neue Zeile", "Wir freuen uns"));
+        foreach (var word in new[] { "Wir", "Ich", "Mit", "Anbei", "Bitte", "Danke" })
+            Assert.Equal($"Guten Tag Herr Schmidt,\n{word.ToLowerInvariant()} melden uns",
+                Pipeline("Guten Tag Herr Schmidt,", $"neue Zeile {word} melden uns"));
+    }
+
+    [Fact]
+    public void CapitalStaysAfterBreakWithoutCommaAndNounKeepsItsCapital()
+    {
+        Assert.Equal("Die Patientin kam heute.\nVielen Dank",
+            Pipeline("Die Patientin kam heute.", "neue Zeile vielen Dank"));
+        Assert.Equal("Haben Sie Schmerzen?\nWir sehen uns",
+            Pipeline("Haben Sie Schmerzen?", "neue Zeile wir sehen uns"));
+        Assert.Equal("Befund\nVielen Dank", Pipeline("Befund", "neue Zeile vielen Dank"));
+        Assert.Equal("Guten Tag,\nHerr Schmidt kommt",
+            Pipeline("Guten Tag,", "neue Zeile Herr Schmidt kommt"));
+    }
+
+    [Fact]
+    public void IchAfterSalutationCommaIsLowercaseAtAPieceSeam()
+    {
+        Assert.Equal("Sehr geehrte Damen und Herren, ich nehme Stellung.",
+            Pipeline("Sehr geehrte Damen und Herren,", "Ich nehme Stellung."));
+        Assert.Equal("Sehr geehrte Damen und Herren,\nich nehme Stellung.",
+            Pipeline("Sehr geehrte Damen und Herren,", "neue Zeile Ich nehme Stellung."));
+        Assert.Equal("Sehr geehrte Damen und Herren. Ich nehme Stellung.",
+            Pipeline("Sehr geehrte Damen und Herren.", "Ich nehme Stellung."));
+    }
+
+    [Fact]
+    public void BreaksAcrossPiecesCapAtTwo()
+    {
+        Assert.Equal("A\n\nB", Pipeline("A neuer Absatz", "neue Zeile B"));
+        Assert.Equal("A\n\nB", Pipeline("A neuer Absatz", "neuer Absatz B"));
+        Assert.Equal("A\n\nB", Pipeline("A neue Zeile", "neue Zeile B"));
+        Assert.Equal("A\n\nB", Pipeline("A neue Zeile", "neuer Absatz B"));
+        Assert.Equal("A\nB", Pipeline("A neue Zeile", "B"));
+    }
+
+    [Fact]
+    public void GluedPunktBecomesPeriodAndCapital()
+    {
+        Assert.Equal("einen Rollator. Aus dem Entlassungsbericht",
+            Pipeline("einen Rollatorpunkt aus dem Entlassungsbericht"));
+        Assert.Equal("mit zwei Pausen. Ursache sind", Pipeline("mit zwei Pausenpunkt Ursache sind"));
+        Assert.Equal("Funktionsbeeinträchtigung der Wirbelsäule.",
+            Pipeline("Funktionsbeeinträchtigung der Wirbelsäulepunkt"));
+        Assert.Equal("und passt die Dosis selbst an. Der letzte",
+            Pipeline("und passt die Dosis selbst anpunkt der letzte"));
+        Assert.Equal("die Fraktur.", Pipeline("die Frakturpunkt"));
+    }
+
+    [Fact]
+    public void FugenSOnlyKeepsRealCompounds()
+    {
+        Assert.Equal("Diabetes.", Pipeline("Diabetespunkt"));
+        Assert.Equal("Ergebnis.", Pipeline("Ergebnispunkt"));
+        foreach (var text in new[]
+        {
+            "Anhaltspunkt",
+            "Gesichtspunkt",
+            "Einstiegspunkt",
+            "Orientierungspunkt",
+            "ein Diskussionspunkt",
+        })
+            Assert.Equal(text, Pipeline(text));
+    }
+
+    [Fact]
+    public void LongerPunktCompoundsStayAGluedBlutdruckSplits()
+    {
+        foreach (var text in new[]
+        {
+            "Untersuchungszeitpunkt",
+            "Behandlungsschwerpunkt",
+            "zum Operationszeitpunkt",
+        })
+            Assert.Equal(text, Pipeline(text));
+        Assert.Equal("Blutdruck. Die Patientin", Pipeline("Blutdruckpunkt Die Patientin"));
+    }
+
+    [Fact]
+    public void RealPunktCompoundsInflectionsAndDoppelpunktStay()
+    {
+        foreach (var text in new[]
+        {
+            "Der Zeitpunkt der Operation",
+            "Das ist der Schwerpunkt",
+            "ein Anhaltspunkt für",
+            "der Druckpunkt am Knie",
+            "der Zusammenhangspunkt bleibt",
+            "Punkte",
+            "Die Punkte bleiben",
+            "mit Punkten und des Punktes",
+            "ein Punkt Anamnese",
+        })
+            Assert.Equal(text, Pipeline(text));
+        Assert.Equal("Diagnose: Polyneuropathie", Pipeline("Diagnose Doppelpunkt Polyneuropathie"));
+        Assert.Equal("Hüfte frei beweglich; Knie", Pipeline("Hüfte frei beweglich Strichpunkt Knie"));
+        Assert.Equal("einen Rollatorpunkt aus",
+            SpokenPunctuation.Apply("einen Rollatorpunkt aus", PunctuationMode.Automatic));
+    }
+
+    [Fact]
+    public void PunktAfterEinBeforePronounIsTheCommand()
+    {
+        Assert.Equal("ein Antidepressivum ein. Ihre Arbeit",
+            Pipeline("ein Antidepressivum ein Punkt Ihre Arbeit"));
+        Assert.Equal("Sie nimmt ein Antidepressivum ein. Ihre Arbeit",
+            Pipeline("Sie nimmt ein Antidepressivum ein Punkt Ihre Arbeit"));
+    }
+
+    [Fact]
+    public void NeueAbsatzWithoutEnding() =>
+        Assert.Equal("Hörbehinderung.\n\nDas Tonaudiogramm",
+            Pipeline("Hörbehinderung. Neue Absatz das Tonaudiogramm"));
+
+    [Fact]
+    public void TrailingSplitIgnoresAMidPieceGlue()
+    {
+        Assert.Equal("Kniepunkt und Hüfte", LiveDictation.SplittingGluedTrailingPunkt("Kniepunkt und Hüfte"));
+        Assert.Equal("Knie. Und Hüfte", Pipeline("Kniepunkt und Hüfte"));
+        Assert.Equal("Kein Juckreiz Punkt?!", LiveDictation.SplittingGluedTrailingPunkt("Kein Juckreizpunkt?!"));
+    }
+}
+
+/// <summary>Spoken colon, Parakeet mishearings (Mac #453, live capture 2026-11-10).</summary>
+public class SpokenColonMishearingTests
+{
+    [Fact]
+    public void DoppelgunIsTheColonCommand() =>
+        Assert.Equal("Symptome: Kopfschmerzen.",
+            LiveDictation.FinishPiece("Symptome, Doppelgun, Kopfschmerzen.", PunctuationMode.SpokenOnly));
+
+    [Fact]
+    public void LeadingOhBeforeALoneColonIsJustTheColon() =>
+        Assert.Equal(":",
+            LiveDictation.FinishPiece("Oh, Doppelpunkt.", PunctuationMode.SpokenOnly).Trim());
+
+    [Fact]
+    public void RealWordsStay()
+    {
+        Assert.Equal("Oh das ist gut.",
+            LiveDictation.FinishPiece("Oh, das ist gut.", PunctuationMode.SpokenOnly));
+        Assert.Equal("Der Doppelgänger kam", SpokenPunctuation.Apply("Der Doppelgänger kam"));
+        Assert.Equal("Die Doppelpunkte fehlen", SpokenPunctuation.Apply("Die Doppelpunkte fehlen"));
+        Assert.Contains("doppelgun", SpokenPunctuation.CommandWords);
+    }
+}
+
+/// <summary>A hyphen between digit groups is a swallowed Schrägstrich, spoken-only only (Mac #482).</summary>
+public class SpokenSlashBetweenNumbersTests
+{
+    [Theory]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6-25.", "Bescheid vom 6/25.")]
+    [InlineData(PunctuationMode.SpokenOnly, "Lendenwirbel 4-5", "Lendenwirbel 4/5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Aktenzeichen 12-24", "Aktenzeichen 12/24")]
+    [InlineData(PunctuationMode.Automatic, "Bescheid vom 6-25.", "Bescheid vom 6-25.")]
+    [InlineData(PunctuationMode.Automatic, "Aktenzeichen 12-24", "Aktenzeichen 12-24")]
+    [InlineData(PunctuationMode.SpokenOnly, "Das COVID-19 Risiko", "Das COVID-19 Risiko")]
+    [InlineData(PunctuationMode.SpokenOnly, "Covid-19 Impfung", "Covid-19 Impfung")]
+    [InlineData(PunctuationMode.SpokenOnly, "Lendenwirbel L4-L5", "Lendenwirbel L4-L5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Raum A1-B2", "Raum A1-B2")]
+    [InlineData(PunctuationMode.SpokenOnly, "Vitamin B-12", "Vitamin B-12")]
+    [InlineData(PunctuationMode.SpokenOnly, "am 2025-11-15", "am 2025-11-15")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6 - 25", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6 – 25", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6\u221225", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6–25.", "Bescheid vom 6/25.")]
+    [InlineData(PunctuationMode.SpokenOnly, "Lendenwirbel L4-5", "Lendenwirbel L4/5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Halswirbel C5-6", "Halswirbel C5/6")]
+    [InlineData(PunctuationMode.SpokenOnly, "LWK 4-5", "LWK 4/5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Raum AB12-34", "Raum AB12/34")]
+    [InlineData(PunctuationMode.SpokenOnly, "Lendenwirbel LWK4-5", "Lendenwirbel LWK4/5")]
+    [InlineData(PunctuationMode.SpokenOnly, "HWS3-4", "HWS3/4")]
+    [InlineData(PunctuationMode.SpokenOnly, "Impfung Covid19-20", "Impfung Covid19-20")]
+    [InlineData(PunctuationMode.SpokenOnly, "Notiz abc4-5", "Notiz abc4-5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Raum ABCDE12-34", "Raum ABCDE12-34")]
+    [InlineData(PunctuationMode.SpokenOnly, "Aktenzeichen 12-24-3", "Aktenzeichen 12/24/3")]
+    [InlineData(PunctuationMode.SpokenOnly, "Aktenzeichen 12 - 24 - 3", "Aktenzeichen 12/24/3")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6-fünfundzwanzig", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom sechs-25", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.Automatic, "Bescheid vom sechs-25", "Bescheid vom sechs-25")]
+    [InlineData(PunctuationMode.SpokenOnly, "ein Sechs-Wochen-Plan", "ein Sechs-Wochen-Plan")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6.25", "Bescheid vom 6.25")]
+    [InlineData(PunctuationMode.SpokenOnly, "sechs Schrägstrich fünfundzwanzig", "6/25")]
+    public void HyphenBetweenDigits(PunctuationMode mode, string input, string expected) =>
+        Assert.Equal(expected, SpokenPunctuation.Apply(input, mode));
+}
+
+/// <summary>False-positive guards from Mac #408 (R194).</summary>
+public class SpokenPunctuationGuardTests
+{
+    [Fact]
+    public void ClosingParenNeedsAnOpenParenInAutomaticMode()
+    {
+        Assert.Equal("um die Klammer zu entfernen", SpokenPunctuation.Apply("um die Klammer zu entfernen"));
+        Assert.Equal("Die Klammer zu lösen war schwer", SpokenPunctuation.Apply("Die Klammer zu lösen war schwer"));
+        Assert.Equal("(Test)", SpokenPunctuation.Apply("Klammer auf Test Klammer zu"));
+        // Spoken-only decodes piece by piece: a lone closing half still converts there.
+        Assert.Equal("Ramipril)", SpokenPunctuation.Apply("Ramipril Klammer zu", PunctuationMode.SpokenOnly));
+    }
+
+    [Fact]
+    public void NewLineAfterAnArticleIsTheNounPhrase()
+    {
+        const string text = "Füge eine neue Zeile in der Tabelle ein";
+        Assert.Equal(text, SpokenPunctuation.Apply(text));
+        Assert.Equal(text, SpokenPunctuation.Apply(text, PunctuationMode.SpokenOnly));
+        Assert.Equal("Befund\nInspektion", SpokenPunctuation.Apply("Befund neue Zeile Inspektion"));
+    }
+
+    [Fact]
+    public void DoppelpunktsetzungStaysAWord() =>
+        Assert.Equal("Befund Doppelpunktsetzung", SpokenPunctuation.Apply("Befund Doppelpunktsetzung"));
+
+    [Fact]
+    public void PunktAfterUmIsATime() =>
+        Assert.Equal("Er kam um Punkt acht Uhr",
+            SpokenPunctuation.Apply("Er kam um Punkt acht Uhr", PunctuationMode.SpokenOnly));
+
+    [Fact]
+    public void WrittenEllipsisSurvivesAndDuplicateMarksStillCollapse()
+    {
+        Assert.StartsWith("usw...", SpokenPunctuation.Apply("usw... und so Punkt", PunctuationMode.SpokenOnly));
+        Assert.StartsWith("usw…", SpokenPunctuation.Apply("usw… und so Punkt", PunctuationMode.SpokenOnly));
+        Assert.Equal("vor. Ende", SpokenPunctuation.Apply("vor. Punkt Ende", PunctuationMode.SpokenOnly));
     }
 }
