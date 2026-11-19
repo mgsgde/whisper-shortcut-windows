@@ -1,3 +1,4 @@
+using System.Globalization;
 using WhisperShortcut.Core;
 
 namespace WhisperShortcut.Tests;
@@ -20,9 +21,46 @@ public class MeetingChatContextTests : IDisposable
     {
         Assert.Equal("", MeetingChatContext.Live(null));
         Assert.Equal("", MeetingChatContext.Live("  \n"));
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_793_814_120);
+        var berlin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
         Assert.Equal(
-            "This chat is attached to a meeting that is being transcribed live. Everything said so far is below — answer the user's questions from it, and quote timestamps like [12:34] when it helps them find the moment.\n\nFull transcript of the meeting so far:\n[00:00] Hallo",
-            MeetingChatContext.Live("[00:00] Hallo"));
+            "This chat is attached to a meeting that is being transcribed live. Everything said so far is below — answer the user's questions from it, and quote timestamps like [12:34] when it helps them find the moment.\n\n"
+            + "Meeting in progress, current date and time: Wednesday, November 4, 2026, 18:42 (Europe/Berlin).\n\n"
+            + "Full transcript of the meeting so far:\n[00:00] Hallo",
+            MeetingChatContext.Live("[00:00] Hallo", now: now, timeZone: berlin, locale: CultureInfo.GetCultureInfo("en-US")));
+    }
+
+    [Fact]
+    public void Live_uses_German_names_and_a_parsed_stem_instead_of_now()
+    {
+        var now = DateTimeOffset.FromUnixTimeSeconds(1_793_814_120);
+        var berlin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+        var german = MeetingChatContext.Live("[00:00] Hallo", now: now, timeZone: berlin);
+        Assert.Contains("Mittwoch", german);
+        Assert.Contains("4. November 2026", german);
+        Assert.Contains("18:42", german);
+
+        const string stem = "Meeting-2026-11-04-143000";
+        var dated = MeetingChatContext.Live("[00:00] Hallo", stem, timeZone: berlin, locale: CultureInfo.GetCultureInfo("en-US"));
+        var started = ChatDateContext.DateFromStem(stem);
+        Assert.NotNull(started);
+        var shown = TimeZoneInfo.ConvertTime(started.Value, berlin).ToString("HH:mm", CultureInfo.InvariantCulture);
+        Assert.Contains("Meeting started: Wednesday, November 4, 2026, " + shown + " (Europe/Berlin).", dated);
+        Assert.DoesNotContain("Meeting in progress", dated);
+    }
+
+    [Fact]
+    public void Ended_dates_a_parsed_stem_and_skips_an_unparseable_one()
+    {
+        var berlin = TimeZoneInfo.FindSystemTimeZoneById("Europe/Berlin");
+        var english = CultureInfo.GetCultureInfo("en-US");
+        var dated = MeetingChatContext.Ended("Kurz", "[00:00] Hi", "Meeting-2026-11-04-143000", berlin, english);
+        Assert.Contains("Meeting date and time: Wednesday, November 4, 2026", dated);
+        Assert.Contains("Europe/Berlin", dated);
+        Assert.Contains("Meeting summary:\nKurz", dated);
+
+        var undated = MeetingChatContext.Ended("Kurz", "T", "not-a-meeting", berlin, english);
+        Assert.Equal("Use the following meeting context to answer the user's questions.\n\nMeeting summary:\nKurz\n\nMeeting transcript:\nT", undated);
     }
 
     [Fact]

@@ -462,6 +462,8 @@ internal sealed partial class ChatWindow : FastShowForm
         var modelName = ModelName;
         var system = Core.ChatPrompts.Effective(_settings.ChatSystemPrompt, offline: engine == Core.Engine.Local);
         system = WithMeetingContext(system, session); // ChatWindow.Meeting.cs
+        // Clock last, after the meeting text: the date line at the top of Effective stays cacheable for the day (Mac #353).
+        system = Core.ChatPrompts.AppendCurrentTime(system);
         var window = Core.ChatText.Window(session.Messages, engine == Core.Engine.Local ? Core.ChatText.LocalWindowChars : 200_000);
 
         var cts = _cts = new CancellationTokenSource();
