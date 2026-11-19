@@ -104,6 +104,139 @@ public static class TextCleanup
         return cleaned;
     }
 
+    /// <summary>
+    /// English planning labels. A line matches only when the label is followed by ":".
+    /// Port of LeakedPlanningStrip.labels (Mac #457).
+    /// </summary>
+    private static readonly string[] PlanningLabels =
+    {
+        "Notice from the audio",
+        "User voice style",
+        "Voice style",
+        "Check prompt constraints",
+        "Check constraints",
+        "Constraints",
+        "Formatting",
+        "Details",
+        "Content",
+        "Plan",
+        "Draft",
+        "Instruction",
+        "Selected text",
+        "Task",
+    };
+
+    private const string GluePunctuation = ".!?:)";
+
+    /// <summary>
+    /// True when the first non-empty line is an English planning header.
+    /// "The user " is case-sensitive. Labels are case-insensitive and may have text after the colon.
+    /// </summary>
+    public static bool LooksLikePlanning(string text)
+    {
+        var line = FirstNonEmptyTrimmedLine(text);
+        if (line == null) return false;
+        if (line.StartsWith("The user ", StringComparison.Ordinal)) return true;
+        return IsPlanningLabelLine(line);
+    }
+
+    /// <summary>
+    /// Drops a leaked planning block from non-thought text parts, in order.
+    /// Separate planning parts are dropped whole. A plan glued to the answer is cut at the glue
+    /// point. Text that cannot be separated is returned unchanged. Port of LeakedPlanningStrip.strip (Mac #457).
+    /// </summary>
+    public static string StripLeakedPlanning(IReadOnlyList<string> parts)
+    {
+        var joined = string.Concat(parts);
+        if (parts.Count >= 2 && LooksLikePlanning(parts[0]))
+        {
+            var start = -1;
+            for (var i = 1; i < parts.Count; i++)
+            {
+                if (!LooksLikePlanning(parts[i])) { start = i; break; }
+            }
+            if (start < 0) return joined;
+            var kept = string.Concat(parts.Skip(start));
+            LogPlanningDrop(joined, kept, parts.Count);
+            return kept;
+        }
+        if (!LooksLikePlanning(joined) || GluedAnswerStart(joined) is not int cut) return joined;
+        var answer = joined[cut..];
+        LogPlanningDrop(joined, answer, parts.Count);
+        return answer;
+    }
+
+    private static bool IsPlanningLabelLine(string trimmedLine)
+    {
+        foreach (var label in PlanningLabels)
+        {
+            if (trimmedLine.StartsWith(label + ":", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static string? FirstNonEmptyTrimmedLine(string text)
+    {
+        var lineStart = 0;
+        while (true)
+        {
+            var lineEnd = text.IndexOf('\n', lineStart);
+            if (lineEnd < 0) lineEnd = text.Length;
+            var trimmed = text[lineStart..lineEnd].Trim();
+            if (trimmed.Length > 0) return trimmed;
+            if (lineEnd == text.Length) return null;
+            lineStart = lineEnd + 1;
+        }
+    }
+
+    /// <summary>
+    /// Start of the last planning header line: a known label line, or the first non-empty line
+    /// when it starts with "The user ".
+    /// </summary>
+    private static int? LastPlanningLineStart(string text)
+    {
+        int? anchor = null;
+        var isFirstNonEmpty = true;
+        var lineStart = 0;
+        while (true)
+        {
+            var lineEnd = text.IndexOf('\n', lineStart);
+            if (lineEnd < 0) lineEnd = text.Length;
+            var trimmed = text[lineStart..lineEnd].Trim();
+            if (trimmed.Length > 0)
+            {
+                if (IsPlanningLabelLine(trimmed)
+                    || (isFirstNonEmpty && trimmed.StartsWith("The user ", StringComparison.Ordinal)))
+                    anchor = lineStart;
+                isFirstNonEmpty = false;
+            }
+            if (lineEnd == text.Length) break;
+            lineStart = lineEnd + 1;
+        }
+        return anchor;
+    }
+
+    /// <summary>Index of the uppercase letter that starts the answer, where punctuation is glued to it.</summary>
+    private static int? GluedAnswerStart(string text)
+    {
+        var anchor = LastPlanningLineStart(text);
+        if (anchor is not int index) return null;
+        while (index < text.Length - 1)
+        {
+            if (GluePunctuation.Contains(text[index]) && char.IsUpper(text[index + 1]))
+                return index + 1;
+            index++;
+        }
+        return null;
+    }
+
+    private static void LogPlanningDrop(string original, string kept, int parts)
+    {
+        var dropped = original.Length - kept.Length;
+        if (dropped <= 0) return;
+        Log.Warn($"PROMPT-LEAK: dropped planning block ({dropped} chars, parts={parts})");
+    }
+
     private static string NormalizeWhitespace(string? text)
     {
         if (string.IsNullOrEmpty(text)) return "";

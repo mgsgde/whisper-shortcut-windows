@@ -504,8 +504,11 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     public static TimeSpan? ParseRetryInfo(string body) => CloudApi.ParseRetryInfo(body);
 
     /// <summary>
-    /// Concatenates candidates[0].content.parts[].text; "" when absent. With <paramref name="rejectTruncated"/>
-    /// a MAX_TOKENS finish throws, so a cut-off rewrite is never pasted over the selection.
+    /// Visible text of candidates[0]: thought parts skipped, then a leaked English planning block
+    /// dropped (<see cref="TextCleanup.StripLeakedPlanning"/>, Mac #457). "" when absent.
+    /// With <paramref name="rejectTruncated"/> a MAX_TOKENS finish throws, so a cut-off rewrite is
+    /// never pasted over the selection. A leaked <c>start_thought</c> marker inside a visible part
+    /// is removed later by <see cref="TextCleanup.NormalizeReply"/>.
     /// </summary>
     internal static string ExtractText(string responseJson, bool rejectTruncated = false)
     {
@@ -524,14 +527,15 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
             if (!cands[0].TryGetProperty("content", out var content)
                 || !content.TryGetProperty("parts", out var parts)
                 || parts.ValueKind != JsonValueKind.Array) return "";
-            var sb = new StringBuilder();
+            var texts = new List<string>();
             foreach (var part in parts.EnumerateArray())
             {
                 if (part.TryGetProperty("thought", out var th) && th.ValueKind == JsonValueKind.True) continue;
-                if (part.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
-                    sb.Append(t.GetString());
+                if (part.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String
+                    && t.GetString() is { } text)
+                    texts.Add(text);
             }
-            return sb.ToString();
+            return TextCleanup.StripLeakedPlanning(texts);
         }
         catch (JsonException)
         {
