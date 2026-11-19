@@ -785,4 +785,91 @@ public static class TextCleanup
         // Never turn a pure preamble into "": the caller should see the original.
         return result.Length == 0 ? text : result;
     }
+
+    /// <summary>
+    /// Replaces Cyrillic letters that look like Latin ones, only inside a word that already
+    /// contains an ASCII Latin letter (A-Z / a-z). A word made only of Cyrillic stays as written.
+    /// Umlauts and ß count as letters but do not trigger the fold by themselves.
+    /// Port of TextProcessingUtility.foldingCyrillicHomoglyphs (Mac #508).
+    /// </summary>
+    public static (string Text, int Folded) FoldCyrillicHomoglyphs(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return ("", 0);
+
+        var output = new StringBuilder(text.Length);
+        var folded = 0;
+        var index = 0;
+        while (index < text.Length)
+        {
+            if (char.IsLetter(text[index]))
+            {
+                var wordStart = index;
+                var wordEnd = index + 1;
+                while (wordEnd < text.Length && char.IsLetter(text[wordEnd])) wordEnd++;
+                var hasAscii = false;
+                for (var i = wordStart; i < wordEnd; i++)
+                {
+                    if (IsAsciiLatinLetter(text[i])) { hasAscii = true; break; }
+                }
+                if (hasAscii)
+                {
+                    for (var i = wordStart; i < wordEnd; i++)
+                    {
+                        if (LatinLookAlike(text[i]) is char latin)
+                        {
+                            output.Append(latin);
+                            folded++;
+                        }
+                        else output.Append(text[i]);
+                    }
+                }
+                else output.Append(text, wordStart, wordEnd - wordStart);
+                index = wordEnd;
+            }
+            else
+            {
+                output.Append(text[index]);
+                index++;
+            }
+        }
+
+        return folded > 0 ? (output.ToString(), folded) : (text, 0);
+    }
+
+    /// <summary>A-Z / a-z only. A precomposed umlaut is not a trigger.</summary>
+    private static bool IsAsciiLatinLetter(char character) =>
+        character is >= 'A' and <= 'Z' or >= 'a' and <= 'z';
+
+    /// <summary>
+    /// Cyrillic letters that are visually identical to a Latin letter. Letters absent from this
+    /// table (including lowercase в) are never rewritten.
+    /// </summary>
+    private static char? LatinLookAlike(char character) => character switch
+    {
+        '\u0430' => 'a', // а
+        '\u0435' => 'e', // е
+        '\u043E' => 'o', // о
+        '\u0440' => 'p', // р
+        '\u0441' => 'c', // с
+        '\u0443' => 'y', // у
+        '\u0445' => 'x', // х
+        '\u0456' => 'i', // і
+        '\u0458' => 'j', // ј
+        '\u0455' => 's', // ѕ
+        '\u0410' => 'A', // А
+        '\u0412' => 'B', // В
+        '\u0415' => 'E', // Е
+        '\u041A' => 'K', // К
+        '\u041C' => 'M', // М
+        '\u041D' => 'H', // Н
+        '\u041E' => 'O', // О
+        '\u0420' => 'P', // Р
+        '\u0421' => 'C', // С
+        '\u0422' => 'T', // Т
+        '\u0425' => 'X', // Х
+        '\u0406' => 'I', // І
+        '\u0408' => 'J', // Ј
+        '\u0405' => 'S', // Ѕ
+        _ => null,
+    };
 }
