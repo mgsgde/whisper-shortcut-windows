@@ -646,3 +646,43 @@ public class SpokenPunctuationPilotTests
         Assert.Equal("A\nB", Pipeline("A neue Zeile", "B"));
     }
 }
+
+/// <summary>False-positive guards from Mac #408 (R194).</summary>
+public class SpokenPunctuationGuardTests
+{
+    [Fact]
+    public void ClosingParenNeedsAnOpenParenInAutomaticMode()
+    {
+        Assert.Equal("um die Klammer zu entfernen", SpokenPunctuation.Apply("um die Klammer zu entfernen"));
+        Assert.Equal("Die Klammer zu lösen war schwer", SpokenPunctuation.Apply("Die Klammer zu lösen war schwer"));
+        Assert.Equal("(Test)", SpokenPunctuation.Apply("Klammer auf Test Klammer zu"));
+        // Spoken-only decodes piece by piece: a lone closing half still converts there.
+        Assert.Equal("Ramipril)", SpokenPunctuation.Apply("Ramipril Klammer zu", PunctuationMode.SpokenOnly));
+    }
+
+    [Fact]
+    public void NewLineAfterAnArticleIsTheNounPhrase()
+    {
+        const string text = "Füge eine neue Zeile in der Tabelle ein";
+        Assert.Equal(text, SpokenPunctuation.Apply(text));
+        Assert.Equal(text, SpokenPunctuation.Apply(text, PunctuationMode.SpokenOnly));
+        Assert.Equal("Befund\nInspektion", SpokenPunctuation.Apply("Befund neue Zeile Inspektion"));
+    }
+
+    [Fact]
+    public void DoppelpunktsetzungStaysAWord() =>
+        Assert.Equal("Befund Doppelpunktsetzung", SpokenPunctuation.Apply("Befund Doppelpunktsetzung"));
+
+    [Fact]
+    public void PunktAfterUmIsATime() =>
+        Assert.Equal("Er kam um Punkt acht Uhr",
+            SpokenPunctuation.Apply("Er kam um Punkt acht Uhr", PunctuationMode.SpokenOnly));
+
+    [Fact]
+    public void WrittenEllipsisSurvivesAndDuplicateMarksStillCollapse()
+    {
+        Assert.StartsWith("usw...", SpokenPunctuation.Apply("usw... und so Punkt", PunctuationMode.SpokenOnly));
+        Assert.StartsWith("usw…", SpokenPunctuation.Apply("usw… und so Punkt", PunctuationMode.SpokenOnly));
+        Assert.Equal("vor. Ende", SpokenPunctuation.Apply("vor. Punkt Ende", PunctuationMode.SpokenOnly));
+    }
+}

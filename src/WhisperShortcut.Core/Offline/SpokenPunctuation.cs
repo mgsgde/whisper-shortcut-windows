@@ -77,9 +77,28 @@ public static class SpokenPunctuation
         MakeLayoutRules(timed: true, parenAlways: true),
     };
 
-    private static Rule[] MakeLayoutRules(bool timed, bool parenAlways)
+    /// <summary>
+    /// Automatic mode: "Klammer zu" is a command only after an unmatched "(". Spoken-only keeps it
+    /// unguarded, because Dictate Live can deliver the closing half in a later piece.
+    /// </summary>
+    private static readonly Rule[] AutomaticRules =
+        MakeLayoutRules(timed: false, parenAlways: false, requiresOpenParen: true);
+
+    /// <summary>A "(" earlier in the text with no ")" in between.</summary>
+    private const string OpenParenBefore = @"(?<=\([^()]{0,2000})";
+
+    /// <summary>
+    /// "neue Zeile" right after an article or determiner is the noun phrase ("eine neue Zeile in
+    /// der Tabelle"), not the command. Placed directly before "\bneu".
+    /// </summary>
+    private const string NotAfterDeterminer =
+        @"(?<!\b(?:eine|einer|einen|einem|die|der|den|dem|jede|jeder|jeden|keine|keiner|diese|dieser|ihre|seine|meine|deine|unsere)[ \t])";
+
+    private static Rule[] MakeLayoutRules(bool timed, bool parenAlways, bool requiresOpenParen = false)
     {
         var opening = parenAlways ? OpeningParenPlain : OpeningParenGuarded;
+        var openGuard = requiresOpenParen ? OpenParenBefore : "";
+        var zeile = NotAfterDeterminer;
         return
         [
             // The colon is already there: a model reply that kept the spoken word after its own heading
@@ -93,15 +112,15 @@ public static class SpokenPunctuation
             // Parakeet sometimes glues the command onto the next word ("Befund Doppelpunktdruckschmerz").
             // The following word's first letter is upper-cased afterwards (CapitalizeAfterGluedColon).
             // Inflections of the noun itself ("Doppelpunkte", "-en", "-es", "-s") are left alone.
-            MakeRule(@"[ \t,.;]*\bdoppel[ \t-]?punkt(?!(?:e|en|es|s)\b)(?=\p{L})", ": \u0001"),
+            MakeRule(@"[ \t,.;]*\bdoppel[ \t-]?punkt(?!(?:e|en|es|s)\b|setzung|zeichen|taste|symbol)(?=\p{L})", ": \u0001"),
             // "(" keeps one space before it and none after, except at the start of the text or a line.
             // Stray ASR commas and periods around the words go.
             MakeRule($@"(^|\n)[ \t,.;]*{opening}[ \t,.;]*", "$1("),
             MakeRule($@"[ \t,.;]*{opening}[ \t,.;]*", " ("),
             // ")" has no space before it. A comma the ASR put after it goes; a period after it stays
             // ("Anlage Klammer zu."). The period and comma before it go.
-            MakeRule($@"[ \t,.;]*{ClosingParen}[ \t]*,[ \t]*", ") "),
-            MakeRule($@"[ \t,.;]*{ClosingParen}", ")"),
+            MakeRule($@"{openGuard}[ \t,.;]*{ClosingParen}[ \t]*,[ \t]*", ") "),
+            MakeRule($@"{openGuard}[ \t,.;]*{ClosingParen}", ")"),
             // A comma before a spoken paragraph break is the ASR marking the pause; the sentence ended.
             // No capital marker: this stays ".\n\n", and the next word keeps the case it was spoken with.
             // "Neuerabsatz" / "Neuenabsatz" are the glued forms (no space).
@@ -111,7 +130,7 @@ public static class SpokenPunctuation
             // starts the new paragraph or line, so it gets a capital (marker, CapitalizeAfterGluedColon).
             // "Neuzeile" / "Neuezeile" are "neue Zeile" glued into one word. "Neuzeilen" does not match.
             MakeRule(@"(?<=[.!?])[ \t]*\bneue[rn][ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
-            MakeRule(@"(?<=[.!?])[ \t]*\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
+            MakeRule($@"(?<=[.!?])[ \t]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
             // Paragraph break without a sentence mark before it. The next word still starts the new
             // paragraph, so it gets a capital too.
             MakeRule(@"[ \t,;]*\bneue[rn][ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
@@ -119,14 +138,14 @@ public static class SpokenPunctuation
             // "Befund, neue Zeile Inspektion" from staying "Befund,\nInspektion". No capital marker.
             // With token timing the comma was spoken ("Müller, neue Zeile vielen Dank"), so it stays.
             timed
-                ? MakeRule(@"[ \t]*,[ \t,;]*\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", ",\n")
-                : MakeRule(@"[ \t]*[,;][ \t,;]*\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n"),
+                ? MakeRule($@"[ \t]*,[ \t,;]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", ",\n")
+                : MakeRule($@"[ \t]*[,;][ \t,;]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n"),
             // Line break without a sentence mark or a pause comma before it. The next word starts the
             // new line, so it gets a capital.
-            MakeRule(@"[ \t;]*\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
+            MakeRule($@"[ \t;]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
             // Parakeet glues this one onto the next word too ("neue Zeileinspektion", "Neuzeileinspektion").
             // "neue Zeilen…" is left alone: the "n" is the plural or a compound, said literally.
-            MakeRule(@"[ \t,;]*\bneu(?:e[ \t]*)?zeile(?!n)(?=\p{L})", "\n\u0001"),
+            MakeRule($@"[ \t,;]*{zeile}\bneu(?:e[ \t]*)?zeile(?!n)(?=\p{{L}})", "\n\u0001"),
         ];
     }
 
@@ -175,7 +194,7 @@ public static class SpokenPunctuation
         // Not the noun: "Punkt 3", "Punkt drei", "Siehe Punkt 2.1", "zu Punkt", "der wichtigste Punkt".
         // A following number word counts as the number, same as a digit ("Unter Punkt drei steht").
         MakeRule(
-            @"[ \t,;]*(?<!\b(?:zu|unter|im|in|der|den|dem|des|einen|einem|ein|jeden|letzten|wichtigste|wichtigsten)[ \t])\bpunkt\b(?![ \t]*(?:\d|(?:eins|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun|zehn|elf|zwölf|zwoelf)\b))[ \t,.;]*",
+            @"[ \t,;]*(?<!\b(?:zu|um|unter|im|in|der|den|dem|des|einen|einem|ein|jeden|letzten|wichtigste|wichtigsten)[ \t])\bpunkt\b(?![ \t]*(?:\d|(?:eins|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun|zehn|elf|zwölf|zwoelf)\b))[ \t,.;]*",
             ". \u0001"),
         MakeRule(@"[ \t,;]*\bkomma\b[ \t,.;]*", ", "),
     };
@@ -304,6 +323,25 @@ public static class SpokenPunctuation
     private static readonly Rule RepeatedMarks = MakeRule("([.,!?])(?:[ \\t\u0001]*\\1)+", "$1");
 
     /// <summary>
+    /// <see cref="RepeatedMarks"/>, except an ellipsis of three or more dots with nothing between them
+    /// ("usw... und so") stays. Duplicates the rules produce (". .", ",,") still collapse.
+    /// </summary>
+    private static string CollapsingRepeatedMarks(string text)
+    {
+        var matches = RepeatedMarks.Regex.Matches(text);
+        if (matches.Count == 0) return text;
+        var result = text;
+        for (var i = matches.Count - 1; i >= 0; i--)
+        {
+            var run = matches[i].Value;
+            if (run.Length >= 3 && run.All(ch => ch == '.')) continue;
+            var start = matches[i].Index;
+            result = result.Remove(start, matches[i].Length).Insert(start, run[0].ToString());
+        }
+        return result;
+    }
+
+    /// <summary>
     /// A spoken "Komma" becomes a comma only in the spoken-only rules, after the break was inserted
     /// ("Komma neue Zeile vielen" → ",\n\u0001vielen"). Drop that capital marker so the next word
     /// keeps the case it was spoken with.
@@ -375,7 +413,7 @@ public static class SpokenPunctuation
         var rules = mode == PunctuationMode.SpokenOnly
             ? RuleSets[(timedMarks ? 2 : 0) + (ParenPairRegex.IsMatch(result) ? 1 : 0)]
                 .Concat(SpokenOnlyRules).Append(PunktAfterParticleRule)
-            : RuleSets[0];
+            : AutomaticRules;
         foreach (var rule in rules)
         {
             if (!rule.Regex.IsMatch(result)) continue;
@@ -387,7 +425,7 @@ public static class SpokenPunctuation
         // "Komma" has just become a comma in front of the break; drop its marker first.
         if (mode == PunctuationMode.SpokenOnly)
         {
-            var collapsed = RepeatedMarks.Regex.Replace(result, RepeatedMarks.Template);
+            var collapsed = CollapsingRepeatedMarks(result);
             if (collapsed != result)
             {
                 result = collapsed;
