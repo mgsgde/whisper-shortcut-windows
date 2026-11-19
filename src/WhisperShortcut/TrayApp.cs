@@ -1364,27 +1364,34 @@ internal sealed partial class TrayApp : ApplicationContext
         SetBusy(Core.UserCopy.EditingText);
         var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct, HistoryFor(selection), _take!.Shot);
 
-        string? instruction = null;
-        if (selection == null)
+        // "Mhm.", "Äh." or a lone "0" is not an instruction. With a selection Gemini hears the
+        // audio and would edit on a guess, so transcribe in parallel (the no-selection path
+        // already did this for a bare edit command) and paste nothing. With or without a selection.
+        var instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct);
+        if (Core.FillerOnlyInstruction.Refuses(instruction))
+        {
+            Core.Log.Info("Prompt: instruction was only a filler, refused");
+            _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
+            Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
+            return "";
+        }
+        if (selection == null && Core.BareEditCommand.Matches(instruction))
         {
             // Nothing selected and the instruction is only "korrigiere" / "mach das freundlicher":
-            // there is nothing to edit, and the model would invent a text. Transcribe in parallel to check.
-            instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct);
-            if (Core.BareEditCommand.Matches(instruction))
-            {
-                Core.Log.Info("Prompt: bare edit command without selection, refused");
-                _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
-                Sounds.Error();
-                Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
-                return "";
-            }
+            // there is nothing to edit, and the model would invent a text.
+            Core.Log.Info("Prompt: bare edit command without selection, refused");
+            _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
+            Sounds.Error();
+            Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
+            return "";
         }
 
-        // With a selection Gemini hears the instruction itself; there is no transcript to compare with.
-        string text = Reply(await answer, instruction == null ? null : new[] { instruction, systemPrompt });
+        // With a selection the transcript is only the filler check. Gemini heard the instruction
+        // itself, so the reply is not compared with the transcript.
+        string text = Reply(await answer, selection == null ? new[] { instruction, systemPrompt } : null);
         Core.Log.Info($"Prompt: answer {text.Length} chars");
         text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
-        RememberPrompt(selection, instruction ?? Core.PromptConversationMemory.SpokenPlaceholder, text);
+        RememberPrompt(selection, selection == null ? instruction : Core.PromptConversationMemory.SpokenPlaceholder, text);
         return text;
     }
 
@@ -1441,8 +1448,10 @@ internal sealed partial class TrayApp : ApplicationContext
         SetBusy(Core.UserCopy.Transcribing);
         string instruction = (await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct)).Trim();
         Core.Log.Info($"Prompt via transcript ({_settings.EffectiveTextEngine}): instruction {instruction.Length} chars");
-        if (instruction.Length == 0)
+        // "Mhm." is the same as nothing heard: do not send it on, and do not paste.
+        if (instruction.Length == 0 || Core.FillerOnlyInstruction.Refuses(instruction))
         {
+            if (instruction.Length > 0) Core.Log.Info("Prompt: instruction was only a filler, refused");
             Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
             return "";
         }
