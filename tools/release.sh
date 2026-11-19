@@ -18,7 +18,19 @@ CSPROJ_VERSION=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/WhisperShortc
 
 dotnet test tests/WhisperShortcut.Tests
 # The settings window for real: a frozen or slow window does not show in the Core tests.
-dotnet test tests/WhisperShortcut.UiTests
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    dotnet test tests/WhisperShortcut.UiTests
+    ;;
+  *)
+    ui_conclusion=$(gh api "repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/check-runs" --jq '.check_runs[] | select(.name=="Test and build (Windows)") | .conclusion')
+    if [ "$ui_conclusion" != "success" ]; then
+      echo "UI tests run only on Windows: CI 'Test and build (Windows)' on HEAD is not green (got: ${ui_conclusion})" >&2
+      exit 1
+    fi
+    echo "UI tests: passed in CI on Windows for HEAD"
+    ;;
+esac
 
 PUB="$(mktemp)"
 openssl ec -in "$KEY" -pubout -out "$PUB" 2>/dev/null

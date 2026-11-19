@@ -34,6 +34,9 @@ jobs:
           --collect:"XPlat Code Coverage"
           --results-directory TestResults
 
+      - name: Run UI tests
+        run: dotnet test tests/WhisperShortcut.UiTests -c Release --verbosity minimal
+
       - name: Build Windows app
         run: dotnet build src/WhisperShortcut -c Release
 
