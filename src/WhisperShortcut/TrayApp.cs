@@ -969,7 +969,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 {
                     try
                     {
-                        fallback = Core.TextCleanup.ForDictation(Backstops(Core.TranscribePurpose.LivePiece, await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, ct)));
+                        fallback = Core.TextCleanup.ForDictation(Backstops(Core.TranscribePurpose.LivePiece, await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, ct)), audioSeconds: seconds);
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
@@ -1325,7 +1325,7 @@ internal sealed partial class TrayApp : ApplicationContext
             ? Backstops(Core.TranscribePurpose.Dictation, "das ist ein test diktat aus der virtuellen maschine")
             : await TranscribeAsync(Core.TranscribePurpose.Dictation, wav, ct);
         string text = Core.TextCleanup.DiscardImplausible(
-            Core.TextCleanup.ForDictation(raw, addTrailingPeriod: punctuation == Core.PunctuationMode.Automatic), seconds);
+            Core.TextCleanup.ForDictation(raw, addTrailingPeriod: punctuation == Core.PunctuationMode.Automatic, audioSeconds: seconds), seconds);
         // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
         if (Core.TextCleanup.LooksLikeRefusal(text)) text = "";
         Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup, punctuation {punctuation}");
@@ -1704,7 +1704,7 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         if (_fakeGemini) return "Das ist ein Testabschnitt aus dem Meeting.";
         string raw = await TranscribeAsync(Core.TranscribePurpose.MeetingChunk, wav, ct);
-        string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), Core.Wav.DurationSeconds(wav));
+        string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw, audioSeconds: Core.Wav.DurationSeconds(wav)), Core.Wav.DurationSeconds(wav));
         return Core.TextCleanup.LooksLikeRefusal(text) ? "" : text;
     }
 

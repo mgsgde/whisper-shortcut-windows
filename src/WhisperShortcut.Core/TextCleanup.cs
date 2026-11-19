@@ -34,6 +34,47 @@ public static class TextCleanup
     private const string FinalPunctuation = ".!?:;";
 
     /// <summary>
+    /// Longest clip for which a single-phrase transcript is treated as a silence hallucination.
+    /// A clip of 2 s or more that transcribes to just "You" or "Vielen Dank" is kept. Unknown
+    /// duration keeps the transcript. Port of TextProcessingUtility.hallucinationMaxClipSeconds (Mac #367).
+    /// </summary>
+    public const double HallucinationMaxClipSeconds = 2.0;
+
+    /// <summary>
+    /// Subtitle filler a model emits when it hears no speech. Closed set, matched against the whole
+    /// transcript only. Port of TextProcessingUtility.knownWhisperHallucinations (Mac #367).
+    /// The Whisper VAD gate and the settings toggle are not ported.
+    /// </summary>
+    public static readonly HashSet<string> KnownSilenceHallucinations = new(StringComparer.Ordinal)
+    {
+        "thank you",
+        "thanks for watching",
+        "you",
+        "bye",
+        "vielen dank",
+        "untertitel der amara.org-community",
+        "subtitles by the amara.org community",
+        "please subscribe",
+        "bitte abonnieren",
+    };
+
+    /// <summary>
+    /// Comparison form for the hallucination check: lowercased, trimmed, trailing punctuation and
+    /// whitespace removed. "Thank you." and "thank you" match; "Thank you, Dr. Meyer." does not.
+    /// </summary>
+    public static string PhantomComparisonForm(string text)
+    {
+        var form = (text ?? "").Trim().ToLowerInvariant();
+        while (form.Length > 0 && (char.IsPunctuation(form[^1]) || char.IsWhiteSpace(form[^1])))
+            form = form[..^1];
+        return form;
+    }
+
+    /// <summary>True when the whole transcript is one of <see cref="KnownSilenceHallucinations"/>.</summary>
+    public static bool IsKnownSilenceHallucination(string text) =>
+        KnownSilenceHallucinations.Contains(PhantomComparisonForm(text));
+
+    /// <summary>
     /// Normalisation for every model answer (dictation and prompt answers): trim, 3+ newlines to 2,
     /// per line trailing whitespace removed, leading indentation kept, inner runs of spaces/tabs
     /// collapsed, then the "here is the transcription:" style remnants removed.
@@ -261,13 +302,23 @@ public static class TextCleanup
     /// unless the text already ends in one of . ! ? : ; (ClipboardManager.formatTranscription). With
     /// <paramref name="addTrailingPeriod"/> off (spoken-only punctuation) no period is added.
     /// Never use this for Dictate Prompt answers.
+    /// <paramref name="audioSeconds"/> is the clip length. A transcript that is entirely one of
+    /// <see cref="KnownSilenceHallucinations"/> is dropped when the clip is shorter than
+    /// <see cref="HallucinationMaxClipSeconds"/> (Mac #367). Unknown or non-positive duration keeps
+    /// the text. Windows has no separate Whisper decode, so this runs for every dictation that
+    /// passes a duration.
     /// </summary>
-    public static string ForDictation(string? text, bool addTrailingPeriod = true)
+    public static string ForDictation(string? text, bool addTrailingPeriod = true, double? audioSeconds = null)
     {
         // Fillers go after the transcript cleanup and before the capital and the period, so a
         // filler-only clip comes back empty and is treated as no speech (Mac #507).
         var formatted = RemovingFillers(Normalize(text));
         if (formatted.Length == 0) return "";
+        if (audioSeconds is > 0 and < HallucinationMaxClipSeconds && IsKnownSilenceHallucination(formatted))
+        {
+            Log.Info($"HALLUCINATION-FILTER: Dropped known silence hallucination ({formatted.Length} chars, {audioSeconds:F1}s)");
+            return "";
+        }
         var first = formatted.EnumerateRunes().First();
         var upper = first.ToString().ToUpperInvariant();
         formatted = upper + formatted[first.Utf16SequenceLength..];
