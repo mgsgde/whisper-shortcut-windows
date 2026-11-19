@@ -130,18 +130,39 @@ internal sealed class McpService : IMcpHost, IDisposable
             return;
         }
         if (_server != null) return;
-        try
+        SocketException? inUse = null;
+        foreach (var port in McpPorts.ForConfigured(Config.Port))
         {
-            _server = new LoopbackHttpServer(Config.Port, Handle, reason => _ui.Post(_ => OnServerFailed(reason), null));
+            try
+            {
+                _server = new LoopbackHttpServer(port, Handle, reason => _ui.Post(_ => OnServerFailed(reason), null));
+                break;
+            }
+            catch (SocketException e) when (e.SocketErrorCode == SocketError.AddressAlreadyInUse)
+            {
+                inUse = e;
+                Core.Log.Info($"MCP: port {port} is in use, trying the next");
+            }
+            catch (SocketException e)
+            {
+                _failure = "Der Dienst konnte nicht starten. Details stehen im Protokoll.";
+                Core.Log.Error($"MCP: start failed ({e.SocketErrorCode})");
+                RaiseChanged();
+                return;
+            }
+        }
+        if (_server == null)
+        {
+            // The old sentence, and only once every candidate failed (Mac #492).
+            _failure = $"Port {Config.Port} ist schon von einem anderen Programm belegt. Das Programm beenden oder WhisperShortcut neu starten.";
+            Core.Log.Error($"MCP: start failed ({inUse?.SocketErrorCode})");
+        }
+        else
+        {
+            if (Config.Port != _server.Port) Config.Port = _server.Port;
             _failure = null;
             Core.Log.Info($"MCP: listening on 127.0.0.1:{_server.Port}");
-        }
-        catch (SocketException e)
-        {
-            _failure = e.SocketErrorCode == SocketError.AddressAlreadyInUse
-                ? $"Port {Config.Port} ist schon von einem anderen Programm belegt. Das Programm beenden oder WhisperShortcut neu starten."
-                : "Der Dienst konnte nicht starten. Details stehen im Protokoll.";
-            Core.Log.Error($"MCP: start failed ({e.SocketErrorCode})");
+            TryRewriteClientUrls();
         }
         RaiseChanged();
     }
@@ -290,6 +311,38 @@ internal sealed class McpService : IMcpHost, IDisposable
     }
 
     // ---------------- connecting apps ----------------
+
+    /// <summary>
+    /// A port change leaves Claude Desktop and Claude Code pointing at the old URL. Rewrite our own loopback
+    /// entries to the port that just bound; a foreign URL is left alone. Failures are logged, the server stays up.
+    /// </summary>
+    private void TryRewriteClientUrls()
+    {
+        try
+        {
+            var url = EndpointUrl;
+            var key = KeyForClients;
+            Rewrite(McpClientSetup.ClaudeDesktopConfigPath(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData)),
+                existing => McpClientSetup.RewriteOwnUrl(existing, url, key, claudeCode: false));
+            Rewrite(McpClientSetup.ClaudeCodeUserConfigPath(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)),
+                existing => McpClientSetup.RewriteOwnUrl(existing, url, key, claudeCode: true));
+        }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException or McpConfigException)
+        {
+            Core.Log.Error("MCP: client URL rewrite failed", e);
+        }
+    }
+
+    private static void Rewrite(string path, Func<string?, string?> rewrite)
+    {
+        if (!File.Exists(path)) return;
+        var updated = rewrite(File.ReadAllText(path));
+        if (updated == null) return;
+        McpClientSetup.WriteWithBackup(path, _ => updated);
+        Core.Log.Info("MCP: client config URL updated: " + Path.GetFileName(path));
+    }
 
     /// <summary>Writes our entry into Claude Desktop's config (backup first). Returns the German result for the user.</summary>
     public string ConnectClaudeDesktop()

@@ -82,6 +82,54 @@ public static class McpClientSetup
     public static string MergeClaudeDesktop(string? existingJson, string url, string token) =>
         Render(Merge(existingJson, DesktopEntry(url, token)));
 
+    /// <summary>
+    /// True for <c>http://127.0.0.1:&lt;p&gt;/mcp</c> and <c>http://localhost:&lt;p&gt;/mcp</c> when
+    /// <c>p</c> is <see cref="McpConfig.DefaultPort"/> through the fallback window (Mac isOwnLoopbackMCPURL).
+    /// </summary>
+    public static bool IsOwnLoopbackMcpUrl(string url)
+    {
+        const string suffix = "/mcp";
+        string? prefix = url.StartsWith("http://127.0.0.1:", StringComparison.Ordinal) ? "http://127.0.0.1:"
+            : url.StartsWith("http://localhost:", StringComparison.Ordinal) ? "http://localhost:"
+            : null;
+        if (prefix == null || !url.EndsWith(suffix, StringComparison.Ordinal)) return false;
+        var portText = url[prefix.Length..^suffix.Length];
+        if (!ushort.TryParse(portText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var port))
+            return false;
+        if (port.ToString(System.Globalization.CultureInfo.InvariantCulture) != portText) return false;
+        return port >= McpConfig.DefaultPort && port <= McpPorts.LastPort;
+    }
+
+    /// <summary>
+    /// New config text when our entry's URL is one of our loopback ports but not <paramref name="currentUrl"/>.
+    /// Null when there is nothing to change: no entry, the URL is already current, a foreign URL, or the file
+    /// does not parse. The written entry uses <paramref name="currentUrl"/> and <paramref name="token"/>.
+    /// </summary>
+    public static string? RewriteOwnUrl(string? existingJson, string currentUrl, string token, bool claudeCode)
+    {
+        if (string.IsNullOrWhiteSpace(existingJson)) return null;
+        JsonObject? root;
+        try { root = JsonNode.Parse(existingJson, null, ReadOptions) as JsonObject; }
+        catch (JsonException) { return null; }
+        if (root?["mcpServers"]?[ServerName] is not JsonObject entry) return null;
+        var found = EntryUrl(entry);
+        if (found == null || found == currentUrl || !IsOwnLoopbackMcpUrl(found)) return null;
+        return claudeCode ? MergeClaudeCode(existingJson, currentUrl, token) : MergeClaudeDesktop(existingJson, currentUrl, token);
+    }
+
+    private static string? EntryUrl(JsonObject entry)
+    {
+        if (entry["url"] is JsonValue url && url.TryGetValue<string>(out var direct) && direct.Length > 0) return direct;
+        if (entry["args"] is JsonArray args)
+        {
+            foreach (var arg in args)
+                if (arg is JsonValue value && value.TryGetValue<string>(out var text)
+                    && (text.StartsWith("http://", StringComparison.Ordinal) || text.StartsWith("https://", StringComparison.Ordinal)))
+                    return text;
+        }
+        return null;
+    }
+
     /// <summary>Same for Claude Code's .claude.json (a direct HTTP server).</summary>
     public static string MergeClaudeCode(string? existingJson, string url, string token) =>
         Render(Merge(existingJson, new JsonObject
