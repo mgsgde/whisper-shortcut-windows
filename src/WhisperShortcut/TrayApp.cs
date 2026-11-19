@@ -1367,8 +1367,23 @@ internal sealed partial class TrayApp : ApplicationContext
         // "Mhm.", "Äh." or a lone "0" is not an instruction. With a selection Gemini hears the
         // audio and would edit on a guess, so transcribe in parallel (the no-selection path
         // already did this for a bare edit command) and paste nothing. With or without a selection.
-        var instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct);
-        if (Core.FillerOnlyInstruction.Refuses(instruction))
+        // With a selection the transcript is only that check, so a failed transcription must not
+        // fail an edit Gemini answers fine: log it and go on without the check.
+        string instruction = "";
+        bool instructionKnown = true;
+        if (selection == null)
+            instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct);
+        else
+        {
+            try { instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                Core.Log.Warn($"Prompt: filler check transcription failed, continuing without it: {ex.GetType().Name}");
+                instructionKnown = false;
+            }
+        }
+        if (instructionKnown && Core.FillerOnlyInstruction.Refuses(instruction))
         {
             Core.Log.Info("Prompt: instruction was only a filler, refused");
             _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
