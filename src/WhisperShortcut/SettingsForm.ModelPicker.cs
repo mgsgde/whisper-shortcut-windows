@@ -109,6 +109,20 @@ internal sealed partial class SettingsForm
         return Core.ModelPickers.Find(models, engine, id);
     }
 
+    /// <summary>
+    /// Mac #429: the Dictate Prompt page says what hears the instruction. Gemini hears the voice itself (no Glossary);
+    /// the local model and OpenAI get it transcribed by the Diktieren speech recognition, Glossary included.
+    /// </summary>
+    private string PromptSpeechNote(Core.PickerModel prompt, bool offline)
+    {
+        if (prompt.Engine == Core.Engine.Gemini && !offline) return " · Hört deine Stimme direkt, darum gilt das Glossar hier nicht.";
+        var dictate = _pickers.FirstOrDefault(x => x.Engine == _dictateStep.Engine);
+        if (dictate == null) return "";
+        var models = dictate.Models();
+        var speech = offline ? models.FirstOrDefault(m => m.Engine == Core.Engine.Local) : Current(dictate, models);
+        return speech == null ? "" : $" · Spracherkennung: {speech.Name} mit deinem Glossar, beides unter Diktieren.";
+    }
+
     private void RefreshPicker(Picker p)
     {
         var models = p.Models();
@@ -128,6 +142,7 @@ internal sealed partial class SettingsForm
             : offline ? $"Der Offline-Modus ist an (Datenschutz & Berechtigungen): Es läuft {shown.Name} auf diesem PC."
             : $"{shown.Name} · {shown.Description}" + (Usable(shown) ? "" : " · Dafür fehlt ein Schlüssel unter Konten.")
               + (shown.Engine == Core.Engine.Local && !p.LocalReady() ? " · Muss einmal geladen werden (unten)." : "");
+        if (shown != null && p.Engine == _promptStep.Engine) p.Description.Text += PromptSpeechNote(shown, offline);
         ResumeLayout(true);
         // WHY: an auto-size flow panel keeps the height it had when it was laid out narrower (more wrapped rows).
         p.Tiles.Parent?.PerformLayout();
