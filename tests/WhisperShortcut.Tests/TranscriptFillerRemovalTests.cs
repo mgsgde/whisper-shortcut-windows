@@ -17,7 +17,7 @@ public class TranscriptFillerRemovalTests
     [InlineData("Das ist mhm gut.", "Das ist gut.", "mhm")]
     [InlineData("Das ist hmm gut.", "Das ist gut.", "hmm")]
     public void FillersDropMidSentenceWithoutTouchingTheNextWordsCase(string input, string expected, string label) =>
-        Assert.Equal(expected, TextCleanup.RemovingFillers(input));
+        Assert.True(TextCleanup.RemovingFillers(input) == expected, label);
 
     [Theory]
     [InlineData("ähm das ist gut.", "Das ist gut.", "ähm at start")]
@@ -32,7 +32,7 @@ public class TranscriptFillerRemovalTests
     [InlineData("Okay? ähm das passt", "Okay? Das passt", "after question")]
     [InlineData("Okay.\nähm das passt", "Okay.\n Das passt", "after newline")]
     public void AFillerAtTheStartOrAfterASentenceEndCapitalisesTheNextLetter(string input, string expected, string label) =>
-        Assert.Equal(expected, TextCleanup.RemovingFillers(input));
+        Assert.True(TextCleanup.RemovingFillers(input) == expected, label);
 
     [Theory]
     [InlineData("Das ist ähnlich.", "Das ist ähnlich.", "ähnlich")]
@@ -41,7 +41,7 @@ public class TranscriptFillerRemovalTests
     [InlineData("achso, dann", "achso, dann", "achso")]
     [InlineData("Herr Ehmann kommt", "Herr Ehmann kommt", "Ehmann")]
     public void RealWordsThatOnlyLookLikeFillersStay(string input, string expected, string label) =>
-        Assert.Equal(expected, TextCleanup.RemovingFillers(input));
+        Assert.True(TextCleanup.RemovingFillers(input) == expected, label);
 
     [Theory]
     [InlineData("ähm")]
