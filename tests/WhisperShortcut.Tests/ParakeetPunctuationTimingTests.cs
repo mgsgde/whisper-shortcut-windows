@@ -284,6 +284,24 @@ public class ParakeetPunctuationTimingTests
         Assert.Equal("50, Merkzeichen", ParakeetPunctuationTiming.FallbackWithoutTiming("50,Merkzeichen"));
 
     [Fact]
+    public void DigitHyphenIsReportedWithItsTimingNeverItsText()
+    {
+        ParakeetPunctuationTiming.Token[] tokens =
+        [
+            Word("Bescheid", 0.0, 0.5), Word("vom", 0.5, 0.7), Word("6", 0.8, 1.0),
+            Mark("-", 1.3, 1.35), Mark("2", 1.4, 1.5), Mark("5", 1.5, 1.6),
+        ];
+        var found = ParakeetPunctuationTiming.DigitHyphens(tokens);
+        var hyphen = Assert.Single(found);
+        Assert.Equal(new ParakeetPunctuationTiming.DigitHyphen(true, 50, 400, 1, 2), hyphen);
+        Assert.Equal("LIVE-DICTATE: digit-hyphen own=true durMs=50 gapMs=400 left=1 right=2", hyphen.LogLine);
+        Assert.Empty(ParakeetPunctuationTiming.DigitHyphens(
+            [Word("Covid", 0, 0.4), Mark("-", 0.4, 0.45), Mark("19", 0.45, 0.6)]));
+        Assert.Empty(ParakeetPunctuationTiming.DigitHyphens(
+            [Word("L4", 0, 0.4), Mark("-", 0.4, 0.45), Word("L5", 0.5, 0.6)]));
+    }
+
+    [Fact]
     public void EllipsisMismatchStillFallsBackWithMarks()
     {
         var tokens = new[]

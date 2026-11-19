@@ -685,6 +685,46 @@ public class SpokenColonMishearingTests
     }
 }
 
+/// <summary>A hyphen between digit groups is a swallowed Schrägstrich, spoken-only only (Mac #482).</summary>
+public class SpokenSlashBetweenNumbersTests
+{
+    [Theory]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6-25.", "Bescheid vom 6/25.")]
+    [InlineData(PunctuationMode.SpokenOnly, "Lendenwirbel 4-5", "Lendenwirbel 4/5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Aktenzeichen 12-24", "Aktenzeichen 12/24")]
+    [InlineData(PunctuationMode.Automatic, "Bescheid vom 6-25.", "Bescheid vom 6-25.")]
+    [InlineData(PunctuationMode.Automatic, "Aktenzeichen 12-24", "Aktenzeichen 12-24")]
+    [InlineData(PunctuationMode.SpokenOnly, "Das COVID-19 Risiko", "Das COVID-19 Risiko")]
+    [InlineData(PunctuationMode.SpokenOnly, "Covid-19 Impfung", "Covid-19 Impfung")]
+    [InlineData(PunctuationMode.SpokenOnly, "Lendenwirbel L4-L5", "Lendenwirbel L4-L5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Raum A1-B2", "Raum A1-B2")]
+    [InlineData(PunctuationMode.SpokenOnly, "Vitamin B-12", "Vitamin B-12")]
+    [InlineData(PunctuationMode.SpokenOnly, "am 2025-11-15", "am 2025-11-15")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6 - 25", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6 – 25", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6\u221225", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6–25.", "Bescheid vom 6/25.")]
+    [InlineData(PunctuationMode.SpokenOnly, "Lendenwirbel L4-5", "Lendenwirbel L4/5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Halswirbel C5-6", "Halswirbel C5/6")]
+    [InlineData(PunctuationMode.SpokenOnly, "LWK 4-5", "LWK 4/5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Raum AB12-34", "Raum AB12/34")]
+    [InlineData(PunctuationMode.SpokenOnly, "Lendenwirbel LWK4-5", "Lendenwirbel LWK4/5")]
+    [InlineData(PunctuationMode.SpokenOnly, "HWS3-4", "HWS3/4")]
+    [InlineData(PunctuationMode.SpokenOnly, "Impfung Covid19-20", "Impfung Covid19-20")]
+    [InlineData(PunctuationMode.SpokenOnly, "Notiz abc4-5", "Notiz abc4-5")]
+    [InlineData(PunctuationMode.SpokenOnly, "Raum ABCDE12-34", "Raum ABCDE12-34")]
+    [InlineData(PunctuationMode.SpokenOnly, "Aktenzeichen 12-24-3", "Aktenzeichen 12/24/3")]
+    [InlineData(PunctuationMode.SpokenOnly, "Aktenzeichen 12 - 24 - 3", "Aktenzeichen 12/24/3")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6-fünfundzwanzig", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom sechs-25", "Bescheid vom 6/25")]
+    [InlineData(PunctuationMode.Automatic, "Bescheid vom sechs-25", "Bescheid vom sechs-25")]
+    [InlineData(PunctuationMode.SpokenOnly, "ein Sechs-Wochen-Plan", "ein Sechs-Wochen-Plan")]
+    [InlineData(PunctuationMode.SpokenOnly, "Bescheid vom 6.25", "Bescheid vom 6.25")]
+    [InlineData(PunctuationMode.SpokenOnly, "sechs Schrägstrich fünfundzwanzig", "6/25")]
+    public void HyphenBetweenDigits(PunctuationMode mode, string input, string expected) =>
+        Assert.Equal(expected, SpokenPunctuation.Apply(input, mode));
+}
+
 /// <summary>False-positive guards from Mac #408 (R194).</summary>
 public class SpokenPunctuationGuardTests
 {

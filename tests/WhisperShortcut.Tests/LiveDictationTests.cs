@@ -767,3 +767,18 @@ public class LiveDictationTests
         Assert.Equal(LiveClipboardEnd.RestoreBefore, LiveDictation.ClipboardAtEnd(false, false, Outcome(), false));
     }
 }
+
+/// <summary>A spoken Schrägstrich between two numbers (Mac #482).</summary>
+public class LiveSlashBetweenNumbersTests
+{
+    [Theory]
+    [InlineData("sechs Schrägstrich fünfundzwanzig", "6/25")]
+    [InlineData("6 Schrägstrich 25", "6/25")]
+    [InlineData("6 Schrägstrich fünfundzwanzig", "6/25")]
+    [InlineData("sechs-Schrägstrich-fünfundzwanzig", "6/25")]
+    [InlineData("6-Schrägstrich-25", "6/25")]
+    [InlineData("6Schrägstrich25", "6/25")]
+    [InlineData("Bescheid vom sechs Schrägstrich fünfundzwanzig Punkt", "Bescheid vom 6/25.")]
+    public void SlashBetweenNumbers(string raw, string expected) =>
+        Assert.Equal(expected, LiveDictation.FinishPiece(raw, PunctuationMode.SpokenOnly));
+}

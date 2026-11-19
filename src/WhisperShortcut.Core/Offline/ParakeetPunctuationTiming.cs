@@ -41,6 +41,52 @@ public static class ParakeetPunctuationTiming
     /// <summary>The result of applying the rule to a text.</summary>
     public sealed record Filtered(string Text, int Kept, int Dropped);
 
+    /// <summary>
+    /// A hyphen, en dash or minus sign directly between two digits in the token run: Parakeet's
+    /// stand-in for a spoken word between two numbers (usually "Schrägstrich"). Numbers only, never
+    /// the text; they tell whether the dash is a token of its own and how long the speaker paused.
+    /// </summary>
+    public sealed record DigitHyphen(bool OwnToken, int DurationMs, int GapMs, int LeftDigits, int RightDigits)
+    {
+        public string LogLine =>
+            "LIVE-DICTATE: digit-hyphen own=" + (OwnToken ? "true" : "false")
+            + " durMs=" + DurationMs + " gapMs=" + GapMs
+            + " left=" + LeftDigits + " right=" + RightDigits;
+    }
+
+    private static readonly HashSet<char> DashCharacters = ['-', '\u2013', '\u2212'];
+
+    /// <summary>Every digit-hyphen in <paramref name="tokens"/>, in order. Never includes the dictated text.</summary>
+    public static List<DigitHyphen> DigitHyphens(IReadOnlyList<Token> tokens)
+    {
+        var characters = new List<(char Character, int Token)>();
+        for (var index = 0; index < tokens.Count; index++)
+        {
+            foreach (var character in tokens[index].Text.Replace(WordMarker, ' '))
+                characters.Add((character, index));
+        }
+        bool IsDigit(int i) => characters[i].Character is >= '0' and <= '9';
+        var found = new List<DigitHyphen>();
+        for (var k = 0; k < characters.Count; k++)
+        {
+            if (!DashCharacters.Contains(characters[k].Character)) continue;
+            if (k == 0 || k + 1 >= characters.Count || !IsDigit(k - 1) || !IsDigit(k + 1)) continue;
+            var left = 0;
+            while (k - 1 - left >= 0 && IsDigit(k - 1 - left)) left++;
+            var right = 0;
+            while (k + 1 + right < characters.Count && IsDigit(k + 1 + right)) right++;
+            var token = tokens[characters[k].Token];
+            var before = tokens[characters[k - 1].Token];
+            var after = tokens[characters[k + 1].Token];
+            found.Add(new DigitHyphen(
+                Bare(token).Length == 1,
+                (int)Math.Round((token.End - token.Start) * 1000, MidpointRounding.AwayFromZero),
+                (int)Math.Round((after.Start - before.End) * 1000, MidpointRounding.AwayFromZero),
+                left, right));
+        }
+        return found;
+    }
+
     private const char WordMarker = '▁';
     private const string MarkCharacters = ",.?!";
 
@@ -209,6 +255,11 @@ public static class ParakeetPunctuationTiming
     /// </summary>
     public static string KeepSpokenMarks(string text, IReadOnlyList<Token>? tokens, double audioSeconds, out bool timed)
     {
+        if (tokens != null)
+        {
+            foreach (var hyphen in DigitHyphens(tokens))
+                Log.Info(hyphen.LogLine);
+        }
         if (tokens != null && Filter(text, tokens, audioSeconds) is { } filtered)
         {
             Log.Info($"LOCAL-SPEECH: punctuation timing kept={filtered.Kept} dropped={filtered.Dropped}");

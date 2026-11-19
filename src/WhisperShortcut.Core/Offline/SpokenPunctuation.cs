@@ -160,7 +160,10 @@ public static class SpokenPunctuation
         // it go; a period stays ("usw. Schrägstrich b" -> "usw./b"). "Schrägstriche" (plural) does not
         // match; the glued form ("Schrägstrichsage") does. Spoken-only: in automatic mode, and in
         // Dictate Prompt instructions, the word is an ordinary noun.
-        MakeRule(@"[ \t,;]*\bschr(?:ä|ae|e)(?:g|ck)[ \t-]?strich\b[ \t,.;]*", "/"),
+        // Parakeet also hyphen-joins the word to neighbouring numbers ("6-Schrägstrich-25"): the hyphens
+        // go with it. A number glued on both sides ("6Schrägstrich25") is a slash too.
+        MakeRule(@"[ \t,;-]*\bschr(?:ä|ae|e)(?:g|ck)[ \t-]?strich\b[ \t,.;-]*", "/"),
+        MakeRule(@"(?<=\d)schr(?:ä|ae|e)(?:g|ck)[ \t-]?strich(?=\d)", "/"),
         MakeRule(@"[ \t,;]*\bschr(?:ä|ae|e)(?:g|ck)[ \t-]?strich(?!(?:e|en|es|s)\b)(?=\p{L})", "/"),
         // Parakeet glues the word onto the word before it: "Arbeitsmarktschrägstrich im ADL" ->
         // "Arbeitsmarkt/im ADL". Needs a letter directly before, so it never overlaps the rules above.
@@ -390,6 +393,98 @@ public static class SpokenPunctuation
         return changed ? result : null;
     }
 
+    // Case-sensitive on purpose: an all-caps prefix is 1–4 letters ("LWK4-5"); "abc4-5" stays.
+    private const RegexOptions SlashOpts = RegexOptions.CultureInvariant;
+    private static readonly Regex SlashBetweenNumberWordsRegex = new(
+        @"\b(\p{L}+)[ \t-]*\bschr(?:ä|ae|e)(?:g|ck)[ \t-]?strich\b[ \t-]*(\p{L}+)\b", Opts);
+    private static readonly Regex DigitHyphenChainRegex = new(
+        @"(?:(?<![\p{L}\d])|(?<=(?<!\p{L})\p{Lu}{1,4}))\d+(?:[ ]?[-–−][ ]?\d+)+(?![\p{L}\d])", SlashOpts);
+    private static readonly Regex IsoDateRegex = new(@"^\d{4}-\d{2}-\d{2}$", SlashOpts);
+    private static readonly Regex HalfConvertedHyphenRegex = new(
+        @"(?<![\p{L}\d])(\d+|\p{L}+)[ ]?[-–−][ ]?(\d+|\p{L}+)(?![\p{L}\d])", SlashOpts);
+
+    /// <summary>
+    /// "sechs Schrägstrich fünfundzwanzig" -> "6/25". Both sides must be German cardinal words;
+    /// anything else is left to the plain slash rules. Null when nothing matched.
+    /// </summary>
+    private static string? SlashBetweenNumberWords(string text)
+    {
+        var matches = SlashBetweenNumberWordsRegex.Matches(text);
+        if (matches.Count == 0) return null;
+        var result = text;
+        var changed = false;
+        for (var i = matches.Count - 1; i >= 0; i--)
+        {
+            var match = matches[i];
+            if (GermanNumberWords.Value(match.Groups[1].Value) is not int left) continue;
+            if (GermanNumberWords.Value(match.Groups[2].Value) is not int right) continue;
+            result = result.Remove(match.Index, match.Length)
+                .Insert(match.Index, left.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + "/" + right.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            changed = true;
+        }
+        return changed ? result : null;
+    }
+
+    /// <summary>
+    /// A hyphen (or en dash, minus sign, with single spaces) between plain digit groups is a spoken
+    /// "Schrägstrich" Parakeet swallowed ("6-25", "12-24", "4-5", "LWK4-5"). An ISO date stays.
+    /// Also "6-fünfundzwanzig" / "sechs-25": one side a digit group, the other a number word.
+    /// Null when unchanged.
+    /// </summary>
+    private static string? SlashBetweenNumbers(string text)
+    {
+        var result = text;
+        var changed = false;
+        var chains = DigitHyphenChainRegex.Matches(result);
+        for (var i = chains.Count - 1; i >= 0; i--)
+        {
+            var chain = chains[i].Value;
+            if (IsoDateRegex.IsMatch(chain)) continue;
+            result = result.Remove(chains[i].Index, chains[i].Length).Insert(chains[i].Index, DigitGroupsJoined(chain));
+            changed = true;
+        }
+        var halves = HalfConvertedHyphenRegex.Matches(result);
+        for (var i = halves.Count - 1; i >= 0; i--)
+        {
+            var match = halves[i];
+            var leftText = match.Groups[1].Value;
+            var rightText = match.Groups[2].Value;
+            var leftDigits = leftText.Length > 0 && leftText.All(char.IsDigit);
+            var rightDigits = rightText.Length > 0 && rightText.All(char.IsDigit);
+            if (leftDigits == rightDigits) continue;
+            int? left = leftDigits
+                ? (int.TryParse(leftText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var l) ? l : null)
+                : GermanNumberWords.Value(leftText);
+            int? right = rightDigits
+                ? (int.TryParse(rightText, System.Globalization.NumberStyles.None, System.Globalization.CultureInfo.InvariantCulture, out var r) ? r : null)
+                : GermanNumberWords.Value(rightText);
+            if (left == null || right == null) continue;
+            result = result.Remove(match.Index, match.Length)
+                .Insert(match.Index, left.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                    + "/" + right.Value.ToString(System.Globalization.CultureInfo.InvariantCulture));
+            changed = true;
+        }
+        return changed ? result : null;
+    }
+
+    private static string DigitGroupsJoined(string chain)
+    {
+        var parts = new List<string>();
+        var i = 0;
+        while (i < chain.Length)
+        {
+            if (char.IsDigit(chain[i]))
+            {
+                var start = i;
+                while (i < chain.Length && char.IsDigit(chain[i])) i++;
+                parts.Add(chain.Substring(start, i - start));
+            }
+            else i++;
+        }
+        return string.Join("/", parts);
+    }
+
     /// <summary>
     /// Text with no command in it comes back unchanged (same string, whitespace included).
     /// <paramref name="keepsEdgeBreaks"/> trims only spaces and tabs at the start/end, not line breaks:
@@ -409,6 +504,16 @@ public static class SpokenPunctuation
         if (mode == PunctuationMode.SpokenOnly && DecimalCommaBetweenNumberWords(result) is { } decimals)
         {
             result = decimals;
+            changed = true;
+        }
+        if (mode == PunctuationMode.SpokenOnly && SlashBetweenNumbers(result) is { } hyphenSlashes)
+        {
+            result = hyphenSlashes;
+            changed = true;
+        }
+        if (mode == PunctuationMode.SpokenOnly && SlashBetweenNumberWords(result) is { } wordSlashes)
+        {
+            result = wordSlashes;
             changed = true;
         }
         var rules = mode == PunctuationMode.SpokenOnly
