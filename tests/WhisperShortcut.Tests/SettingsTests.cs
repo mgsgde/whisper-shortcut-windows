@@ -181,7 +181,7 @@ public class SettingsTests
         Assert.Equal("gemini-3.8-flash", l.Prompt.Gemini);
         Assert.Equal(Settings.DefaultTranscriptionModel, l.Dictate.Gemini);
         Assert.Equal("gpt-6-sol", l.Prompt.OpenAi);
-        Assert.Equal("gpt-4o-transcribe", l.Dictate.OpenAi);
+        Assert.Equal("gpt-transcribe", l.Dictate.OpenAi);
     }
 
     [Fact]
@@ -224,7 +224,7 @@ public class SettingsTests
         Assert.Equal(Engine.Gemini, s.Prompt.Engine);
         Assert.True(s.OfflineMode);
         Assert.Equal("", s.OpenAiKey);
-        Assert.Equal("gpt-4o-transcribe", s.Dictate.OpenAi);
+        Assert.Equal("gpt-transcribe", s.Dictate.OpenAi);
         Assert.Equal("gpt-6-sol", s.Prompt.OpenAi);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
@@ -1040,7 +1040,7 @@ public class QuickActionRequestTests
         var s = Settings.Load(path, new PlainSecretProtector());
         s.ReadAloudHotkey = "Alt+8";
         s.ReadAloudHotkeyEnabled = false;
-        s.ReadAloudModel = "gpt-4o-mini-tts";
+        s.ReadAloudModel = "gemini-3.8-flash-tts";
         s.ReadAloudVoiceGemini = "Kore";
         s.ReadAloudVoiceOpenAi = "marin";
         s.ReadAloudSpeed = 1.5;
@@ -1055,8 +1055,8 @@ public class QuickActionRequestTests
         var t = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal("Alt+8", t.ReadAloudHotkey);
         Assert.False(t.ReadAloudHotkeyEnabled);
-        Assert.Equal("gpt-4o-mini-tts", t.ReadAloudModel);
-        Assert.Equal(TtsProvider.OpenAI, t.ReadAloudTtsModel.Provider);
+        Assert.Equal("gemini-3.8-flash-tts", t.ReadAloudModel);
+        Assert.Equal(TtsProvider.Gemini, t.ReadAloudTtsModel.Provider);
         Assert.Equal("Kore", t.ReadAloudVoiceGemini);
         Assert.Equal("marin", t.ReadAloudVoiceOpenAi);
         Assert.Equal(1.5, t.ReadAloudSpeed);
@@ -1081,5 +1081,56 @@ public class QuickActionRequestTests
         File.WriteAllText(path, "{\"readAloudModel\":\"gemini-3.1-flash-tts-preview\"}");
         Assert.Equal(ReadAloud.DefaultModel, Settings.Load(path, new PlainSecretProtector()).ReadAloudModel);
         Directory.Delete(dir, true);
+    }
+
+    private static string WriteSettings(string json)
+    {
+        var dir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var path = Path.Combine(dir, "settings.json");
+        File.WriteAllText(path, json);
+        return path;
+    }
+
+    [Fact]
+    public void Load_RetiredGpt4oTranscribe_ForwardsDictateAndMeeting()
+    {
+        var path = WriteSettings("""
+            {
+              "speechEngine": "openai",
+              "openAiTranscriptionModel": "gpt-4o-transcribe",
+              "meetingSpeechEngine": "openai",
+              "meetingOpenAiTranscriptionModel": "gpt-4o-transcribe"
+            }
+            """);
+        var s = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(OpenAiModels.KeywordModel, s.Dictate.OpenAi);
+        Assert.Equal(OpenAiModels.KeywordModel, s.MeetingTranscription.OpenAi);
+        var kept = WriteSettings("{\"openAiTranscriptionModel\":\"gpt-4o-mini-transcribe\"}");
+        Assert.Equal("gpt-4o-mini-transcribe", Settings.Load(kept, new PlainSecretProtector()).Dictate.OpenAi);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+        Directory.Delete(Path.GetDirectoryName(kept)!, true);
+    }
+
+    [Fact]
+    public void Load_RetiredMiniTts_MovesToGeminiWhenAKeyExists_ElseTheWindowsVoice_AndStays()
+    {
+        var withKey = WriteSettings("""{ "readAloudModel": "gpt-4o-mini-tts", "apiKey": "gemini-key" }""");
+        var gemini = Settings.Load(withKey, new PlainSecretProtector());
+        Assert.Equal(ReadAloud.DefaultModel, gemini.ReadAloudModel);
+        Assert.Contains("\"readAloudModel\": \"gemini-3.8-flash-lite-tts\"", File.ReadAllText(withKey));
+        Assert.DoesNotContain("gpt-4o-mini-tts", File.ReadAllText(withKey));
+
+        var path = WriteSettings("""{ "readAloudModel": "gpt-4o-mini-tts", "openAiKey": "sk-test" }""");
+        var windows = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(ReadAloud.SystemModel, windows.ReadAloudModel);
+        Assert.Contains("\"readAloudModel\": \"system-windows\"", File.ReadAllText(path));
+
+        // A Gemini key added later does not move the user off the Windows voice.
+        windows.ApiKey = "gemini-key";
+        windows.Save();
+        Assert.Equal(ReadAloud.SystemModel, Settings.Load(path, new PlainSecretProtector()).ReadAloudModel);
+        Directory.Delete(Path.GetDirectoryName(withKey)!, true);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 }

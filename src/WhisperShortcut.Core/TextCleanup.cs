@@ -34,6 +34,47 @@ public static class TextCleanup
     private const string FinalPunctuation = ".!?:;";
 
     /// <summary>
+    /// Longest clip for which a single-phrase transcript is treated as a silence hallucination.
+    /// A clip of 2 s or more that transcribes to just "You" or "Vielen Dank" is kept. Unknown
+    /// duration keeps the transcript. Port of TextProcessingUtility.hallucinationMaxClipSeconds (Mac #367).
+    /// </summary>
+    public const double HallucinationMaxClipSeconds = 2.0;
+
+    /// <summary>
+    /// Subtitle filler a model emits when it hears no speech. Closed set, matched against the whole
+    /// transcript only. Port of TextProcessingUtility.knownWhisperHallucinations (Mac #367).
+    /// The Whisper VAD gate and the settings toggle are not ported.
+    /// </summary>
+    public static readonly HashSet<string> KnownSilenceHallucinations = new(StringComparer.Ordinal)
+    {
+        "thank you",
+        "thanks for watching",
+        "you",
+        "bye",
+        "vielen dank",
+        "untertitel der amara.org-community",
+        "subtitles by the amara.org community",
+        "please subscribe",
+        "bitte abonnieren",
+    };
+
+    /// <summary>
+    /// Comparison form for the hallucination check: lowercased, trimmed, trailing punctuation and
+    /// whitespace removed. "Thank you." and "thank you" match; "Thank you, Dr. Meyer." does not.
+    /// </summary>
+    public static string PhantomComparisonForm(string text)
+    {
+        var form = (text ?? "").Trim().ToLowerInvariant();
+        while (form.Length > 0 && (char.IsPunctuation(form[^1]) || char.IsWhiteSpace(form[^1])))
+            form = form[..^1];
+        return form;
+    }
+
+    /// <summary>True when the whole transcript is one of <see cref="KnownSilenceHallucinations"/>.</summary>
+    public static bool IsKnownSilenceHallucination(string text) =>
+        KnownSilenceHallucinations.Contains(PhantomComparisonForm(text));
+
+    /// <summary>
     /// Normalisation for every model answer (dictation and prompt answers): trim, 3+ newlines to 2,
     /// per line trailing whitespace removed, leading indentation kept, inner runs of spaces/tabs
     /// collapsed, then the "here is the transcription:" style remnants removed.
@@ -45,15 +86,196 @@ public static class TextCleanup
     }
 
     /// <summary>
-    /// Cleanup for Dictate Prompt, quick action and template replies: the same whitespace steps as
-    /// <see cref="Normalize"/> plus the anchored "here is the transcription:" preamble strip, but none of
-    /// the transcript leak heuristics (literal prompt prefixes and suffixes), which would cut real answers.
-    /// Port of the Mac's PromptReplyCleanup.normalize.
+    /// Cleanup for Dictate Prompt, quick action and template replies: a leaked
+    /// <c>start_thought</c> … <c>end_thought</c> block is removed first (Mac #443,
+    /// <see cref="StripLeakedThought"/>), then the same whitespace steps as <see cref="Normalize"/>
+    /// plus the anchored "here is the transcription:" preamble strip, but none of the transcript leak
+    /// heuristics (literal prompt prefixes and suffixes), which would cut real answers.
+    /// Port of the Mac's PromptReplyCleanup.normalize after LeakedThoughtStrip.
     /// </summary>
     public static string NormalizeReply(string? text)
     {
-        var normalized = NormalizeWhitespace(text);
+        var normalized = NormalizeWhitespace(StripLeakedThought(text));
         return normalized.Length == 0 ? "" : StripPreamble(normalized).Trim();
+    }
+
+    /// <summary>
+    /// Drops a leaked Gemini reasoning block (<c>start_thought</c> … <c>end_thought</c>), content
+    /// included. An <c>end_thought</c> with no opener drops the prefix; an unclosed
+    /// <c>start_thought</c> drops the tail (still streaming, or truncated). Leading spaces and
+    /// line breaks (LF or CRLF) are trimmed. Port of LeakedThoughtStrip.strip (Mac #443). Thought parts are already
+    /// skipped where the response is parsed; this catches the marker text inside a visible part.
+    /// </summary>
+    public static string StripLeakedThought(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        var cleaned = text;
+        const string startMarker = "start_thought";
+        const string endMarker = "end_thought";
+        while (true)
+        {
+            var start = cleaned.IndexOf(startMarker, StringComparison.Ordinal);
+            if (start >= 0)
+            {
+                var end = cleaned.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);
+                if (end >= 0)
+                {
+                    cleaned = string.Concat(cleaned.AsSpan(0, start), cleaned.AsSpan(end + endMarker.Length));
+                }
+                else
+                {
+                    cleaned = cleaned[..start];
+                    // Drop the spaces that sat before the removed tail (newlines stay).
+                    while (cleaned.EndsWith(' ')) cleaned = cleaned[..^1];
+                    continue;
+                }
+            }
+            else
+            {
+                var end = cleaned.IndexOf(endMarker, StringComparison.Ordinal);
+                if (end >= 0)
+                    cleaned = cleaned[(end + endMarker.Length)..];
+                else
+                    break;
+            }
+        }
+        // The markers normally sit at the very start; drop the whitespace they leave behind there.
+        while (cleaned.Length > 0 && (cleaned[0] == ' ' || cleaned[0] == '\r' || cleaned[0] == '\n'))
+            cleaned = cleaned[1..];
+        return cleaned;
+    }
+
+    /// <summary>
+    /// English planning labels. A line matches only when the label is followed by ":".
+    /// Port of LeakedPlanningStrip.labels (Mac #457).
+    /// </summary>
+    private static readonly string[] PlanningLabels =
+    {
+        "Notice from the audio",
+        "User voice style",
+        "Voice style",
+        "Check prompt constraints",
+        "Check constraints",
+        "Constraints",
+        "Formatting",
+        "Details",
+        "Content",
+        "Plan",
+        "Draft",
+        "Instruction",
+        "Selected text",
+        "Task",
+    };
+
+    private const string GluePunctuation = ".!?:)";
+
+    /// <summary>
+    /// True when the first non-empty line is an English planning header.
+    /// "The user " is case-sensitive. Labels are case-insensitive and may have text after the colon.
+    /// </summary>
+    public static bool LooksLikePlanning(string text)
+    {
+        var line = FirstNonEmptyTrimmedLine(text);
+        if (line == null) return false;
+        if (line.StartsWith("The user ", StringComparison.Ordinal)) return true;
+        return IsPlanningLabelLine(line);
+    }
+
+    /// <summary>
+    /// Drops a leaked planning block from non-thought text parts, in order.
+    /// Separate planning parts are dropped whole. A plan glued to the answer is cut at the glue
+    /// point. Text that cannot be separated is returned unchanged. Port of LeakedPlanningStrip.strip (Mac #457).
+    /// </summary>
+    public static string StripLeakedPlanning(IReadOnlyList<string> parts)
+    {
+        var joined = string.Concat(parts);
+        if (parts.Count >= 2 && LooksLikePlanning(parts[0]))
+        {
+            var start = -1;
+            for (var i = 1; i < parts.Count; i++)
+            {
+                if (!LooksLikePlanning(parts[i])) { start = i; break; }
+            }
+            if (start < 0) return joined;
+            var kept = string.Concat(parts.Skip(start));
+            LogPlanningDrop(joined, kept, parts.Count);
+            return kept;
+        }
+        if (!LooksLikePlanning(joined) || GluedAnswerStart(joined) is not int cut) return joined;
+        var answer = joined[cut..];
+        LogPlanningDrop(joined, answer, parts.Count);
+        return answer;
+    }
+
+    private static bool IsPlanningLabelLine(string trimmedLine)
+    {
+        foreach (var label in PlanningLabels)
+        {
+            if (trimmedLine.StartsWith(label + ":", StringComparison.OrdinalIgnoreCase)) return true;
+        }
+        return false;
+    }
+
+    private static string? FirstNonEmptyTrimmedLine(string text)
+    {
+        var lineStart = 0;
+        while (true)
+        {
+            var lineEnd = text.IndexOf('\n', lineStart);
+            if (lineEnd < 0) lineEnd = text.Length;
+            var trimmed = text[lineStart..lineEnd].Trim();
+            if (trimmed.Length > 0) return trimmed;
+            if (lineEnd == text.Length) return null;
+            lineStart = lineEnd + 1;
+        }
+    }
+
+    /// <summary>
+    /// Start of the last planning header line: a known label line, or the first non-empty line
+    /// when it starts with "The user ".
+    /// </summary>
+    private static int? LastPlanningLineStart(string text)
+    {
+        int? anchor = null;
+        var isFirstNonEmpty = true;
+        var lineStart = 0;
+        while (true)
+        {
+            var lineEnd = text.IndexOf('\n', lineStart);
+            if (lineEnd < 0) lineEnd = text.Length;
+            var trimmed = text[lineStart..lineEnd].Trim();
+            if (trimmed.Length > 0)
+            {
+                if (IsPlanningLabelLine(trimmed)
+                    || (isFirstNonEmpty && trimmed.StartsWith("The user ", StringComparison.Ordinal)))
+                    anchor = lineStart;
+                isFirstNonEmpty = false;
+            }
+            if (lineEnd == text.Length) break;
+            lineStart = lineEnd + 1;
+        }
+        return anchor;
+    }
+
+    /// <summary>Index of the uppercase letter that starts the answer, where punctuation is glued to it.</summary>
+    private static int? GluedAnswerStart(string text)
+    {
+        var anchor = LastPlanningLineStart(text);
+        if (anchor is not int index) return null;
+        while (index < text.Length - 1)
+        {
+            if (GluePunctuation.Contains(text[index]) && char.IsUpper(text[index + 1]))
+                return index + 1;
+            index++;
+        }
+        return null;
+    }
+
+    private static void LogPlanningDrop(string original, string kept, int parts)
+    {
+        var dropped = original.Length - kept.Length;
+        if (dropped <= 0) return;
+        Log.Warn($"PROMPT-LEAK: dropped planning block ({dropped} chars, parts={parts})");
     }
 
     private static string NormalizeWhitespace(string? text)
@@ -80,16 +302,112 @@ public static class TextCleanup
     /// unless the text already ends in one of . ! ? : ; (ClipboardManager.formatTranscription). With
     /// <paramref name="addTrailingPeriod"/> off (spoken-only punctuation) no period is added.
     /// Never use this for Dictate Prompt answers.
+    /// <paramref name="audioSeconds"/> is the clip length. A transcript that is entirely one of
+    /// <see cref="KnownSilenceHallucinations"/> is dropped when the clip is shorter than
+    /// <see cref="HallucinationMaxClipSeconds"/> (Mac #367). Unknown or non-positive duration keeps
+    /// the text. Windows has no separate Whisper decode, so this runs for every dictation that
+    /// passes a duration.
     /// </summary>
-    public static string ForDictation(string? text, bool addTrailingPeriod = true)
+    public static string ForDictation(string? text, bool addTrailingPeriod = true, double? audioSeconds = null)
     {
-        var formatted = Normalize(text).Trim();
+        // Fillers go after the transcript cleanup and before the capital and the period, so a
+        // filler-only clip comes back empty and is treated as no speech (Mac #507).
+        var formatted = RemovingFillers(Normalize(text));
         if (formatted.Length == 0) return "";
+        if (audioSeconds is > 0 and < HallucinationMaxClipSeconds && IsKnownSilenceHallucination(formatted))
+        {
+            Log.Info($"HALLUCINATION-FILTER: Dropped known silence hallucination ({formatted.Length} chars, {audioSeconds:F1}s)");
+            return "";
+        }
         var first = formatted.EnumerateRunes().First();
         var upper = first.ToString().ToUpperInvariant();
         formatted = upper + formatted[first.Utf16SequenceLength..];
         if (addTrailingPeriod && FinalPunctuation.IndexOf(formatted[^1]) < 0) formatted += ".";
         return formatted;
+    }
+
+    private static readonly Regex FillerSpaceRun = new(@"[ \t]{2,}", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Drops hesitation fillers ("Mm-hmm", "Ähm", …) as whole words, case-insensitive, plus one
+    /// comma, period or semicolon glued on and the spaces around them. The word list is
+    /// <see cref="LiveDictation"/>'s, not a second copy. "Um", "ah", "aha", "achso" and "oh" stay.
+    /// A filler at the start, or right after ". ", "! ", "? " or a newline, uppercases the next
+    /// letter ("Ähm, ich komme" becomes "Ich komme"). A piece of only fillers comes back "".
+    /// Port of TextProcessingUtility.removingFillers (Mac #507). Live pieces keep their own pass
+    /// and do not capitalise here.
+    /// </summary>
+    public static string RemovingFillers(string text)
+    {
+        var matches = LiveDictation.FillerRegex.Matches(text);
+        if (matches.Count == 0) return text;
+
+        var rebuilt = new StringBuilder();
+        var cursor = 0;
+        var capitalizeNext = false;
+        foreach (Match match in matches)
+        {
+            if (cursor < match.Index)
+            {
+                var gap = text[cursor..match.Index];
+                rebuilt.Append(capitalizeNext ? CapitalizingFirstLetter(gap) : gap);
+                capitalizeNext = false;
+            }
+            // The match, including the spaces and one glued mark around the filler, becomes one space.
+            rebuilt.Append(' ');
+            if (FillerRemovalStartsSentence(text, match.Index, match.Index + match.Length))
+                capitalizeNext = true;
+            cursor = match.Index + match.Length;
+        }
+        if (cursor < text.Length)
+        {
+            var gap = text[cursor..];
+            rebuilt.Append(capitalizeNext ? CapitalizingFirstLetter(gap) : gap);
+        }
+        return FillerSpaceRun.Replace(rebuilt.ToString(), " ").Trim(' ', '\t');
+    }
+
+    /// <summary>
+    /// True when this filler match sits at the start of <paramref name="text"/> (whitespace aside)
+    /// or right after ". ", "! ", "? " or a newline. The spaces the filler pattern consumes count as the gap.
+    /// </summary>
+    private static bool FillerRemovalStartsSentence(string text, int matchStart, int matchEnd)
+    {
+        var wordStart = matchStart;
+        while (wordStart < matchEnd && (text[wordStart] == ' ' || text[wordStart] == '\t'))
+            wordStart++;
+        if (wordStart == 0) return true;
+
+        var index = wordStart;
+        var sawSpace = false;
+        while (index > 0)
+        {
+            var character = text[index - 1];
+            if (character is ' ' or '\t')
+            {
+                sawSpace = true;
+                index--;
+                continue;
+            }
+            break;
+        }
+        if (index == 0) return true;
+        var boundary = text[index - 1];
+        if (boundary is '\n' or '\r') return true;
+        return sawSpace && boundary is '.' or '!' or '?';
+    }
+
+    /// <summary>
+    /// Uppercases the first letter of <paramref name="gap"/> when a filler just before it opened a sentence.
+    /// Leading whitespace, including newlines, stays. A gap that does not start with a letter
+    /// (once that whitespace is skipped) is returned unchanged.
+    /// </summary>
+    private static string CapitalizingFirstLetter(string gap)
+    {
+        var index = 0;
+        while (index < gap.Length && char.IsWhiteSpace(gap[index])) index++;
+        if (index >= gap.Length || !char.IsLetter(gap[index])) return gap;
+        return string.Concat(gap.AsSpan(0, index), gap[index].ToString().ToUpperInvariant(), gap.AsSpan(index + 1));
     }
 
     /// <summary>
@@ -467,4 +785,91 @@ public static class TextCleanup
         // Never turn a pure preamble into "": the caller should see the original.
         return result.Length == 0 ? text : result;
     }
+
+    /// <summary>
+    /// Replaces Cyrillic letters that look like Latin ones, only inside a word that already
+    /// contains an ASCII Latin letter (A-Z / a-z). A word made only of Cyrillic stays as written.
+    /// Umlauts and ß count as letters but do not trigger the fold by themselves.
+    /// Port of TextProcessingUtility.foldingCyrillicHomoglyphs (Mac #508).
+    /// </summary>
+    public static (string Text, int Folded) FoldCyrillicHomoglyphs(string text)
+    {
+        if (string.IsNullOrEmpty(text)) return ("", 0);
+
+        var output = new StringBuilder(text.Length);
+        var folded = 0;
+        var index = 0;
+        while (index < text.Length)
+        {
+            if (char.IsLetter(text[index]))
+            {
+                var wordStart = index;
+                var wordEnd = index + 1;
+                while (wordEnd < text.Length && char.IsLetter(text[wordEnd])) wordEnd++;
+                var hasAscii = false;
+                for (var i = wordStart; i < wordEnd; i++)
+                {
+                    if (IsAsciiLatinLetter(text[i])) { hasAscii = true; break; }
+                }
+                if (hasAscii)
+                {
+                    for (var i = wordStart; i < wordEnd; i++)
+                    {
+                        if (LatinLookAlike(text[i]) is char latin)
+                        {
+                            output.Append(latin);
+                            folded++;
+                        }
+                        else output.Append(text[i]);
+                    }
+                }
+                else output.Append(text, wordStart, wordEnd - wordStart);
+                index = wordEnd;
+            }
+            else
+            {
+                output.Append(text[index]);
+                index++;
+            }
+        }
+
+        return folded > 0 ? (output.ToString(), folded) : (text, 0);
+    }
+
+    /// <summary>A-Z / a-z only. A precomposed umlaut is not a trigger.</summary>
+    private static bool IsAsciiLatinLetter(char character) =>
+        character is >= 'A' and <= 'Z' or >= 'a' and <= 'z';
+
+    /// <summary>
+    /// Cyrillic letters that are visually identical to a Latin letter. Letters absent from this
+    /// table (including lowercase в) are never rewritten.
+    /// </summary>
+    private static char? LatinLookAlike(char character) => character switch
+    {
+        '\u0430' => 'a', // а
+        '\u0435' => 'e', // е
+        '\u043E' => 'o', // о
+        '\u0440' => 'p', // р
+        '\u0441' => 'c', // с
+        '\u0443' => 'y', // у
+        '\u0445' => 'x', // х
+        '\u0456' => 'i', // і
+        '\u0458' => 'j', // ј
+        '\u0455' => 's', // ѕ
+        '\u0410' => 'A', // А
+        '\u0412' => 'B', // В
+        '\u0415' => 'E', // Е
+        '\u041A' => 'K', // К
+        '\u041C' => 'M', // М
+        '\u041D' => 'H', // Н
+        '\u041E' => 'O', // О
+        '\u0420' => 'P', // Р
+        '\u0421' => 'C', // С
+        '\u0422' => 'T', // Т
+        '\u0425' => 'X', // Х
+        '\u0406' => 'I', // І
+        '\u0408' => 'J', // Ј
+        '\u0405' => 'S', // Ѕ
+        _ => null,
+    };
 }

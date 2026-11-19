@@ -193,10 +193,11 @@ public static class LiveDictation
     }
 
     // "hmm" is two or more m's; "hm" is the single one. Longer forms come first so a word boundary
-    // still decides, and "ähm" is not eaten as "äh".
-    private static readonly System.Text.RegularExpressions.Regex FillerRegex = new(
+    // still decides, and "ähm" is not eaten as "äh". TextCleanup.RemovingFillers uses this same
+    // pattern for cloud transcripts (Mac #507); this method stays the live-piece behaviour.
+    internal static readonly System.Text.RegularExpressions.Regex FillerRegex = new(
         @"[ \t]*\b(?:mm-hmm|mmhmm|m-hm|mhm|hm{2,}|hm|ähm|äh|öhm|ehm)\b[,.;]?[ \t]*",
-        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant | System.Text.RegularExpressions.RegexOptions.Compiled);
     private static readonly System.Text.RegularExpressions.Regex FillerSpaceRun = new(@"[ \t]{2,}");
 
     /// <summary>
