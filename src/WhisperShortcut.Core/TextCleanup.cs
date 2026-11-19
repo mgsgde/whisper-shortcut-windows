@@ -45,15 +45,63 @@ public static class TextCleanup
     }
 
     /// <summary>
-    /// Cleanup for Dictate Prompt, quick action and template replies: the same whitespace steps as
-    /// <see cref="Normalize"/> plus the anchored "here is the transcription:" preamble strip, but none of
-    /// the transcript leak heuristics (literal prompt prefixes and suffixes), which would cut real answers.
-    /// Port of the Mac's PromptReplyCleanup.normalize.
+    /// Cleanup for Dictate Prompt, quick action and template replies: a leaked
+    /// <c>start_thought</c> … <c>end_thought</c> block is removed first (Mac #443,
+    /// <see cref="StripLeakedThought"/>), then the same whitespace steps as <see cref="Normalize"/>
+    /// plus the anchored "here is the transcription:" preamble strip, but none of the transcript leak
+    /// heuristics (literal prompt prefixes and suffixes), which would cut real answers.
+    /// Port of the Mac's PromptReplyCleanup.normalize after LeakedThoughtStrip.
     /// </summary>
     public static string NormalizeReply(string? text)
     {
-        var normalized = NormalizeWhitespace(text);
+        var normalized = NormalizeWhitespace(StripLeakedThought(text));
         return normalized.Length == 0 ? "" : StripPreamble(normalized).Trim();
+    }
+
+    /// <summary>
+    /// Drops a leaked Gemini reasoning block (<c>start_thought</c> … <c>end_thought</c>), content
+    /// included. An <c>end_thought</c> with no opener drops the prefix; an unclosed
+    /// <c>start_thought</c> drops the tail (still streaming, or truncated). Leading spaces and
+    /// newlines are trimmed. Port of LeakedThoughtStrip.strip (Mac #443). Thought parts are already
+    /// skipped where the response is parsed; this catches the marker text inside a visible part.
+    /// </summary>
+    public static string StripLeakedThought(string? text)
+    {
+        if (string.IsNullOrEmpty(text)) return "";
+        var cleaned = text;
+        const string startMarker = "start_thought";
+        const string endMarker = "end_thought";
+        while (true)
+        {
+            var start = cleaned.IndexOf(startMarker, StringComparison.Ordinal);
+            if (start >= 0)
+            {
+                var end = cleaned.IndexOf(endMarker, start + startMarker.Length, StringComparison.Ordinal);
+                if (end >= 0)
+                {
+                    cleaned = string.Concat(cleaned.AsSpan(0, start), cleaned.AsSpan(end + endMarker.Length));
+                }
+                else
+                {
+                    cleaned = cleaned[..start];
+                    // Drop the spaces that sat before the removed tail (newlines stay).
+                    while (cleaned.EndsWith(' ')) cleaned = cleaned[..^1];
+                    continue;
+                }
+            }
+            else
+            {
+                var end = cleaned.IndexOf(endMarker, StringComparison.Ordinal);
+                if (end >= 0)
+                    cleaned = cleaned[(end + endMarker.Length)..];
+                else
+                    break;
+            }
+        }
+        // The markers normally sit at the very start; drop the whitespace they leave behind there.
+        while (cleaned.Length > 0 && (cleaned[0] == ' ' || cleaned[0] == '\n'))
+            cleaned = cleaned[1..];
+        return cleaned;
     }
 
     private static string NormalizeWhitespace(string? text)
