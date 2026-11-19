@@ -195,6 +195,8 @@ public class LiveMeetingSessionTests : IDisposable
         Assert.DoesNotContain("# Meeting", seen);
         Assert.Equal("## Punkte\n- Start", _store.ReadSummary(s.Meeting.Id));
         Assert.True(result.Meeting.HasSummary);
+        Assert.Equal(MeetingSummaryMeta.FromChunks(_store.ReadChunks(s.Meeting.Id)), _store.ReadSummaryMeta(s.Meeting.Id));
+        Assert.False(_store.NeedsNewSummary(s.Meeting.Id));
     }
 
     [Fact]
@@ -208,6 +210,7 @@ public class LiveMeetingSessionTests : IDisposable
         Assert.IsType<InvalidOperationException>(result.SummaryError);
         Assert.Equal(MeetingStatus.Ended, _store.Get(s.Meeting.Id)!.Status);
         Assert.Null(_store.ReadSummary(s.Meeting.Id));
+        Assert.True(_store.NeedsNewSummary(s.Meeting.Id));
     }
 
     [Fact]

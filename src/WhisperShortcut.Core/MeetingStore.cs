@@ -81,6 +81,7 @@ public sealed class MeetingStore
     private const string MeetingFile = "meeting.json";
     private const string TranscriptFile = "transcript.md";
     private const string SummaryFile = "summary.md";
+    private const string SummaryMetaFile = "summary.meta.json";
     private const string PendingFolder = "audio-pending";
 
     private static readonly UTF8Encoding Utf8 = new(false);
@@ -271,6 +272,19 @@ public sealed class MeetingStore
         return result;
     }
 
+    /// <summary>
+    /// The transcript from the first chunk marker on, or null when there is no chunk to summarize
+    /// (no marker, or only empty bodies). The header above the first marker is left out.
+    /// </summary>
+    public static string? TextForSummary(string? transcript)
+    {
+        if (string.IsNullOrEmpty(transcript)) return null;
+        var first = MarkerRegex.Match(transcript);
+        if (!first.Success) return null;
+        var body = transcript[first.Index..];
+        return ParseTranscript(body).Count == 0 ? null : body;
+    }
+
     /// <summary>"[mm:ss]" for a position in the meeting; minutes may exceed 59 ("[75:03]").</summary>
     public static string FormatTimestamp(double seconds)
     {
@@ -357,11 +371,47 @@ public sealed class MeetingStore
         }
     }
 
-    /// <summary>Writes summary.md.</summary>
-    public void SaveSummary(string id, string markdown)
+    /// <summary>
+    /// Writes summary.md and the sidecar that records which transcript it was built from.
+    /// <paramref name="meta"/> is that transcript (taken before the model ran). Without it the sidecar
+    /// matches the file as it is now, so a chunk that arrived during generation would look covered.
+    /// </summary>
+    public void SaveSummary(string id, string markdown, MeetingSummaryMeta? meta = null)
     {
         var folder = FolderOf(id);
-        lock (_gate) WriteTextAtomic(Path.Combine(folder, SummaryFile), markdown);
+        lock (_gate)
+        {
+            WriteTextAtomic(Path.Combine(folder, SummaryFile), markdown);
+            var source = meta ?? MeetingSummaryMeta.FromChunks(
+                ParseTranscript(ReadText(Path.Combine(folder, TranscriptFile)) ?? ""));
+            WriteTextAtomic(Path.Combine(folder, SummaryMetaFile), JsonSerializer.Serialize(source, Json));
+        }
+    }
+
+    /// <summary>The sidecar next to summary.md, or null when there is none or it cannot be read.</summary>
+    public MeetingSummaryMeta? ReadSummaryMeta(string id)
+    {
+        if (!IsValidId(id)) return null;
+        lock (_gate)
+        {
+            var text = ReadText(Path.Combine(Root, id, SummaryMetaFile));
+            if (text == null) return null;
+            try { return JsonSerializer.Deserialize<MeetingSummaryMeta>(text, Json); }
+            catch (JsonException) { return null; }
+        }
+    }
+
+    /// <summary>
+    /// True when this meeting's summary should be generated again. See <see cref="MeetingSummaryFreshness"/>.
+    /// Unknown id: false.
+    /// </summary>
+    public bool NeedsNewSummary(string id)
+    {
+        var info = Get(id);
+        if (info == null) return false;
+        var meta = info.HasSummary ? ReadSummaryMeta(id) : null;
+        return MeetingSummaryFreshness.NeedsNewSummary(
+            info.Status, info.HasSummary, meta, ReadChunks(id), info.PendingAudioChunks);
     }
 
     /// <summary>Records how much audio the meeting holds so far.</summary>

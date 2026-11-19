@@ -1,6 +1,5 @@
 using System.Runtime.InteropServices;
 using System.Threading.Channels;
-using System.Text.RegularExpressions;
 
 namespace WhisperShortcut.Core;
 
@@ -25,8 +24,6 @@ public sealed record MeetingRetryResult(int Recovered, int StillPending, Excepti
 /// </summary>
 public sealed class LiveMeetingSession : IDisposable
 {
-    private static readonly Regex FirstMarker = new(@"^\[\d+:\d{2}\]", RegexOptions.Multiline | RegexOptions.Compiled);
-
     private readonly MeetingStore _store;
     private readonly Func<byte[], CancellationToken, Task<string>> _transcribe;
     private readonly string _audioMode;
@@ -221,14 +218,16 @@ public sealed class LiveMeetingSession : IDisposable
         {
             try
             {
-                var transcript = _store.ReadTranscript(id) ?? "";
-                var first = FirstMarker.Match(transcript);
-                if (first.Success && _store.ReadChunks(id).Count > 0)
+                var body = MeetingStore.TextForSummary(_store.ReadTranscript(id));
+                if (body != null)
                 {
-                    var summary = (await summarize(transcript[first.Index..], ct).ConfigureAwait(false)).Trim();
+                    // The transcript the model actually sees. A chunk spliced in afterwards (backlog
+                    // retry) leaves this sidecar stale, so the summary is generated again.
+                    var meta = MeetingSummaryMeta.FromChunks(_store.ReadChunks(id));
+                    var summary = (await summarize(body, ct).ConfigureAwait(false)).Trim();
                     if (summary.Length > 0)
                     {
-                        _store.SaveSummary(id, summary);
+                        _store.SaveSummary(id, summary, meta);
                         summarySaved = true;
                     }
                 }
