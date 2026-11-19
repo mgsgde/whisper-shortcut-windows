@@ -1,6 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.Drawing.Text;
+using Microsoft.Win32;
 
 namespace WhisperShortcut;
 
@@ -113,6 +114,7 @@ internal sealed class RecordingOverlay : OverlayForm
         AccessibleName = Core.UserCopy.OverlayAccessibleName;
         AccessibleRole = AccessibleRole.StatusBar;
         _timer.Tick += (_, _) => OnTick();
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
     }
 
     // The bitmap goes out through UpdateLayeredWindow; there is nothing for WM_PAINT to do.
@@ -290,7 +292,19 @@ internal sealed class RecordingOverlay : OverlayForm
         return new SizeF(500 * s, (HeaderH + (_context != null ? ContextH : 0) + shot + (_context != null || shot > 0 ? 6 : 0)) * s);
     }
 
-    private void Present()
+    // A monitor was plugged in, unplugged or rearranged: place the pill again without restarting its fade.
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        if (IsDisposed || !Visible) return;
+        try
+        {
+            if (InvokeRequired) BeginInvoke(() => { if (!IsDisposed && Visible) Present(placementOnly: true); });
+            else Present(placementOnly: true);
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { }
+    }
+
+    private void Present(bool placementOnly = false)
     {
         EnsureFonts();
         using var probe = LayeredWindow.NewBitmap(1, 1);
@@ -304,6 +318,11 @@ internal sealed class RecordingOverlay : OverlayForm
         var area = screen.WorkingArea;
         _basePos = new Point(area.Left + (area.Width - size.Width) / 2, area.Bottom - size.Height - (int)(14 * S) + m / 2);
         if (Size != size || Location != _basePos) SetBounds(_basePos.X, _basePos.Y, size.Width, size.Height);
+        if (placementOnly)
+        {
+            if (Visible) Redraw();
+            return;
+        }
 
         _phaseStart = DateTime.UtcNow;
         _fadeStart = null;
@@ -747,6 +766,7 @@ internal sealed class RecordingOverlay : OverlayForm
     {
         if (disposing)
         {
+            SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             _timer.Dispose();
             _cardCache?.Dispose();
             _titleFont?.Dispose();

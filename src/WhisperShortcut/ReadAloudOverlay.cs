@@ -1,4 +1,5 @@
 using System.Drawing.Drawing2D;
+using Microsoft.Win32;
 
 namespace WhisperShortcut;
 
@@ -56,6 +57,19 @@ internal sealed class ReadAloudOverlay : OverlayForm
         Opacity = 0.97;
         AccessibleName = "Vorlesen";
         _timer.Tick += (_, _) => { _tick++; Invalidate(); };
+        SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+    }
+
+    // The card is visible: run Present again so a display change puts it back on a screen.
+    private void OnDisplaySettingsChanged(object? sender, EventArgs e)
+    {
+        if (IsDisposed || !Visible) return;
+        try
+        {
+            if (InvokeRequired) BeginInvoke(() => { if (!IsDisposed && Visible) Present(); });
+            else Present();
+        }
+        catch (Exception ex) when (ex is ObjectDisposedException or InvalidOperationException) { }
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -285,6 +299,7 @@ internal sealed class ReadAloudOverlay : OverlayForm
     {
         if (disposing)
         {
+            SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
             _timer.Dispose();
             _titleFont.Dispose();
             _textFont.Dispose();
