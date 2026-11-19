@@ -659,6 +659,92 @@ public class SpokenPunctuationPilotTests
         Assert.Equal("A\n\nB", Pipeline("A neue Zeile", "neuer Absatz B"));
         Assert.Equal("A\nB", Pipeline("A neue Zeile", "B"));
     }
+
+    [Fact]
+    public void GluedPunktBecomesPeriodAndCapital()
+    {
+        Assert.Equal("einen Rollator. Aus dem Entlassungsbericht",
+            Pipeline("einen Rollatorpunkt aus dem Entlassungsbericht"));
+        Assert.Equal("mit zwei Pausen. Ursache sind", Pipeline("mit zwei Pausenpunkt Ursache sind"));
+        Assert.Equal("Funktionsbeeinträchtigung der Wirbelsäule.",
+            Pipeline("Funktionsbeeinträchtigung der Wirbelsäulepunkt"));
+        Assert.Equal("und passt die Dosis selbst an. Der letzte",
+            Pipeline("und passt die Dosis selbst anpunkt der letzte"));
+        Assert.Equal("die Fraktur.", Pipeline("die Frakturpunkt"));
+    }
+
+    [Fact]
+    public void FugenSOnlyKeepsRealCompounds()
+    {
+        Assert.Equal("Diabetes.", Pipeline("Diabetespunkt"));
+        Assert.Equal("Ergebnis.", Pipeline("Ergebnispunkt"));
+        foreach (var text in new[]
+        {
+            "Anhaltspunkt",
+            "Gesichtspunkt",
+            "Einstiegspunkt",
+            "Orientierungspunkt",
+            "ein Diskussionspunkt",
+        })
+            Assert.Equal(text, Pipeline(text));
+    }
+
+    [Fact]
+    public void LongerPunktCompoundsStayAGluedBlutdruckSplits()
+    {
+        foreach (var text in new[]
+        {
+            "Untersuchungszeitpunkt",
+            "Behandlungsschwerpunkt",
+            "zum Operationszeitpunkt",
+        })
+            Assert.Equal(text, Pipeline(text));
+        Assert.Equal("Blutdruck. Die Patientin", Pipeline("Blutdruckpunkt Die Patientin"));
+    }
+
+    [Fact]
+    public void RealPunktCompoundsInflectionsAndDoppelpunktStay()
+    {
+        foreach (var text in new[]
+        {
+            "Der Zeitpunkt der Operation",
+            "Das ist der Schwerpunkt",
+            "ein Anhaltspunkt für",
+            "der Druckpunkt am Knie",
+            "der Zusammenhangspunkt bleibt",
+            "Punkte",
+            "Die Punkte bleiben",
+            "mit Punkten und des Punktes",
+            "ein Punkt Anamnese",
+        })
+            Assert.Equal(text, Pipeline(text));
+        Assert.Equal("Diagnose: Polyneuropathie", Pipeline("Diagnose Doppelpunkt Polyneuropathie"));
+        Assert.Equal("Hüfte frei beweglich; Knie", Pipeline("Hüfte frei beweglich Strichpunkt Knie"));
+        Assert.Equal("einen Rollatorpunkt aus",
+            SpokenPunctuation.Apply("einen Rollatorpunkt aus", PunctuationMode.Automatic));
+    }
+
+    [Fact]
+    public void PunktAfterEinBeforePronounIsTheCommand()
+    {
+        Assert.Equal("ein Antidepressivum ein. Ihre Arbeit",
+            Pipeline("ein Antidepressivum ein Punkt Ihre Arbeit"));
+        Assert.Equal("Sie nimmt ein Antidepressivum ein. Ihre Arbeit",
+            Pipeline("Sie nimmt ein Antidepressivum ein Punkt Ihre Arbeit"));
+    }
+
+    [Fact]
+    public void NeueAbsatzWithoutEnding() =>
+        Assert.Equal("Hörbehinderung.\n\nDas Tonaudiogramm",
+            Pipeline("Hörbehinderung. Neue Absatz das Tonaudiogramm"));
+
+    [Fact]
+    public void TrailingSplitIgnoresAMidPieceGlue()
+    {
+        Assert.Equal("Kniepunkt und Hüfte", LiveDictation.SplittingGluedTrailingPunkt("Kniepunkt und Hüfte"));
+        Assert.Equal("Knie. Und Hüfte", Pipeline("Kniepunkt und Hüfte"));
+        Assert.Equal("Kein Juckreiz Punkt?!", LiveDictation.SplittingGluedTrailingPunkt("Kein Juckreizpunkt?!"));
+    }
 }
 
 /// <summary>Spoken colon, Parakeet mishearings (Mac #453, live capture 2026-11-10).</summary>

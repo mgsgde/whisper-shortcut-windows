@@ -265,7 +265,7 @@ public class LiveDictationTests
         {
             Assert.Equal("Blutdruck 140 zu 90",
                 LiveDictation.FinishPiece("Blutdruck 140 zu neunzig", mode, timedMarks: true));
-            Assert.Equal("Einzel GdB Psyche 20.",
+            Assert.Equal("Einzel-GdB Psyche 20.",
                 LiveDictation.FinishPiece("Einzel GdB Psyche zwanzig.", mode, timedMarks: true));
             Assert.Equal("Um zehn Uhr kam die Patientin",
                 LiveDictation.FinishPiece("Um zehn Uhr kam die Patientin", mode, timedMarks: true));
@@ -275,7 +275,7 @@ public class LiveDictationTests
         }
         Assert.Equal("Sie hat drei Punkte erreicht.",
             LiveDictation.FinishPiece("Sie hat drei Punkte erreicht Punkt", Spoken, timedMarks: true));
-        Assert.Equal("Gesamt GdB 50, Merkzeichen G",
+        Assert.Equal("Gesamt-GdB 50, Merkzeichen G",
             LiveDictation.FinishPiece("Gesamt GdB fünfzig Komma Merkzeichen G", Spoken, timedMarks: true));
         Assert.Equal("Ramipril 2,5 mg",
             LiveDictation.FinishPiece("Ramipril zwei Komma fünf mg", Spoken, timedMarks: true));

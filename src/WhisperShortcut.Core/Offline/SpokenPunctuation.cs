@@ -124,17 +124,18 @@ public static class SpokenPunctuation
             MakeRule($@"{openGuard}[ \t,.;]*{ClosingParen}", ")"),
             // A comma before a spoken paragraph break is the ASR marking the pause; the sentence ended.
             // No capital marker: this stays ".\n\n", and the next word keeps the case it was spoken with.
-            // "Neuerabsatz" / "Neuenabsatz" / "Neuabsatz" are the glued forms (no space).
+            // "Neuerabsatz" / "Neuenabsatz" / "Neueabsatz" / "Neuabsatz" are the glued forms (no space).
+            // "Neue Absatz" (no -r or -n) is the same command.
             // With token timing a leftover comma was spoken ("Herren, neuer Absatz"): it stays, as ",\n\n".
-            MakeRule(@"[ \t]*,[ \t]*\bneu(?:e[rn])?[ \t]*absatz\b[ \t,.;:!?]*", timed ? ",\n\n" : ".\n\n"),
+            MakeRule(@"[ \t]*,[ \t]*\bneu(?:e[rn]?)?[ \t]*absatz\b[ \t,.;:!?]*", timed ? ",\n\n" : ".\n\n"),
             // The model already ended the sentence ("Anamnese. Neuer Absatz, die Klägerin"): the next word
             // starts the new paragraph or line, so it gets a capital (marker, CapitalizeAfterGluedColon).
             // "Neuzeile" / "Neuezeile" are "neue Zeile" glued into one word. "Neuzeilen" does not match.
-            MakeRule(@"(?<=[.!?])[ \t]*\bneu(?:e[rn])?[ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
+            MakeRule(@"(?<=[.!?])[ \t]*\bneu(?:e[rn]?)?[ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
             MakeRule($@"(?<=[.!?])[ \t]*{zeile}\bneu(?:e[ \t]*)?zeile\b[ \t,.;:!?]*", "\n\u0001"),
             // Paragraph break without a sentence mark before it. The next word still starts the new
             // paragraph, so it gets a capital too.
-            MakeRule(@"[ \t,;]*\bneu(?:e[rn])?[ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
+            MakeRule(@"[ \t,;]*\bneu(?:e[rn]?)?[ \t]*absatz\b[ \t,.;:!?]*", "\n\n\u0001"),
             // A comma or semicolon before "neue Zeile" is the pause Parakeet wrote. Eating it stops
             // "Befund, neue Zeile Inspektion" from staying "Befund,\nInspektion". No capital marker.
             // With token timing the comma was spoken ("Müller, neue Zeile vielen Dank"), so it stays.
@@ -148,6 +149,72 @@ public static class SpokenPunctuation
             // "neue Zeilen…" is left alone: the "n" is the plural or a compound, said literally.
             MakeRule($@"[ \t,;]*{zeile}\bneu(?:e[ \t]*)?zeile(?!n)(?=\p{{L}})", "\n\u0001"),
         ];
+    }
+
+    /// <summary>
+    /// Lowercase real German words ending in "Punkt". A spoken "Punkt" glued onto the previous word
+    /// ("Rollatorpunkt") is the command; these are not. A longer word that ends in one stays whole
+    /// too ("Untersuchungszeitpunkt"), except <see cref="WholeWordOnlyPunktCompounds"/>: a glued
+    /// "Blutdruck" + "punkt" ends in "druckpunkt" and must still split. A stem ending in a real
+    /// Fugen-s ("…ungs", "…ts", "…gs") stays a compound in the rule itself.
+    /// </summary>
+    public static readonly HashSet<string> RealPunktCompounds = new(StringComparer.Ordinal)
+    {
+        "schwerpunkt", "zeitpunkt", "standpunkt", "höhepunkt", "mittelpunkt", "treffpunkt",
+        "ausgangspunkt", "gesichtspunkt", "wendepunkt", "knackpunkt", "brennpunkt", "tiefpunkt",
+        "bezugspunkt", "schnittpunkt", "anknüpfungspunkt", "kritikpunkt", "programmpunkt",
+        "tagesordnungspunkt", "druckpunkt", "triggerpunkt", "schmerzpunkt", "messpunkt", "endpunkt",
+        "nullpunkt", "siedepunkt", "gefrierpunkt", "blickpunkt", "haltepunkt", "startpunkt",
+        "kernpunkt", "streitpunkt", "anhaltspunkt", "berührungspunkt", "angelpunkt", "doppelpunkt",
+        "strichpunkt", "prozentpunkt", "akupunkturpunkt", "druckschmerzpunkt", "fixpunkt", "eckpunkt",
+        "scheitelpunkt", "sammelpunkt", "tiefstpunkt", "höchstpunkt", "nadelpunkt", "kontaktpunkt",
+        "umkehrpunkt", "wassersiedepunkt",
+        "tenderpunkt", "akupressurpunkt", "knotenpunkt", "schmelzpunkt", "hauptpunkt", "pluspunkt",
+        "minuspunkt", "stützpunkt", "ankerpunkt", "kontrollpunkt", "drehpunkt", "aussichtspunkt",
+        "fluchtpunkt", "gipfelpunkt", "grenzpunkt", "sternpunkt", "zielpunkt", "zugangspunkt",
+        "einstichpunkt", "insertionspunkt", "ansatzpunkt", "auslösepunkt", "maximalpunkt",
+        "sattelpunkt", "lotpunkt", "fußpunkt", "reizpunkt", "knickpunkt", "taupunkt", "schwachpunkt",
+        "schlusspunkt", "kontrapunkt", "diskussionspunkt", "prüfpunkt", "hochpunkt", "lichtpunkt",
+        "einstiegspunkt", "verbindungspunkt", "orientierungspunkt", "gesprächspunkt",
+        "verhandlungspunkt", "abschlusspunkt", "wiedereinstiegspunkt", "kreuzungspunkt",
+    };
+
+    /// <summary>
+    /// In <see cref="RealPunktCompounds"/>, but a longer word that only ends in one of these is still
+    /// the command ("Blutdruckpunkt", "Juckreizpunkt", "stechendpunkt").
+    /// </summary>
+    public static readonly HashSet<string> WholeWordOnlyPunktCompounds = new(StringComparer.Ordinal)
+    {
+        "endpunkt", "druckpunkt", "eckpunkt", "hochpunkt", "lichtpunkt", "reizpunkt",
+    };
+
+    /// <summary>
+    /// True when <paramref name="word"/> must stay unsplit: it equals a <see cref="RealPunktCompounds"/>
+    /// entry, or it ends in one that is not <see cref="WholeWordOnlyPunktCompounds"/>.
+    /// </summary>
+    public static bool IsRealPunktCompound(string word)
+    {
+        var lower = word.ToLowerInvariant();
+        if (RealPunktCompounds.Contains(lower)) return true;
+        foreach (var compound in RealPunktCompounds)
+        {
+            if (lower.Length > compound.Length
+                && lower.EndsWith(compound, StringComparison.Ordinal)
+                && !WholeWordOnlyPunktCompounds.Contains(compound))
+                return true;
+        }
+        return false;
+    }
+
+    private static readonly Rule GluedPunktRule = MakeRule(BuildGluedPunktPattern(), "$1. \u0001");
+
+    private static string BuildGluedPunktPattern()
+    {
+        var whole = string.Join("|", WholeWordOnlyPunktCompounds.OrderBy(w => w, StringComparer.Ordinal).Select(Regex.Escape));
+        var suffixes = string.Join("|",
+            RealPunktCompounds.Except(WholeWordOnlyPunktCompounds).OrderBy(w => w, StringComparer.Ordinal).Select(Regex.Escape));
+        return @"\b(?!(?:" + whole + @")\b)(?!\p{L}*(?:" + suffixes
+            + @")\b)(\p{L}{2,}(?<!(?:ung|ion|heit|keit|tät|t|g|ch)s))punkt\b[ \t,.;]*";
     }
 
     // Only in PunctuationMode.SpokenOnly, where the model adds no punctuation of its own. The mark
@@ -185,6 +252,10 @@ public static class SpokenPunctuation
         // same mark. A comma the model put on either side is the pause, and goes. A period before the
         // word stays ("usw. Semikolon"), the same way "Komma" leaves one.
         MakeRule(@"[ \t,]*\b(?:semikolon|strichpunkt)\b[ \t,.;]*", "; "),
+        // Parakeet glues a spoken "Punkt" onto the word before it ("Rollatorpunkt", "anpunkt").
+        // A listed compound stays, including a longer word that ends in one; the whole-word-only
+        // endings ("druckpunkt", "endpunkt", …) stay only as the whole word. A real Fugen-s stays.
+        GluedPunktRule,
         // "drei Pünktchen", "drei Puenktchen", "Auslassungspunkte" -> "…", attached to the previous
         // word. Spaces and a stray comma or semicolon before it go; comma, period and semicolon after
         // it go too. Not "drei Punkte" (a score). Before "Punkt", so "Pünktchen" is not read as one.
@@ -307,17 +378,32 @@ public static class SpokenPunctuation
         "eins|zwei|drei|vier|fünf|fuenf|sechs|sieben|acht|neun|zehn|elf|zwölf|zwoelf";
 
     /// <summary>
+    /// Words that make "ein/zu/in Punkt" the command even when they are capitalised ("ein Punkt Ihre").
+    /// Not part of <see cref="FunctionWords"/>: that set also lower-cases a word at a piece seam,
+    /// which would turn "Sehr geehrte Frau X, Ihre …" into "ihre".
+    /// </summary>
+    public static readonly HashSet<string> PunktCommandPronouns = new(StringComparer.Ordinal)
+    {
+        "ihre", "ihr", "ihren", "ihrem", "ihrer", "ihres",
+        "seine", "sein", "seinen", "seinem", "seiner",
+        "sie", "er", "es", "wir", "ich",
+        "dies", "dieser", "diese",
+        "dabei", "danach", "daher", "dann", "zudem", "außerdem",
+    };
+
+    /// <summary>
     /// After "ein/zu/in/einen" the word "Punkt" is the command, unless a number or a noun follows.
-    /// A capitalised word that is not a function word counts as a noun. Runs after the general
-    /// "Punkt" rule, which already refuses these particles.
+    /// A capitalised word that is not a function word and not a <see cref="PunktCommandPronouns"/>
+    /// entry counts as a noun. Runs after the general "Punkt" rule, which already refuses these particles.
     /// </summary>
     private static readonly Rule PunktAfterParticleRule = MakeRule(
         @"[ \t,;]*(?<=\b(?:zu|ein|in|einen)[ \t])\bpunkt\b(?![ \t]*(?:\d|(?:" + PunktNumberWords
-        + @")\b|mehr\b|weniger\b|(?!(?:" + PunktFunctionWords() + @")\b)(?-i:\p{Lu})))[ \t,.;]*",
+        + @")\b|mehr\b|weniger\b|(?!(?:" + PunktParticleWords() + @")\b)(?-i:\p{Lu})))[ \t,.;]*",
         ". \u0001");
 
-    private static string PunktFunctionWords() =>
-        string.Join("|", FunctionWords.OrderBy(w => w, StringComparer.Ordinal).Select(Regex.Escape));
+    private static string PunktParticleWords() =>
+        string.Join("|", FunctionWords.Concat(PunktCommandPronouns).Distinct(StringComparer.Ordinal)
+            .OrderBy(w => w, StringComparer.Ordinal).Select(Regex.Escape));
 
     private static readonly Rule TrailingSpaceBeforeBreak = MakeRule(@"[ \t]+(?=\n|$)", "");
     private static readonly Rule ExcessBreaks = MakeRule(@"\n{3,}", "\n\n");
