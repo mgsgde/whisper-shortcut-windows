@@ -926,9 +926,11 @@ internal sealed partial class TrayApp : ApplicationContext
         // No TextCleanup.ForDictation per piece: it would capitalise and end every piece with a period.
         if (mode != Core.PunctuationMode.SpokenOnly)
             return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(await _offline.TranscribeAsync(wav, ct), mode));
-        // "Nur gesprochen": Parakeet's marks stay only where the token timings show speech time behind them (Mac #339/#347).
-        var (text, timed) = await _offline.TranscribeSpokenMarksAsync(wav, ct);
-        return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(text, mode, timedMarks: timed));
+        // "Nur gesprochen": Parakeet's marks stay where the token timings show speech time behind them
+        // (Mac #339/#347). A mismatch keeps the model's commas, "?" and "!" (Mac #393), and the piece is
+        // finished as timed either way: the transcribe step already decided which marks stay.
+        var (text, _) = await _offline.TranscribeSpokenMarksAsync(wav, ct);
+        return Backstops(Core.TranscribePurpose.LivePiece, Core.LiveDictation.FinishPiece(text, mode, timedMarks: true));
     }
 
     private Task ProcessLiveAsync(Take take)

@@ -189,7 +189,7 @@ public static class LiveDictation
         var source = mode == PunctuationMode.SpokenOnly
             ? SpokenPunctuation.StripModelPunctuation(withoutFillers, timedMarks)
             : withoutFillers;
-        return SpokenPunctuation.Apply(source, mode, keepsEdgeBreaks: true);
+        return SpokenPunctuation.Apply(source, mode, keepsEdgeBreaks: true, timedMarks: timedMarks);
     }
 
     // "hmm" is two or more m's; "hm" is the single one. Longer forms come first so a word boundary
@@ -382,6 +382,11 @@ public sealed class LiveChunkJoiner
         var body = piece.Trim(' ', '\t');
         if (body.Length == 0) return "";
 
+        // Across a piece boundary at most one blank line: "neuer Absatz" at the end of one piece and
+        // "neue Zeile" at the start of the next must not stack up to three breaks.
+        body = LimitingBreaks(body, _precedingText + _inserted);
+        if (body.Length == 0) return "";
+
         if (!HoldsPeriods) body = LowercaseLeadingFunctionWord(body, _precedingText + _inserted);
 
         var output = new System.Text.StringBuilder();
@@ -429,21 +434,64 @@ public sealed class LiveChunkJoiner
     internal static bool IsNewline(char c) =>
         c is '\n' or '\r' or '\u000B' or '\u000C' or '\u0085' or '\u2028' or '\u2029';
 
+    /// <summary>
+    /// Caps the line breaks where <paramref name="body"/> meets the text so far at two ("\n\n"):
+    /// the breaks already at the end of <paramref name="prior"/> count, and surplus ones at the start of
+    /// <paramref name="body"/> are dropped.
+    /// </summary>
+    private static string LimitingBreaks(string body, string prior)
+    {
+        var lead = 0;
+        while (lead < body.Length && (IsNewline(body[lead]) || body[lead] is ' ' or '\t')) lead++;
+        var leadBreaks = 0;
+        for (var i = 0; i < lead; i++)
+            if (IsNewline(body[i])) leadBreaks++;
+        if (leadBreaks == 0) return body;
+        var priorBreaks = 0;
+        for (var i = prior.Length - 1; i >= 0; i--)
+        {
+            if (IsNewline(prior[i])) priorBreaks++;
+            else if (prior[i] != ' ' && prior[i] != '\t') break;
+        }
+        var allowed = Math.Max(0, 2 - priorBreaks);
+        if (leadBreaks <= allowed) return body;
+        return new string('\n', allowed) + body[lead..];
+    }
+
     // Parakeet capitalises the first word after a pause. Mid-sentence, in spoken-only mode, that capital belongs only
-    // on a noun or a verb.
+    // on a noun or a verb. After a line break the last real mark decides: a comma (the salutation's) makes the word
+    // lower-case again unless it may be a noun; after ". ! ? :" or with no mark before, it stays capital.
     private static string LowercaseLeadingFunctionWord(string body, string inserted)
     {
         var prior = inserted.Trim(' ', '\t');
+        var lead = 0;
+        var leadHasNewline = false;
+        while (lead < body.Length && (IsNewline(body[lead]) || body[lead] is ' ' or '\t'))
+        {
+            if (IsNewline(body[lead])) leadHasNewline = true;
+            lead++;
+        }
+        if (leadHasNewline || (prior.Length > 0 && IsNewline(prior[^1])))
+        {
+            var beforeBreak = inserted.Trim();
+            if (beforeBreak.Length == 0 || beforeBreak[^1] != ',' || lead >= body.Length) return body;
+            var wordEnd = lead;
+            while (wordEnd < body.Length && char.IsLetter(body[wordEnd])) wordEnd++;
+            if (wordEnd == lead) return body;
+            var lowered = SpokenPunctuation.LowercasingAfterSalutationComma(body[lead..wordEnd]);
+            if (lowered == null) return body;
+            return body[..lead] + lowered + body[wordEnd..];
+        }
         if (prior.Length == 0) return body;
         var last = prior[^1];
-        if (IsNewline(last) || last is '.' or '!' or '?' or ':') return body;
+        if (last is '.' or '!' or '?' or ':') return body;
         var split = -1;
         for (var i = 0; i < body.Length; i++)
             if (char.IsWhiteSpace(body[i])) { split = i; break; }
         var word = split < 0 ? body : body[..split];
-        var lowered = SpokenPunctuation.LowercasingFunctionWord(word);
-        if (lowered == null) return body;
-        return split < 0 ? lowered : lowered + body[split..];
+        var loweredWord = SpokenPunctuation.LowercasingFunctionWord(word);
+        if (loweredWord == null) return body;
+        return split < 0 ? loweredWord : loweredWord + body[split..];
     }
 
     /// <summary>True for a letter that is lower case.</summary>

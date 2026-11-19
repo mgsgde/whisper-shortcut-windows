@@ -204,8 +204,8 @@ internal sealed class OfflineEngine : IDisposable
 
     /// <summary>
     /// Speech to text for "Only when spoken" punctuation: the text with the marks Parakeet guessed removed
-    /// by token timing. Timed is false when no usable timings came back; the caller then runs
-    /// <see cref="Core.SpokenPunctuation.StripModelPunctuation"/> without timedMarks.
+    /// by token timing. Timed is false when no usable timings came back; the text is then
+    /// <see cref="Core.ParakeetPunctuationTiming.FallbackWithoutTiming"/> (commas, "?" and "!" stay).
     /// </summary>
     public async Task<(string Text, bool Timed)> TranscribeSpokenMarksAsync(byte[] wav, CancellationToken ct)
     {

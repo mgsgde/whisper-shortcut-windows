@@ -18,11 +18,16 @@ namespace WhisperShortcut.Core;
 ///
 /// "?" and "!" use the same timing rule as "," and ".". When no timings are available,
 /// <see cref="SpokenPunctuation.StripModelPunctuation"/> still drops the model's "?" and "!".
+/// When timings exist but the marks cannot be matched to them, <see cref="FallbackWithoutTiming"/>
+/// keeps the model's marks instead of dropping every comma.
 /// </summary>
 public static class ParakeetPunctuationTiming
 {
     /// <summary>Mid-text mark ("," "." "?" "!"): minimum silence to the next token for the mark to count as spoken.</summary>
     public const double MinGapToNextToken = 0.120;
+
+    /// <summary>Mid-text "," directly after a digit token: shorter minimum gap (see <see cref="SpokenMarks"/>).</summary>
+    public const double MinGapAfterDigitComma = 0.060;
 
     /// <summary>
     /// Final mark ("," "." "?" "!"): minimum audio left after it. Stricter than the mid-text gap
@@ -76,15 +81,32 @@ public static class ParakeetPunctuationTiming
     public static string SpacingGluedCommas(string text) => GluedCommaRegex.Replace(text, ", ");
 
     /// <summary>
+    /// The text when the marks cannot be matched to the tokens (<see cref="Filter"/> returned null).
+    /// The model's commas, "?", "!" and periods stay: a spoken salutation comma or question mark is worse
+    /// lost than a guessed comma kept. Only semicolons go (Parakeet never says one; a spoken "Semikolon"
+    /// is converted later).
+    /// </summary>
+    public static string FallbackWithoutTiming(string text) =>
+        SpokenPunctuation.StripModelPunctuation(SpacingGluedCommas(text), timedMarks: true);
+
+    /// <summary>
     /// One verdict per mark token, in order: true = the speaker said it, false = Parakeet guessed it.
     /// "," "." "?" and "!" share one rule: a mark with a following token needs
     /// <see cref="MinGapToNextToken"/> of silence before that token; the last mark needs
-    /// <see cref="MinTailAfterFinalMark"/> of audio after it.
+    /// <see cref="MinTailAfterFinalMark"/> of audio after it. A comma right after a digit uses the
+    /// shorter <see cref="MinGapAfterDigitComma"/>: the speaker's pause after a number is glued in time.
     /// </summary>
     public static List<bool> SpokenMarks(IReadOnlyList<Token> tokens, double audioDuration) =>
-        MarkIndexes(tokens).Select(index => index == tokens.Count - 1
-            ? audioDuration - tokens[index].End >= MinTailAfterFinalMark
-            : tokens[index + 1].Start - tokens[index].End >= MinGapToNextToken).ToList();
+        MarkIndexes(tokens).Select(index =>
+        {
+            if (index == tokens.Count - 1)
+                return audioDuration - tokens[index].End >= MinTailAfterFinalMark;
+            var gap = tokens[index + 1].Start - tokens[index].End;
+            var previous = index > 0 ? Bare(tokens[index - 1]) : "";
+            if (Bare(tokens[index]) == "," && previous.Length > 0 && char.IsNumber(previous[^1]))
+                return gap >= MinGapAfterDigitComma;
+            return gap >= MinGapToNextToken;
+        }).ToList();
 
     /// <summary>
     /// Removes the guessed marks from <paramref name="text"/>. The n-th mark in the text (a mark character
@@ -181,9 +203,8 @@ public static class ParakeetPunctuationTiming
 
     /// <summary>
     /// <paramref name="text"/> with the marks Parakeet guessed removed, using the token timings. When they
-    /// are missing or do not line up with the text, the glued commas are spaced and
-    /// <paramref name="timed"/> is false: the caller then runs
-    /// <see cref="SpokenPunctuation.StripModelPunctuation"/> without timedMarks, as the Mac does.
+    /// are missing or do not line up with the text, <paramref name="timed"/> is false and the text is
+    /// <see cref="FallbackWithoutTiming"/>: commas, "?" and "!" stay, only semicolons go.
     /// Counts only, never the dictated text, go to the log.
     /// </summary>
     public static string KeepSpokenMarks(string text, IReadOnlyList<Token>? tokens, double audioSeconds, out bool timed)
@@ -196,6 +217,6 @@ public static class ParakeetPunctuationTiming
         }
         Log.Info("LOCAL-SPEECH: punctuation timing skipped");
         timed = false;
-        return SpacingGluedCommas(text);
+        return FallbackWithoutTiming(text);
     }
 }
