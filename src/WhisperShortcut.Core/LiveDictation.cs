@@ -182,6 +182,8 @@ public static class LiveDictation
     /// ("neuer Absatz" at the very end of a piece) are kept: <see cref="LiveChunkJoiner"/> relies on them to lay out
     /// the next piece without adding a space after. <paramref name="timedMarks"/>: the piece's commas, periods, "?" and
     /// "!" were already filtered by token timing, so Strip removes only semicolons.
+    /// Last, quantity number words become digits (<see cref="GermanNumberWords"/>): after the spoken
+    /// commands, so "drei Pünktchen" is already "…" and "zwei Komma fünf" already "2,5" when it runs.
     /// </summary>
     public static string FinishPiece(string text, PunctuationMode mode, bool timedMarks = false)
     {
@@ -189,7 +191,8 @@ public static class LiveDictation
         var source = mode == PunctuationMode.SpokenOnly
             ? SpokenPunctuation.StripModelPunctuation(withoutFillers, timedMarks)
             : withoutFillers;
-        return SpokenPunctuation.Apply(source, mode, keepsEdgeBreaks: true, timedMarks: timedMarks);
+        var punctuated = SpokenPunctuation.Apply(source, mode, keepsEdgeBreaks: true, timedMarks: timedMarks);
+        return GermanNumberWords.DigitizingQuantities(punctuated);
     }
 
     // Parakeet hears the breath before a lone spoken command as "Oh," ("Oh, Doppelpunkt." for a piece

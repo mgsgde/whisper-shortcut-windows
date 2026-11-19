@@ -259,6 +259,29 @@ public class LiveDictationTests
     }
 
     [Fact]
+    public void QuantityNumberWordsBecomeDigitsInAFinishedPiece()
+    {
+        foreach (var mode in new[] { Spoken, Auto })
+        {
+            Assert.Equal("Blutdruck 140 zu 90",
+                LiveDictation.FinishPiece("Blutdruck 140 zu neunzig", mode, timedMarks: true));
+            Assert.Equal("Einzel GdB Psyche 20.",
+                LiveDictation.FinishPiece("Einzel GdB Psyche zwanzig.", mode, timedMarks: true));
+            Assert.Equal("Um zehn Uhr kam die Patientin",
+                LiveDictation.FinishPiece("Um zehn Uhr kam die Patientin", mode, timedMarks: true));
+            Assert.Equal(mode == Auto,
+                LiveDictation.FinishPiece("Gesamt GdB drei Pünktchen und dann weiter", mode, timedMarks: true)
+                    .Contains("drei"));
+        }
+        Assert.Equal("Sie hat drei Punkte erreicht.",
+            LiveDictation.FinishPiece("Sie hat drei Punkte erreicht Punkt", Spoken, timedMarks: true));
+        Assert.Equal("Gesamt GdB 50, Merkzeichen G",
+            LiveDictation.FinishPiece("Gesamt GdB fünfzig Komma Merkzeichen G", Spoken, timedMarks: true));
+        Assert.Equal("Ramipril 2,5 mg",
+            LiveDictation.FinishPiece("Ramipril zwei Komma fünf mg", Spoken, timedMarks: true));
+    }
+
+    [Fact]
     public void Timed_marks_keep_the_spoken_comma_without_timings_the_old_rule_strips_it()
     {
         Assert.Equal("Gangbild, geht weiter.", LiveDictation.FinishPiece("Gangbild, geht weiter.", Spoken, timedMarks: true));
