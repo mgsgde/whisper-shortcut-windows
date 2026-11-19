@@ -65,6 +65,10 @@ internal sealed partial class TrayApp : ApplicationContext
     private bool _settingsAfterTour;
     // Mac „Einrichtung abschließen …“: shown while the welcome tour is not finished.
     private readonly ToolStripMenuItem _finishSetupItem;
+    private ContextMenuStrip _menu = null!;
+    private ToolStripMenuItem _quitItem = null!;
+    /// <summary>Rows the unfinished-setup gate hid (Mac #511 hiddenBySetupGate); exactly these come back once setup is done.</summary>
+    private readonly List<ToolStripItem> _hiddenBySetupGate = new();
     private readonly Toast _toast = new();
     private readonly UpdateService _updates;
     private readonly ToolStripMenuItem _updateItem;
@@ -167,7 +171,7 @@ internal sealed partial class TrayApp : ApplicationContext
         // Mac: „Feedback senden“ with the problem report first. Windows adds the log, which the report points to.
         var feedbackItem = new ToolStripMenuItem("Feedback senden");
         AddFeedbackItems(feedbackItem); // TrayApp.Feedback.cs
-        var quitItem = new ToolStripMenuItem("WhisperShortcut beenden", null, (_, _) => Quit());
+        var quitItem = _quitItem = new ToolStripMenuItem("WhisperShortcut beenden", null, (_, _) => Quit());
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         // Popups sit above the recording pill while it is on screen (Mac centerBottomPillClearance).
         _toast.AvoidBounds = () => _overlay.Visible ? _overlay.Bounds : null;
@@ -176,7 +180,7 @@ internal sealed partial class TrayApp : ApplicationContext
             () => Core.HotkeySlots.Assignments(_settings).Where(a => a.Action != Core.HotkeyAction.Meeting).Select(a => (a.Owner, a.Key)).ToList(),
             suspend => { if (suspend) { _hotkeys.UnregisterAll(); _globalHotkeysOn = false; } else SyncGlobalHotkeys(notify: true); },
             fakeAudio: testWav != null || fakeGemini);
-        var menu = new ContextMenuStrip();
+        var menu = _menu = new ContextMenuStrip();
         menu.Items.AddRange(new ToolStripItem[]
         {
             _statusItem, _updateItem, new ToolStripSeparator(),
@@ -374,6 +378,13 @@ internal sealed partial class TrayApp : ApplicationContext
     private void UpdateMenuRows()
     {
         static string Key(string active) => active.Length > 0 ? Hotkey.Display(active) : "";
+        // Setup just finished: put back what the gate hid first, so the rules below decide those rows again.
+        if (_settings.WelcomeCompleted && _hiddenBySetupGate.Count > 0)
+        {
+            foreach (var item in _hiddenBySetupGate) item.Visible = true;
+            _hiddenBySetupGate.Clear();
+            Core.Log.Info("Menu: setup finished, rows hidden during setup are back");
+        }
         bool idle = IsIdle;
         _stopItem.Visible = _stopSeparator.Visible = !idle || _readAloud?.IsActive == true;
         _proposalsItem.Visible = _mcp != null && _mcp.Proposals.Pending.Count > 0;
@@ -400,6 +411,44 @@ internal sealed partial class TrayApp : ApplicationContext
         if (replay != null)
             _withoutTemplateItem.ToolTipText = $"Führt dein letztes Diktat noch einmal mit dem System-Prompt von Dictate Prompt aus statt mit „{replay.Value.TemplateName}“. "
                 + "Das Ergebnis kommt in die Zwischenablage.";
+        ApplyUnfinishedSetupGate();
+    }
+
+    /// <summary>
+    /// Mac #511: until the tour is finished the menu shows only the status line, „Einrichtung abschließen …“, „Einstellungen …“
+    /// and „Beenden“; every feature row would only lead to a missing-key or missing-model message. Runs last, because the
+    /// rules above show rows again on every opening.
+    /// </summary>
+    private void ApplyUnfinishedSetupGate()
+    {
+        if (_settings.WelcomeCompleted || _menu == null) return;
+        var allowed = new HashSet<ToolStripItem> { _statusItem, _finishSetupItem, _settingsItem, _quitItem };
+        foreach (ToolStripItem item in _menu.Items)
+        {
+            if (item is ToolStripSeparator || allowed.Contains(item) || !item.Available) continue;
+            item.Visible = false;
+            if (!_hiddenBySetupGate.Contains(item)) _hiddenBySetupGate.Add(item);
+        }
+        // A separator with no visible row between it and the previous visible separator (or the top) would double up.
+        ToolStripItem? lastShown = null;
+        foreach (ToolStripItem item in _menu.Items)
+        {
+            if (item is ToolStripSeparator)
+            {
+                if (!item.Available) continue;
+                if (lastShown is null or ToolStripSeparator) Hide(item);
+                else lastShown = item;
+            }
+            else if (item.Available) lastShown = item;
+        }
+        if (lastShown is ToolStripSeparator trailing) Hide(trailing);
+
+        void Hide(ToolStripItem item)
+        {
+            if (!item.Available) return;
+            item.Visible = false;
+            if (!_hiddenBySetupGate.Contains(item)) _hiddenBySetupGate.Add(item);
+        }
     }
 
     /// <summary>The menu's „Stopp“ (Mac stopCurrentOperation): stops a recording, cancels the processing.</summary>
