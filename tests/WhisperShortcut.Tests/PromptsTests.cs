@@ -22,7 +22,9 @@ public class PromptsTests
     [SwiftSourceFact]
     public void PromptsEqualSwiftSource()
     {
-        var t = Swift("AppConstants.swift", 7, 90);
+        // Mac #468 inserted the additions helpers above these constants, so they no longer
+        // fit in lines 7–90. The names are unchanged; the fixed-core architecture is not ported.
+        var t = Swift("AppConstants.swift", 7, 120);
         Assert.Equal(Prompts.DefaultTranscriptionSystemPrompt, Multi(t, "defaultTranscriptionSystemPrompt"));
         Assert.Equal(Prompts.DefaultPromptModeSystemPrompt, Multi(t, "defaultPromptModeSystemPrompt"));
         Assert.Equal(Prompts.PromptModeOutputRule, Single(t, "promptModeOutputRule"));
