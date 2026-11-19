@@ -264,13 +264,99 @@ public static class TextCleanup
     /// </summary>
     public static string ForDictation(string? text, bool addTrailingPeriod = true)
     {
-        var formatted = Normalize(text).Trim();
+        // Fillers go after the transcript cleanup and before the capital and the period, so a
+        // filler-only clip comes back empty and is treated as no speech (Mac #507).
+        var formatted = RemovingFillers(Normalize(text));
         if (formatted.Length == 0) return "";
         var first = formatted.EnumerateRunes().First();
         var upper = first.ToString().ToUpperInvariant();
         formatted = upper + formatted[first.Utf16SequenceLength..];
         if (addTrailingPeriod && FinalPunctuation.IndexOf(formatted[^1]) < 0) formatted += ".";
         return formatted;
+    }
+
+    private static readonly Regex FillerSpaceRun = new(@"[ \t]{2,}", RegexOptions.Compiled);
+
+    /// <summary>
+    /// Drops hesitation fillers ("Mm-hmm", "Ähm", …) as whole words, case-insensitive, plus one
+    /// comma, period or semicolon glued on and the spaces around them. The word list is
+    /// <see cref="LiveDictation"/>'s, not a second copy. "Um", "ah", "aha", "achso" and "oh" stay.
+    /// A filler at the start, or right after ". ", "! ", "? " or a newline, uppercases the next
+    /// letter ("Ähm, ich komme" becomes "Ich komme"). A piece of only fillers comes back "".
+    /// Port of TextProcessingUtility.removingFillers (Mac #507). Live pieces keep their own pass
+    /// and do not capitalise here.
+    /// </summary>
+    public static string RemovingFillers(string text)
+    {
+        var matches = LiveDictation.FillerRegex.Matches(text);
+        if (matches.Count == 0) return text;
+
+        var rebuilt = new StringBuilder();
+        var cursor = 0;
+        var capitalizeNext = false;
+        foreach (Match match in matches)
+        {
+            if (cursor < match.Index)
+            {
+                var gap = text[cursor..match.Index];
+                rebuilt.Append(capitalizeNext ? CapitalizingFirstLetter(gap) : gap);
+                capitalizeNext = false;
+            }
+            // The match, including the spaces and one glued mark around the filler, becomes one space.
+            rebuilt.Append(' ');
+            if (FillerRemovalStartsSentence(text, match.Index, match.Index + match.Length))
+                capitalizeNext = true;
+            cursor = match.Index + match.Length;
+        }
+        if (cursor < text.Length)
+        {
+            var gap = text[cursor..];
+            rebuilt.Append(capitalizeNext ? CapitalizingFirstLetter(gap) : gap);
+        }
+        return FillerSpaceRun.Replace(rebuilt.ToString(), " ").Trim(' ', '\t');
+    }
+
+    /// <summary>
+    /// True when this filler match sits at the start of <paramref name="text"/> (whitespace aside)
+    /// or right after ". ", "! ", "? " or a newline. The spaces the filler pattern consumes count as the gap.
+    /// </summary>
+    private static bool FillerRemovalStartsSentence(string text, int matchStart, int matchEnd)
+    {
+        var wordStart = matchStart;
+        while (wordStart < matchEnd && (text[wordStart] == ' ' || text[wordStart] == '\t'))
+            wordStart++;
+        if (wordStart == 0) return true;
+
+        var index = wordStart;
+        var sawSpace = false;
+        while (index > 0)
+        {
+            var character = text[index - 1];
+            if (character is ' ' or '\t')
+            {
+                sawSpace = true;
+                index--;
+                continue;
+            }
+            break;
+        }
+        if (index == 0) return true;
+        var boundary = text[index - 1];
+        if (boundary is '\n' or '\r') return true;
+        return sawSpace && boundary is '.' or '!' or '?';
+    }
+
+    /// <summary>
+    /// Uppercases the first letter of <paramref name="gap"/> when a filler just before it opened a sentence.
+    /// Leading whitespace, including newlines, stays. A gap that does not start with a letter
+    /// (once that whitespace is skipped) is returned unchanged.
+    /// </summary>
+    private static string CapitalizingFirstLetter(string gap)
+    {
+        var index = 0;
+        while (index < gap.Length && char.IsWhiteSpace(gap[index])) index++;
+        if (index >= gap.Length || !char.IsLetter(gap[index])) return gap;
+        return string.Concat(gap.AsSpan(0, index), gap[index].ToString().ToUpperInvariant(), gap.AsSpan(index + 1));
     }
 
     /// <summary>
