@@ -65,6 +65,10 @@ internal sealed partial class TrayApp : ApplicationContext
     private bool _settingsAfterTour;
     // Mac „Einrichtung abschließen …“: shown while the welcome tour is not finished.
     private readonly ToolStripMenuItem _finishSetupItem;
+    private ContextMenuStrip _menu = null!;
+    private ToolStripMenuItem _quitItem = null!;
+    /// <summary>Rows the unfinished-setup gate hid (Mac #511 hiddenBySetupGate); exactly these come back once setup is done.</summary>
+    private readonly List<ToolStripItem> _hiddenBySetupGate = new();
     private readonly Toast _toast = new();
     private readonly UpdateService _updates;
     private readonly ToolStripMenuItem _updateItem;
@@ -167,7 +171,7 @@ internal sealed partial class TrayApp : ApplicationContext
         // Mac: „Feedback senden“ with the problem report first. Windows adds the log, which the report points to.
         var feedbackItem = new ToolStripMenuItem("Feedback senden");
         AddFeedbackItems(feedbackItem); // TrayApp.Feedback.cs
-        var quitItem = new ToolStripMenuItem("WhisperShortcut beenden", null, (_, _) => Quit());
+        var quitItem = _quitItem = new ToolStripMenuItem("WhisperShortcut beenden", null, (_, _) => Quit());
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         // Popups sit above the recording pill while it is on screen (Mac centerBottomPillClearance).
         _toast.AvoidBounds = () => _overlay.Visible ? _overlay.Bounds : null;
@@ -176,7 +180,7 @@ internal sealed partial class TrayApp : ApplicationContext
             () => Core.HotkeySlots.Assignments(_settings).Where(a => a.Action != Core.HotkeyAction.Meeting).Select(a => (a.Owner, a.Key)).ToList(),
             suspend => { if (suspend) { _hotkeys.UnregisterAll(); _globalHotkeysOn = false; } else SyncGlobalHotkeys(notify: true); },
             fakeAudio: testWav != null || fakeGemini);
-        var menu = new ContextMenuStrip();
+        var menu = _menu = new ContextMenuStrip();
         menu.Items.AddRange(new ToolStripItem[]
         {
             _statusItem, _updateItem, new ToolStripSeparator(),
@@ -374,6 +378,13 @@ internal sealed partial class TrayApp : ApplicationContext
     private void UpdateMenuRows()
     {
         static string Key(string active) => active.Length > 0 ? Hotkey.Display(active) : "";
+        // Setup just finished: put back what the gate hid first, so the rules below decide those rows again.
+        if (_settings.WelcomeCompleted && _hiddenBySetupGate.Count > 0)
+        {
+            foreach (var item in _hiddenBySetupGate) item.Visible = true;
+            _hiddenBySetupGate.Clear();
+            Core.Log.Info("Menu: setup finished, rows hidden during setup are back");
+        }
         bool idle = IsIdle;
         _stopItem.Visible = _stopSeparator.Visible = !idle || _readAloud?.IsActive == true;
         _proposalsItem.Visible = _mcp != null && _mcp.Proposals.Pending.Count > 0;
@@ -400,6 +411,44 @@ internal sealed partial class TrayApp : ApplicationContext
         if (replay != null)
             _withoutTemplateItem.ToolTipText = $"Führt dein letztes Diktat noch einmal mit dem System-Prompt von Dictate Prompt aus statt mit „{replay.Value.TemplateName}“. "
                 + "Das Ergebnis kommt in die Zwischenablage.";
+        ApplyUnfinishedSetupGate();
+    }
+
+    /// <summary>
+    /// Mac #511: until the tour is finished the menu shows only the status line, „Einrichtung abschließen …“, „Einstellungen …“
+    /// and „Beenden“; every feature row would only lead to a missing-key or missing-model message. Runs last, because the
+    /// rules above show rows again on every opening.
+    /// </summary>
+    private void ApplyUnfinishedSetupGate()
+    {
+        if (_settings.WelcomeCompleted || _menu == null) return;
+        var allowed = new HashSet<ToolStripItem> { _statusItem, _finishSetupItem, _settingsItem, _quitItem };
+        foreach (ToolStripItem item in _menu.Items)
+        {
+            if (item is ToolStripSeparator || allowed.Contains(item) || !item.Available) continue;
+            item.Visible = false;
+            if (!_hiddenBySetupGate.Contains(item)) _hiddenBySetupGate.Add(item);
+        }
+        // A separator with no visible row between it and the previous visible separator (or the top) would double up.
+        ToolStripItem? lastShown = null;
+        foreach (ToolStripItem item in _menu.Items)
+        {
+            if (item is ToolStripSeparator)
+            {
+                if (!item.Available) continue;
+                if (lastShown is null or ToolStripSeparator) Hide(item);
+                else lastShown = item;
+            }
+            else if (item.Available) lastShown = item;
+        }
+        if (lastShown is ToolStripSeparator trailing) Hide(trailing);
+
+        void Hide(ToolStripItem item)
+        {
+            if (!item.Available) return;
+            item.Visible = false;
+            if (!_hiddenBySetupGate.Contains(item)) _hiddenBySetupGate.Add(item);
+        }
     }
 
     /// <summary>The menu's „Stopp“ (Mac stopCurrentOperation): stops a recording, cancels the processing.</summary>
@@ -985,7 +1034,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 {
                     try
                     {
-                        fallback = Core.TextCleanup.ForDictation(Backstops(Core.TranscribePurpose.LivePiece, await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, ct)));
+                        fallback = Core.TextCleanup.ForDictation(Backstops(Core.TranscribePurpose.LivePiece, await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, ct)), audioSeconds: seconds);
                     }
                     catch (OperationCanceledException) when (ct.IsCancellationRequested)
                     {
@@ -1341,7 +1390,7 @@ internal sealed partial class TrayApp : ApplicationContext
             ? Backstops(Core.TranscribePurpose.Dictation, "das ist ein test diktat aus der virtuellen maschine")
             : await TranscribeAsync(Core.TranscribePurpose.Dictation, wav, ct);
         string text = Core.TextCleanup.DiscardImplausible(
-            Core.TextCleanup.ForDictation(raw, addTrailingPeriod: punctuation == Core.PunctuationMode.Automatic), seconds);
+            Core.TextCleanup.ForDictation(raw, addTrailingPeriod: punctuation == Core.PunctuationMode.Automatic, audioSeconds: seconds), seconds);
         // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
         if (Core.TextCleanup.LooksLikeRefusal(text)) text = "";
         Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup, punctuation {punctuation}");
@@ -1380,27 +1429,49 @@ internal sealed partial class TrayApp : ApplicationContext
         SetBusy(Core.UserCopy.EditingText);
         var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct, HistoryFor(selection), _take!.Shot);
 
-        string? instruction = null;
+        // "Mhm.", "Äh." or a lone "0" is not an instruction. With a selection Gemini hears the
+        // audio and would edit on a guess, so transcribe in parallel (the no-selection path
+        // already did this for a bare edit command) and paste nothing. With or without a selection.
+        // With a selection the transcript is only that check, so a failed transcription must not
+        // fail an edit Gemini answers fine: log it and go on without the check.
+        string instruction = "";
+        bool instructionKnown = true;
         if (selection == null)
-        {
-            // Nothing selected and the instruction is only "korrigiere" / "mach das freundlicher":
-            // there is nothing to edit, and the model would invent a text. Transcribe in parallel to check.
             instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct);
-            if (Core.BareEditCommand.Matches(instruction))
+        else
+        {
+            try { instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch (Exception ex)
             {
-                Core.Log.Info("Prompt: bare edit command without selection, refused");
-                _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
-                Sounds.Error();
-                Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
-                return "";
+                Core.Log.Warn($"Prompt: filler check transcription failed, continuing without it: {ex.GetType().Name}");
+                instructionKnown = false;
             }
         }
+        if (instructionKnown && Core.FillerOnlyInstruction.Refuses(instruction))
+        {
+            Core.Log.Info("Prompt: instruction was only a filler, refused");
+            _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
+            Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
+            return "";
+        }
+        if (selection == null && Core.BareEditCommand.Matches(instruction))
+        {
+            // Nothing selected and the instruction is only "korrigiere" / "mach das freundlicher":
+            // there is nothing to edit, and the model would invent a text.
+            Core.Log.Info("Prompt: bare edit command without selection, refused");
+            _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
+            Sounds.Error();
+            Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
+            return "";
+        }
 
-        // With a selection Gemini hears the instruction itself; there is no transcript to compare with.
-        string text = Reply(await answer, instruction == null ? null : new[] { instruction, systemPrompt });
+        // With a selection the transcript is only the filler check. Gemini heard the instruction
+        // itself, so the reply is not compared with the transcript.
+        string text = Reply(await answer, selection == null ? new[] { instruction, systemPrompt } : null);
         Core.Log.Info($"Prompt: answer {text.Length} chars");
         text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
-        RememberPrompt(selection, instruction ?? Core.PromptConversationMemory.SpokenPlaceholder, text);
+        RememberPrompt(selection, selection == null ? instruction : Core.PromptConversationMemory.SpokenPlaceholder, text);
         return text;
     }
 
@@ -1457,8 +1528,10 @@ internal sealed partial class TrayApp : ApplicationContext
         SetBusy(Core.UserCopy.Transcribing);
         string instruction = (await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct)).Trim();
         Core.Log.Info($"Prompt via transcript ({_settings.EffectiveTextEngine}): instruction {instruction.Length} chars");
-        if (instruction.Length == 0)
+        // "Mhm." is the same as nothing heard: do not send it on, and do not paste.
+        if (instruction.Length == 0 || Core.FillerOnlyInstruction.Refuses(instruction))
         {
+            if (instruction.Length > 0) Core.Log.Info("Prompt: instruction was only a filler, refused");
             Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
             return "";
         }
@@ -1720,7 +1793,7 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         if (_fakeGemini) return "Das ist ein Testabschnitt aus dem Meeting.";
         string raw = await TranscribeAsync(Core.TranscribePurpose.MeetingChunk, wav, ct);
-        string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw), Core.Wav.DurationSeconds(wav));
+        string text = Core.TextCleanup.DiscardImplausible(Core.TextCleanup.ForDictation(raw, audioSeconds: Core.Wav.DurationSeconds(wav)), Core.Wav.DurationSeconds(wav));
         return Core.TextCleanup.LooksLikeRefusal(text) ? "" : text;
     }
 

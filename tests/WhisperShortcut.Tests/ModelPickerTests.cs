@@ -81,7 +81,7 @@ public class ModelPickerTests
         var transcription = new Dictionary<string, int>
         {
             ["gemini-3.1-flash-lite"] = 1, ["gpt-4o-mini-transcribe"] = 2, ["gemini-3.5-flash-lite"] = 3,
-            ["gpt-4o-transcribe"] = 4, ["gpt-transcribe"] = 5, ["gemini-3.8-flash"] = 6,
+            ["gpt-transcribe"] = 5, ["gemini-3.8-flash"] = 6,
         };
         var prompt = new Dictionary<string, int>
         {

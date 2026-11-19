@@ -132,7 +132,7 @@ internal static class Program
         var spoken = string.Join(" ", parts);
         var raw = SpokenPunctuation.Apply(
             SpokenPunctuation.StripModelPunctuation(spoken, timedMarks: true), PunctuationMode.SpokenOnly, timedMarks: true);
-        return TextCleanup.DiscardImplausible(TextCleanup.ForDictation(raw, addTrailingPeriod: false), Wav.DurationSeconds(wav));
+        return TextCleanup.DiscardImplausible(TextCleanup.ForDictation(raw, addTrailingPeriod: false, audioSeconds: Wav.DurationSeconds(wav)), Wav.DurationSeconds(wav));
     }
 
     private static bool OnlyPunctuation(string s) => s.Trim().Length > 0 && s.Trim().All(ch => !char.IsLetterOrDigit(ch));

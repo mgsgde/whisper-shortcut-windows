@@ -46,7 +46,7 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | Sprecher-Labels im Echo-Test (93458ddb) | Meeting | Windows-Meetings haben keine Labels | entfällt |
 | `gpt-transcribe`: Glossar als `keywords`, kein Prompt, keine Temperatur | `isContextFieldStyle` | Glossar als Anweisung, die es ignoriert | **PR #37** |
 | Meeting-Abschnitte ohne Glossar-Stichwörter (#261) | ja | gingen mit | **PR #37** |
-| OpenAI-Standard für Diktieren | `gpt-transcribe` (Audit 03.11.: 4o 9/9 Echos, Abschaltung 26.02.2027) | `gpt-4o-transcribe` | offen — **Entscheidung Magnus** (Standard + Migration) |
+| OpenAI-Standard für Diktieren | `gpt-transcribe` (Audit 03.11.: 4o 9/9 Echos, Abschaltung 26.02.2027) | `gpt-transcribe`; gespeichertes `gpt-4o-transcribe` wird beim Laden dorthin geschoben. Vorlesen: `gpt-4o-mini-tts` → Gemini Flash-Lite TTS, sonst die Windows-Stimme (Mac #481) | erledigt |
 | Gemini-IDs migrieren | `migrateLegacy*RawValue` | `GeminiModels.Renamed` | erledigt; `gemini-2.0-flash` → 3.1 Flash-Lite **PR #37** |
 | OpenAI-IDs migrieren | gpt-5 / 5.x → GPT-6 | `OpenAiModels.Renamed` | erledigt |
 | Temperatur / Thinking wählbar | Diktieren → Erweitert | Diktieren → Erweitert → Genauigkeit (Plan Schritt 9) | erledigt |

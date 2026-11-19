@@ -8,18 +8,17 @@ public class ReadAloudTests
     public void Models_AreInMacOrder_WithGermanDescriptions()
     {
         var ids = ReadAloud.Models.Select(m => m.Id).ToArray();
-        Assert.Equal(new[] { "gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gpt-4o-mini-tts", "system-windows" }, ids);
-        Assert.Equal(TtsProvider.System, ReadAloud.Models[3].Provider);
+        Assert.Equal(new[] { "gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "system-windows" }, ids);
+        Assert.Equal(TtsProvider.System, ReadAloud.Models[2].Provider);
         Assert.Equal(ReadAloud.DefaultModel, ids[0]);
         Assert.Equal(TtsProvider.Gemini, ReadAloud.Models[1].Provider);
-        Assert.Equal(TtsProvider.OpenAI, ReadAloud.Models[2].Provider);
-        Assert.Equal("GPT-4o mini TTS", ReadAloud.Models[2].Name);
+        Assert.DoesNotContain(ids, id => id == ReadAloud.RetiredOpenAiModelId);
         Assert.Contains("Empfohlen", ReadAloud.Models[0].Description);
     }
 
     [Theory]
     [InlineData("gemini-3.8-flash-tts", "gemini-3.8-flash-tts")]
-    [InlineData("gpt-4o-mini-tts", "gpt-4o-mini-tts")]
+    [InlineData("gpt-4o-mini-tts", "gpt-4o-mini-tts")] // still parses; settings load moves it
     [InlineData("gemini-2.5-flash-preview-tts", "gemini-3.8-flash-lite-tts")]
     [InlineData("gemini-2.5-pro-preview-tts", "gemini-3.8-flash-lite-tts")]
     [InlineData("gemini-3.1-flash-tts-preview", "gemini-3.8-flash-lite-tts")]
@@ -145,6 +144,17 @@ public class ReadAloudTests
         var a = swift.IndexOf("\"\"\"\n", i, StringComparison.Ordinal) + 4;
         var b = swift.IndexOf("\n\"\"\"", a, StringComparison.Ordinal);
         Assert.Equal(swift[a..b].Replace("\r\n", "\n"), ReadAloud.DefaultRewritePrompt.Replace("\r\n", "\n"));
+    }
+
+    [Fact]
+    public void RetiredMiniTts_IsHidden_AndMovesToGeminiOrTheWindowsVoice()
+    {
+        Assert.Equal(ReadAloud.DefaultModel, ReadAloud.RetiredReplacement(ReadAloud.RetiredOpenAiModelId, hasGeminiKey: true));
+        Assert.Equal(ReadAloud.SystemModel, ReadAloud.RetiredReplacement(ReadAloud.RetiredOpenAiModelId, hasGeminiKey: false));
+        Assert.Equal(ReadAloud.SystemModel, ReadAloud.RetiredReplacement(" " + ReadAloud.RetiredOpenAiModelId + " ", hasGeminiKey: false));
+        Assert.Null(ReadAloud.RetiredReplacement(ReadAloud.DefaultModel, hasGeminiKey: true));
+        Assert.Null(ReadAloud.RetiredReplacement(ReadAloud.SystemModel, hasGeminiKey: false));
+        Assert.Null(ReadAloud.RetiredReplacement(null, hasGeminiKey: true));
     }
 
     [Fact]

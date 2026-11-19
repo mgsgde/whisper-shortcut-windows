@@ -3,14 +3,18 @@ namespace WhisperShortcut.Core;
 /// <summary>The OpenAI models offered per step, and the mapping of stored ids onto them.</summary>
 public static class OpenAiModels
 {
-    /// <summary>Default OpenAI transcription model.</summary>
-    public const string DefaultTranscriptionModel = "gpt-4o-transcribe";
-
     /// <summary>
     /// Pure ASR model: takes the glossary as repeated <c>keywords</c> fields and is hurt by an instruction
-    /// <c>prompt</c> (Mac: isContextFieldStyle).
+    /// <c>prompt</c> (Mac: isContextFieldStyle). Also the default: gpt-4o-transcribe was dominated by it
+    /// and OpenAI shuts that model down 2027-02-26 (Mac #481).
     /// </summary>
     public const string KeywordModel = "gpt-transcribe";
+
+    /// <summary>Default OpenAI transcription model.</summary>
+    public const string DefaultTranscriptionModel = KeywordModel;
+
+    /// <summary>Hidden from pickers. Stored selections forward to <see cref="KeywordModel"/>.</summary>
+    public const string RetiredTranscriptionModel = "gpt-4o-transcribe";
 
     /// <summary>True when <paramref name="id"/> takes the glossary as <c>keywords</c> instead of a prompt.</summary>
     public static bool TakesKeywords(string? id) => string.Equals(id, KeywordModel, StringComparison.Ordinal);
@@ -18,12 +22,15 @@ public static class OpenAiModels
     /// <summary>Default OpenAI Dictate Prompt model.</summary>
     public const string DefaultPromptModel = "gpt-6-sol";
 
-    /// <summary>Models offered for Dictate, in display order.</summary>
+    /// <summary>
+    /// Models offered for Dictate, in display order. gpt-4o-transcribe is not here (Mac #481): stored
+    /// ids forward to <see cref="KeywordModel"/> in <see cref="NormalizeTranscription"/>. gpt-4o-mini
+    /// stays as the OpenAI model that follows the dictation prompt.
+    /// </summary>
     public static IReadOnlyList<ModelInfo> Transcription { get; } = new[]
     {
-        new ModelInfo("gpt-4o-transcribe", "GPT-4o Transcribe", "Genau, beachtet das Glossar, empfohlen") { TranscriptionSpeed = 4 },
+        new ModelInfo(KeywordModel, "GPT Transcribe", "Empfohlen. Glossar als Stichwörter, ohne eigene Anweisungen") { TranscriptionSpeed = 5 },
         new ModelInfo("gpt-4o-mini-transcribe", "GPT-4o mini Transcribe", "Günstiger, etwas ungenauer") { TranscriptionSpeed = 2 },
-        new ModelInfo("gpt-transcribe", "GPT Transcribe", "Neuestes Modell, Glossar als Stichwörter, ohne eigene Anweisungen") { TranscriptionSpeed = 5 },
     };
 
     /// <summary>Models offered for Dictate Prompt, in display order.</summary>
@@ -48,6 +55,9 @@ public static class OpenAiModels
         ["gpt-5.6-luna"] = "gpt-6-luna",
         ["gpt-4o-mini"] = "gpt-5.4-mini",
         ["whisper-1"] = DefaultTranscriptionModel,
+        // Dominated by gpt-transcribe (price, silence, glossary, latency). Case stays out of the
+        // picker; the raw id still maps so an old settings.json keeps working (Mac #481).
+        [RetiredTranscriptionModel] = KeywordModel,
     };
 
     /// <summary>A valid transcription model id: the id itself, its successor, or the default.</summary>

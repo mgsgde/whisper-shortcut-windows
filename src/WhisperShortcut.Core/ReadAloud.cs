@@ -84,13 +84,21 @@ public static class ReadAloud
             "Schnellster Start, niedrigste Kosten, über 100 Sprachen. Empfohlen.", TtsProvider.Gemini),
         new("gemini-3.8-flash-tts", "Gemini 3.8 Flash TTS",
             "Beste Sprachqualität, startet langsamer als Flash-Lite.", TtsProvider.Gemini),
-        new("gpt-4o-mini-tts", "GPT-4o mini TTS",
-            "Natürliche Sprache von OpenAI. Braucht einen OpenAI-API-Schlüssel.", TtsProvider.OpenAI),
         new(SystemModel, "Windows (auf diesem PC)",
             "Windows-Stimmen auf diesem PC • Ohne Internet, ohne API-Schlüssel • Automatisch im Offline-Modus", TtsProvider.System),
     };
 
-    /// <summary>Selectable models: Flash-Lite TTS, Flash TTS, gpt-4o-mini-tts, the Windows voices.</summary>
+    /// <summary>
+    /// Retired from pickers (Mac #481, shutdown 2027-01-06, no speech-endpoint successor). Still
+    /// parsed by <see cref="NormalizeModel"/> so <see cref="RetiredReplacement"/> can move a stored
+    /// selection. Not in <see cref="Models"/>.
+    /// </summary>
+    public const string RetiredOpenAiModelId = "gpt-4o-mini-tts";
+
+    private static readonly TtsModel RetiredOpenAi = new(RetiredOpenAiModelId, "GPT-4o mini TTS",
+        "Natürliche Sprache von OpenAI. Braucht einen OpenAI-API-Schlüssel.", TtsProvider.OpenAI);
+
+    /// <summary>Selectable models: Flash-Lite TTS, Flash TTS, the Windows voices.</summary>
     public static IReadOnlyList<TtsModel> Models => AllModels;
 
     /// <summary>Ids of removed models and the model that replaced them (Mac migrateLegacyReadAloudRawValue).</summary>
@@ -99,21 +107,39 @@ public static class ReadAloud
         "gemini-2.5-flash-preview-tts", "gemini-2.5-pro-preview-tts", "gemini-3.1-flash-tts-preview",
     };
 
-    /// <summary>A known id stays, a removed one becomes its successor, anything else the default.</summary>
+    /// <summary>
+    /// A known id stays, including <see cref="RetiredOpenAiModelId"/> so a stored selection still
+    /// parses. A removed Gemini preview becomes the default. Anything else the default.
+    /// The retired OpenAI model is not rewritten here: that move depends on whether a Gemini key
+    /// exists (<see cref="RetiredReplacement"/>), which settings load decides.
+    /// </summary>
     public static string NormalizeModel(string? id)
     {
         if (id != null)
         {
             foreach (var m in AllModels) if (m.Id == id) return id;
+            if (id == RetiredOpenAi.Id) return id;
             if (Array.IndexOf(LegacyModelIds, id) >= 0) return DefaultModel;
         }
         return DefaultModel;
+    }
+
+    /// <summary>
+    /// Where a retired Read Aloud model moves (Mac <c>retiredReadAloudReplacement</c>). Gemini 3.8
+    /// Flash-Lite TTS when a Gemini key exists, otherwise the Windows voice. Null when
+    /// <paramref name="id"/> is still offered, so nothing else is moved.
+    /// </summary>
+    public static string? RetiredReplacement(string? id, bool hasGeminiKey)
+    {
+        if (!string.Equals(id?.Trim(), RetiredOpenAi.Id, StringComparison.Ordinal)) return null;
+        return hasGeminiKey ? DefaultModel : SystemModel;
     }
 
     /// <summary>The model for <paramref name="id"/> after <see cref="NormalizeModel"/>.</summary>
     public static TtsModel ModelById(string? id)
     {
         var normalized = NormalizeModel(id);
+        if (normalized == RetiredOpenAi.Id) return RetiredOpenAi;
         return AllModels.First(m => m.Id == normalized);
     }
 
