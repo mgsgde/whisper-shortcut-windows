@@ -1,4 +1,4 @@
-# Windows vs. macOS: Funktionsabgleich (Stand 03.11.2026)
+# Windows vs. macOS: Funktionsabgleich (Stand 23.11.2026)
 
 Geprüft: Windows `integrate/cloud-sessions` (`a17d964`, enthält #18–#27, #29, #30) plus die offenen PRs
 #31–#38, gegen die macOS-App **v8.75** (`mgsgde/whisper-shortcut`, `e06174f`, Quellcode gelesen, nicht nur
@@ -14,6 +14,36 @@ früherer Verlauf bei Schnellanweisungen, leere Antwort löscht die Aufnahme, An
 Glossar-Echo-Regeln, GPT Transcribe ohne Glossar, Abrechnungs-Meldung. Offen bleiben vor allem UI-Themen,
 die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 
+
+## Abgleich 23.11.2026: Mac #348–#572 (v8.80 → v9.08)
+
+Alle 194 Mac-PRs seit dem letzten Abgleich, einzeln gegen `origin/main` (0.7.14) geprüft: Tabelle mit Status je PR in
+[`macos-abgleich-2026-11-23.md`](macos-abgleich-2026-11-23.md). Ergebnis: 47 schon da (meist Abgleich 19.11., #68–#71),
+41 bewusst anders (§8), 48 Mac-Werkzeuge/Doku, 14 in anderen Sessions (Pill/Karte, Silero, Modell-Download),
+28 fehlen, 10 ganze Funktionen fehlen, 3 unklar.
+
+**Erledigt mit diesem Abgleich:** „Problem melden“ wie Mac #549/#485/#555: ein Fenster für Tray, Über, Fehlermeldungen,
+Chat-`/feedback` und MCP; Mail an den Entwickler mit dem Bericht als `.txt`-Datei (Nachricht, Details, Einstellungen,
+Anweisungen, Glossar, Vorlagen, Protokollende). **Windows anders:** Anhang per Simple MAPI (klassisches Outlook,
+Thunderbird), sonst `mailto:` + Datei im Explorer markiert und kopiert (Mac ohne Apple Mail genauso); „Im Explorer
+zeigen“ statt Teilen-Menü; Protokollende statt Hang-Berichten; Ergebnisse nur im Speicher, Berichtsdateien nach einem
+Tag gelöscht (Mac 7 Tage); Schlüssel werden im ganzen Bericht geschwärzt; kein Audio.
+
+**Reihenfolge der übrigen Lücken** (je ein kleiner PR mit eigenem Release):
+1. Modelle: Gemini 4 Hydrogen/Neon, Argon → Neon (#562, zeitkritisch: Argon wird ab 01.12. teurer), GPT-6.1 Terra (#384).
+2. Textschutz: Planungsblock nicht an Abkürzungen schneiden (#538), Dictate-Prompt-Schutz gegen geleakte/überlange
+   Antworten (#459), Zahlwörter lassen Fließtext in Ruhe (#525).
+3. Glossar-Startlisten (#472), Glossar-Kürzel lernt die falsch gehörte Form (#498).
+4. MCP: Claude Desktop ohne Node.js (#373), vollständige Kürzel und Vorlagen-Werkzeuge (#496), `not_yet_enabled` (#430).
+5. Kleinere UI: Einführung unter Allgemein (#528), Live wählen nimmt Parakeet (#502), Vorlesen mit Anweisung (#441).
+6. Mit der Overlay-Session abzustimmen: Vorlesen per Tastatur (#438, #475–#477).
+
+**Offen mit Grund** (Entscheidung Magnus oder groß): Nur-Diktieren-Modus (#463/#464/#504/#526, L), fester Prompt-Kern
+(#468, bisher bewusst nicht), Dictate Live mit Cloud-Modellen (#570, L, hängt am Cloud-Pfad der Diktier-Bug-Session),
+Glossar-Ersetzungen mit Wörterbuch (#499), Vorlesen über `gpt-realtime-2.1-mini` (#488, WebSocket), Chat-Werkzeuge und
+Live-Notizen (#424, #535, #559, #357), Meeting-Titel (#487), Offline-Fallback ohne Schlüssel (#365), 4B oder 9B als
+Offline-Empfehlung für Dictate Prompt (#553). Kleinkram mit wenig Wirkung (Chat-Schrift #355/#444, Mitscroll-Schalter
+#368, Chat-Listen #411, MCP-Tipp #425, Docs-Werkzeug #522, Namen aus dem Feld #445) bleibt offen.
 ## 1. Diktieren
 
 | Funktion | Mac v8.75 | Windows | Status |
@@ -85,7 +115,7 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | Fenstergröße Einstellungen (#282) | Fix | fest 980×700, an Arbeitsfläche angepasst | erledigt |
 | Kürzel abschaltbar | jedes Kürzel, Glossar ab Werk aus | Diktat, Bearbeiten, Glossar immer belegt | offen (klein) |
 | Telemetrie (#288) | Zähler | keine | bewusst anders (Praxis, Patientendaten) |
-| Problem melden mit letztem Diktat (#240) | Text, Modell, Echo | Version, Modelle, Log, ohne Diktat | bewusst anders (Datenschutz); optional „Letzten Text beilegen“ |
+| Problem melden mit letztem Diktat (#240, #549) | Fenster mit letzten Ergebnissen, Mail mit Datei | gleich (seit Abgleich 23.11.), Ergebnisse nur im Speicher | erledigt, siehe Abschnitt „Abgleich 23.11.2026“ |
 | Benachrichtigungen / englische UI | Sprache, Popup-Einstellungen | fest Deutsch | offen (groß) |
 | Welcome-Tour | mehrere Schritte | `WelcomeForm`, fünf Schritte wie der Mac (Plan Schritt 8) | erledigt |
 
@@ -198,6 +228,6 @@ aus. Rechte Strg statt Fn (`FnDictationToggle`, gleiches Verhalten). Bestehende 
 alten Kürzel (wie der Mac `legacyCommandDigit`). Neue Installationen: keine Signaltöne, Screenshots an.
 Tray-Menü in der Reihenfolge und mit den Titeln von `MenuBarController.createMenu`. Abweichungen:
 Chat liegt auf Alt+6 (Mac ⌥Leertaste); „Meeting“ steht zusätzlich als eigenes Untermenü neben „Chat“;
-„Letzte Aufnahme erneut verarbeiten“ statt „Abgebrochene Aufnahme transkribieren“; „Feedback senden“ enthält
-„Problem melden …“ und „Protokoll öffnen“ statt der Mac-Kanäle; kein „Einrichtung abschließen …“. Der
+„Letzte Aufnahme erneut verarbeiten“ statt „Abgebrochene Aufnahme transkribieren“; „Problem melden …“ als eine Zeile wie
+auf dem Mac (seit Mac #549, Windows-Abgleich 23.11.); kein „Einrichtung abschließen …“. Der
 Offline-Schalter im Menü entfällt (Mac hat keinen), offline bleibt in den Einstellungen.
