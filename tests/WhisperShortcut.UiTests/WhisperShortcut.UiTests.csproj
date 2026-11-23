@@ -22,6 +22,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- One definition of the CI time budget factor for both test projects. -->
+    <Compile Include="..\WhisperShortcut.Tests\TimingBudget.cs" Link="TimingBudget.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Using Include="Xunit" />
   </ItemGroup>
 

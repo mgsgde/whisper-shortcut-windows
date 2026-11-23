@@ -1,6 +1,7 @@
 using System.Buffers.Binary;
 using System.Diagnostics;
 using WhisperShortcut.Core;
+using WhisperShortcut.TestSupport;
 using Xunit.Abstractions;
 
 namespace WhisperShortcut.Tests;
@@ -59,7 +60,8 @@ public class LatencyPathTests
         Assert.True(SpeechGate.HasSpeech(level));
         // A float[] of this recording would be 1.92 MB. Stay well under a 64 KB header-parse budget.
         Assert.True(alloc < 64_000, $"SpeechGate allocated {alloc} bytes for a 30 s file");
-        Assert.True(sw.ElapsedMilliseconds < 200, $"SpeechGate 30 s took {sw.ElapsedMilliseconds} ms");
+        var best = TimingBudget.BestOf(5, () => SpeechGate.Analyze(wav));
+        Assert.True(best < TimingBudget.Ms(200), $"SpeechGate 30 s took {best:F0} ms at best of 5 (budget {TimingBudget.Ms(200)} ms)");
     }
 
     [Fact]
@@ -77,7 +79,8 @@ public class LatencyPathTests
         Assert.Equal(expected[0], samples[0], 1e-6);
         Assert.Equal(expected[expected.Length / 2], samples[expected.Length / 2], 1e-6);
         Assert.Equal(expected[^1], samples[^1], 1e-6);
-        Assert.True(sw.ElapsedMilliseconds < 250, $"ReadMonoFloat 30 s took {sw.ElapsedMilliseconds} ms");
+        var best = TimingBudget.BestOf(5, () => Wav.ReadMonoFloat(wav, out _));
+        Assert.True(best < TimingBudget.Ms(250), $"ReadMonoFloat 30 s took {best:F0} ms at best of 5 (budget {TimingBudget.Ms(250)} ms)");
     }
 
     [Fact]
@@ -100,7 +103,8 @@ public class LatencyPathTests
         Assert.Equal(0.0, (double)json["generationConfig"]!["temperature"]!);
         // Writer buffer + ToArray, not a base64 string plus a JsonObject plus another string.
         Assert.True(alloc < utf8.Length * 3 + 64_000, $"Gemini body allocated {alloc} bytes for a {utf8.Length} byte JSON");
-        Assert.True(sw.ElapsedMilliseconds < 100, $"Gemini body 2 s took {sw.ElapsedMilliseconds} ms");
+        var best = TimingBudget.BestOf(5, () => GeminiClient.BuildTranscriptionBodyUtf8("gemini-3.1-flash-lite", wav, new[] { "Müller" }, null));
+        Assert.True(best < TimingBudget.Ms(100), $"Gemini body 2 s took {best:F0} ms at best of 5 (budget {TimingBudget.Ms(100)} ms)");
     }
 
     [Fact]

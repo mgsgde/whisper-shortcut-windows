@@ -1,3 +1,4 @@
+using WhisperShortcut.TestSupport;
 using System.Diagnostics;
 using System.Windows.Forms;
 
@@ -33,7 +34,7 @@ public sealed class OverlayTests : IDisposable
             for (int i = 0; i < 100; i++) overlay.TickForTests();
             watch.Stop();
             overlay.HideOverlay();
-            const int budget = 1500;
+            var budget = TimingBudget.Ms(1500);
             Assert.True(watch.ElapsedMilliseconds < budget, $"100 frames took {watch.ElapsedMilliseconds} ms ({watch.ElapsedMilliseconds / 100.0:F1} ms per frame, budget {budget} ms)");
         });
     }
@@ -96,7 +97,7 @@ public sealed class OverlayTests : IDisposable
             for (int i = 0; i < 300; i++) toast.TickForTests();
             watch.Stop();
             toast.Dismiss();
-            const int budget = 150;
+            var budget = TimingBudget.Ms(150);
             Assert.True(watch.ElapsedMilliseconds < budget, $"300 ticks at rest took {watch.ElapsedMilliseconds} ms (budget {budget} ms, nothing should be drawn)");
         });
     }

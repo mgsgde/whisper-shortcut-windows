@@ -1,3 +1,4 @@
+using WhisperShortcut.TestSupport;
 using System.Diagnostics;
 using System.Windows.Forms;
 
@@ -30,7 +31,7 @@ public sealed class WelcomeWindowTests : IDisposable
             var watch = Stopwatch.StartNew();
             using var form = OpenTour();
             watch.Stop();
-            const int budget = 3000;
+            var budget = TimingBudget.Ms(3000);
             Assert.True(watch.ElapsedMilliseconds < budget, $"welcome tour took {watch.ElapsedMilliseconds} ms to open (budget {budget} ms)");
         });
     }
@@ -51,7 +52,7 @@ public sealed class WelcomeWindowTests : IDisposable
             watch.Stop();
             // A width change rewraps the visible page (about 100 ms each on Magnus's PC, up to 2.3 s for 20 under the
             // load of the full UI test run); the budget catches every page relaying out again, not that.
-            const int budget = 4000;
+            var budget = TimingBudget.Ms(4000);
             Assert.True(watch.ElapsedMilliseconds < budget, $"20 resizes took {watch.ElapsedMilliseconds} ms (budget {budget} ms)");
         });
     }
