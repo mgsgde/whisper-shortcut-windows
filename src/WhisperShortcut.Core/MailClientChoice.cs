@@ -50,7 +50,7 @@ public static class MailClientChoice
     {
         try
         {
-            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+            using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             using var reader = new BinaryReader(fs);
             if (fs.Length < 0x40 || reader.ReadUInt16() != 0x5A4D) return null; // "MZ"
             fs.Position = 0x3C;
