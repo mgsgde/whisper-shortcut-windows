@@ -15,7 +15,8 @@ public static class McpProblemReport
     public static string MessageFor(string reportText)
     {
         var text = reportText.Replace("\r\n", "\n");
-        int cut = text.IndexOf("\n---\n", StringComparison.Ordinal);
+        // The last rule: Write puts it before the environment block; an AI app's own "---" in the text comes earlier.
+        int cut = text.LastIndexOf("\n---\n", StringComparison.Ordinal);
         return (cut >= 0 ? text[..cut] : text).Trim();
     }
 

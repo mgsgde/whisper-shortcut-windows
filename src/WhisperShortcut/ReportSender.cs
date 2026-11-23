@@ -13,48 +13,76 @@ namespace WhisperShortcut;
 /// </summary>
 internal static class ReportSender
 {
-    /// <summary>
-    /// True when Simple MAPI reaches the program the user writes mail with: the MAPI client registered under
-    /// Software\Clients\Mail runs the same executable as the mailto: handler. Pure, for the tests.
-    /// </summary>
-    public static bool PrefersMapi(string? mailtoExecutable, string? mapiClientExecutable) =>
-        !string.IsNullOrWhiteSpace(mailtoExecutable) && !string.IsNullOrWhiteSpace(mapiClientExecutable)
-        && string.Equals(Path.GetFileName(mailtoExecutable.Trim().Trim('"')), Path.GetFileName(mapiClientExecutable.Trim().Trim('"')),
-            StringComparison.OrdinalIgnoreCase);
+    /// <summary>What became of a MAPI compose request.</summary>
+    public enum ComposeOutcome
+    {
+        /// <summary>No matching MAPI mail program, or it failed at once: use the mailto: route.</summary>
+        NotPossible,
+        /// <summary>The compose window is open (or the call returned success).</summary>
+        Open,
+        /// <summary>The call still runs after the wait: most likely the compose window waiting for the user (classic Outlook).</summary>
+        Pending,
+    }
 
     /// <summary>
-    /// Opens a compose window to <see cref="Core.FeedbackLinks.SupportEmail"/> with <paramref name="body"/> and the file
-    /// attached. False when no MAPI mail program matches the mail handler or the call failed at once; the caller then
-    /// falls back. Runs MAPI on its own STA thread: some clients block the call until their compose window closes.
+    /// Asks the mail program for a compose window to <see cref="Core.FeedbackLinks.SupportEmail"/> with <paramref name="body"/>
+    /// and the file attached. Never blocks the caller: the UI thread carries the app's keyboard hook, and Windows drops a
+    /// hook that does not answer. MAPI runs on its own STA thread; some clients (classic Outlook) keep the call open until
+    /// their compose window closes, so after a short wait the answer is <see cref="ComposeOutcome.Pending"/>. Should the call
+    /// later end in an error, <paramref name="lateFailure"/> runs (on the MAPI thread) so the caller can still fall back.
     /// </summary>
-    public static bool TryComposeWithAttachment(string subject, string body, string file)
+    public static async Task<ComposeOutcome> ComposeWithAttachmentAsync(string subject, string body, string file, Action lateFailure)
     {
-        var handler = MailtoExecutable();
-        var client = MapiClientExecutable();
-        if (!PrefersMapi(handler, client))
+        var client = await Task.Run(() =>
         {
-            Core.Log.Info($"REPORT: no MAPI compose (mailto: {Path.GetFileName(handler ?? "-")}, MAPI client: {Path.GetFileName(client ?? "-")})");
-            return false;
-        }
-        uint? result = null;
-        var done = new ManualResetEventSlim();
+            var handler = MailtoExecutable();
+            var (exe, dll) = MapiClient();
+            if (!Core.MailClientChoice.PrefersMapi(handler, exe))
+            {
+                Core.Log.Info($"REPORT: no MAPI compose (mailto: {Path.GetFileName(handler ?? "-")}, MAPI client: {Path.GetFileName(exe ?? "-")})");
+                return null;
+            }
+            // A 32-bit Office does not load into this 64-bit process: the call would fail or hang in a system message box.
+            if (dll != null && Core.MailClientChoice.PeMachine(dll) is { } machine
+                && !Core.MailClientChoice.MachineMatches(machine, RuntimeInformation.ProcessArchitecture))
+            {
+                Core.Log.Info($"REPORT: MAPI client {Path.GetFileName(exe)} is built for 0x{machine:X4}, not {RuntimeInformation.ProcessArchitecture}");
+                return null;
+            }
+            return exe;
+        });
+        if (client == null) return ComposeOutcome.NotPossible;
+
+        var done = new TaskCompletionSource<uint>(TaskCreationOptions.RunContinuationsAsynchronously);
+        bool answered = false;
+        var gate = new object();
         var thread = new Thread(() =>
         {
+            uint result;
             try { result = SendMail(subject, body, file); }
             catch (Exception e) { Core.Log.Warn($"REPORT: MAPI call failed ({e.GetType().Name})"); result = MapiFailure; }
-            finally { done.Set(); }
+            Core.Log.Info($"REPORT: MAPI returned {result}");
+            bool late;
+            lock (gate) { late = answered; answered = true; }
+            if (late && result is not (MapiSuccess or MapiUserAbort)) lateFailure();
+            done.TrySetResult(result);
         }) { IsBackground = true, Name = "MAPI compose" };
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
-        // A compose window that is open and waiting for the user keeps the call running: that is success. An error
-        // comes back within a moment (no profile, no attachment support).
-        if (!done.Wait(TimeSpan.FromSeconds(4)))
+
+        // An error comes back within a moment (no profile, no attachment support); an open compose window keeps waiting.
+        var first = await Task.WhenAny(done.Task, Task.Delay(TimeSpan.FromSeconds(4)));
+        lock (gate)
         {
-            Core.Log.Info($"REPORT: MAPI compose open in {Path.GetFileName(client)}");
-            return true;
+            if (first != done.Task && !answered)
+            {
+                answered = true;
+                Core.Log.Info($"REPORT: MAPI compose still open in {Path.GetFileName(client)}");
+                return ComposeOutcome.Pending;
+            }
+            answered = true;
         }
-        Core.Log.Info($"REPORT: MAPI returned {result}");
-        return result is MapiSuccess or MapiUserAbort;
+        return done.Task.Result is MapiSuccess or MapiUserAbort ? ComposeOutcome.Open : ComposeOutcome.NotPossible;
     }
 
     /// <summary>Opens the mail program with a <c>mailto:</c> link. False when Windows found no handler.</summary>
@@ -119,8 +147,11 @@ internal static class ReportSender
         }
     }
 
-    /// <summary>The executable of the default Simple MAPI client (HKCU, then HKLM Software\Clients\Mail), or null.</summary>
-    private static string? MapiClientExecutable()
+    /// <summary>
+    /// The default Simple MAPI client (HKCU, then HKLM Software\Clients\Mail): its executable and its MAPI DLL
+    /// (DLLPathEx before DLLPath, as the system's MAPI stub prefers it), or nulls.
+    /// </summary>
+    private static (string? Exe, string? Dll) MapiClient()
     {
         try
         {
@@ -130,30 +161,19 @@ internal static class ReportSender
                 if (clients?.GetValue(null) is not string name || name.Length == 0) continue;
                 using var client = Registry.LocalMachine.OpenSubKey($@"Software\Clients\Mail\{name}")
                     ?? root.OpenSubKey($@"Software\Clients\Mail\{name}");
-                if (client == null || client.GetValue("DLLPath") is not string dll || dll.Length == 0) continue;
+                if (client == null) continue;
+                var dll = (client.GetValue("DLLPathEx") as string) is { Length: > 0 } ex ? ex : client.GetValue("DLLPath") as string;
+                if (string.IsNullOrEmpty(dll)) continue;
                 using var command = client.OpenSubKey(@"shell\open\command");
-                if (command?.GetValue(null) is string cmd && ExecutableOf(cmd) is { } exe) return exe;
+                if (command?.GetValue(null) is string cmd && Core.MailClientChoice.ExecutableOf(cmd) is { } exe)
+                    return (exe, Environment.ExpandEnvironmentVariables(dll));
             }
         }
         catch (Exception e)
         {
             Core.Log.Warn($"REPORT: MAPI client unknown ({e.GetType().Name})");
         }
-        return null;
-    }
-
-    /// <summary>The program path at the start of a command line ("C:\x\a.exe" /y or C:\x\a.exe /y).</summary>
-    internal static string? ExecutableOf(string commandLine)
-    {
-        var c = commandLine.Trim();
-        if (c.Length == 0) return null;
-        if (c[0] == '"')
-        {
-            int end = c.IndexOf('"', 1);
-            return end > 1 ? c[1..end] : null;
-        }
-        int exe = c.IndexOf(".exe", StringComparison.OrdinalIgnoreCase);
-        return exe > 0 ? c[..(exe + 4)] : c.Split(' ')[0];
+        return (null, null);
     }
 
     // ---- Simple MAPI ----------------------------------------------------------------------------------------------

@@ -20,8 +20,6 @@ internal sealed class ProblemReportWindow : Form
 
     private static ProblemReportWindow? _current;
 
-    private const int MailtoContextLimit = 1500; // mailto: travels in the URL; the full text is in the file
-
     private readonly IReadOnlyList<Core.ResultCandidate> _candidates;
     private readonly Dictionary<string, string> _editedDetails = new();
     private readonly string _openedMessage;
@@ -36,7 +34,8 @@ internal sealed class ProblemReportWindow : Form
     private readonly FieldFrame _detailsFrame;
     private readonly LinkLabel _detailsToggle, _preview;
     private readonly ToggleSwitch _includeConfiguration;
-    private readonly FluentButton _copy, _send, _done;
+    private readonly FluentButton _copy, _reveal, _send, _done;
+    private readonly Font _mono = new("Consolas", 9.5f);
 
     /// <summary>True while a report window is on screen.</summary>
     public static bool IsShowing => _current is { IsDisposed: false };
@@ -45,11 +44,12 @@ internal sealed class ProblemReportWindow : Form
     /// Opens the window (Mac ProblemReport.open). <paramref name="message"/> prefills „Was ist schiefgelaufen?“;
     /// <paramref name="details"/> goes above the general candidate's lines (the chat tail from /feedback);
     /// <paramref name="activate"/> false keeps the keyboard where it is (an MCP report while the user types);
-    /// <paramref name="onHandedOff"/> runs once, with the report text, when the user first sends, shows or copies it.
-    /// An edited draft on screen is kept; an untouched window is replaced.
+    /// <paramref name="onHandedOff"/> runs once, with the report text, when the user first sends, shows or copies it;
+    /// <paramref name="asDraft"/> makes the prefilled text count as the user's draft (an AI app's report), so a later open
+    /// does not replace it. An edited draft on screen is kept; an untouched window is replaced.
     /// </summary>
     public static void Open(string? message = null, string? details = null, bool startOnGeneral = false,
-        bool activate = true, Action<string>? onHandedOff = null)
+        bool activate = true, Action<string>? onHandedOff = null, bool asDraft = false)
     {
         var provided = CandidatesProvider?.Invoke() ?? Array.Empty<Core.ResultCandidate>();
         if (provided.Count == 0)
@@ -67,18 +67,18 @@ internal sealed class ProblemReportWindow : Form
             }
             open.Close();
         }
-        var window = new ProblemReportWindow(candidates, message ?? "", startOnGeneral, activate, onHandedOff);
+        var window = new ProblemReportWindow(candidates, message ?? "", asDraft ? "" : message ?? "", startOnGeneral, activate, onHandedOff);
         _current = window;
         window.FormClosed += (_, _) => { if (_current == window) _current = null; };
         window.Present(activate);
         Core.Log.Info($"REPORT: opened on {window.Current?.Kind} ({candidates.Count} results)");
     }
 
-    private ProblemReportWindow(IReadOnlyList<Core.ResultCandidate> candidates, string message, bool startOnGeneral,
-        bool activate, Action<string>? onHandedOff)
+    private ProblemReportWindow(IReadOnlyList<Core.ResultCandidate> candidates, string message, string openedMessage,
+        bool startOnGeneral, bool activate, Action<string>? onHandedOff)
     {
         _candidates = candidates;
-        _openedMessage = message;
+        _openedMessage = openedMessage;
         _activate = activate;
         _onHandedOff = onHandedOff;
         _selected = Core.ResultReport.InitialSelection(candidates, startOnGeneral);
@@ -130,7 +130,7 @@ internal sealed class ProblemReportWindow : Form
         _details = new TextBox
         {
             Multiline = true, AcceptsReturn = true, ScrollBars = ScrollBars.Vertical, WordWrap = true,
-            Font = new Font("Consolas", 9.5f), AccessibleName = "Details",
+            Font = _mono, AccessibleName = "Details",
         };
         _details.TextChanged += (_, _) =>
         {
@@ -176,7 +176,7 @@ internal sealed class ProblemReportWindow : Form
         cancel.Click += (_, _) => Close();
         _copy = new FluentButton("Kopieren") { MinimumSize = new Size(100, 32), AccessibleName = "Bericht kopieren" };
         _copy.Click += (_, _) => Copy();
-        var reveal = new FluentButton("Im Explorer zeigen") { MinimumSize = new Size(150, 32), Margin = new Padding(8, 0, 0, 0), AccessibleName = "Berichtsdatei im Explorer zeigen" };
+        var reveal = _reveal = new FluentButton("Im Explorer zeigen") { MinimumSize = new Size(150, 32), Margin = new Padding(8, 0, 0, 0), AccessibleName = "Berichtsdatei im Explorer zeigen" };
         reveal.Click += (_, _) => RevealFile();
         // No AcceptButton: Return in the message field must not send.
         _send = new FluentButton("Per E-Mail senden", accent: true) { MinimumSize = new Size(150, 32), Margin = new Padding(8, 0, 0, 0), AccessibleName = "Per E-Mail senden" };
@@ -207,6 +207,12 @@ internal sealed class ProblemReportWindow : Form
     }
 
     protected override bool ShowWithoutActivation => !_activate;
+
+    protected override void Dispose(bool disposing)
+    {
+        if (disposing) _mono.Dispose();
+        base.Dispose(disposing);
+    }
 
     protected override void OnHandleCreated(EventArgs e)
     {
@@ -291,7 +297,7 @@ internal sealed class ProblemReportWindow : Form
         catch (Exception e) when (e is IOException or UnauthorizedAccessException)
         {
             Core.Log.Warn($"REPORT: file not written ({e.GetType().Name})");
-            ChoiceDialog.Ask(this, "Die Einstellungsdatei konnte nicht erstellt werden.",
+            ChoiceDialog.Ask(this, "Die Berichtsdatei konnte nicht erstellt werden.",
                 "Nutze stattdessen „Kopieren“: Damit landet alles in der Zwischenablage.", new[] { "OK" });
             return null;
         }
@@ -309,13 +315,12 @@ internal sealed class ProblemReportWindow : Form
     /// attached by the mail program (Simple MAPI); otherwise mailto: opens, the file is selected in Explorer and on the
     /// clipboard, and the window stays open and says how to add it.
     /// </summary>
-    private void SendEmail()
+    private async void SendEmail()
     {
         var context = Context;
         if (!_includeConfiguration.Checked)
         {
-            var url = Core.FeedbackLinks.MailtoUrl(Core.FeedbackLinks.Truncated(context, MailtoContextLimit), AppVersion, WindowsVersion);
-            if (ReportSender.OpenMailto(url))
+            if (ReportSender.OpenMailto(Core.FeedbackLinks.MailtoUrlWithin(context, AppVersion, WindowsVersion)))
             {
                 Core.Log.Info("REPORT: opened mailto with the message");
                 HandedOff(Core.FeedbackLinks.MessageBody(context, AppVersion, WindowsVersion));
@@ -327,34 +332,70 @@ internal sealed class ProblemReportWindow : Form
 
         var text = ReportFileText();
         if (WriteFile(text) is not { } file) return;
-        UseWaitCursor = true;
-        bool composed;
+        var ui = SynchronizationContext.Current;
+        var body = Core.FeedbackLinks.MessageBody(Core.FeedbackLinks.Truncated(context, Core.FeedbackLinks.MailtoContextLimit), AppVersion, WindowsVersion);
+        SetBusy(true);
+        ReportSender.ComposeOutcome outcome;
         try
         {
-            var body = Core.FeedbackLinks.MessageBody(Core.FeedbackLinks.Truncated(context, Core.FeedbackLinks.MailtoContextLimit), AppVersion, WindowsVersion);
-            composed = ReportSender.TryComposeWithAttachment(Core.FeedbackLinks.EmailSubject(AppVersion), body, file);
+            // Never blocks the UI thread (the keyboard hook lives there). A MAPI error after the wait still falls back.
+            outcome = await ReportSender.ComposeWithAttachmentAsync(Core.FeedbackLinks.EmailSubject(AppVersion), body, file,
+                lateFailure: () => ui?.Post(_ => FallBack(this, file, context), null));
         }
-        finally { UseWaitCursor = false; }
-        if (composed)
+        catch (Exception e)
         {
-            Core.Log.Info($"REPORT: e-mail with {Path.GetFileName(file)} attached");
-            HandedOff(text);
-            Close();
-            return;
+            Core.Log.Warn($"REPORT: compose failed ({e.GetType().Name})");
+            outcome = ReportSender.ComposeOutcome.NotPossible;
         }
+        if (IsDisposed) return;
+        SetBusy(false);
+        HandedOff(text);
+        switch (outcome)
+        {
+            case ReportSender.ComposeOutcome.Open:
+                Core.Log.Info($"REPORT: e-mail with {Path.GetFileName(file)} attached");
+                Close();
+                break;
+            case ReportSender.ComposeOutcome.Pending:
+                // Classic Outlook keeps the call open while its window waits. Stay open: should it still fail, the
+                // fallback shows here instead of the user's text vanishing.
+                ShowDone("Die E-Mail ist in deinem E-Mail-Programm geöffnet, mit dem Bericht im Anhang. Prüfe sie und sende sie dort ab.");
+                break;
+            default:
+                FallBack(this, file, context);
+                break;
+        }
+    }
 
+    /// <summary>
+    /// Mac without Apple Mail: mailto: with the message (the file name first), the file selected in Explorer and on the
+    /// clipboard. Runs on the UI thread, also after the window closed (a late MAPI error); then only the mail opens.
+    /// </summary>
+    private static void FallBack(ProblemReportWindow window, string file, string context)
+    {
         ReportSender.RevealInExplorer(file);
         ReportSender.CopyFileToClipboard(file);
-        var withNote = Core.ResultReport.WithFileNote(Core.FeedbackLinks.Truncated(context, MailtoContextLimit), Path.GetFileName(file));
-        bool opened = ReportSender.OpenMailto(Core.FeedbackLinks.MailtoUrl(withNote, AppVersion, WindowsVersion));
+        var withNote = Core.ResultReport.WithFileNote(context, Path.GetFileName(file));
+        bool opened = ReportSender.OpenMailto(Core.FeedbackLinks.MailtoUrlWithin(withNote, AppVersion, WindowsVersion));
         Core.Log.Info($"REPORT: mailto {(opened ? "opened" : "did not open")}, {Path.GetFileName(file)} shown in Explorer");
-        HandedOff(text);
-        _fileNote.Text = opened
+        if (window.IsDisposed) return;
+        window.ShowDone(opened
             ? "Die Datei ist im Explorer markiert und kopiert. Drücke in der E-Mail Strg+V oder ziehe die Datei hinein."
-            : $"Kein E-Mail-Programm gefunden. Die Datei ist im Explorer markiert und kopiert: Schreib an {Core.FeedbackLinks.SupportEmail} und hänge sie an.";
+            : $"Kein E-Mail-Programm gefunden. Die Datei ist im Explorer markiert und kopiert: Schreib an {Core.FeedbackLinks.SupportEmail} und hänge sie an.");
+    }
+
+    private void ShowDone(string note)
+    {
+        _fileNote.Text = note;
         _fileNote.Visible = true;
         _send.Visible = false;
         _done.Visible = true;
+    }
+
+    private void SetBusy(bool busy)
+    {
+        UseWaitCursor = busy;
+        _send.Enabled = _copy.Enabled = _reveal.Enabled = !busy;
     }
 
     private void NoMailProgram() =>

@@ -157,7 +157,51 @@ public class ResultReportTests
         Assert.Equal("body\n\ntech\n\nconfig", ResultReport.FileText("body", " tech ", "config\n"));
         Assert.Equal("body\n\nconfig", ResultReport.FileText("body", "", "config"));
         Assert.Equal("body", ResultReport.FileText("body", "  ", null));
-        Assert.Equal("ctx\n\nKonfiguration als Datei: r.txt", ResultReport.WithFileNote("ctx", "r.txt"));
+        Assert.Equal("Bericht als Datei: r.txt\n\nctx", ResultReport.WithFileNote("ctx", "r.txt"));
+    }
+
+    [Fact]
+    public void MailtoUrlWithin_keeps_the_link_short_and_the_start_of_the_text()
+    {
+        var context = ResultReport.WithFileNote(string.Concat(Enumerable.Repeat("Größe über Ärztin\n", 400)), "r.txt");
+        var url = FeedbackLinks.MailtoUrlWithin(context, "1.0", "10.0").OriginalString;
+        Assert.True(url.Length <= FeedbackLinks.MaxMailtoLength, $"{url.Length} chars");
+        var body = Uri.UnescapeDataString(url[(url.IndexOf("&body=") + 6)..]);
+        Assert.Contains("Bericht als Datei: r.txt", body); // the line that must arrive comes first
+        Assert.Contains("…", body);
+        Assert.EndsWith("App-Version: 1.0\nWindows: 10.0", body);
+        // A short text is not touched.
+        Assert.Equal(FeedbackLinks.MailtoUrl("kurz", "1", "2"), FeedbackLinks.MailtoUrlWithin("kurz", "1", "2"));
+    }
+
+    [Theory]
+    [InlineData(@"C:\Program Files\Microsoft Office\root\Office16\OUTLOOK.EXE", "\"C:\\Program Files\\Microsoft Office\\root\\Office16\\OUTLOOK.EXE\" /c ipm.note", true)]
+    [InlineData(@"C:\Program Files\Mozilla Thunderbird\thunderbird.exe", @"C:\Program Files\Mozilla Thunderbird\thunderbird.exe -mail", true)]
+    [InlineData(@"C:\Program Files\Google\Chrome\Application\chrome.exe", "\"C:\\Program Files\\Microsoft Office\\root\\Office16\\OUTLOOK.EXE\"", false)]
+    [InlineData(null, "\"C:\\x\\OUTLOOK.EXE\"", false)]
+    [InlineData(@"C:\x\OUTLOOK.EXE", "", false)]
+    public void PrefersMapi_only_when_the_mail_handler_is_the_MAPI_client(string? mailto, string command, bool expected) =>
+        Assert.Equal(expected, MailClientChoice.PrefersMapi(mailto, MailClientChoice.ExecutableOf(command)));
+
+    [Fact]
+    public void MachineMatches_refuses_a_32_bit_client_in_the_64_bit_app()
+    {
+        Assert.True(MailClientChoice.MachineMatches(0x8664, System.Runtime.InteropServices.Architecture.X64));
+        Assert.False(MailClientChoice.MachineMatches(0x14C, System.Runtime.InteropServices.Architecture.X64));
+        Assert.True(MailClientChoice.MachineMatches(0xAA64, System.Runtime.InteropServices.Architecture.Arm64));
+        Assert.False(MailClientChoice.MachineMatches(0x8664, System.Runtime.InteropServices.Architecture.Arm64));
+        // This test process is a real PE image of the machine it runs on.
+        var self = Environment.ProcessPath!;
+        Assert.True(MailClientChoice.MachineMatches(MailClientChoice.PeMachine(self)!.Value,
+            System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture));
+        Assert.Null(MailClientChoice.PeMachine(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".dll")));
+    }
+
+    [Fact]
+    public void McpProblemReport_message_stops_at_the_environment_block_not_at_a_rule_in_the_text()
+    {
+        var text = "# Titel\n\n## Was passiert\n\nerst\n---\ndann\n\n---\n\n- Version: 1\n\nFooter";
+        Assert.Equal("# Titel\n\n## Was passiert\n\nerst\n---\ndann", WhisperShortcut.Core.Mcp.McpProblemReport.MessageFor(text));
     }
 
     private sealed class Plain : ISecretProtector

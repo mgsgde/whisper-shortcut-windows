@@ -28,7 +28,9 @@ public sealed class FakeHost : IMcpHost
     public string? WriteBlockedReason() => BlockedReason;
     public void AfterApply() => AfterApplyCount++;
     public void ProposalCreated(McpProposal proposal) => Proposals.Add(proposal);
-    public void OpenProblemReport(string path) => OpenedReports.Add(path);
+    /// <summary>False: the host behaves as if a „Problem melden“ window were already open.</summary>
+    public bool ShowsReports { get; set; } = true;
+    public bool OpenProblemReport(string path) { OpenedReports.Add(path); return ShowsReports; }
 }
 
 /// <summary>Reverses the secret so tests can tell protected from plain text.</summary>

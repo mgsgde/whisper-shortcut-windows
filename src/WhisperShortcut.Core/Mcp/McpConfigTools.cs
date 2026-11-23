@@ -507,10 +507,13 @@ public sealed class McpConfigTools(McpToolContext ctx) : IMcpToolProvider, IMcpR
         {
             return ctx.Reject(tool, "write failed", "The report could not be saved: " + ex.Message);
         }
-        try { ctx.Host.OpenProblemReport(path); }
+        bool shown = false;
+        try { shown = ctx.Host.OpenProblemReport(path); }
         catch (Exception ex) { AppLog.Error("MCP: opening the problem report failed", ex); }
-        AppLog.Info("MCP: report_problem saved");
-        return new McpToolResult($"Saved as a problem report (file {Path.GetFileName(path)}) and opened in WhisperShortcut's „Problem melden“ window. Nothing is sent; the user reviews it and decides whether to send it by e-mail.", false);
+        AppLog.Info($"MCP: report_problem saved (shown: {shown})");
+        return new McpToolResult(shown
+            ? $"Saved as a problem report (file {Path.GetFileName(path)}) and opened in WhisperShortcut's „Problem melden“ window. Nothing is sent; the user reviews it and decides whether to send it by e-mail."
+            : $"Saved as a problem report (file {Path.GetFileName(path)} in WhisperShortcut's Problemberichte folder), but not shown: the user already has a „Problem melden“ window open. Nothing is sent. Tell the user the report is saved and that they can send it from „Problem melden“ once the open one is done.", false);
     }
 
     // ---- get_proposal_status -----------------------------------------------------------------------------------

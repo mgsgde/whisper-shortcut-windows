@@ -25,6 +25,31 @@ public static class FeedbackLinks
         new("mailto:" + SupportEmail + "?subject=" + Uri.EscapeDataString(EmailSubject(appVersion))
             + "&body=" + Uri.EscapeDataString(MessageBody(context, appVersion, windowsVersion)));
 
+    /// <summary>
+    /// Longest mailto: link we open. Classic Outlook and other handlers cut or refuse links around 2,000 characters, and
+    /// escaping makes a German text two to three times longer (umlauts, line breaks). The full report is in the file.
+    /// </summary>
+    public const int MaxMailtoLength = 1900;
+
+    /// <summary>
+    /// <see cref="MailtoUrl"/> with <paramref name="context"/> shortened (and marked with "…") until the whole link fits
+    /// <paramref name="maxLength"/>. The start of the context survives, so anything that must arrive goes first.
+    /// </summary>
+    public static Uri MailtoUrlWithin(string? context, string appVersion, string windowsVersion, int maxLength = MaxMailtoLength)
+    {
+        var text = (context ?? "").Trim();
+        var url = MailtoUrl(text, appVersion, windowsVersion);
+        if (url.OriginalString.Length <= maxLength) return url;
+        int lo = 0, hi = text.Length; // largest prefix length that fits
+        while (lo < hi)
+        {
+            int mid = (lo + hi + 1) / 2;
+            if (MailtoUrl(Truncated(text, mid), appVersion, windowsVersion).OriginalString.Length <= maxLength) lo = mid;
+            else hi = mid - 1;
+        }
+        return MailtoUrl(lo == 0 ? "" : Truncated(text, lo), appVersion, windowsVersion);
+    }
+
     /// <summary><paramref name="text"/> trimmed; when longer than <paramref name="limit"/>, the first <paramref name="limit"/> characters plus "…".</summary>
     public static string Truncated(string text, int limit)
     {

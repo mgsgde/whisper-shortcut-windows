@@ -178,9 +178,12 @@ public static class ResultReport
         return SecretRedactor.Redact(string.Join("\n\n", parts));
     }
 
-    /// <summary>The context with a pointer to the attached configuration file.</summary>
+    /// <summary>
+    /// The context with a pointer to the report file, so the developer notices when it was not pasted. First, not last
+    /// as on the Mac: a mailto: link that is too long loses its end, and this line must arrive.
+    /// </summary>
     public static string WithFileNote(string context, string fileName) =>
-        context + "\n\nKonfiguration als Datei: " + fileName;
+        "Bericht als Datei: " + fileName + "\n\n" + context;
 
     /// <summary>Label above the message box.</summary>
     public static string MessageLabel(ResultKind kind) =>

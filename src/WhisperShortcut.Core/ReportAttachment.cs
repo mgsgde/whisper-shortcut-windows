@@ -15,7 +15,7 @@ public static class ReportAttachment
 
     /// <summary>
     /// Writes <paramref name="text"/> to WhisperShortcut-Report-yyyy-MM-dd-HHmmss.txt (UTF-8 with BOM, CRLF line endings),
-    /// after pruning files older than 7 days. Returns the full path.
+    /// after pruning files older than a day. Returns the full path.
     /// </summary>
     public static string Write(string text, DateTime now, string? directory = null)
     {
@@ -30,7 +30,7 @@ public static class ReportAttachment
         return path;
     }
 
-    /// <summary>Deletes report files last written more than 7 days before <paramref name="now"/>. A missing folder is nothing.</summary>
+    /// <summary>Deletes report files last written more than a day before <paramref name="now"/>. A missing folder is nothing.</summary>
     public static void PruneOld(DateTime now, string? directory = null)
     {
         var folder = directory ?? DefaultDirectory;

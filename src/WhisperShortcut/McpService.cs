@@ -259,27 +259,26 @@ internal sealed class McpService : IMcpHost, IDisposable
         _ui.Post(_ => ShowProposal(proposal), null);
 
     /// <inheritdoc />
-    public void OpenProblemReport(string path)
+    public bool OpenProblemReport(string path)
     {
         Core.Log.Info("MCP: problem report saved");
         // Mac #549: the AI app's report opens in „Problem melden“ without taking the keyboard; the user sends it from
-        // there with the configuration attached. One window at a time: an open draft stays.
-        _ui.Post(_ =>
+        // there with the configuration attached. One window at a time: an open window stays, and the AI app is told.
+        if (ProblemReportWindow.IsShowing)
         {
-            string message;
-            try { message = Core.Mcp.McpProblemReport.MessageFor(File.ReadAllText(path)); }
-            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
-            {
-                Core.Log.Error($"Reading the problem report failed: {e.GetType().Name}");
-                return;
-            }
-            if (ProblemReportWindow.IsShowing)
-            {
-                Core.Log.Info("MCP: problem report left in its file; a report window is already open");
-                return;
-            }
-            ProblemReportWindow.Open(message: message, startOnGeneral: true, activate: false);
-        }, null);
+            Core.Log.Info("MCP: problem report left in its file; a report window is already open");
+            return false;
+        }
+        string message;
+        try { message = Core.Mcp.McpProblemReport.MessageFor(File.ReadAllText(path)); }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            Core.Log.Error($"Reading the problem report failed: {e.GetType().Name}");
+            return false;
+        }
+        // asDraft: the AI app's text is the user's to send; opening the window from the tray must not replace it.
+        _ui.Post(_ => ProblemReportWindow.Open(message: message, startOnGeneral: true, activate: false, asDraft: true), null);
+        return true;
     }
 
     // ---------------- proposals ----------------
