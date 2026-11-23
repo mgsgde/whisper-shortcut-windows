@@ -73,6 +73,10 @@ owns them now.)
 
 Notifications are GitHub issues that mention `@mgsgde` (GitHub mails them), not a mail script.
 
+**Dev instance on Magnus's PC** (the Mac's „WhisperShortcut Dev“ and `dev-daily.sh`): `tools/dev/README.md`. A Task
+Scheduler task installs every green `main` build as a separate „WhisperShortcut Dev“ (own data, shared offline models,
+deleting them is locked in Dev). Magnus sets the task up himself; never start either app from Claude.
+
 ### Stop any of it
 
 | What | Hold | Resume |
