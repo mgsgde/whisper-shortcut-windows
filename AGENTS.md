@@ -35,7 +35,7 @@ Parakeet download failed):
 
 - CI runs the real Silero model on real speech (`SileroRealSpeechTests`, WAVs from `tools/e2e/make-speech-wav.ps1`)
   and, as `Dictation smoke (Windows)`, the published exe end to end (`tools/e2e/dictation-smoke.ps1`).
-  `tools/release.sh` refuses a commit whose smoke check is not green. The Gemini key for it is the repository
+  The release workflow refuses a commit whose CI (push run, smoke check included) is not green. The Gemini key for it is the repository
   secret `GEMINI_API_KEY` (`gh secret set GEMINI_API_KEY`); never put a key in the repo.
 - `Offline catalog upstream` (daily) compares every `OfflineCatalog` file with its host. Pin new URLs to a
   revision or release tag, never `/resolve/main/`.
