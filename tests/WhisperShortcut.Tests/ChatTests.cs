@@ -337,8 +337,8 @@ public class ChatTests : IDisposable
         Assert.Equal(new[]
             {
                 "/new", "/screenshot", "/attach", "/model", "/gemini",
-                "/gemini35flashlite", "/gemini31flashlite", "/gemini4argon",
-                "/gpt", "/gpt6luna", "/gpt54mini",
+                "/gemini35flashlite", "/gemini31flashlite", "/gemini4hydrogen", "/gemini4neon",
+                "/gpt", "/gpt61terra", "/gpt6luna", "/gpt54mini",
                 "/think", "/settings", "/pin", "/unpin", "/meeting", "/copy", "/feedback",
             },
             ChatCommands.All.Select(c => c.Command));
@@ -387,7 +387,9 @@ public class ChatTests : IDisposable
     [InlineData("/gpt6luna", "gpt-6-luna")]
     [InlineData("/GPT54MINI ignoriert", "gpt-5.4-mini")]
     [InlineData("/gemini35flashlite", "gemini-3.5-flash-lite")]
-    [InlineData("/gemini4argon", "gemini-4-argon")]
+    [InlineData("/gemini4neon", "gemini-4-neon")]
+    [InlineData("/gemini4hydrogen", "gemini-4-hydrogen")]
+    [InlineData("/gpt61terra", "gpt-6.1-terra")]
     public void TryParse_model_aliases_carry_the_model_id(string input, string modelId)
     {
         Assert.True(ChatCommands.TryParse(input, out var kind, out var arg));

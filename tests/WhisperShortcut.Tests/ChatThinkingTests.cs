@@ -22,7 +22,8 @@ public class ChatThinkingTests
     public void TryParse_rejects_everything_else(string? input) => Assert.False(ChatThinking.TryParse(input, out _));
 
     [Theory]
-    [InlineData("gemini-4-argon", null, "high")]
+    [InlineData("gemini-4-neon", null, "medium")]
+    [InlineData("gemini-4-hydrogen", null, "low")]
     [InlineData("gemini-3.1-pro", "default", "high")]
     [InlineData("gemini-3.8-flash", "", "low")]
     [InlineData("gemini-3.1-flash-lite", null, "minimal")]
@@ -34,12 +35,13 @@ public class ChatThinkingTests
 
     [Theory]
     [InlineData("gemini-3.8-flash", "minimal", "low")]
-    [InlineData("gemini-4-argon", "minimal", "low")]
+    [InlineData("gemini-4-neon", "minimal", "low")]
+    [InlineData("gemini-4-hydrogen", "minimal", "low")]
     [InlineData("gemini-3.1-pro", "minimal", "low")]
     [InlineData("gemini-3.5-flash-lite", "minimal", "minimal")]
     [InlineData("gemini-3.8-flash", "high", "high")]
     [InlineData("gemini-3.1-flash-lite", "medium", "medium")]
-    [InlineData("gemini-4-argon", "low", "low")]
+    [InlineData("gemini-4-neon", "low", "low")]
     public void Gemini_explicit_level_replaces_the_built_in(string model, string level, string expected) =>
         Assert.Equal(expected, (string?)ChatThinking.GeminiConfig(model, level)!["thinkingLevel"]);
 
@@ -62,7 +64,8 @@ public class ChatThinkingTests
         Assert.Equal(expected, ChatThinking.OpenAiEffort(model, level));
 
     [Theory]
-    [InlineData("gemini-4-argon")]
+    [InlineData("gemini-4-neon")]
+    [InlineData("gemini-4-hydrogen")]
     [InlineData("gemini-3.7-flash")]
     [InlineData("gemini-9-pro")]
     public void Gemini_minimal_becomes_low_for_models_that_reject_it(string model) =>

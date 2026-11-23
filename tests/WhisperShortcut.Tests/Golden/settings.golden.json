@@ -9,7 +9,7 @@
   "transcriptionLanguage": "de",
   "transcriptionTemperature": 0.5,
   "transcriptionThinking": "high",
-  "openAiPromptModel": "gpt-6-luna",
+  "openAiPromptModel": "gpt-6.1-terra",
   "glossary": [
     "Alpha",
     "Beta"
@@ -79,14 +79,14 @@
   "meetingOpenAiTranscriptionModel": "gpt-4o-mini-transcribe",
   "meetingTextEngine": "openai",
   "meetingSummaryModel": "gemini-3.8-flash",
-  "meetingOpenAiSummaryModel": "gpt-6-luna",
+  "meetingOpenAiSummaryModel": "gpt-6.1-terra",
   "meetingChunkSeconds": 30,
   "meetingSafeguardMinutes": 120,
   "chatHotkey": "Ctrl\u002BAlt\u002BF8",
   "chatHotkeyEnabled": false,
   "chatEngine": "openai",
   "chatModel": "gemini-3.5-flash-lite",
-  "chatOpenAiModel": "gpt-6-luna",
+  "chatOpenAiModel": "gpt-6.1-terra",
   "chatSystemPrompt": "Eigene Chat-Anweisung",
   "chatWebSearch": false,
   "chatCloseOnFocusLoss": false

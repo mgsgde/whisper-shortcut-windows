@@ -17,12 +17,13 @@ public static class GeminiModels
         new ModelInfo("gemini-3.8-flash", "Gemini 3.8 Flash", "Schnell und gründlich, empfohlen") { PromptSpeed = 5 },
         new ModelInfo("gemini-3.5-flash-lite", "Gemini 3.5 Flash-Lite", "Am schnellsten, für kurze Änderungen") { PromptSpeed = 1 },
         new ModelInfo("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite", "Günstig, einfache Aufgaben") { PromptSpeed = 2 },
-        new ModelInfo("gemini-4-argon", "Gemini 4 Argon", "Beste Texte, deutlich langsamer, nur mit bezahltem Schlüssel"),
+        new ModelInfo("gemini-4-hydrogen", "Gemini 4 Hydrogen", "Günstigstes Gemini 4 • Alltagsfragen und Agenten • Gratisstufe • Multimodal"),
+        new ModelInfo("gemini-4-neon", "Gemini 4 Neon", "Stärkstes Gemini 4 für schwierige Rechercheaufgaben • Kostenpflichtig (keine Gratisstufe) • Multimodal"),
     };
 
     private static readonly HashSet<string> RejectsMinimalIds = new(StringComparer.OrdinalIgnoreCase)
     {
-        "gemini-4-argon", "gemini-3.1-pro", "gemini-3.8-flash",
+        "gemini-4-hydrogen", "gemini-4-neon", "gemini-3.1-pro", "gemini-3.8-flash",
     };
 
     /// <summary>True when <paramref name="id"/> answers HTTP 400 to thinkingLevel "minimal" (the caller then sends "low").</summary>
@@ -39,7 +40,8 @@ public static class GeminiModels
     /// <summary>The thinkingLevel a model uses when the user keeps "default".</summary>
     public static string BuiltInThinking(string? id) => id switch
     {
-        "gemini-4-argon" => "high",
+        "gemini-4-neon" => "medium",
+        "gemini-4-hydrogen" => "low",
         "gemini-3.1-pro" => "high",
         "gemini-3.8-flash" => "low",
         "gemini-3.1-flash-lite" or "gemini-3.5-flash-lite" => "minimal",
@@ -49,6 +51,8 @@ public static class GeminiModels
     // Same migration as the Mac app: ids that no longer exist map to their successor.
     private static readonly Dictionary<string, string> Renamed = new(StringComparer.Ordinal)
     {
+        // Argon was retired 2026-11-20 (dominated by Neon); stored ids forward to Neon.
+        ["gemini-4-argon"] = "gemini-4-neon",
         ["gemini-3.7-flash"] = "gemini-3.8-flash",
         ["gemini-3.6-flash"] = "gemini-3.8-flash",
         ["gemini-3.5-flash"] = "gemini-3.8-flash",
@@ -62,18 +66,17 @@ public static class GeminiModels
 
     /// <summary>A valid Dictate model id: the id itself, its successor, or the default.</summary>
     public static string NormalizeTranscription(string? id) =>
-        Normalize(id, Transcription, Settings.DefaultTranscriptionModel, argonAllowed: false);
+        Normalize(id, Transcription, Settings.DefaultTranscriptionModel);
 
     /// <summary>A valid Dictate Prompt model id: the id itself, its successor, or the default.</summary>
     public static string NormalizePrompt(string? id) =>
-        Normalize(id, Prompt, Settings.DefaultPromptModel, argonAllowed: true);
+        Normalize(id, Prompt, Settings.DefaultPromptModel);
 
-    private static string Normalize(string? id, IReadOnlyList<ModelInfo> list, string fallback, bool argonAllowed)
+    private static string Normalize(string? id, IReadOnlyList<ModelInfo> list, string fallback)
     {
         var t = id?.Trim();
         if (string.IsNullOrEmpty(t)) return fallback;
         if (list.Any(m => string.Equals(m.Id, t, StringComparison.Ordinal))) return t;
-        if (!argonAllowed && t == "gemini-4-argon") return fallback;
         if (t.Contains("-pro", StringComparison.Ordinal)) return fallback;
         if (Renamed.TryGetValue(t, out var next) && list.Any(m => m.Id == next)) return next;
         return fallback;
