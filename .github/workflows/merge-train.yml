@@ -1,0 +1,65 @@
+name: Merge train
+
+# The macOS repo's merge train and Monday PR list (scripts/merge-train/ there), as GitHub Actions so they do not
+# depend on a PC being on. What they do: tools/automation/merge-train.sh and tools/automation/stale-prs.sh.
+#
+# Stop it:
+#   gh variable set MERGE_TRAIN_HOLD --body "Grund"    # train merges nothing (Monday list still runs)
+#   gh variable delete MERGE_TRAIN_HOLD                # resume
+#   gh workflow disable merge-train.yml                # everything off, including the Monday list
+# Per PR: label hold or needs-device-test, or keep it a draft.
+
+on:
+  schedule:
+    - cron: "*/20 * * * *"   # train
+    - cron: "30 7 * * 1"     # Monday 08:30 Berlin (winter): PR list
+  workflow_dispatch:
+    inputs:
+      job:
+        description: "train or stale-prs"
+        type: choice
+        options: [train, stale-prs]
+        default: train
+      dry_run:
+        description: "Decide and print only; change nothing"
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+  checks: read
+
+concurrency:
+  group: merge-train-${{ github.event.schedule == '30 7 * * 1' && 'stale' || inputs.job || 'train' }}
+  cancel-in-progress: false
+
+jobs:
+  train:
+    if: github.event.schedule == '*/20 * * * *' || inputs.job == 'train'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Merge green PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
+          MERGE_TRAIN_HOLD: ${{ vars.MERGE_TRAIN_HOLD }}
+        run: bash tools/automation/merge-train.sh
+
+  stale-prs:
+    if: github.event.schedule == '30 7 * * 1' || inputs.job == 'stale-prs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: List and close old PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
+        run: bash tools/automation/stale-prs.sh
