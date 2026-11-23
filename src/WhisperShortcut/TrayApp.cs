@@ -232,6 +232,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _offline.DownloadChanged += () => { if (IsIdle) RefreshStatus(); };
         _overlay.QuickActionClicked += OnQuickAction;
         _overlay.CancelClicked += OnEscape; // the pill's ✕ (Mac): discard the recording or cancel the processing
+        _overlay.ConfirmClicked += () => { if (IsRecording) _ = StopAndProcessAsync(); }; // the pill's ✓ (Mac): stop and process
         _updates.Found += OnUpdateFound;
         _updateNoticeTimer.Tick += (_, _) =>
         {
