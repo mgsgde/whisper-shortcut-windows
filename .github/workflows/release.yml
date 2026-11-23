@@ -5,13 +5,23 @@ name: Release
 # with the update key, uploads everything to a draft and only then publishes. Nobody runs `gh release create`
 # by hand any more, so a tag can no longer land on whatever the default branch happens to be.
 #
-#   tools/release.sh              checks, then tags HEAD and pushes the tag (this workflow starts)
+#   release-nightly.yml           the normal way: calls this workflow (workflow_call) after tagging main
+#   tools/release.sh              hotfix by hand: checks, then tags HEAD and pushes the tag (this workflow starts)
 #   workflow_dispatch tag=vX.Y.Z  re-drive an existing tag (failed run, or draft=true to test first)
 #   pull_request (these files)    dry run: build, sign, upload to a throwaway draft, download, verify, delete
 #
+# Channels, as on the Mac (Latest first, Stable a week later): a new release is published as a GitHub
+# *prerelease*. Apps on the Latest channel take the newest published release including prereleases; apps on
+# Stable (the default, and every copy older than the channel setting) read releases/latest, which GitHub never
+# points at a prerelease. Promotion to Stable clears the prerelease flag (release-nightly.yml, Tuesdays).
+# stable=true (dispatch input) publishes a hotfix straight to Stable.
+#
+# Signing key: secret UPDATE_SIGNING_KEY of the environment `release`, which GitHub hands only to runs on
+# main or on a v* tag. Pull-request runs never see it; their dry run signs with a throwaway key.
+#
 # Keep a release a draft (install it on the Windows PC before users get it): repo variable RELEASE_AS_DRAFT=true
-# (`gh variable set RELEASE_AS_DRAFT --body true`) before pushing the tag, or dispatch with draft=true.
-# Publish it with: gh release edit vX.Y.Z --draft=false --latest
+# (`gh variable set RELEASE_AS_DRAFT --body true`) before it is cut, or dispatch with draft=true.
+# Publish it with: gh release edit vX.Y.Z --draft=false --prerelease
 
 on:
   push:
@@ -25,6 +35,24 @@ on:
         type: string
       draft:
         description: "Keep the release a draft (install and test it, then publish by hand)"
+        required: false
+        default: false
+        type: boolean
+      stable:
+        description: "Hotfix: publish straight to Stable instead of Latest"
+        required: false
+        default: false
+        type: boolean
+  workflow_call:
+    inputs:
+      tag:
+        required: true
+        type: string
+      draft:
+        required: false
+        default: false
+        type: boolean
+      stable:
         required: false
         default: false
         type: boolean
@@ -69,7 +97,9 @@ jobs:
           PR_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          case "$EVENT" in
+          # workflow_call and workflow_dispatch pass the tag; a tag push names it in the ref.
+          if [ -n "$INPUT_TAG" ] || [ "$EVENT" = push ]; then kind=tag; else kind="$EVENT"; fi
+          case "$kind" in
             pull_request)
               # A dry run of the pipeline itself: the version comes from the csproj, nothing is published.
               sha="$PR_SHA"
@@ -78,7 +108,7 @@ jobs:
               tag="v$version"
               mode=dryrun
               ;;
-            push|workflow_dispatch)
+            tag)
               tag="${INPUT_TAG:-$REF_NAME}"
               case "$tag" in v[0-9]*) ;; *) echo "::error::Not a release tag: '$tag'"; exit 1 ;; esac
               # The tag must already exist on GitHub; this workflow never creates or moves one.
@@ -112,8 +142,9 @@ jobs:
           echo "Version $VERSION; notes:"; cat .github/RELEASE_NOTES.md
 
       # The whole CI workflow (unit tests, UI tests, and every job added later such as the dictation smoke
-      # check) must be green on the tagged commit, in a push run: on a pull_request run the smoke job may skip
-      # without its secret and still count as green. A dry run on a PR skips this: CI runs next to it anyway.
+      # check) must be green on the tagged commit, in a push or workflow_dispatch run: on a pull_request run the
+      # smoke job may skip without its secret and still count as green. (Commits that Actions pushes with
+      # GITHUB_TOKEN start no push run, so the merge train and the nightly job dispatch CI themselves.) A dry run on a PR skips this: CI runs next to it anyway.
       - name: Wait for green CI on the tagged commit
         if: steps.resolve.outputs.mode == 'publish'
         env:
@@ -123,8 +154,8 @@ jobs:
           set -uo pipefail
           deadline=$((SECONDS + 60 * 60))
           while true; do
-            runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=20" \
-              --jq '[.workflow_runs[] | "\(.status) \(.conclusion)"] | join(",")') || runs=""
+            runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=30" \
+              --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch") | "\(.status) \(.conclusion)"] | join(",")') || runs=""
             echo "CI runs on $SHA: ${runs:-none}"
             case ",$runs," in
               *",completed success,"*) echo "CI is green on $SHA."; exit 0 ;;
@@ -144,6 +175,8 @@ jobs:
     name: Build and sign (Windows)
     needs: gate
     runs-on: windows-latest
+    # Only a real release enters the protected environment holding the key (GitHub allows main and v* tags only).
+    environment: ${{ needs.gate.outputs.mode == 'publish' && 'release' || '' }}
     timeout-minutes: 40
     defaults:
       run:
@@ -310,19 +343,26 @@ jobs:
         if: needs.gate.outputs.mode == 'publish'
         env:
           INPUT_DRAFT: ${{ inputs.draft }}
+          INPUT_STABLE: ${{ inputs.stable }}
           RELEASE_AS_DRAFT: ${{ vars.RELEASE_AS_DRAFT }}
         run: |
           set -euo pipefail
           if [ "$INPUT_DRAFT" = "true" ] || [ "$RELEASE_AS_DRAFT" = "true" ]; then
-            echo "::notice::$TAG stays a draft. Publish with: gh release edit $TAG --draft=false --latest"
+            echo "::notice::$TAG stays a draft. Publish with: gh release edit $TAG --draft=false --prerelease"
             exit 0
           fi
-          # Only a higher version becomes Latest (what UpdateCheck reads); a hotfix of an older line does not.
+          if [ "$INPUT_STABLE" != "true" ]; then
+            # Latest channel: a prerelease, which releases/latest (Stable) skips.
+            gh release edit "$TAG" -R "$REPO" --draft=false --prerelease --latest=false
+            echo "Published $TAG to Latest: https://github.com/$REPO/releases/tag/$TAG"
+            exit 0
+          fi
+          # Hotfix straight to Stable. Only a higher version becomes releases/latest; an older line never does.
           current=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || echo v0)
           newest=$(printf '%s\n%s\n' "${current#v}" "$VERSION" | sort -V | tail -1)
           latest=false; [ "$newest" = "$VERSION" ] && [ "${current#v}" != "$VERSION" ] && latest=true
-          gh release edit "$TAG" -R "$REPO" --draft=false --latest="$latest"
-          echo "Published $TAG (latest=$latest, previous latest $current): https://github.com/$REPO/releases/tag/$TAG"
+          gh release edit "$TAG" -R "$REPO" --draft=false --prerelease=false --latest="$latest"
+          echo "Published $TAG to Stable (latest=$latest, previous $current): https://github.com/$REPO/releases/tag/$TAG"
 
       - name: Delete the dry-run draft
         if: always() && needs.gate.outputs.mode == 'dryrun' && steps.draft.outputs.name != ''

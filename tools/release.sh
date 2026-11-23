@@ -44,9 +44,9 @@ if [ -n "$PREV" ] && git diff --quiet "$PREV" "$SHA" -- "$NOTES"; then
 fi
 
 # release.yml checks this too; checking here means a red or running CI never leaves a tag behind.
-# Push runs only: a pull_request run may skip the dictation smoke check (no secret) and still be green.
-CI=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=20" \
-  --jq '[.workflow_runs[] | "\(.status) \(.conclusion)"] | join(",")')
+# Push or dispatch runs only: a pull_request run may skip the dictation smoke check (no secret) and still be green.
+CI=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=30" \
+  --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch") | "\(.status) \(.conclusion)"] | join(",")')
 case ",$CI," in
   *",completed success,"*) ;;
   *) fail "CI is not green on $SHA (${CI:-no run}). Wait for it, re-run a flaky job, or push a hotfix as release/x.y.z so CI runs on push." ;;

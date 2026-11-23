@@ -5,6 +5,8 @@ on:
     # release/** = hotfix branches off an older tag; release.yml needs a green push run on the tagged commit.
     branches: [main, "release/**"]
   pull_request:
+  # The merge train and the nightly release dispatch CI on main: their GITHUB_TOKEN pushes start no push run.
+  workflow_dispatch:
 
 permissions:
   contents: read
