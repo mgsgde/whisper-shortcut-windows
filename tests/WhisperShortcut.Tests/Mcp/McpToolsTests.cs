@@ -254,6 +254,18 @@ public class McpToolsTests
     }
 
     [Fact]
+    public void ReportProblem_TellsTheAiApp_WhenTheWindowIsAlreadyOpen()
+    {
+        using var s = new McpStack();
+        s.Host.ShowsReports = false;
+        var r = s.Tool("report_problem", A("{\"title\":\"a\",\"what_happens\":\"b\",\"why_not_settings\":\"c\"}"));
+        Assert.False(r.IsError, r.Text);
+        Assert.Contains("not shown", r.Text);
+        Assert.DoesNotContain("opened in", r.Text);
+        Assert.True(File.Exists(Assert.Single(s.Host.OpenedReports)));
+    }
+
+    [Fact]
     public void ReportProblem_NeedsWriteAccess_AndValidInput()
     {
         using var s = new McpStack(McpAccessLevel.Read);

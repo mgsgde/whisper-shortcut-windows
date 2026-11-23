@@ -80,6 +80,6 @@ public interface IMcpHost
     /// <summary>A proposal was created: show the approval dialog.</summary>
     void ProposalCreated(McpProposal proposal);
 
-    /// <summary>Opens the saved problem report file for the user.</summary>
-    void OpenProblemReport(string path);
+    /// <summary>Shows the saved problem report to the user; false when it could not be shown (a report window is already open).</summary>
+    bool OpenProblemReport(string path);
 }

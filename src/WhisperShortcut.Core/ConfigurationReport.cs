@@ -5,7 +5,8 @@ namespace WhisperShortcut.Core;
 /// <summary>What the report may contain beyond the base snapshot.</summary>
 /// <param name="IncludeGlossary">Append the glossary terms.</param>
 /// <param name="IncludePrompts">Append the system prompt texts (and the template when set).</param>
-public sealed record ConfigurationReportOptions(bool IncludeGlossary = false, bool IncludePrompts = false);
+/// <param name="IncludeTemplates">Append the dictation templates with their instructions.</param>
+public sealed record ConfigurationReportOptions(bool IncludeGlossary = false, bool IncludePrompts = false, bool IncludeTemplates = false);
 
 /// <summary>Where the app runs; shown in the report header.</summary>
 /// <param name="AppVersion">App version, e.g. "1.2.3".</param>
@@ -19,9 +20,6 @@ public sealed record ConfigurationReportEnvironment(string AppVersion, string Wi
 /// </summary>
 public static class ConfigurationReport
 {
-    /// <summary>wa.me / mailto silently drop longer bodies (Mac FeedbackReportSheet.linkLimit).</summary>
-    public const int LinkLimit = 1200;
-
     /// <summary>Builds the report text; lines are joined with "\n".</summary>
     public static string Build(ConfigurationReportOptions options, Settings settings,
         IReadOnlyList<McpSetting> catalog, ConfigurationReportEnvironment env)
@@ -73,18 +71,23 @@ public static class ConfigurationReport
             lines.Add("```");
         }
 
+        if (options.IncludeTemplates)
+        {
+            lines.Add("");
+            lines.Add("## Templates");
+            if (settings.Templates.Count == 0) lines.Add("none");
+            foreach (var t in settings.Templates)
+            {
+                lines.Add("");
+                lines.Add($"### {t.DisplayName}  (shortcut: {(string.IsNullOrWhiteSpace(t.Hotkey) ? "none" : t.Hotkey)})");
+                lines.Add("```");
+                lines.Add(SecretRedactor.Redact(t.Instructions));
+                lines.Add("```");
+            }
+        }
+
         return string.Join("\n", lines);
     }
-
-    /// <summary>Note first (trimmed), then the draft (trimmed), empty parts dropped, joined by a blank line.</summary>
-    public static string Message(string? note, string draft)
-    {
-        var parts = new[] { note?.Trim() ?? "", draft?.Trim() ?? "" }.Where(p => p.Length > 0);
-        return string.Join("\n\n", parts);
-    }
-
-    /// <summary>True when the message is short enough for a wa.me / mailto link.</summary>
-    public static bool FitsInLink(string message) => message.Length <= LinkLimit;
 
     private static string Effective(string stored, string fallback, out bool customized)
     {

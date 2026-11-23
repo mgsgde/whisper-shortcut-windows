@@ -2,7 +2,7 @@ namespace WhisperShortcut;
 
 /// <summary>
 /// The Mac chat features around one chat: the meeting chat (a chat attached to a meeting sees its transcript, live while it
-/// records, then summary and transcript), /think (thinking depth per chat), /feedback (WhatsApp with the end of this chat)
+/// records, then summary and transcript), /think (thinking depth per chat), /feedback („Problem melden“ with the end of this chat)
 /// and the user's own commands (one .md file per command, Mac UserCommands). On Windows the chat from which /meeting starts
 /// becomes the meeting chat; a meeting started from the tray offers „Fragen zum laufenden Meeting“ in the header.
 /// </summary>
@@ -149,16 +149,14 @@ internal sealed partial class ChatWindow
 
     // ---------------- /feedback ----------------
 
-    /// <summary>Mac sendFeedbackFromChat: WhatsApp opens with the end of this chat prefilled; nothing is sent without the user.</summary>
+    /// <summary>
+    /// Mac sendFeedbackFromChat (#549): „Problem melden“ opens on general feedback with the end of this chat in the
+    /// details; the message field stays empty for the user to say what went wrong. Nothing is sent without them.
+    /// </summary>
     private void SendFeedback()
     {
-        var context = Core.FeedbackLinks.ChatContext(_session.Messages);
-        if (!TrayApp.OpenFeedback(Core.FeedbackChannel.WhatsApp, context))
-        {
-            SetStatus(Core.FeedbackLinks.OpenFailed, Tone.Bad);
-            return;
-        }
-        SetStatus(context == null ? Core.FeedbackLinks.OpenedEmpty : Core.FeedbackLinks.OpenedWithChat, Tone.Secondary);
+        var excerpt = Core.FeedbackLinks.ChatExcerpt(_session.Messages);
+        ProblemReportWindow.Open(details: excerpt.Length == 0 ? null : excerpt, startOnGeneral: true);
     }
 
     // ---------------- user commands ----------------

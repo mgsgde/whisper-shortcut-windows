@@ -1,59 +1,53 @@
 namespace WhisperShortcut.Core;
 
-/// <summary>Where feedback can be sent.</summary>
-public enum FeedbackChannel
-{
-    /// <summary>WhatsApp chat with the developer.</summary>
-    WhatsApp,
-    /// <summary>E-mail (mailto:).</summary>
-    Email,
-    /// <summary>A new GitHub issue.</summary>
-    GitHub,
-}
-
-/// <summary>Links and pre-filled messages for "Feedback senden" (Mac FeedbackLinks and ChatView sendFeedbackFromChat).</summary>
+/// <summary>The feedback e-mail of "Problem melden" (Mac FeedbackLinks).</summary>
 public static class FeedbackLinks
 {
-    /// <summary>WhatsApp number of the developer, without "+".</summary>
-    public const string WhatsAppNumber = "4917641952181";
-
     /// <summary>E-mail address for feedback.</summary>
     public const string SupportEmail = "mgsgde@gmail.com";
 
-    /// <summary>The GitHub repository of the Windows app.</summary>
-    public const string GitHubUrl = "https://github.com/mgsgde/whisper-shortcut-windows";
+    /// <summary>The context is cut to this many characters before the mailto link is built (Mac).</summary>
+    public const int MailtoContextLimit = 6000;
 
-    /// <summary>Notice after WhatsApp was opened with the end of the chat attached.</summary>
-    public const string OpenedWithChat = "WhatsApp geöffnet, mit dem Ende dieses Chats im Anhang. Vor dem Senden bearbeiten.";
+    /// <summary>Subject of the feedback mail.</summary>
+    public static string EmailSubject(string appVersion) => $"Feedback zu WhisperShortcut ({appVersion})";
 
-    /// <summary>Notice after WhatsApp was opened without chat context.</summary>
-    public const string OpenedEmpty = "WhatsApp geöffnet. Bearbeite die Nachricht vor dem Senden.";
-
-    /// <summary>Notice when WhatsApp could not be opened.</summary>
-    public const string OpenFailed = "WhatsApp ließ sich nicht öffnen – die anderen Kontaktwege findest du im Menü unter „Feedback senden“.";
-
-    /// <summary>
-    /// The pre-filled message: greeting, the optional <paramref name="context"/>, then app and Windows version.
-    /// English on purpose: it goes to the developer.
-    /// </summary>
+    /// <summary>The message: greeting, the optional <paramref name="context"/>, then app and Windows version.</summary>
     public static string MessageBody(string? context, string appVersion, string windowsVersion)
     {
-        var text = "Hi! I have feedback about WhisperShortcut:\n\n";
-        if (!string.IsNullOrWhiteSpace(context)) text += context.Trim() + "\n\n";
-        return text + $"---\nApp version: {appVersion}\nWindows: {windowsVersion}";
+        var text = "Hallo, ich habe Feedback zu WhisperShortcut:";
+        if (!string.IsNullOrWhiteSpace(context)) text += "\n\n" + SecretRedactor.Redact(context.Trim()); // never a key in the mail
+        return text + $"\n\n---\nApp-Version: {appVersion}\nWindows: {windowsVersion}";
     }
 
-    /// <summary>The link that opens <paramref name="channel"/> with <see cref="MessageBody"/> filled in.</summary>
-    public static Uri Url(FeedbackChannel channel, string? context, string appVersion, string windowsVersion)
+    /// <summary>The mailto link with subject and <see cref="MessageBody"/> filled in.</summary>
+    public static Uri MailtoUrl(string? context, string appVersion, string windowsVersion) =>
+        new("mailto:" + SupportEmail + "?subject=" + Uri.EscapeDataString(EmailSubject(appVersion))
+            + "&body=" + Uri.EscapeDataString(MessageBody(context, appVersion, windowsVersion)));
+
+    /// <summary>
+    /// Longest mailto: link we open. Classic Outlook and other handlers cut or refuse links around 2,000 characters, and
+    /// escaping makes a German text two to three times longer (umlauts, line breaks). The full report is in the file.
+    /// </summary>
+    public const int MaxMailtoLength = 1900;
+
+    /// <summary>
+    /// <see cref="MailtoUrl"/> with <paramref name="context"/> shortened (and marked with "…") until the whole link fits
+    /// <paramref name="maxLength"/>. The start of the context survives, so anything that must arrive goes first.
+    /// </summary>
+    public static Uri MailtoUrlWithin(string? context, string appVersion, string windowsVersion, int maxLength = MaxMailtoLength)
     {
-        var body = Uri.EscapeDataString(MessageBody(context, appVersion, windowsVersion));
-        return channel switch
+        var text = (context ?? "").Trim();
+        var url = MailtoUrl(text, appVersion, windowsVersion);
+        if (url.OriginalString.Length <= maxLength) return url;
+        int lo = 0, hi = text.Length; // largest prefix length that fits
+        while (lo < hi)
         {
-            FeedbackChannel.WhatsApp => new Uri($"https://wa.me/{WhatsAppNumber}?text={body}"),
-            FeedbackChannel.Email => new Uri(
-                $"mailto:{SupportEmail}?subject={Uri.EscapeDataString($"WhisperShortcut feedback ({appVersion})")}&body={body}"),
-            _ => new Uri($"{GitHubUrl}/issues/new?body={body}"),
-        };
+            int mid = (lo + hi + 1) / 2;
+            if (MailtoUrl(Truncated(text, mid), appVersion, windowsVersion).OriginalString.Length <= maxLength) lo = mid;
+            else hi = mid - 1;
+        }
+        return MailtoUrl(lo == 0 ? "" : Truncated(text, lo), appVersion, windowsVersion);
     }
 
     /// <summary><paramref name="text"/> trimmed; when longer than <paramref name="limit"/>, the first <paramref name="limit"/> characters plus "…".</summary>
@@ -78,12 +72,5 @@ public static class FeedbackLinks
             return Truncated((m.Role == ChatRole.User ? "Me: " : "Assistant: ") + text, 300);
         });
         return Truncated(string.Join("\n", lines), 1200);
-    }
-
-    /// <summary>The excerpt with a lead-in line, or null when there is nothing to attach.</summary>
-    public static string? ChatContext(IReadOnlyList<ChatMessage> messages)
-    {
-        var excerpt = ChatExcerpt(messages);
-        return excerpt.Length == 0 ? null : "Here is the end of my chat for context:\n\n" + excerpt;
     }
 }

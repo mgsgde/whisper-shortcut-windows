@@ -6,7 +6,19 @@ namespace WhisperShortcut.Core.Mcp;
 /// <summary>The problem report file an AI app can save with report_problem: Markdown the user reviews before reporting anything.</summary>
 public static class McpProblemReport
 {
-    private const string Footer = "Von einer KI-App über WhisperShortcut erstellt. Es wurde nichts gesendet. Wer das melden möchte: Text prüfen, Privates entfernen und unter https://github.com/mgsgde/whisper-shortcut-windows/issues/new einfügen.";
+    private const string Footer = "Von einer KI-App über WhisperShortcut erstellt. Es wurde nichts gesendet. WhisperShortcut öffnet dazu „Problem melden“: Text prüfen, Privates entfernen und dort „Per E-Mail senden“ drücken.";
+
+    /// <summary>
+    /// The AI app's description out of a saved report (title and sections, without the environment block and footer):
+    /// what „Problem melden“ prefills. The window attaches the full configuration itself (Mac handOffProblemReport).
+    /// </summary>
+    public static string MessageFor(string reportText)
+    {
+        var text = reportText.Replace("\r\n", "\n");
+        // The last rule: Write puts it before the environment block; an AI app's own "---" in the text comes earlier.
+        int cut = text.LastIndexOf("\n---\n", StringComparison.Ordinal);
+        return (cut >= 0 ? text[..cut] : text).Trim();
+    }
 
     private static string OneLine(string s) => ProblemReport.Redact(s).ReplaceLineEndings(" ").Trim();
 

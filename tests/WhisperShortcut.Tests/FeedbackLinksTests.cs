@@ -11,7 +11,7 @@ public class FeedbackLinksTests
     [Fact]
     public void MessageBody_without_context()
     {
-        Assert.Equal("Hi! I have feedback about WhisperShortcut:\n\n---\nApp version: 0.6.0\nWindows: 11 (26100)",
+        Assert.Equal("Hallo, ich habe Feedback zu WhisperShortcut:\n\n---\nApp-Version: 0.6.0\nWindows: 11 (26100)",
             FeedbackLinks.MessageBody("  ", "0.6.0", "11 (26100)"));
         Assert.Equal(FeedbackLinks.MessageBody(null, "1", "2"), FeedbackLinks.MessageBody("", "1", "2"));
     }
@@ -19,21 +19,25 @@ public class FeedbackLinksTests
     [Fact]
     public void MessageBody_with_context_is_trimmed()
     {
-        Assert.Equal("Hi! I have feedback about WhisperShortcut:\n\nKontext\n\n---\nApp version: 1\nWindows: 2",
+        Assert.Equal("Hallo, ich habe Feedback zu WhisperShortcut:\n\nKontext\n\n---\nApp-Version: 1\nWindows: 2",
             FeedbackLinks.MessageBody("  Kontext \n", "1", "2"));
     }
 
     [Fact]
-    public void Urls_for_the_three_channels()
+    public void EmailSubject_names_the_version()
     {
-        var body = Uri.EscapeDataString(FeedbackLinks.MessageBody("ctx", "0.6.0", "W"));
-        Assert.Equal("https://wa.me/4917641952181?text=" + body,
-            FeedbackLinks.Url(FeedbackChannel.WhatsApp, "ctx", "0.6.0", "W").AbsoluteUri);
-        var mail = FeedbackLinks.Url(FeedbackChannel.Email, "ctx", "0.6.0", "W").OriginalString;
-        Assert.StartsWith("mailto:mgsgde@gmail.com?subject=" + Uri.EscapeDataString("WhisperShortcut feedback (0.6.0)") + "&body=", mail);
+        Assert.Equal("Feedback zu WhisperShortcut (0.6.0)", FeedbackLinks.EmailSubject("0.6.0"));
+    }
+
+    [Fact]
+    public void MailtoUrl_escapes_ampersand_and_plus_in_the_body()
+    {
+        var mail = FeedbackLinks.MailtoUrl("a & b + c", "0.6.0", "W").OriginalString;
+        var body = Uri.EscapeDataString(FeedbackLinks.MessageBody("a & b + c", "0.6.0", "W"));
+        Assert.StartsWith("mailto:mgsgde@gmail.com?subject=" + Uri.EscapeDataString("Feedback zu WhisperShortcut (0.6.0)") + "&body=", mail);
         Assert.EndsWith(body, mail);
-        Assert.Equal("https://github.com/mgsgde/whisper-shortcut-windows/issues/new?body=" + body,
-            FeedbackLinks.Url(FeedbackChannel.GitHub, "ctx", "0.6.0", "W").AbsoluteUri);
+        Assert.Contains("a%20%26%20b%20%2B%20c", mail);
+        Assert.Equal(1, mail.Count(c => c == '&'));
     }
 
     [Theory]
@@ -68,10 +72,8 @@ public class FeedbackLinksTests
     }
 
     [Fact]
-    public void ChatContext_is_null_without_messages()
+    public void ChatExcerpt_is_empty_without_messages()
     {
         Assert.Equal("", FeedbackLinks.ChatExcerpt(Array.Empty<ChatMessage>()));
-        Assert.Null(FeedbackLinks.ChatContext(Array.Empty<ChatMessage>()));
-        Assert.Equal("Here is the end of my chat for context:\n\nMe: hi", FeedbackLinks.ChatContext(new[] { U("hi") }));
     }
 }

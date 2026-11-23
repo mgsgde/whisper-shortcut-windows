@@ -90,18 +90,28 @@ public class ConfigurationReportTests
     }
 
     [Fact]
-    public void MessageOrdersNoteFirstAndDropsEmptyParts()
+    public void TemplatesAreListedOnlyWhenAsked()
     {
-        Assert.Equal("hello\n\nreport", ConfigurationReport.Message("  hello ", " report\n"));
-        Assert.Equal("report", ConfigurationReport.Message("   ", "report"));
-        Assert.Equal("report", ConfigurationReport.Message(null, "report"));
+        using var stack = Stack();
+        stack.Settings.Templates = new List<DictationTemplate>
+        {
+            new() { Name = "Brief", Instructions = "TEMPLATE_SENTINEL_otter key AIzaSyTESTKEY_should_never_appear_1234567", Hotkey = "Ctrl+Shift+1" },
+            new() { Name = "Stumm", Instructions = "x" },
+        };
+        Assert.DoesNotContain("TEMPLATE_SENTINEL_otter", Build(stack));
+        var report = ConfigurationReport.Build(new ConfigurationReportOptions(IncludeTemplates: true), stack.Settings, stack.Catalog, Env);
+        Assert.Contains("\n## Templates\n\n### Brief  (shortcut: Ctrl+Shift+1)\n```\nTEMPLATE_SENTINEL_otter key AIza…\n```", report);
+        Assert.Contains("### Stumm  (shortcut: none)", report);
+        Assert.DoesNotContain("TESTKEY", report);
     }
 
     [Fact]
-    public void FitsInLinkBoundary()
+    public void EmptyTemplateListSaysNone()
     {
-        Assert.True(ConfigurationReport.FitsInLink(new string('a', 1200)));
-        Assert.False(ConfigurationReport.FitsInLink(new string('a', 1201)));
+        using var stack = Stack();
+        stack.Settings.Templates = new List<DictationTemplate>();
+        var report = ConfigurationReport.Build(new ConfigurationReportOptions(IncludeTemplates: true), stack.Settings, stack.Catalog, Env);
+        Assert.EndsWith("## Templates\nnone", report);
     }
 
     [Fact]
