@@ -257,18 +257,39 @@ public static class TextCleanup
         return anchor;
     }
 
-    /// <summary>Index of the uppercase letter that starts the answer, where punctuation is glued to it.</summary>
+    /// <summary>
+    /// Index of the uppercase letter that starts the answer, where punctuation is glued to it. The word before
+    /// the punctuation must be at least 3 characters and end in a lowercase letter or digit, so "U.S.",
+    /// "Dr.Meyer" and similar abbreviations never cut a real answer (Mac #538).
+    /// </summary>
     private static int? GluedAnswerStart(string text)
     {
         var anchor = LastPlanningLineStart(text);
         if (anchor is not int index) return null;
         while (index < text.Length - 1)
         {
-            if (GluePunctuation.Contains(text[index]) && char.IsUpper(text[index + 1]))
+            if (GluePunctuation.Contains(text[index]) && char.IsUpper(text[index + 1])
+                && IsGlueWord(text, anchor: (int)anchor, punctuation: index))
                 return index + 1;
             index++;
         }
         return null;
+    }
+
+    private static bool IsGlueWord(string text, int anchor, int punctuation)
+    {
+        var count = 0;
+        var cursor = punctuation;
+        char? last = null;
+        while (cursor > anchor)
+        {
+            var c = text[cursor - 1];
+            if (!char.IsLetterOrDigit(c)) break;
+            last ??= c;
+            count++;
+            cursor--;
+        }
+        return count >= 3 && last is char l && (char.IsLower(l) || char.IsDigit(l));
     }
 
     private static void LogPlanningDrop(string original, string kept, int parts)
