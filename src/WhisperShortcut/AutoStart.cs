@@ -12,7 +12,7 @@ internal static class AutoStart
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     // Task Manager's Autostart tab and Settings → Apps → Startup keep their on/off switch here, not in Run.
     private const string ApprovedKey = @"Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run";
-    private const string ValueName = "WhisperShortcut";
+    private static string ValueName => Core.AppIdentity.Current.AutoStartValueName; // Dev: "WhisperShortcut Dev"
 
     /// <summary>
     /// True when the Run value exists and Windows has not switched it off in Task Manager / Settings.

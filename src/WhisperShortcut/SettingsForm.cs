@@ -146,7 +146,7 @@ internal sealed partial class SettingsForm : FastShowForm
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        Text = "WhisperShortcut – Einstellungen";
+        Text = $"{Core.AppIdentity.Current.DisplayName} – Einstellungen";
         AccessibleDescription = Core.UserCopy.SettingsAccessibleDescription;
         Font = Theme.Body;
         StartPosition = FormStartPosition.Manual; // centered in Load, after the size is known
@@ -683,7 +683,7 @@ internal sealed partial class SettingsForm : FastShowForm
         };
         var appTitle = new ThemedLabel
         {
-            Text = "WhisperShortcut", AutoSize = false, Location = new Point(48, 16), Size = new Size(200, 24),
+            Text = Core.AppIdentity.Current.DisplayName, AutoSize = false, Location = new Point(48, 16), Size = new Size(200, 24),
             Font = Theme.AppTitle, TextAlign = ContentAlignment.MiddleLeft,
         };
         nav.Controls.Add(logo);
@@ -925,6 +925,22 @@ internal sealed partial class SettingsForm : FastShowForm
     {
         page.Controls.Add(Section("Updates", subtitle: "Ob WhisperShortcut nach neuen Versionen sucht."));
         var card = new Card();
+        if (!Core.AppIdentity.Current.UpdatesEnabled)
+        {
+            // Dev: no controls, no GitHub request. The unused controls only keep the bindings and handlers below valid.
+            _updateButton = new FluentButton("Suchen");
+            _updateStatus = new ThemedLabel();
+            _autoUpdate = new ToggleSwitch { Checked = _settings.AutoUpdateCheck };
+            var note = new ThemedLabel
+            {
+                Text = "Die Dev-Version wird über die Aufgabenplanung aktualisiert (tools/dev).",
+                AutoSize = true, Tone = Tone.Secondary, Margin = new Padding(RowPadding, 12, RowPadding, 12),
+            };
+            Fit(note, 2 * RowPadding);
+            card.AddRow(note);
+            page.Controls.Add(card);
+            return;
+        }
         _updateButton = new FluentButton("Suchen") { MinimumSize = new Size(ButtonWidth, 32), AccessibleName = "Nach Updates suchen" };
         _updateButton.Click += (_, _) =>
         {
@@ -1020,7 +1036,9 @@ internal sealed partial class SettingsForm : FastShowForm
     {
         if (ChoiceDialog.Ask(this, "App zurücksetzen und beenden?",
             "Gelöscht werden alle Einstellungen, der API-Schlüssel, das Glossar, die Schnellanweisungen, die Vorlage und die "
-            + "eigenen Anweisungen mit ihren früheren Fassungen, die geladenen Offline-Modelle und das Protokoll. Der Start mit Windows wird abgeschaltet.\n\n"
+            + "eigenen Anweisungen mit ihren früheren Fassungen"
+            + (Core.AppIdentity.Current.IsDev ? " und das Protokoll (die gemeinsamen Offline-Modelle bleiben)" : ", die geladenen Offline-Modelle und das Protokoll")
+            + ". Der Start mit Windows wird abgeschaltet.\n\n"
             + "Danach beendet sich WhisperShortcut. Beim nächsten Start ist es wie neu installiert. Das lässt sich nicht rückgängig machen.",
             new[] { "Zurücksetzen", "Abbrechen" }, danger: true) != 0) return;
         Core.Log.Info("Settings: reset app");
@@ -1755,6 +1773,11 @@ internal sealed partial class SettingsForm : FastShowForm
 
     private void RemoveModel(Core.OfflineComponent component, string name)
     {
+        if (Core.AppIdentity.Current.IsDev)
+        {
+            Warn(Core.AppIdentity.OfflineDeleteLockedReason);
+            return;
+        }
         if (ChoiceDialog.Ask(this, "Modell entfernen?", $"{name} wird von diesem PC gelöscht. Für den Offline-Modus muss es danach neu geladen werden.",
                 new[] { "Entfernen", "Abbrechen" }, danger: true) != 0) return;
         try { _offline.Delete(component); }
@@ -1798,6 +1821,7 @@ internal sealed partial class SettingsForm : FastShowForm
         row.Shown = state;
         row.Progress.Visible = mine;
         row.Remove.Visible = installed && !mine;
+        row.Remove.Enabled = !Core.AppIdentity.Current.IsDev; // Dev: the normal app uses the same models
         row.Action.Visible = !installed || mine;
         row.Action.Enabled = download == null || mine;
         row.Action.Text = mine ? "Abbrechen" : "Laden";
@@ -1809,7 +1833,8 @@ internal sealed partial class SettingsForm : FastShowForm
         }
         else if (installed)
         {
-            row.SetStatus($"✓ Geladen ({FormatBytes(size)} auf diesem PC)", Tone.Good);
+            row.SetStatus($"✓ Geladen ({FormatBytes(size)} auf diesem PC)"
+                + (Core.AppIdentity.Current.IsDev ? "\n" + Core.AppIdentity.OfflineDeleteLockedReason : ""), Tone.Good);
         }
         else if (error != null)
         {
@@ -2228,7 +2253,7 @@ internal sealed partial class SettingsForm : FastShowForm
     private static bool IsSafe(Hotkey hotkey) => hotkey.IsSafe;
 
     private void Warn(string text) =>
-        MessageBox.Show(this, text, "WhisperShortcut", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        MessageBox.Show(this, text, Core.AppIdentity.Current.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
 
     private static void OpenWeb(string url)
     {

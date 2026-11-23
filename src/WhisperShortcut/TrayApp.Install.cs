@@ -19,6 +19,52 @@ internal sealed partial class TrayApp
         _ui.Post(_ => Quit(), null);
     }
 
+    /// <summary>True when the other version (Dev from the normal app, normal from Dev) is installed at its canonical place.</summary>
+    private static bool OtherVersionInstalled()
+    {
+        try { return File.Exists(Core.AppIdentity.Current.OtherInstallExe); }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>
+    /// Tray „Zur Dev-Version wechseln“ / „Zur normalen Version wechseln“ (the Mac's Switch to Dev/Release Build): starts the other
+    /// exe with <c>--takeover</c> (it asks this instance to quit and waits for it before it takes the hotkeys) and quits here.
+    /// Refused while a meeting records in this instance.
+    /// </summary>
+    private void SwitchVersion()
+    {
+        var id = Core.AppIdentity.Current;
+        var target = id.OtherInstallExe;
+        try
+        {
+            if (_meeting.IsActive)
+            {
+                MessageBox.Show("Ein Meeting wird gerade aufgenommen. Beende es zuerst, dann kannst du die Version wechseln.",
+                    id.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+            if (!File.Exists(target))
+            {
+                MessageBox.Show($"Die andere Version ist nicht installiert ({target}).", id.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            Core.Log.Info($"Switching version: starting {target} --takeover");
+            using var started = Process.Start(new ProcessStartInfo(target)
+            {
+                Arguments = "--takeover", UseShellExecute = false, WorkingDirectory = Path.GetDirectoryName(target)!,
+            });
+            if (started == null) throw new InvalidOperationException("process did not start");
+        }
+        catch (Exception ex)
+        {
+            Core.Log.Error("Switching version failed", ex);
+            MessageBox.Show("Die andere Version ließ sich nicht starten. Sie wird nicht beendet; diese läuft weiter.",
+                id.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
+        }
+        Quit();
+    }
+
     /// <summary>
     /// Once per exe path: offers to copy the exe to its fixed place and restart from there. Posted after the welcome tour
     /// has opened (if it does), so the two never fight over the first window.
@@ -29,6 +75,7 @@ internal sealed partial class TrayApp
         {
             var exe = InstallState.ExePath;
             var place = InstallState.Place;
+            if (!Core.AppIdentity.Current.MayRegisterSystemEntries) return; // Dev: installed by the update script, never moved by the app
             if (InstallState.TestRun || string.IsNullOrEmpty(exe) || !Core.InstallLocation.ShouldOfferMove(place)) return;
             if (_settings.MoveOfferDismissed.Contains(exe, StringComparer.OrdinalIgnoreCase)) return;
 

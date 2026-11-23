@@ -20,8 +20,7 @@ internal static class InstallState
 
     public static string ExePath => Environment.ProcessPath ?? "";
 
-    public static string CanonicalDir =>
-        Core.InstallLocation.CanonicalDir(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
+    public static string CanonicalDir => Core.AppIdentity.Current.InstallDir; // Dev: Programs\WhisperShortcut Dev
 
     public static string CanonicalExe => Path.Combine(CanonicalDir, Core.UpdateInstallPath.ExeName);
 

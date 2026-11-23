@@ -24,7 +24,7 @@ internal static class StartMenu
     public static void EnsureEntry(bool testRun)
     {
         InstallState.TestRun = testRun;
-        if (!InstallState.MayRegister) return;
+        if (!InstallState.MayRegister || !Core.AppIdentity.Current.MayRegisterSystemEntries) return; // Dev: would overwrite the normal app's entry
         var exe = Environment.ProcessPath;
         if (string.IsNullOrEmpty(exe)) return;
         try

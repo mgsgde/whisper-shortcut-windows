@@ -72,7 +72,7 @@ internal sealed class WelcomeForm : FastShowForm
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        Text = "WhisperShortcut – Einführung";
+        Text = $"{Core.AppIdentity.Current.DisplayName} – Einführung";
         Font = Theme.Body;
         StartPosition = FormStartPosition.CenterScreen;
         ClientSize = new Size(ContentWidth + 2 * PagePadX + 20, 640); // Mac: min 720×640

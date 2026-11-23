@@ -22,7 +22,7 @@ internal sealed class McpApprovalDialog : Form
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        Text = "WhisperShortcut – Vorschlag";
+        Text = $"{Core.AppIdentity.Current.DisplayName} – Vorschlag";
         Font = Theme.Body;
         Icon = TrayIcons.App;
         FormBorderStyle = FormBorderStyle.Sizable;
