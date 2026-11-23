@@ -1,5 +1,4 @@
-Fehlerbehebung für Version 0.7.13:
+Neu in Version 0.7.16:
 
-- **Diktieren funktioniert wieder:** Seit 0.7.13 kam beim Diktieren über Gemini oft nur ein einzelnes Wort oder Unsinn heraus. Ursache war die Erkennung von Sprechpausen, die fast die ganze Aufnahme abgeschnitten hat. Jetzt geht wieder das ganze Diktat an Gemini.
-- **Offline-Spracherkennung (Parakeet) lässt sich wieder laden:** Der Download brach mit „Download beschädigt“ ab, weil der Anbieter die Modelldateien ausgetauscht hatte. WhisperShortcut lädt jetzt fest die geprüfte Fassung. Wer Parakeet schon installiert hat, muss nichts tun.
-
+- **Update-Kanal wählbar:** In den Einstellungen gibt es jetzt „Update-Kanal“. Mit **Stabil** (Standard) kommen neue Versionen etwa eine Woche nach Erscheinen, wenn sie sich bewährt haben. Mit **Neueste** bekommst du jede Version am Tag ihres Erscheinens.
+- **Vorbereitung für eine Testversion:** WhisperShortcut kann jetzt neben einer separaten Entwicklerversion laufen, ohne dass sich beide in die Quere kommen. Für dich ändert sich dadurch nichts.
