@@ -212,6 +212,37 @@ public class SpeechActivityTests
         var quiet = File.ReadAllBytes(Paths.TestAudio("stille.wav"));
         Assert.Null(SpeechActivityGate.Apply(quiet, vad.Detect));
     }
+
+    /// <summary>
+    /// A whole-buffer AcceptWaveform collapses the recording to one short segment at the end.
+    /// 1.5 s of silence around a real dictation must still leave speech that starts in the first two seconds,
+    /// and a trim must keep the dictation rather than its tail.
+    /// </summary>
+    [SileroWindowFact]
+    public void RealModel_PaddedDictation_IsNotCutDownToItsTail()
+    {
+        using var vad = SileroVad.Load(SileroWindowFactAttribute.ModelPath()!);
+
+        var speech = Wav.ReadMonoFloat(File.ReadAllBytes(Paths.TestAudio("diktat.wav")), out var rate);
+        Assert.Equal(SileroVad.SampleRate, rate);
+
+        const double padSeconds = 1.5;
+        var pad = (int)(padSeconds * rate);
+        var samples = new float[pad + speech.Length + pad];
+        speech.CopyTo(samples, pad);
+
+        var spans = vad.Detect(samples);
+        Assert.Contains(spans, s => s.Start < 2.0);
+
+        var duration = (double)samples.Length / rate;
+        var decision = SpeechActivity.Decide(spans, duration);
+        Assert.NotEqual(SpeechVerdict.NoSpeech, decision.Verdict);
+        if (decision.Verdict == SpeechVerdict.Trim)
+        {
+            Assert.True(decision.Start <= 1.6, $"trim start {decision.Start:0.000} is after 1.6 s");
+            Assert.True(decision.End >= duration - 1.6, $"trim end {decision.End:0.000} drops the speech (need ≥ {duration - 1.6:0.000})");
+        }
+    }
 }
 
 /// <summary>Skipped when the Silero model is not on disk.</summary>
@@ -228,5 +259,28 @@ public sealed class SileroModelFactAttribute : FactAttribute
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
         var installed = Path.Combine(OfflineCatalog.SileroVad.FullPath, OfflineCatalog.SileroVad.Files[0].RelativePath);
         return File.Exists(installed) ? installed : null;
+    }
+}
+
+/// <summary>
+/// Skipped unless silero_vad.onnx is available via WSW_SILERO_VAD_MODEL, the known local copy,
+/// or the same places <see cref="SileroModelFactAttribute"/> looks.
+/// </summary>
+public sealed class SileroWindowFactAttribute : FactAttribute
+{
+    private const string Fallback =
+        "/private/tmp/claude-501/-Users-mgsgde--claude-spares-spare-x3ELh8/6a75521a-a48d-404d-b0c2-25228172951e/scratchpad/silero_vad.onnx";
+
+    public SileroWindowFactAttribute()
+    {
+        if (ModelPath() == null) Skip = "silero_vad.onnx not found (set WSW_SILERO_VAD_MODEL)";
+    }
+
+    public static string? ModelPath()
+    {
+        var env = Environment.GetEnvironmentVariable("WSW_SILERO_VAD_MODEL");
+        if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
+        if (File.Exists(Fallback)) return Fallback;
+        return SileroModelFactAttribute.ModelPath();
     }
 }

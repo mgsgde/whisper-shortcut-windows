@@ -25,7 +25,8 @@ public sealed record LocalLlm(string Id, string DisplayName, string Description,
 public static class OfflineCatalog
 {
     private const long GiB = 1024L * 1024 * 1024;
-    private const string ParakeetBase = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main/";
+    // resolve/main/ was re-uploaded on 2026-11-07; that tree no longer matches the pinned sizes and hashes.
+    private const string ParakeetBase = "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/2bda32ec70b097a55adaa07d9a7173915b43cc78/";
     private const string LlamaBase = "https://github.com/ggml-org/llama.cpp/releases/download/b11755/";
     private const string UnslothBase = "https://huggingface.co/unsloth/";
 
@@ -102,7 +103,8 @@ public static class OfflineCatalog
             new OfflineComponent("qwen3.5-9b", "Sprachmodell Qwen3.5 9B (ca. 5,7 GB)", "qwen3.5-9b",
                 new ModelFile[]
                 {
-                    new("Qwen3.5-9B-Q4_K_M.gguf", UnslothBase + "Qwen3.5-9B-GGUF/resolve/main/Qwen3.5-9B-Q4_K_M.gguf",
+                    // Same reason as Parakeet: pin the commit whose x-linked-size and x-linked-etag match the hash below.
+                    new("Qwen3.5-9B-Q4_K_M.gguf", UnslothBase + "Qwen3.5-9B-GGUF/resolve/3885219b6810b007914f3a7950a8d1b469d598a5/Qwen3.5-9B-Q4_K_M.gguf",
                         5680522464, "03b74727a860a56338e042c4420bb3f04b2fec5734175f4cb9fa853daf52b7e8"),
                 }),
             16 * GiB),
@@ -110,7 +112,8 @@ public static class OfflineCatalog
             new OfflineComponent("qwen3-4b-instruct-2507", "Sprachmodell Qwen3 4B (ca. 2,5 GB)", "qwen3-4b-instruct-2507",
                 new ModelFile[]
                 {
-                    new("Qwen3-4B-Instruct-2507-Q4_K_M.gguf", UnslothBase + "Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+                    // Same reason as Parakeet: pin the commit whose x-linked-size and x-linked-etag match the hash below.
+                    new("Qwen3-4B-Instruct-2507-Q4_K_M.gguf", UnslothBase + "Qwen3-4B-Instruct-2507-GGUF/resolve/a06e946bb6b655725eafa393f4a9745d460374c9/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
                         2497281120, "3605803b982cb64aead44f6c1b2ae36e3acdb41d8e46c8a94c6533bc4c67e597"),
                 }),
             8 * GiB),
