@@ -190,14 +190,15 @@ public class ResultReportTests
         Assert.False(MailClientChoice.MachineMatches(0x14C, System.Runtime.InteropServices.Architecture.X64));
         Assert.True(MailClientChoice.MachineMatches(0xAA64, System.Runtime.InteropServices.Architecture.Arm64));
         Assert.False(MailClientChoice.MachineMatches(0x8664, System.Runtime.InteropServices.Architecture.Arm64));
+        Assert.Null(MailClientChoice.PeMachine(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".dll")));
         // kernel32.dll in this process's system folder is a native image of this process's machine (the test host exe
-        // is not reliable: CI may run it through another host).
+        // is not reliable: CI may run it through another host). Windows only: the Linux CI job has no kernel32.dll.
+        if (!OperatingSystem.IsWindows()) return;
         var kernel32 = Path.Combine(Environment.SystemDirectory, "kernel32.dll");
         var machine = MailClientChoice.PeMachine(kernel32);
         Assert.True(machine.HasValue, $"no PE header read from {kernel32}");
         Assert.True(MailClientChoice.MachineMatches(machine!.Value, System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture),
             $"0x{machine:X4} vs {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture}");
-        Assert.Null(MailClientChoice.PeMachine(Path.Combine(Path.GetTempPath(), Guid.NewGuid() + ".dll")));
     }
 
     [Fact]
