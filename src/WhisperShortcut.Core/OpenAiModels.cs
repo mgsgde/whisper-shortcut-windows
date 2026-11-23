@@ -37,6 +37,7 @@ public static class OpenAiModels
     public static IReadOnlyList<ModelInfo> Prompt { get; } = new[]
     {
         new ModelInfo("gpt-6-sol", "GPT-6 Sol", "Gründlich, empfohlen") { PromptSpeed = 6 },
+        new ModelInfo("gpt-6.1-terra", "GPT-6.1 Terra", "GPT-6 im mittleren Preis • Klare Texte und Bildverständnis • 1 Mio. Kontext"),
         new ModelInfo("gpt-6-luna", "GPT-6 Luna", "Schnell und sehr günstig") { PromptSpeed = 3 },
         new ModelInfo("gpt-5.4-mini", "GPT-5.4 mini", "Günstig, einfache Aufgaben") { PromptSpeed = 4 },
     };

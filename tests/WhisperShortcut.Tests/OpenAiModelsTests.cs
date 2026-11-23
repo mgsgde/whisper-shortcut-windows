@@ -29,6 +29,7 @@ public class OpenAiModelsTests
 
     [Theory]
     [InlineData("gpt-6-luna", "gpt-6-luna")]
+    [InlineData("gpt-6.1-terra", "gpt-6.1-terra")]
     [InlineData("gpt-5.4-mini", "gpt-5.4-mini")]
     [InlineData("gpt-4o", "gpt-6-sol")]
     [InlineData("gpt-5", "gpt-6-sol")]
@@ -39,4 +40,11 @@ public class OpenAiModelsTests
     [InlineData(null, "gpt-6-sol")]
     public void NormalizePrompt(string? id, string expected) =>
         Assert.Equal(expected, OpenAiModels.NormalizePrompt(id));
+
+    [Fact]
+    public void Prompt_catalog_lists_Terra_between_Sol_and_Luna()
+    {
+        Assert.Equal(new[] { "gpt-6-sol", "gpt-6.1-terra", "gpt-6-luna", "gpt-5.4-mini" }, OpenAiModels.Prompt.Select(m => m.Id));
+        Assert.Equal("GPT-6.1 Terra", OpenAiModels.Prompt.Single(m => m.Id == "gpt-6.1-terra").Name);
+    }
 }

@@ -50,10 +50,11 @@ public class ModelSelectionTests
     }
 
     [Fact]
-    public void Normalize_Text_AllowsArgonAndMapsOldIds()
+    public void Normalize_Text_MapsArgonToNeonAndOldIds()
     {
         var n = new ModelSelection(Engine.Gemini, "gemini-4-argon", "gpt-4o").Normalize(ModelStep.Text);
-        Assert.Equal(new ModelSelection(Engine.Gemini, "gemini-4-argon", OpenAiModels.DefaultPromptModel), n);
+        Assert.Equal(new ModelSelection(Engine.Gemini, "gemini-4-neon", OpenAiModels.DefaultPromptModel), n);
+        Assert.Equal("gpt-6.1-terra", new ModelSelection(Engine.OpenAI, "x", "gpt-6.1-terra").Normalize(ModelStep.Text).OpenAi);
         Assert.Equal("gpt-5.4-mini", new ModelSelection(Engine.OpenAI, "x", "gpt-5-mini").Normalize(ModelStep.Text).OpenAi);
         Assert.Equal(Settings.DefaultPromptModel, new ModelSelection(Engine.OpenAI, "unknown", "x").Normalize(ModelStep.Text).Gemini);
     }
@@ -142,7 +143,7 @@ public class ModelSelectionTests
               "chatEngine": "gemini", "chatModel": "gemini-2.5-flash", "chatOpenAiModel": "gpt-4o" }
             """);
         Assert.Equal(new ModelSelection(Engine.Gemini, "gemini-3.8-flash", OpenAiModels.DefaultTranscriptionModel), s.MeetingTranscription);
-        Assert.Equal(new ModelSelection(Engine.Local, "gemini-4-argon", "gpt-5.4-mini"), s.MeetingText);
+        Assert.Equal(new ModelSelection(Engine.Local, "gemini-4-neon", "gpt-5.4-mini"), s.MeetingText);
         Assert.Equal(new ModelSelection(Engine.Gemini, "gemini-3.8-flash", OpenAiModels.DefaultPromptModel), s.Chat);
     }
 
@@ -167,5 +168,18 @@ public class ModelSelectionTests
         Assert.Equal(Engine.Local, s.EffectiveSpeechEngine);
         Assert.Equal(Engine.Local, s.EffectiveTextEngine);
         Assert.Equal(Engine.Local, s.EffectiveMeetingTextEngine);
+    }
+
+    [Fact]
+    public void Load_StoredArgon_BecomesNeonInEveryTextStep()
+    {
+        var s = LoadJson("""
+            { "textEngine": "gemini", "promptModel": "gemini-4-argon",
+              "meetingTextEngine": "gemini", "meetingSummaryModel": "gemini-4-argon",
+              "chatEngine": "gemini", "chatModel": "gemini-4-argon" }
+            """);
+        Assert.Equal("gemini-4-neon", s.Prompt.Gemini);
+        Assert.Equal("gemini-4-neon", s.MeetingText.Gemini);
+        Assert.Equal("gemini-4-neon", s.Chat.Gemini);
     }
 }
