@@ -16,7 +16,7 @@ public static class FeedbackLinks
     public static string MessageBody(string? context, string appVersion, string windowsVersion)
     {
         var text = "Hallo, ich habe Feedback zu WhisperShortcut:";
-        if (!string.IsNullOrWhiteSpace(context)) text += "\n\n" + context.Trim();
+        if (!string.IsNullOrWhiteSpace(context)) text += "\n\n" + SecretRedactor.Redact(context.Trim()); // never a key in the mail
         return text + $"\n\n---\nApp-Version: {appVersion}\nWindows: {windowsVersion}";
     }
 

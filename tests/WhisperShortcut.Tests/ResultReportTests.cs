@@ -180,4 +180,23 @@ public class ResultReportTests
         Assert.NotEqual(ReportConfigFingerprint.Current(a), ReportConfigFingerprint.Current(b));
         Assert.Equal(12, ReportConfigFingerprint.ShortHash("x").Length);
     }
+
+    [Fact]
+    public void Keys_never_reach_the_report_file_or_the_mail_body()
+    {
+        const string gemini = "AIzaSyD-1234567890abcdefghijklmnopqrstu";
+        const string openAi = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
+        var context = ResultReport.Context(ResultKind.General, $"mein Schlüssel {gemini}", $"Details {openAi}");
+        var body = FeedbackLinks.MessageBody(context, "1.0", "10.0");
+        var file = ResultReport.FileText(body, $"Bearer {openAi}", $"## Log\nx-goog-api-key {gemini}\nprompt: {gemini}");
+        foreach (var text in new[] { body, file, FeedbackLinks.MailtoUrl(context, "1.0", "10.0").OriginalString })
+        {
+            Assert.DoesNotContain(gemini, text);
+            Assert.DoesNotContain(openAi, text);
+            Assert.DoesNotContain(Uri.EscapeDataString(gemini), text);
+        }
+        // The rest of the report is still there.
+        Assert.Contains("mein Schlüssel AIza…", file);
+        Assert.Contains("Details sk-…", file);
+    }
 }

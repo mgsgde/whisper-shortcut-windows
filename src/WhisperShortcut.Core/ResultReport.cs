@@ -174,7 +174,8 @@ public static class ResultReport
         var parts = new[] { messageBody, technical, configuration ?? "" }
             .Select(p => p.Trim())
             .Where(p => p.Length > 0);
-        return string.Join("\n\n", parts);
+        // Last line of defence: a key pasted into the message, the details, a prompt or a log line never leaves.
+        return SecretRedactor.Redact(string.Join("\n\n", parts));
     }
 
     /// <summary>The context with a pointer to the attached configuration file.</summary>
