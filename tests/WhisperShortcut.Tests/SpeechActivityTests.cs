@@ -193,6 +193,32 @@ public class SpeechActivityTests
         Assert.True(NetworkPolicy.IsAllowedDownloadUrl(file.Url));
     }
 
+    [Fact]
+    public void Windows_ExactMultiple_HasNoPaddingWindow()
+    {
+        var windows = SileroVad.Windows(new float[1024], 512).ToList();
+        Assert.Equal(2, windows.Count);
+    }
+
+    [Fact]
+    public void Windows_Remainder_IsZeroPadded()
+    {
+        var samples = Enumerable.Repeat(1f, 1100).ToArray();
+        var windows = SileroVad.Windows(samples, 512).ToList();
+        Assert.Equal(3, windows.Count);
+        var last = windows[2];
+        Assert.All(last.Take(76), v => Assert.Equal(1f, v));
+        Assert.All(last.Skip(76), v => Assert.Equal(0f, v));
+    }
+
+    [Fact]
+    public void Windows_Empty_HasNoWindows() =>
+        Assert.Empty(SileroVad.Windows(Array.Empty<float>(), 512));
+
+    [Fact]
+    public void Windows_AllHaveWindowSize() =>
+        Assert.All(SileroVad.Windows(new float[1100], 512), w => Assert.Equal(512, w.Length));
+
     /// <summary>Runs the real model; skipped unless silero_vad.onnx is on this machine (env WSW_SILERO_VAD or the app's folder).</summary>
     [SileroModelFact]
     public void RealModel_SeparatesSpeechFromSilence()
