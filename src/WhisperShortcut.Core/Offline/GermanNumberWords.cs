@@ -11,18 +11,28 @@ namespace WhisperShortcut.Core;
 /// zu neunzig", "Einzel GdB Psyche zwanzig"). A report wants digits for measured values, but prose
 /// keeps small numbers as words ("seit drei Tagen", "um zehn Uhr", "drei Punkte erreicht"). The rule
 /// follows the usual German writing convention (DIN 5008): numbers with a unit of measure and
-/// assessment values are digits, other numbers up to twelve stay words.
+/// assessment values are digits, other numbers up to twelve stay words. A year (exactly four
+/// digits, 1900–2099) and a capitalised noun after the number are prose too ("Seit 2020 zwei
+/// Operationen", "Zimmer 12 drei Betten", "2023 zu vier Terminen"; Mac #525).
 ///
 /// A number word becomes digits only when one of these holds:
 /// <list type="bullet">
-/// <item>a unit of measure follows ("fünfhundert Meter", "zehn mg", "neunzig Prozent", "zwanzig %");</item>
+/// <item>a unit of measure follows ("fünfhundert Meter", "zehn mg", "neunzig Prozent", "zwanzig %").
+/// "Grad" counts only with a capital G, the noun ("achtunddreißig Grad"); lower-case "grad" is colloquial
+/// "gerade" ("die zwei grad besprochenen Punkte"). "Schläge" or "schläge" counts only above twelve
+/// ("Puls sechzig Schläge"); "drei Schläge auf den Rücken" stays words. "°" and "%" still count;</item>
 /// <item>a time unit follows and the number is above twelve ("dreizehn Uhr", "zwanzig Jahre"), so
 /// "um zehn Uhr" and "seit drei Tagen" stay words;</item>
+/// <item>it is the minutes after a digit hour: the previous word is "Uhr", the token before that is digits,
+/// the number is 0–59, and no noun follows. "um vierzehn Uhr dreißig" becomes "um 14 Uhr 30" once "vierzehn"
+/// is digits. "um zehn Uhr dreißig" stays words, because "zehn" is not above twelve;</item>
 /// <item>it is a GdB value: right after "GdB", after "GdB von", or after "GdB" and one capitalised
 /// word ("Einzel GdB Psyche zwanzig");</item>
-/// <item>it stands on one side of "zu" and the other side is digits, or both sides are number words
-/// and one of them is above nine ("140 zu neunzig", "hundertvierzig zu neunzig"; "eins zu eins" stays);</item>
-/// <item>digits stand right next to it, separated only by spaces or "/" ("140 neunzig", "4/fünf").</item>
+/// <item>it stands on one side of "zu" and the other side is digits that are not a year, and no noun follows,
+/// or both sides are number words and one of them is above nine ("140 zu neunzig", "hundertvierzig zu neunzig";
+/// "eins zu eins" and "2023 zu vier Terminen" stay);</item>
+/// <item>digits that are not a year stand right next to it, separated only by spaces or "/", and no noun
+/// follows ("140 neunzig", "4/fünf"). "Seit 2020 zwei Operationen" and "Zimmer 12 drei Betten" stay words.</item>
 /// </list>
 /// "ein" / "eine" are articles and are never read as a number; "eins" only in one of the contexts
 /// above. Pure and rule-based: no model, no setting.
@@ -79,7 +89,7 @@ public static class GermanNumberWords
     {
         "meter", "metern", "m", "km", "kilometer", "kilometern", "cm", "zentimeter", "mm", "millimeter",
         "mg", "milligramm", "µg", "mikrogramm", "gramm", "kg", "kilo", "kilogramm", "ml", "milliliter",
-        "liter", "prozent", "grad", "mmhg", "mmol", "ie", "euro", "schläge",
+        "liter", "prozent", "mmhg", "mmol", "ie", "euro",
     };
 
     /// <summary>Time units: digits only above twelve.</summary>
@@ -107,14 +117,25 @@ public static class GermanNumberWords
         if (next is int unit && tokens[unit].Kind == Kind.Word)
         {
             var name = Lower(unit);
+            var nextText = tokens[unit].Text;
             if (MeasureUnits.Contains(name)) return true;
             if (TimeUnits.Contains(name) && number > 12) return true;
+            // "Grad" is the noun (capital G); lower-case "grad" is "gerade". "Schläge" above twelve is a pulse.
+            if (nextText == "Grad") return true;
+            if (number > 12 && nextText is "Schläge" or "schläge") return true;
         }
         if (index + 1 < tokens.Count && tokens[index + 1].Kind == Kind.Other)
         {
             var rest = tokens[index + 1].Text.TrimStart(' ', '\t');
             if (rest.Length > 0 && (rest[0] == '%' || rest[0] == '°')) return true;
         }
+
+        // Minutes once the hour is digits ("vierzehn Uhr" became "14 Uhr" earlier in this pass).
+        if (previous is int uhr && Lower(uhr) == "uhr"
+            && Neighbor(uhr, -1, tokens) is int hour && tokens[hour].Kind == Kind.Digits
+            && number is >= 0 and <= 59
+            && !FollowedByNoun(index, tokens))
+            return true;
 
         if (previous is int prev)
         {
@@ -131,18 +152,43 @@ public static class GermanNumberWords
         {
             if (link is not int linkIndex || Lower(linkIndex) != "zu") continue;
             if (Neighbor(linkIndex, step, tokens) is not int other) continue;
-            if (tokens[other].Kind == Kind.Digits) return true;
-            if (tokens[other].Kind == Kind.Word && Value(tokens[other].Text) is int otherValue
+            // A year, or a noun after the number ("2023 zu vier Terminen"), is a sentence, not a ratio.
+            if (tokens[other].Kind == Kind.Digits)
+            {
+                if (!IsYear(tokens[other]) && !FollowedByNoun(index, tokens)) return true;
+            }
+            else if (tokens[other].Kind == Kind.Word && Value(tokens[other].Text) is int otherValue
                 && Math.Max(number, otherValue) >= 10)
                 return true;
         }
 
         foreach (var step in new[] { 1, -1 })
         {
-            if (Neighbor(index, step, tokens, slash: true) is int other && tokens[other].Kind == Kind.Digits)
+            // Digits right next to it, unless that neighbour is a year or a noun follows.
+            if (Neighbor(index, step, tokens, slash: true) is int other && tokens[other].Kind == Kind.Digits
+                && !IsYear(tokens[other]) && !FollowedByNoun(index, tokens))
                 return true;
         }
         return false;
+    }
+
+    /// <summary>A four-digit year, 1900–2099. "2,5" and "12" are not years.</summary>
+    private static bool IsYear(Token token) =>
+        token.Kind == Kind.Digits && token.Text.Length == 4 && token.Text.All(char.IsAsciiDigit)
+        && int.Parse(token.Text, CultureInfo.InvariantCulture) is >= 1900 and <= 2099;
+
+    /// <summary>
+    /// The next word is a capitalised noun ("Operationen", "Betten"), so the number is a count in a sentence.
+    /// A word in the measure or time units, or "GdB", is not a noun.
+    /// </summary>
+    private static bool FollowedByNoun(int index, List<Token> tokens)
+    {
+        if (Neighbor(index, 1, tokens) is not int next || tokens[next].Kind != Kind.Word) return false;
+        var text = tokens[next].Text;
+        if (!char.IsUpper(text[0]) || Value(text) != null) return false;
+        var folded = text.ToLowerInvariant();
+        if (MeasureUnits.Contains(folded) || TimeUnits.Contains(folded)) return false;
+        return folded != "gdb";
     }
 
     /// <summary>

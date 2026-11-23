@@ -25,13 +25,22 @@ internal sealed class LocalEngines(OfflineEngine offline) : Core.ISpeechProvider
     /// Parakeet, in 30-second pieces above 40 s, one at a time (the recognizer is serialized anyway).
     /// Spoken "Doppelpunkt" / "neuer Absatz" become punctuation; Gemini does that itself.
     /// </summary>
-    public async Task<string> TranscribeAsync(byte[] wav, Core.PunctuationMode punctuation, CancellationToken ct)
+    public Task<string> TranscribeAsync(byte[] wav, Core.PunctuationMode punctuation, CancellationToken ct) =>
+        TranscribeAsync(wav, punctuation, finishTranscript: false, ct);
+
+    /// <summary>
+    /// With <paramref name="finishTranscript"/> (plain Dictate) the joined text gets the same finisher as Live diktieren:
+    /// fillers dropped, a glued trailing "...punkt" split, GdB spelled, quantity number words as digits (Mac #525).
+    /// </summary>
+    public async Task<string> TranscribeAsync(byte[] wav, Core.PunctuationMode punctuation, bool finishTranscript, CancellationToken ct)
     {
         if (punctuation != Core.PunctuationMode.SpokenOnly)
         {
             var joined = await Core.ChunkedTranscription.TranscribeAsync(Core.WavChunker.SplitForLocal(wav),
                 (chunk, c) => Offline.TranscribeAsync(chunk, c), maxParallel: 1, ct);
-            return Core.SpokenPunctuation.Apply(joined, punctuation);
+            return finishTranscript
+                ? Core.OfflineTranscriptFinisher.Finish(joined, punctuation, timedMarks: false, keepsEdgeBreaks: false)
+                : Core.SpokenPunctuation.Apply(joined, punctuation);
         }
         // "Nur gesprochen" (Mac #339/#347/#393): each piece keeps Parakeet's marks only where the token timings
         // show speech time behind them. A piece whose marks cannot be matched keeps the model's commas, "?" and
@@ -42,6 +51,8 @@ internal sealed class LocalEngines(OfflineEngine offline) : Core.ISpeechProvider
                 var (text, _) = await Offline.TranscribeSpokenMarksAsync(chunk, c);
                 return text;
             }, maxParallel: 1, ct);
+        if (finishTranscript)
+            return Core.OfflineTranscriptFinisher.Finish(spoken, punctuation, timedMarks: true, keepsEdgeBreaks: false);
         return Core.SpokenPunctuation.Apply(
             Core.SpokenPunctuation.StripModelPunctuation(spoken, timedMarks: true), punctuation, timedMarks: true);
     }

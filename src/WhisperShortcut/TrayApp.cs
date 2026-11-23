@@ -1649,7 +1649,7 @@ internal sealed partial class TrayApp : ApplicationContext
         var policy = Core.TranscriptionPolicy.For(purpose, engine);
         var punctuation = policy.Punctuation(_settings.PunctuationMode, engine);
         var raw = engine == Core.Engine.Local
-            ? await _engines.Local.TranscribeAsync(wav, punctuation, ct)
+            ? await _engines.Local.TranscribeAsync(wav, punctuation, finishTranscript: purpose == Core.TranscribePurpose.Dictation, ct)
             : await TranscribeOnlineAsync(_engines.Speech(step), wav, ct, policy);
         return policy.GlossaryBackstops ? GlossaryBackstops(raw, policy.EchoStrip) : raw;
     }
