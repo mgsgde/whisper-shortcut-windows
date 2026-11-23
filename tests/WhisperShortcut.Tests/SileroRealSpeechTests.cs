@@ -26,6 +26,13 @@ public class SileroRealSpeechTests
     [SileroModelFact]
     public void Pause_GateKeepsAllSpeech() => CheckGate("pause-hedda");
 
+    /// <summary>A real microphone: quiet speech (median −48 dBFS), 86 s in one piece, 13 stretches with pauses.</summary>
+    [SileroModelFact]
+    public void Mikro_QuietLong_SpeechIsFoundWhereItIs() => CheckDetect("mikro-leise");
+
+    [SileroModelFact]
+    public void Mikro_QuietLong_GateKeepsAllSpeech() => CheckGate("mikro-leise");
+
     /// <summary>
     /// TTS is loud and clean; this covers a quiet, noisy, long dictation (over a minute in one piece,
     /// the length of real dictations) until real microphone recordings exist.
