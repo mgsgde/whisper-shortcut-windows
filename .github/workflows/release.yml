@@ -1,0 +1,326 @@
+name: Release
+
+# Same shape as the macOS app (mgsgde/whisper-shortcut, .github/workflows/release.yml): a pushed v* tag is the
+# release. CI on that exact commit must be green, then this workflow builds both exes and ZIPs, signs them
+# with the update key, uploads everything to a draft and only then publishes. Nobody runs `gh release create`
+# by hand any more, so a tag can no longer land on whatever the default branch happens to be.
+#
+#   tools/release.sh              checks, then tags HEAD and pushes the tag (this workflow starts)
+#   workflow_dispatch tag=vX.Y.Z  re-drive an existing tag (failed run, or draft=true to test first)
+#   pull_request (these files)    dry run: build, sign, upload to a throwaway draft, download, verify, delete
+#
+# Keep a release a draft (install it on the Windows PC before users get it): repo variable RELEASE_AS_DRAFT=true
+# (`gh variable set RELEASE_AS_DRAFT --body true`) before pushing the tag, or dispatch with draft=true.
+# Publish it with: gh release edit vX.Y.Z --draft=false --latest
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing v* tag to (re-)release, e.g. v0.7.15"
+        required: true
+        type: string
+      draft:
+        description: "Keep the release a draft (install and test it, then publish by hand)"
+        required: false
+        default: false
+        type: boolean
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - tools/release.sh
+      - dist/ANLEITUNG.txt
+      - src/WhisperShortcut.Core/UpdateSignature.cs
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: release-${{ inputs.tag || github.head_ref || github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+  REPO: ${{ github.repository }}
+
+jobs:
+  gate:
+    name: Gate (tag, version, CI green)
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      version: ${{ steps.resolve.outputs.version }}
+      sha: ${{ steps.resolve.outputs.sha }}
+      mode: ${{ steps.resolve.outputs.mode }}
+    steps:
+      - name: Resolve tag, commit and mode
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+          REF_NAME: ${{ github.ref_name }}
+          PR_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request)
+              # A dry run of the pipeline itself: the version comes from the csproj, nothing is published.
+              sha="$PR_SHA"
+              version=$(gh api "repos/$REPO/contents/src/WhisperShortcut/WhisperShortcut.csproj?ref=$sha" --jq .content \
+                | base64 -d | sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' | head -1)
+              tag="v$version"
+              mode=dryrun
+              ;;
+            push|workflow_dispatch)
+              tag="${INPUT_TAG:-$REF_NAME}"
+              case "$tag" in v[0-9]*) ;; *) echo "::error::Not a release tag: '$tag'"; exit 1 ;; esac
+              # The tag must already exist on GitHub; this workflow never creates or moves one.
+              sha=$(gh api "repos/$REPO/commits/refs/tags/$tag" --jq .sha) \
+                || { echo "::error::Tag $tag does not exist on GitHub. Push it with tools/release.sh."; exit 1; }
+              version="${tag#v}"
+              mode=publish
+              ;;
+            *) echo "::error::Unexpected event $EVENT"; exit 1 ;;
+          esac
+          [ -n "$version" ] || { echo "::error::Could not read <Version> from the csproj"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Release $tag ($mode) from $sha"
+
+      - name: Checkout the tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.resolve.outputs.sha }}
+
+      - name: Version and release notes match the tag
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          csproj=$(sed -n 's:.*<Version>\(.*\)</Version>.*:\1:p' src/WhisperShortcut/WhisperShortcut.csproj | head -1)
+          [ "$csproj" = "$VERSION" ] || { echo "::error::csproj <Version> is $csproj, the tag says $VERSION"; exit 1; }
+          [ -s .github/RELEASE_NOTES.md ] || { echo "::error::.github/RELEASE_NOTES.md is missing or empty on this commit"; exit 1; }
+          echo "Version $VERSION; notes:"; cat .github/RELEASE_NOTES.md
+
+      # The whole CI workflow (unit tests, UI tests, and every job added later such as the dictation smoke
+      # check) must be green on the tagged commit. A dry run on a PR skips this: CI runs next to it anyway.
+      - name: Wait for green CI on the tagged commit
+        if: steps.resolve.outputs.mode == 'publish'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -uo pipefail
+          deadline=$((SECONDS + 60 * 60))
+          while true; do
+            runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=20" \
+              --jq '[.workflow_runs[] | "\(.status) \(.conclusion)"] | join(",")') || runs=""
+            echo "CI runs on $SHA: ${runs:-none}"
+            case ",$runs," in
+              *",completed success,"*) echo "CI is green on $SHA."; exit 0 ;;
+            esac
+            if [ -n "$runs" ] && ! grep -qv '^completed' <<<"$(tr ',' '\n' <<<"$runs")"; then
+              echo "::error::Every CI run on $SHA finished without success ($runs). Fix main (or re-run a flaky job), then dispatch this workflow with tag=${{ steps.resolve.outputs.tag }}."
+              exit 1
+            fi
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::No green CI run on $SHA after 60 min (${runs:-no run at all}). A commit off main needs a PR so CI runs on it."
+              exit 1
+            fi
+            sleep 30
+          done
+
+  build:
+    name: Build and sign (Windows)
+    needs: gate
+    runs-on: windows-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout the tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish both exes
+        run: |
+          set -euo pipefail
+          for rid in win-x64 win-arm64; do
+            dotnet publish src/WhisperShortcut -c Release -r "$rid" --self-contained \
+              -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o "out/$rid"
+          done
+
+      # The ZIP holds WhisperShortcut/WhisperShortcut.exe and the guide, as before. .NET writes '/' separators.
+      - name: Pack the ZIPs
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          New-Item -ItemType Directory -Force release | Out-Null
+          foreach ($arch in 'x64', 'arm64') {
+            $stage = Join-Path $env:RUNNER_TEMP "stage-$arch"
+            New-Item -ItemType Directory -Force "$stage/WhisperShortcut" | Out-Null
+            Copy-Item "out/win-$arch/WhisperShortcut.exe" "$stage/WhisperShortcut/WhisperShortcut.exe"
+            Copy-Item dist/ANLEITUNG.txt "$stage/WhisperShortcut/ANLEITUNG.txt"
+            $zip = Join-Path (Resolve-Path release) "WhisperShortcut-Windows-$arch.zip"
+            [IO.Compression.ZipFile]::CreateFromDirectory($stage, $zip, [IO.Compression.CompressionLevel]::Optimal, $false)
+            Copy-Item "out/win-$arch/WhisperShortcut.exe" "release/WhisperShortcut-Windows-$arch.exe"
+            $z = [IO.Compression.ZipFile]::OpenRead($zip)
+            try { $z.Entries | ForEach-Object { "  $($_.FullName)  $($_.Length)" } } finally { $z.Dispose() }
+          }
+          Copy-Item dist/ANLEITUNG.txt release/ANLEITUNG.txt
+
+      # ECDSA P-256 over SHA-256 of the whole file, DER; what UpdateSignature.Verify checks. The key is the
+      # repository secret UPDATE_SIGNING_KEY (PEM) and only ever exists in this job's temp folder.
+      # Every signature is checked against the public key compiled into the app, not one derived from the
+      # secret, so a wrong secret fails here instead of in every installed updater.
+      - name: Sign and verify against the app's public key
+        env:
+          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
+          MODE: ${{ needs.gate.outputs.mode }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/update-key.pem"
+          pub="$RUNNER_TEMP/update-pub.pem"
+          sed -n '/BEGIN PUBLIC KEY/,/END PUBLIC KEY/p' src/WhisperShortcut.Core/UpdateSignature.cs | sed 's/^ *//' > "$pub"
+          if [ -n "${UPDATE_SIGNING_KEY:-}" ]; then
+            printf '%s\n' "$UPDATE_SIGNING_KEY" > "$key"
+            derived=$(openssl ec -in "$key" -pubout 2>/dev/null | openssl ec -pubin -outform DER 2>/dev/null | base64 -w0)
+            compiled=$(openssl ec -pubin -in "$pub" -outform DER 2>/dev/null | base64 -w0)
+            [ "$derived" = "$compiled" ] || { echo "::error::UPDATE_SIGNING_KEY does not match the public key in UpdateSignature.cs"; exit 1; }
+            echo "Signing with UPDATE_SIGNING_KEY (matches the app's public key)."
+          elif [ "$MODE" = "dryrun" ]; then
+            echo "::warning::UPDATE_SIGNING_KEY is not set: the dry run signs with a throwaway key. A real release would fail here."
+            openssl ecparam -name prime256v1 -genkey -noout -out "$key"
+            openssl ec -in "$key" -pubout -out "$pub" 2>/dev/null
+          else
+            echo "::error::UPDATE_SIGNING_KEY is not set: installed apps would refuse this update. Nothing was published."
+            exit 1
+          fi
+          for f in release/WhisperShortcut-Windows-*.zip release/WhisperShortcut-Windows-*.exe; do
+            openssl dgst -sha256 -sign "$key" -out "$f.sig" "$f"
+            openssl dgst -sha256 -verify "$pub" -signature "$f.sig" "$f"
+          done
+          rm -f "$key"
+          cp "$pub" release-pub.pem
+          ls -l release
+
+      - name: Keep the build
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ needs.gate.outputs.version }}
+          path: |
+            release/
+            release-pub.pem
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Upload and publish
+    needs: [gate, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ needs.gate.outputs.tag }}
+      VERSION: ${{ needs.gate.outputs.version }}
+      SHA: ${{ needs.gate.outputs.sha }}
+      MODE: ${{ needs.gate.outputs.mode }}
+    steps:
+      - name: Checkout the tagged commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.gate.outputs.sha }}
+
+      - name: Fetch the build
+        uses: actions/download-artifact@v4
+        with:
+          name: release-${{ needs.gate.outputs.version }}
+          path: build
+
+      # Always a draft first: users only ever see a release whose every asset is already there.
+      # A dry run uploads to a draft under a throwaway name (no tag is created) and deletes it afterwards.
+      - name: Upload to a draft
+        id: draft
+        run: |
+          set -euo pipefail
+          assets=(build/release/*)
+          [ "${#assets[@]}" -eq 9 ] || { echo "::error::Expected 9 assets, got ${#assets[@]}: ${assets[*]}"; exit 1; }
+          if [ "$MODE" = "dryrun" ]; then
+            name="dryrun-$VERSION-${{ github.run_id }}"
+            echo "name=$name" >> "$GITHUB_OUTPUT"  # before creating, so the cleanup step finds a half-made draft too
+            gh release create "$name" -R "$REPO" --draft --target "$SHA" \
+              --title "Probelauf $VERSION (wird gelöscht)" --notes-file .github/RELEASE_NOTES.md "${assets[@]}"
+            exit 0
+          fi
+          # The releases/tags endpoint hides drafts, so scan the list.
+          state=$(gh api --paginate "repos/$REPO/releases?per_page=100" --jq ".[] | select(.tag_name == \"$TAG\") | .draft" | head -1)
+          case "$state" in
+            false)
+              echo "::error::$TAG is already published. Never replace published assets: ship a higher version."
+              exit 1 ;;
+            true)
+              echo "$TAG exists as a draft: replacing its assets and notes."
+              gh release upload "$TAG" -R "$REPO" --clobber "${assets[@]}"
+              gh release edit "$TAG" -R "$REPO" --title "Version $VERSION" --notes-file .github/RELEASE_NOTES.md ;;
+            *)
+              gh release create "$TAG" -R "$REPO" --verify-tag --draft \
+                --title "Version $VERSION" --notes-file .github/RELEASE_NOTES.md "${assets[@]}" ;;
+          esac
+          echo "name=$TAG" >> "$GITHUB_OUTPUT"
+
+      # What installed updaters do: download the ZIP and its .sig from the release, check the signature.
+      - name: Download from the release and verify
+        env:
+          NAME: ${{ steps.draft.outputs.name }}
+        run: |
+          set -euo pipefail
+          got=$(gh release view "$NAME" -R "$REPO" --json assets --jq '[.assets[].name] | sort | join(" ")')
+          want="ANLEITUNG.txt WhisperShortcut-Windows-arm64.exe WhisperShortcut-Windows-arm64.exe.sig WhisperShortcut-Windows-arm64.zip WhisperShortcut-Windows-arm64.zip.sig WhisperShortcut-Windows-x64.exe WhisperShortcut-Windows-x64.exe.sig WhisperShortcut-Windows-x64.zip WhisperShortcut-Windows-x64.zip.sig"
+          [ "$got" = "$want" ] || { echo "::error::Assets on $NAME: $got"; exit 1; }
+          mkdir -p check
+          gh release download "$NAME" -R "$REPO" -D check -p 'WhisperShortcut-Windows-*.zip*' -p 'WhisperShortcut-Windows-*.exe*'
+          for f in check/*.zip check/*.exe; do
+            openssl dgst -sha256 -verify build/release-pub.pem -signature "$f.sig" "$f"
+            cmp "$f" "build/release/$(basename "$f")"
+          done
+          echo "All assets on $NAME are complete and verify."
+
+      # Decided right before publishing, like the Mac: a release someone asked to hold stays a draft.
+      - name: Publish
+        if: needs.gate.outputs.mode == 'publish'
+        env:
+          INPUT_DRAFT: ${{ inputs.draft }}
+          RELEASE_AS_DRAFT: ${{ vars.RELEASE_AS_DRAFT }}
+        run: |
+          set -euo pipefail
+          if [ "$INPUT_DRAFT" = "true" ] || [ "$RELEASE_AS_DRAFT" = "true" ]; then
+            echo "::notice::$TAG stays a draft. Publish with: gh release edit $TAG --draft=false --latest"
+            exit 0
+          fi
+          # Only a higher version becomes Latest (what UpdateCheck reads); a hotfix of an older line does not.
+          current=$(gh api "repos/$REPO/releases/latest" --jq .tag_name 2>/dev/null || echo v0)
+          newest=$(printf '%s\n%s\n' "${current#v}" "$VERSION" | sort -V | tail -1)
+          latest=false; [ "$newest" = "$VERSION" ] && [ "${current#v}" != "$VERSION" ] && latest=true
+          gh release edit "$TAG" -R "$REPO" --draft=false --latest="$latest"
+          echo "Published $TAG (latest=$latest, previous latest $current): https://github.com/$REPO/releases/tag/$TAG"
+
+      - name: Delete the dry-run draft
+        if: always() && needs.gate.outputs.mode == 'dryrun' && steps.draft.outputs.name != ''
+        run: gh release delete "${{ steps.draft.outputs.name }}" -R "$REPO" --yes

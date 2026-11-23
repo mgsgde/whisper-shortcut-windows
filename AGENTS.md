@@ -48,16 +48,45 @@ Magnus, 2026-10-28: „dass du hier dafür Sorge trägst zentral, dass alles dep
 Windows“. Whoever works in this repo makes sure every finished change reaches a GitHub release; Magnus
 does not have to ask for it. No separate „Soll ich releasen?“: merged and verified means released.
 
+Releases run in CI, the same way as the macOS app (`mgsgde/whisper-shortcut`, `release.yml`): a pushed
+`v*` tag is the release. Since 2026-11-23, after an evening where a tag landed on the default branch, a session
+published although it said it had aborted, and an unreviewed 0.7.14 had to be deleted.
+
 1. Branch → PR → merge to `main` (tests green, check on the Windows PC for anything users see).
-2. Bump `<Version>` in `src/WhisperShortcut/WhisperShortcut.csproj` (semver; fixes = patch), commit
-   „Version x.y.z“ on `main`, write German release notes (what changes for the user, short).
-3. `tools/release.sh x.y.z <notes.md> --publish` from a clean `main`: tests, both exes and ZIPs (x64, arm64),
-   ECDSA signatures with `~/.config/whispershortcut-windows-update/ecdsa-p256-private.pem`. Never
-   publish a ZIP without its `.sig`; never lose or commit that key.
-4. Verify: `gh release view vx.y.z` lists both exes, both ZIPs, all four `.sig`, `ANLEITUNG.txt` (the exe is the
-   download, the ZIP is what installed updaters fetch); on the Windows PC the
-   previous version finds and installs the update.
-5. Report the release link to Magnus. Testers (e.g. Christoph) get it through the in-app update.
+2. Bump `<Version>` in `src/WhisperShortcut/WhisperShortcut.csproj` (semver; fixes = patch) and replace
+   `.github/RELEASE_NOTES.md` with the German notes (what changes for the user, short); commit both as
+   „Version x.y.z“, push, wait for CI green on that commit. Coordinate with other sessions first: one release
+   at a time, and say in their notes folder which version you are cutting.
+3. `tools/release.sh` (Git Bash; asks before tagging, `--yes` skips): refuses a dirty tree, an unpushed HEAD, an
+   existing tag, unchanged notes or a CI that is not green on HEAD; then tags HEAD (annotated, explicit commit)
+   and pushes the tag. Nothing is built or signed on the PC.
+4. `.github/workflows/release.yml` takes over: waits for the whole `CI` workflow green on the tagged commit
+   (so every gate in `ci.yml`, including the dictation smoke check, blocks a release), builds both exes and
+   ZIPs (x64, arm64), signs them with the repository secret `UPDATE_SIGNING_KEY` and checks every signature
+   against the public key in `UpdateSignature.cs`, uploads to a draft, downloads the assets back and verifies
+   them, and only then publishes. Only a higher version becomes Latest (what `UpdateCheck` reads), so a
+   hotfix on an older line never hijacks the update feed. A published release's assets are never replaced:
+   ship a higher version.
+5. Verify: `gh run watch` on the release run until green; `gh release view vx.y.z` lists both exes, both ZIPs,
+   all four `.sig`, `ANLEITUNG.txt`; on the Windows PC the previous version finds and installs the update.
+6. Report the release link to Magnus. Testers (e.g. Christoph) get it through the in-app update.
+
+- **Draft first** (to install it on the PC before users get it): `gh variable set RELEASE_AS_DRAFT --body true`
+  before pushing the tag, or dispatch the workflow with `draft=true`; publish with
+  `gh release edit vx.y.z --draft=false --latest`, then `gh variable delete RELEASE_AS_DRAFT`.
+- **Re-drive a tag** whose run failed (flaky CI re-run, outage): Actions → Release → Run workflow,
+  `tag=vx.y.z` (or `gh workflow run release.yml -f tag=vx.y.z`). An existing draft gets its assets replaced.
+- **Hotfix off an older version:** branch from the old tag (`release/x.y.z`), bump, notes, push, open a PR so
+  CI runs on it, then `tools/release.sh` on that branch. The tag points at that branch's commit, never at `main`.
+- **Abort:** before the tag is pushed nothing has happened. After it, cancel the run
+  (`gh run cancel <id>`) and check `gh release view vx.y.z`: the workflow publishes only in its last step, so a
+  cancelled run leaves at most a draft. Say "not published" only after that check.
+- **Dry run:** every PR touching `release.yml`, `tools/release.sh`, `dist/ANLEITUNG.txt` or `UpdateSignature.cs`
+  runs the whole pipeline against a throwaway draft (`dryrun-<version>-<run>`, no tag) and deletes it.
+- **Signing key:** `UPDATE_SIGNING_KEY` holds the PEM of `~/.config/whispershortcut-windows-update/ecdsa-p256-private.pem`
+  (the PC keeps the original as backup). Never commit it, never print it; losing it means installed copies can
+  never auto-update again. Not ported from the Mac: nightly auto-release and the Latest/Stable split (the Windows
+  updater reads only `releases/latest`).
 
 ## Model tiering: Opus 5.5 thinks, cheap hands type
 
