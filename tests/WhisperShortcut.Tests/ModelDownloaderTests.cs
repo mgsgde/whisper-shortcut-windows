@@ -97,6 +97,32 @@ public class ModelDownloaderTests : IDisposable
     }
 
     [Fact]
+    public async Task DownloadHeldByAnotherInstance_WaitsThenSeesItInstalled_WithoutARequest()
+    {
+        using var srv = new TestServer { Data = Bytes(10) };
+        var c = Comp(srv.Url, srv.Data);
+        var other = ComponentLock.TryAcquire(OfflineCatalog.Root, c.Id)!; // the other instance is downloading
+        var run = new ModelDownloader(new HttpClient()).DownloadAsync(c, null, CancellationToken.None);
+        await Task.Delay(700);
+        Assert.False(run.IsCompleted); // waits instead of writing into the same .part file
+        Directory.CreateDirectory(c.FullPath);
+        File.WriteAllText(Path.Combine(c.FullPath, ".complete"), "x"); // the other one finished
+        other.Dispose();
+        await run.WaitAsync(TimeSpan.FromSeconds(10));
+        Assert.Equal(0, srv.Requests);
+    }
+
+    [Fact]
+    public void Delete_IsRefusedWhileAnotherInstanceDownloads()
+    {
+        var c = Comp("https://example.invalid/x", Bytes(10));
+        Directory.CreateDirectory(c.FullPath);
+        using var other = ComponentLock.TryAcquire(OfflineCatalog.Root, c.Id)!;
+        Assert.Throws<IOException>(() => ModelDownloader.Delete(c));
+        Assert.True(Directory.Exists(c.FullPath));
+    }
+
+    [Fact]
     public async Task NotEnoughDiskSpace_FailsBeforeDownloading()
     {
         using var srv = new TestServer { Data = Bytes(10) };

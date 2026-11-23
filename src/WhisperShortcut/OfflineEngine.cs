@@ -138,6 +138,7 @@ internal sealed class OfflineEngine : IDisposable
     /// <summary>Removes a downloaded model; unloads it first so Windows lets go of the files.</summary>
     public void Delete(Core.OfflineComponent component)
     {
+        if (Core.AppIdentity.Current.IsDev) throw new InvalidOperationException(Core.AppIdentity.OfflineDeleteLockedReason); // before unloading anything
         if (component == Core.OfflineCatalog.Parakeet)
         {
             _parakeet?.Dispose();
@@ -288,7 +289,9 @@ internal sealed class OfflineEngine : IDisposable
         finally { _parakeetLock.Release(); }
     }
 
-    private static string HotwordsDir => Path.Combine(Core.OfflineCatalog.Root, "parakeet-hotwords");
+    // Per instance (not in the shared models folder): the cleanup below deletes every hotwords file in this folder,
+    // which would pull the file out from under the other instance, and both count their files from 1.
+    private static string HotwordsDir => Path.Combine(Core.AppData.LocalFolder, "parakeet-hotwords");
 
     private Core.ParakeetTranscriber LoadWithHotwords(string dir, int threads, IReadOnlyList<string> terms)
     {

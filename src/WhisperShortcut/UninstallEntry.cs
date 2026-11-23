@@ -14,7 +14,7 @@ internal static class UninstallEntry
     /// <summary>Writes or refreshes the entry for this exe; only values that differ are written. Never throws.</summary>
     public static void Ensure()
     {
-        if (!InstallState.MayRegister) return;
+        if (!InstallState.MayRegister || !Core.AppIdentity.Current.MayRegisterSystemEntries) return; // Dev: would overwrite the normal app's entry
         var exe = InstallState.ExePath;
         if (string.IsNullOrEmpty(exe)) return;
         try

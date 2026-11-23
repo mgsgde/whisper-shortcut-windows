@@ -16,7 +16,8 @@ public static class AppData
     /// Every folder the app writes to, distinct. Recent texts live in memory only. An unfinished
     /// recording may sit in <c>unfinished</c> under <see cref="LocalFolder"/> until the next start.
     /// </summary>
-    public static IReadOnlyList<string> Folders => new[] { SettingsFolder, LocalFolder, LogFolder, OfflineCatalog.Root }
+    public static IReadOnlyList<string> Folders => new[] { SettingsFolder, LocalFolder, LogFolder }
+        .Concat(AppIdentity.Current.IsDev ? Array.Empty<string>() : new[] { OfflineCatalog.Root }) // Dev never deletes the shared models
         .Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
 
     /// <summary>

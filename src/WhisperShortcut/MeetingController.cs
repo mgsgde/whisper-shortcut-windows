@@ -211,6 +211,7 @@ internal sealed class MeetingController : IDisposable
         session.Changed += () => _ui.Post(_ => UpdateStatus(), null);
         session.ChunkFailed += e => _ui.Post(_ => OnChunkFailed(e), null);
         _startedUtc = DateTime.UtcNow;
+        Core.AppIdentity.Current.WriteLiveMeetingMarker(Environment.ProcessId, _startedUtc); // the Dev update script waits while this pid lives
         StartSafeguard();
         Sounds.Start();
         _overlay.ShowRecording(_startedUtc, level);
@@ -226,6 +227,7 @@ internal sealed class MeetingController : IDisposable
         Core.Log.Info($"Meeting: stop after {(DateTime.UtcNow - _startedUtc).TotalMinutes:0.0} min");
         Sounds.Stop();
         StopAudio();
+        Core.AppIdentity.Current.DeleteLiveMeetingMarker();
         _overlay.ShowFinishing(session.QueuedChunks > 0 ? "Letzte Abschnitte werden transkribiert …" : "Wird gespeichert …");
         RefreshMenu();
 
@@ -313,7 +315,7 @@ internal sealed class MeetingController : IDisposable
         Core.Log.Info($"Meeting: safeguard question after {minutes} min");
         var page = new TaskDialogPage
         {
-            Caption = "WhisperShortcut", Heading = "Langes Meeting", Text = Core.MeetingOptions.LongMeetingText(minutes),
+            Caption = Core.AppIdentity.Current.DisplayName, Heading = "Langes Meeting", Text = Core.MeetingOptions.LongMeetingText(minutes),
             Icon = TaskDialogIcon.Information, AllowCancel = true,
         };
         var stop = new TaskDialogButton("Meeting beenden");
@@ -350,6 +352,7 @@ internal sealed class MeetingController : IDisposable
     {
         var session = _session;
         StopAudio();
+        Core.AppIdentity.Current.DeleteLiveMeetingMarker();
         if (session == null) return;
         if (_stopping)
         {

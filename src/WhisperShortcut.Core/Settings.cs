@@ -56,9 +56,7 @@ public sealed partial class Settings
     }
 
     /// <summary>Default location: %APPDATA%\WhisperShortcut\settings.json.</summary>
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-        "WhisperShortcut", "settings.json");
+    public static string DefaultPath => AppIdentity.Current.SettingsPath; // Dev: "WhisperShortcut Dev"
 
     /// <summary>Gemini API key (plain in memory, protected on disk). Read at call time by GeminiClient.</summary>
     public string ApiKey { get; set; } = "";

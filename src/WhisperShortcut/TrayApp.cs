@@ -98,6 +98,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _cancelledItem, _withoutTemplateItem;
     private readonly ToolStripMenuItem _welcomeItem;
     private readonly ToolStripMenuItem _checkUpdatesItem;
+    private readonly ToolStripMenuItem _switchVersionItem;
     private CancellationTokenSource? _snipCts;
     private readonly MeetingController _meeting;
     private readonly McpService _mcp;
@@ -175,7 +176,13 @@ internal sealed partial class TrayApp : ApplicationContext
         _settingsItem = new ToolStripMenuItem("Einstellungen …", null, (_, _) => ShowSettings());
         _welcomeItem = new ToolStripMenuItem("Einführung …", null, (_, _) => OpenWelcome());
         // Mac #346: „Nach Updates suchen …“ in the status menu (the app menu of a menu bar app); the switch stays in Allgemein → Updates.
-        _checkUpdatesItem = new ToolStripMenuItem("Nach Updates suchen …", null, (_, _) => _ = CheckForUpdatesFromTrayAsync());
+        _checkUpdatesItem = new ToolStripMenuItem("Nach Updates suchen …", null, (_, _) => _ = CheckForUpdatesFromTrayAsync())
+        {
+            Visible = Core.AppIdentity.Current.UpdatesEnabled, // Dev has no updater
+        };
+        // Normal app ⇄ Dev (the Mac's „Switch to Dev Build“): shown by UpdateMenuRows only when the other one is installed.
+        _switchVersionItem = new ToolStripMenuItem(Core.AppIdentity.Current.IsDev ? "Zur normalen Version wechseln" : "Zur Dev-Version wechseln",
+            null, (_, _) => SwitchVersion()) { Visible = false };
         _finishSetupItem = new ToolStripMenuItem("Einrichtung abschließen …", null, (_, _) => OpenWelcome()) { Visible = false };
         // Mac #549: one flat „Problem melden …“ instead of the „Feedback senden“ submenu; every kind of feedback goes there.
         var feedbackItem = new ToolStripMenuItem("Problem melden …", null, (_, _) => OpenProblemReportFromTray()); // TrayApp.Feedback.cs
@@ -199,7 +206,7 @@ internal sealed partial class TrayApp : ApplicationContext
             _copyLast, _recentMenu, _cancelledItem, _withoutTemplateItem, _retryItem, new ToolStripSeparator(),
             // Mac: „Chat“ above Settings, and the meeting starts from the chat (/meeting); Windows keeps its Meeting row too.
             ChatMenuItem(), _meeting.MenuItem, new ToolStripSeparator(),
-            _settingsItem, _welcomeItem, _checkUpdatesItem, feedbackItem, quitItem,
+            _settingsItem, _welcomeItem, _checkUpdatesItem, _switchVersionItem, feedbackItem, quitItem,
         });
         menu.Opening += (_, _) =>
         {
@@ -251,7 +258,7 @@ internal sealed partial class TrayApp : ApplicationContext
             else _updateNoticePending = true;
         };
         // Test runs (VM loop) must not pop update notices into the screenshots.
-        if (!testRun) _updates.Start();
+        if (!testRun && Core.AppIdentity.Current.UpdatesEnabled) _updates.Start(); // Dev: no automatic checks
         _ui.Post(_ => _meeting.OnStartup(), null);
 
         // Mac: the tour opens at every start until it was finished with „Fertig“ (closing it is not finishing).
@@ -398,6 +405,7 @@ internal sealed partial class TrayApp : ApplicationContext
             Core.Log.Info("Menu: setup finished, rows hidden during setup are back");
         }
         bool idle = IsIdle;
+        _switchVersionItem.Visible = OtherVersionInstalled();
         _stopItem.Visible = _stopSeparator.Visible = !idle || _readAloud?.IsActive == true;
         _proposalsItem.Visible = _mcp != null && _mcp.Proposals.Pending.Count > 0;
         _finishSetupItem.Visible = !_settings.WelcomeCompleted;
@@ -1943,7 +1951,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private void ShowDoneIfFree(string title, bool neutral = false)
     {
         if (IsIdle) _overlay.ShowDone(title, neutral);
-        else Notify("WhisperShortcut", title, ToolTipIcon.Info);
+        else Notify(Core.AppIdentity.Current.DisplayName, title, ToolTipIcon.Info);
     }
 
     /// <summary>The local models the mode's engines need are on disk (true when it uses none).</summary>
@@ -2087,7 +2095,7 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void SetStatusText(string status)
     {
-        string tip = $"WhisperShortcut – {status}";
+        string tip = $"{Core.AppIdentity.Current.DisplayName} – {status}";
         _icon.Text = tip.Length <= 127 ? tip : tip[..127]; // NotifyIcon throws above 127 characters; also the tray's screen-reader name
         _statusItem.Text = status;
     }

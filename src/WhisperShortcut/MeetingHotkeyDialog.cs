@@ -32,7 +32,7 @@ internal sealed class MeetingHotkeyDialog : Form
         SuspendLayout();
         AutoScaleDimensions = new SizeF(96F, 96F);
         AutoScaleMode = AutoScaleMode.Dpi;
-        Text = "WhisperShortcut";
+        Text = Core.AppIdentity.Current.DisplayName;
         Font = Theme.Body;
         FormBorderStyle = FormBorderStyle.FixedDialog;
         MaximizeBox = false;

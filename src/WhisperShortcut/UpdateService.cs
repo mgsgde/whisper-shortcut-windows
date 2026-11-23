@@ -48,7 +48,7 @@ internal sealed class UpdateService : IDisposable
 
     public bool IsIdle => _idle();
 
-    public void Start() => _timer.Start();
+    public void Start() { if (Core.AppIdentity.Current.UpdatesEnabled) _timer.Start(); } // Dev: no updater
 
     /// <summary>
     /// Asks GitHub. Returns the newer release or null. A failed automatic check only logs; a manual one
@@ -56,6 +56,7 @@ internal sealed class UpdateService : IDisposable
     /// </summary>
     public async Task<Core.UpdateInfo?> CheckAsync(bool manual)
     {
+        if (!Core.AppIdentity.Current.UpdatesEnabled) return null; // Dev: replaced by the scheduled task, never asks GitHub
         try
         {
             using var http = Core.NetworkPolicy.CreateApiClient(TimeSpan.FromSeconds(15));

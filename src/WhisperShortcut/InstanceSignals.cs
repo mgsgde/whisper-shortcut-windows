@@ -9,8 +9,8 @@ namespace WhisperShortcut;
 /// </summary>
 internal sealed class InstanceSignals : IDisposable
 {
-    public const string ShowName = @"Local\WhisperShortcut.Windows.Show";
-    public const string QuitName = @"Local\WhisperShortcut.Windows.Quit";
+    public static string ShowName => Core.AppIdentity.Current.ShowEventName;
+    public static string QuitName => Core.AppIdentity.Current.QuitEventName;
 
     private readonly EventWaitHandle _show, _quit;
     private RegisteredWaitHandle? _showWait, _quitWait;
@@ -49,6 +49,39 @@ internal sealed class InstanceSignals : IDisposable
         catch (Exception ex)
         {
             Core.Log.Error($"Signalling the running instance failed ({ex.GetType().Name})");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// <c>--takeover</c>: asks the OTHER instance (normal app or Dev) to quit, if it runs, and waits up to
+    /// <paramref name="wait"/> for its single-instance mutex to be free, so only one of the two holds the hotkeys.
+    /// Returns true when the other one is gone (or was not running).
+    /// </summary>
+    public static bool TakeOverFromOther(TimeSpan wait)
+    {
+        var other = Core.AppIdentity.Current.Other;
+        try
+        {
+            if (!EventWaitHandle.TryOpenExisting(other.QuitEventName, out var quit)) return true; // not running
+            using (quit) quit.Set();
+            Core.Log.Info($"Takeover: asked {other.DisplayName} to quit");
+            using var mutex = new Mutex(false, other.MutexName);
+            try
+            {
+                if (!mutex.WaitOne(wait))
+                {
+                    Core.Log.Warn($"Takeover: {other.DisplayName} did not quit within {wait.TotalSeconds:0} s");
+                    return false;
+                }
+            }
+            catch (AbandonedMutexException) { }
+            mutex.ReleaseMutex(); // we only wanted to know it is gone
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Core.Log.Error("Takeover failed", ex);
             return false;
         }
     }

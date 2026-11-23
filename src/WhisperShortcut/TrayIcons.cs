@@ -10,11 +10,39 @@ internal static class TrayIcons
 {
     /// <summary>All sizes, for windows (Windows picks the title-bar and taskbar size itself).</summary>
     public static readonly Icon App = Load("app.ico", null);
-    public static readonly Icon Ready = Load("app.ico", SystemInformation.SmallIconSize);
-    public static readonly Icon Recording = Load("recording.ico", SystemInformation.SmallIconSize);
-    public static readonly Icon Processing = Load("processing.ico", SystemInformation.SmallIconSize);
+    public static readonly Icon Ready = DevMarked(Load("app.ico", SystemInformation.SmallIconSize));
+    public static readonly Icon Recording = DevMarked(Load("recording.ico", SystemInformation.SmallIconSize));
+    public static readonly Icon Processing = DevMarked(Load("processing.ico", SystemInformation.SmallIconSize));
     /// <summary>Mac ⚠️ in the menu bar: dictation is not set up yet (no key, offline model not loaded). The app icon with an amber badge.</summary>
     public static readonly Icon Warning = WithBadge(Ready);
+
+    /// <summary>
+    /// The Dev instance (WhisperShortcut Dev) gets an orange "D" in the top-right corner, drawn at runtime on the normal
+    /// icon (the amber warning badge sits bottom-right). The normal app gets the icon back unchanged.
+    /// </summary>
+    private static Icon DevMarked(Icon icon)
+    {
+        if (!Core.AppIdentity.Current.IsDev) return icon;
+        using var bmp = icon.ToBitmap();
+        using (var g = Graphics.FromImage(bmp))
+        {
+            g.SmoothingMode = System.Drawing.Drawing2D.SmoothingMode.AntiAlias;
+            int d = Math.Max(8, bmp.Width / 2);
+            var r = new Rectangle(bmp.Width - d, 0, d - 1, d - 1);
+            using var orange = new SolidBrush(Color.FromArgb(255, 255, 122, 0));
+            using var ring = new Pen(Color.FromArgb(255, 32, 32, 32), Math.Max(1f, d / 10f));
+            g.FillRectangle(orange, r);
+            g.DrawRectangle(ring, r);
+            using var letter = new Font("Segoe UI", d * 0.66f, FontStyle.Bold, GraphicsUnit.Pixel);
+            TextRenderer.DrawText(g, "D", letter, r, Color.White,
+                TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter | TextFormatFlags.NoPadding);
+        }
+        var handle = bmp.GetHicon();
+        using var temp = Icon.FromHandle(handle);
+        var copy = (Icon)temp.Clone();
+        NativeIcon.DestroyIcon(handle);
+        return copy;
+    }
 
     private static Icon WithBadge(Icon icon)
     {

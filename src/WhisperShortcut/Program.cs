@@ -3,7 +3,7 @@ namespace WhisperShortcut;
 internal static class Program
 {
     /// <summary>The single-instance mutex; <c>--uninstall</c> takes it too.</summary>
-    internal const string MutexName = @"Local\WhisperShortcut.Windows";
+    internal static string MutexName => Core.AppIdentity.Current.MutexName; // Dev: Local\WhisperShortcut.Windows.Dev
 
     [STAThread]
     static void Main(string[] args)
@@ -39,12 +39,16 @@ internal static class Program
             // for when the running instance cannot be reached.
             InstanceSignals.AllowForeground();
             if (InstanceSignals.Signal(InstanceSignals.ShowName)) return;
-            MessageBox.Show("WhisperShortcut läuft bereits. Das Symbol ist unten rechts im Infobereich der Taskleiste.",
-                "WhisperShortcut", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            MessageBox.Show($"{Core.AppIdentity.Current.DisplayName} läuft bereits. Das Symbol ist unten rechts im Infobereich der Taskleiste.",
+                Core.AppIdentity.Current.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
         // Before the slow TrayApp constructor, so a second start during startup is not lost.
         using var signals = new InstanceSignals();
+
+        // Switch from the other version (tray: "Zur Dev-Version wechseln" / "Zur normalen Version wechseln"): it quits first,
+        // so only one of the two registers the global hotkeys (TrayApp's constructor).
+        if (args.Contains("--takeover")) InstanceSignals.TakeOverFromOther(TimeSpan.FromSeconds(10));
 
         UpdateInstaller.CleanupAfterStart();
         SelfExtractCleanup.CleanupStaleInBackground();

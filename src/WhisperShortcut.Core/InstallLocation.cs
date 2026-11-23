@@ -18,7 +18,11 @@ public enum InstallPlace
 public static class InstallLocation
 {
     /// <summary>The canonical folder below the given %LOCALAPPDATA%.</summary>
-    public static string CanonicalDir(string localAppData) => Path.Combine(localAppData, "Programs", "WhisperShortcut");
+    public static string CanonicalDir(string localAppData) => CanonicalDir(localAppData, dev: false);
+
+    /// <summary>The canonical folder of the normal app, or of the Dev instance ("WhisperShortcut Dev").</summary>
+    public static string CanonicalDir(string localAppData, bool dev) =>
+        Path.Combine(localAppData, "Programs", dev ? "WhisperShortcut Dev" : "WhisperShortcut");
 
     /// <summary>Order matters: Canonical wins, then Temporary (a ZIP opened from Downloads still runs from Temp).</summary>
     public static InstallPlace Classify(string exePath, string? tempDir, string? downloadsDir, string? desktopDir, string? canonicalDir)

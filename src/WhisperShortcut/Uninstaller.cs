@@ -13,17 +13,21 @@ internal static class Uninstaller
     public static int Run()
     {
         ApplicationConfiguration.Initialize();
+        var id = Core.AppIdentity.Current;
         var exe = InstallState.ExePath;
         bool deleteExe = InstallState.Place == Core.InstallPlace.Canonical && !string.IsNullOrEmpty(exe);
 
-        var what = "Entfernt werden: der Start mit Windows, der Eintrag im Startmenü und unter „Apps“ in den Windows-Einstellungen, "
-            + "alle Einstellungen, der API-Schlüssel, das Glossar, die Offline-Modelle und das Protokoll sowie der Eintrag von "
-            + "WhisperShortcut in Claude Desktop und Claude Code (falls verbunden).\n\n"
+        var what = id.IsDev
+            ? "Entfernt werden: der Start mit Windows (nur der der Dev-Version), alle Einstellungen, der API-Schlüssel, das Glossar und das Protokoll "
+                + "der Dev-Version. Die normale WhisperShortcut-App und die gemeinsamen Offline-Modelle bleiben unberührt.\n\n"
+            : "Entfernt werden: der Start mit Windows, der Eintrag im Startmenü und unter „Apps“ in den Windows-Einstellungen, "
+                + "alle Einstellungen, der API-Schlüssel, das Glossar, die Offline-Modelle und das Protokoll sowie der Eintrag von "
+                + "WhisperShortcut in Claude Desktop und Claude Code (falls verbunden).\n\n"
             + (deleteExe
                 ? "Auch die Programmdatei wird gelöscht. "
                 : $"Die Datei {Path.GetFileName(exe)} bleibt liegen; du kannst sie danach selbst löschen. ")
             + "Das lässt sich nicht rückgängig machen.";
-        if (ChoiceDialog.Ask(null!, "WhisperShortcut deinstallieren?", what, new[] { "Deinstallieren", "Abbrechen" }, danger: true) != 0)
+        if (ChoiceDialog.Ask(null!, $"{id.DisplayName} deinstallieren?", what, new[] { "Deinstallieren", "Abbrechen" }, danger: true) != 0)
             return 1;
         Core.Log.Info("Uninstall: confirmed");
 
@@ -49,9 +53,12 @@ internal static class Uninstaller
         }
 
         Step("Autostart", () => { if (!AutoStart.Disable()) throw new IOException("autostart"); });
-        Step("Startmenü", StartMenu.Remove);
-        Step("Apps-Eintrag", UninstallEntry.Remove);
-        Step("KI-Apps", RemoveAiAppEntries);
+        if (!id.IsDev) // Dev never wrote these and must not remove the normal app's
+        {
+            Step("Startmenü", StartMenu.Remove);
+            Step("Apps-Eintrag", UninstallEntry.Remove);
+            Step("KI-Apps", RemoveAiAppEntries);
+        }
         var extractRoot = SelfExtractCleanup.Current()?.Root;
         // Last: the log goes with the app data. The Reset also stops further writes to it.
         Step("App-Daten", () => Core.AppData.Reset());

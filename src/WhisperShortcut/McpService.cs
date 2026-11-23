@@ -119,8 +119,18 @@ internal sealed class McpService : IMcpHost, IDisposable
     /// <summary>Offline mode was switched (tray or settings window): stop or restart the listener.</summary>
     public void SyncOfflineMode() => Sync();
 
+    /// <summary>Dev never serves nor registers: the AI apps' configs and the loopback ports belong to the normal app.</summary>
+    private const string DevBlocked = "In der Dev-Version aus: Die KI-Apps sind mit der normalen WhisperShortcut-App verbunden.";
+
     private void Sync()
     {
+        if (Core.AppIdentity.Current.IsDev)
+        {
+            Stop();
+            _failure = DevBlocked;
+            RaiseChanged();
+            return;
+        }
         bool wanted = Config.Enabled && !_settings.OfflineMode;
         if (!wanted)
         {
@@ -326,6 +336,7 @@ internal sealed class McpService : IMcpHost, IDisposable
     /// </summary>
     private void TryRewriteClientUrls()
     {
+        if (Core.AppIdentity.Current.IsDev) return; // never touch the normal app's entries
         try
         {
             var url = EndpointUrl;
@@ -355,6 +366,7 @@ internal sealed class McpService : IMcpHost, IDisposable
     /// <summary>Writes our entry into Claude Desktop's config (backup first). Returns the German result for the user.</summary>
     public string ConnectClaudeDesktop()
     {
+        if (Core.AppIdentity.Current.IsDev) return DevBlocked;
         var path = McpClientSetup.ClaudeDesktopConfigPath(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData));
@@ -373,6 +385,7 @@ internal sealed class McpService : IMcpHost, IDisposable
     /// </summary>
     public async Task<string> ConnectClaudeCodeAsync()
     {
+        if (Core.AppIdentity.Current.IsDev) return DevBlocked;
         var (url, key) = (EndpointUrl, KeyForClients);
         var claude = FindClaude();
         if (claude != null)
