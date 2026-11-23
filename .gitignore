@@ -8,3 +8,4 @@ dist/*.exe
 dist/*.zip
 dist/*/
 dist/*.sig
+test-audio-roh/
