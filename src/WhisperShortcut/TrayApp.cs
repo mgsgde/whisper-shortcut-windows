@@ -37,10 +37,11 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _recentMenu;
     private readonly ToolStripMenuItem _retryItem;
     private readonly RecordingOverlay _overlay = new();
+    private readonly Core.QuickActionUsage _quickUsage = new();
     // In memory only: in a practice a dictation must not stay behind in a file.
     private readonly Core.RecentTexts _recent = new();
     private static readonly Hotkey Escape = new(0, Keys.Escape);
-    // Ctrl+1–9 while a Dictate Prompt recording runs: apply a quick instruction (Settings.QuickActions).
+    // Ctrl+1–3 while a Dictate Prompt recording runs: apply a quick instruction from the card (Take.Card).
     private static readonly Hotkey[] QuickKeys =
         Enumerable.Range(0, Core.QuickActionList.Max).Select(i => new Hotkey(NativeMethods.MOD_CONTROL, Keys.D1 + i)).ToArray();
 
@@ -709,9 +710,10 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private void OnQuickAction(int index)
     {
-        if (_take is not { Phase: TakePhase.Recording, Kind: Core.RecordingKindName.Prompt } take || index >= _settings.QuickActions.Count) return;
+        if (_take is not { Phase: TakePhase.Recording, Kind: Core.RecordingKindName.Prompt } take || index >= take.Card.Count) return;
         Core.Log.Info($"Quick action {index + 1}");
-        take.QuickAction = _settings.QuickActions[index];
+        take.QuickAction = take.Card[index];
+        _quickUsage.Record(take.QuickAction, DateTime.UtcNow);
         _ = StopAndProcessAsync();
     }
 
@@ -918,6 +920,8 @@ internal sealed partial class TrayApp : ApplicationContext
         long micMs = feedback.ElapsedMilliseconds - beforeMic;
         Sounds.Start();
         take.Serial = ++_recordingSerial;
+        // Mac: the three most used of the user's quick instructions, in their Settings order; set before RefreshStatus registers Ctrl+1–3.
+        if (mode == Mode.Prompt) take.Card = Core.QuickActionCard.Select(_settings.QuickActions, _quickUsage.Counts(DateTime.UtcNow));
         _take = take;
         RefreshStatus();
         // One turn only: a Dictate run leaves the image for the next Dictate Prompt or template run.
@@ -925,7 +929,7 @@ internal sealed partial class TrayApp : ApplicationContext
         if (take.Shot != null) Core.Log.Info($"{mode}: screenshot attached ({take.Shot.Data.Length / 1024} KB)");
         _overlay.ShowRecording(mode, Hotkey.Display(stored), limit,
             mic != null ? () => mic.Level : null, mic != null ? () => mic.PeakSoFar : null,
-            mode == Mode.Prompt ? _settings.QuickActions : null,
+            take.Card,
             templateName: mode == Mode.Template ? template!.DisplayName : null, screenshot: take.Shot != null,
             title: live != null ? Core.UserCopy.LiveTitle : null);
         Core.Log.Info($"{mode}: overlay after {feedback.ElapsedMilliseconds} ms (setup {beforeMic} ms, microphone {micMs} ms)");
@@ -1554,7 +1558,7 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     /// <summary>
-    /// A quick instruction (Ctrl+1–9 or a click while recording). Whatever was said is transcribed and
+    /// A quick instruction (Ctrl+1–3 or a click while recording). Whatever was said is transcribed and
     /// goes along as text, so this path always has a transcript to check the reply against.
     /// </summary>
     private async Task<string> QuickActionAsync(string quick, byte[] wav, double seconds, string? selection, string systemPrompt, CancellationToken ct)
@@ -1568,7 +1572,7 @@ internal sealed partial class TrayApp : ApplicationContext
         if (request == null)
         {
             Sounds.Error();
-            Notify("Nichts zum Anwenden", $"Erst Text markieren oder etwas diktieren, dann {Core.QuickActionList.KeyRange} drücken.", ToolTipIcon.Info);
+            Notify("Nichts zum Anwenden", $"Erst Text markieren oder etwas diktieren, dann {Core.QuickActionCard.KeyRange} drücken.", ToolTipIcon.Info);
             return "";
         }
         var (target, instruction, fromDictation) = request.Value;
@@ -1901,7 +1905,7 @@ internal sealed partial class TrayApp : ApplicationContext
     // ---------------- UI ----------------
 
     /// <summary>
-    /// Esc and Ctrl+1–9 belong to the other programs except while we need them: Esc while recording or processing,
+    /// Esc and Ctrl+1–3 belong to the other programs except while we need them: Esc while recording or processing,
     /// Ctrl+1–9 only while a Dictate Prompt recording runs.
     /// </summary>
     private void SyncSessionHotkeys()
@@ -1911,7 +1915,7 @@ internal sealed partial class TrayApp : ApplicationContext
         bool quick = _take is { Phase: TakePhase.Recording, Kind: Core.RecordingKindName.Prompt };
         for (int i = 0; i < QuickKeys.Length; i++)
         {
-            if (!quick || i >= _settings.QuickActions.Count) _hotkeys.Unregister(QuickKeys[i]);
+            if (!quick || i >= _take!.Card.Count) _hotkeys.Unregister(QuickKeys[i]);
             else if (!_hotkeys.IsRegistered(QuickKeys[i]))
             {
                 int index = i;

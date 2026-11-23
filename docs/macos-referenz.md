@@ -133,7 +133,7 @@ und diese Datei wird korrigiert.
    (`MenuBarController.swift:3509-3570`, `DictatePromptSelection.swift`).
    - Neue Zwischenablage mit Text → **Bearbeiten**: die Anweisung wird auf diesen Text angewendet.
    - Sonst → **Verfassen**: neuer Text an der Cursorposition.
-2. **Aufnahme:** Die Pill zeigt „Prompting“ und darüber die **Schnell-Prompts** (⌃1–9 oder klicken
+2. **Aufnahme:** Die Pill zeigt „Prompting“ und darüber die **Schnell-Prompts** (die 3 meistgenutzten, ⌃1–3 oder klicken
    statt sprechen). Prompt-Aufnahmen werden nicht gestreamt.
 3. **Bildschirminhalt:** Standardmäßig geht ein Screenshot mit (Schalter; braucht Bildschirmaufnahme).
 4. **Verarbeitung:** Pill „Thinking“, Standardmodell Gemini 3.8 Flash.

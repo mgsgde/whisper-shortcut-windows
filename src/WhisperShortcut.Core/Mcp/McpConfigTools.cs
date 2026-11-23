@@ -103,7 +103,7 @@ public sealed class McpConfigTools(McpToolContext ctx) : IMcpToolProvider, IMcpR
             }, new[] { "section", "content" }, Writes(true));
 
         yield return WriteTool("update_quick_instructions", "Update Quick Instructions",
-            $"Replaces the whole list of quick instructions (Ctrl+1 to Ctrl+{QuickActionList.Max} while recording a Dictate Prompt). At most {QuickActionList.Max} items of {QuickActionList.MaxLength} characters each. Read the current list with get_configuration and keep the ones the user still needs.",
+            $"Replaces the whole list of quick instructions (the {QuickActionCard.Entries} most used in the last 30 days appear as Ctrl+1 to Ctrl+{QuickActionCard.Entries} while recording a Dictate Prompt). At most {QuickActionList.Max} items of {QuickActionList.MaxLength} characters each. Read the current list with get_configuration and keep the ones the user still needs.",
             new JsonObject { ["instructions"] = StringList("The complete new list.", QuickActionList.Max) }, new[] { "instructions" }, Writes(true));
 
         yield return new JsonObject

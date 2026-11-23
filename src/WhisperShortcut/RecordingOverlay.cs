@@ -8,7 +8,7 @@ namespace WhisperShortcut;
 /// The pill at the bottom of the screen, drawn like the Mac's recording pill (RecordingIndicatorWindow.swift):
 /// a black capsule (92 % opaque) with ✕, ten white level bars, the status word and a white ✓ while recording,
 /// ✕, spinner and status word while processing. Dictate Prompt and templates grow it into the Mac's card
-/// (QuickActionCardView): what the run acts on, the quick instructions (Strg+1–9 or a click), and the recording
+/// (QuickActionCardView): what the run acts on, the three most used quick instructions (Strg+1–3 or a click), and the recording
 /// controls as its footer.
 /// Like the Mac panel (borderless, non-activating, hasShadow) it never takes focus (WS_EX_NOACTIVATE,
 /// MA_NOACTIVATE), otherwise Ctrl+V would land in the pill instead of the user's window.
@@ -133,7 +133,7 @@ internal sealed class RecordingOverlay : OverlayForm
     // ---------------- API for TrayApp ----------------
 
     /// <param name="level">Live level 0..1 (null for a test WAV: no bars, no silence warning).</param>
-    /// <param name="quickActions">Dictate Prompt: the instructions offered as Ctrl+1–9 rows.</param>
+    /// <param name="quickActions">Dictate Prompt: the card's rows (Take.Card, at most three).</param>
     /// <param name="templateName">A template recording: the card names it, and no quick instructions are offered.</param>
     /// <param name="screenshot">A held screenshot is sent with this run: shown as its own line.</param>
     public void ShowRecording(Mode mode, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar,

@@ -80,6 +80,9 @@ internal sealed class Take : IDisposable
     public Task<string?>? Selection { get; private set; }
 
     public string? QuickAction { get; set; }
+
+    /// <summary>Dictate Prompt: the quick instructions on the card, in row order (Strg+1–3 pick from these).</summary>
+    public IReadOnlyList<string> Card { get; set; } = Array.Empty<string>();
     public Core.ScreenshotImage? Shot { get; set; }
     public CancellationTokenSource? Cts { get; set; }
     public string BusyStatus { get; set; } = Core.UserCopy.Processing;
