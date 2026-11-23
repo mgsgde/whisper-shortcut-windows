@@ -101,6 +101,8 @@ public static class RunOutcomes
             case OfflineNotReadyException: return "offline model missing";
             case LocalLlmException: withException = true; return "local LLM failed";
             case EmptyModelReplyException: return "empty model reply";
+            case PromptReplyRejectedException: return "prompt reply withheld";
+            case InstructionNotUnderstoodException: return "instruction not understood";
             case GeminiException g: return $"Gemini {g.Kind}";
             case AudioSilentException or MicrophoneUnavailableException: return $"microphone problem {e.GetType().Name}";
             default: withException = true; return "unexpected error";
@@ -126,6 +128,10 @@ public static class RunOutcomes
                 return Retryable(UserCopy.OfflineModelErrorTitle, e.Message);
             case EmptyModelReplyException when context == FailureContext.Dictation:
                 return Retryable(UserCopy.NoReplyTitle, e.Message);
+            case PromptReplyRejectedException when context == FailureContext.Dictation:
+                return Retryable(UserCopy.ReplyNotPastedTitle, e.Message);
+            case InstructionNotUnderstoodException when context == FailureContext.Dictation:
+                return Toast(UserCopy.InstructionNotUnderstoodTitle, e.Message, Severity.Warning);
             case GeminiException g when context == FailureContext.Dictation:
             {
                 var title = UserCopy.ProviderErrorTitle(g.Kind, g.Provider, g.Message);

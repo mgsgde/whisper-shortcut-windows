@@ -51,7 +51,11 @@ NO SELECTED TEXT (nothing was selected; the result will be inserted at the curso
 """;
 
     /// <summary>Label of the copied selection (AppConstants.clipboardSelectionHeader).</summary>
-    public const string ClipboardSelectionHeader = "SELECTED TEXT FROM CLIPBOARD (apply the voice instruction to this text):";
+    public const string ClipboardSelectionHeader = ClipboardSelectionLabel + " (apply the voice instruction to this text):";
+
+    /// <summary>The request scaffold's own labels, shared by the request builders and <see cref="PromptReplyGuard"/> (Mac #459).</summary>
+    public const string ClipboardSelectionLabel = "SELECTED TEXT FROM CLIPBOARD";
+    public const string VoiceInstructionLabel = "VOICE INSTRUCTION:";
 
     /// <summary>
     /// Header of the glossary hint appended to the transcription instruction; the comma-joined
