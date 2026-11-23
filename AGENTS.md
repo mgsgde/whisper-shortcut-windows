@@ -60,8 +60,8 @@ published although it said it had aborted, and an unreviewed 0.7.14 had to be de
 3. `tools/release.sh` (Git Bash; asks before tagging, `--yes` skips): refuses a dirty tree, an unpushed HEAD, an
    existing tag, unchanged notes or a CI that is not green on HEAD; then tags HEAD (annotated, explicit commit)
    and pushes the tag. Nothing is built or signed on the PC.
-4. `.github/workflows/release.yml` takes over: waits for the whole `CI` workflow green on the tagged commit
-   (so every gate in `ci.yml`, including the dictation smoke check, blocks a release), builds both exes and
+4. `.github/workflows/release.yml` takes over: waits for the whole `CI` workflow green on the tagged commit in a
+   push run (a PR run may skip the smoke check without its secret), so every gate in `ci.yml`, including the dictation smoke check, blocks a release; builds both exes and
    ZIPs (x64, arm64), signs them with the repository secret `UPDATE_SIGNING_KEY` and checks every signature
    against the public key in `UpdateSignature.cs`, uploads to a draft, downloads the assets back and verifies
    them, and only then publishes. Only a higher version becomes Latest (what `UpdateCheck` reads), so a
@@ -76,8 +76,8 @@ published although it said it had aborted, and an unreviewed 0.7.14 had to be de
   `gh release edit vx.y.z --draft=false --latest`, then `gh variable delete RELEASE_AS_DRAFT`.
 - **Re-drive a tag** whose run failed (flaky CI re-run, outage): Actions → Release → Run workflow,
   `tag=vx.y.z` (or `gh workflow run release.yml -f tag=vx.y.z`). An existing draft gets its assets replaced.
-- **Hotfix off an older version:** branch from the old tag (`release/x.y.z`), bump, notes, push, open a PR so
-  CI runs on it, then `tools/release.sh` on that branch. The tag points at that branch's commit, never at `main`.
+- **Hotfix off an older version:** branch `release/x.y.z` from the old tag, bump, notes, push (CI runs on
+  pushes to `release/**`), then `tools/release.sh` on that branch. The tag points at that branch's commit, never at `main`.
 - **Abort:** before the tag is pushed nothing has happened. After it, cancel the run
   (`gh run cancel <id>`) and check `gh release view vx.y.z`: the workflow publishes only in its last step, so a
   cancelled run leaves at most a draft. Say "not published" only after that check.

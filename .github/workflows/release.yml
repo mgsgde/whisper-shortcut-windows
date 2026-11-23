@@ -112,7 +112,8 @@ jobs:
           echo "Version $VERSION; notes:"; cat .github/RELEASE_NOTES.md
 
       # The whole CI workflow (unit tests, UI tests, and every job added later such as the dictation smoke
-      # check) must be green on the tagged commit. A dry run on a PR skips this: CI runs next to it anyway.
+      # check) must be green on the tagged commit, in a push run: on a pull_request run the smoke job may skip
+      # without its secret and still count as green. A dry run on a PR skips this: CI runs next to it anyway.
       - name: Wait for green CI on the tagged commit
         if: steps.resolve.outputs.mode == 'publish'
         env:
@@ -122,7 +123,7 @@ jobs:
           set -uo pipefail
           deadline=$((SECONDS + 60 * 60))
           while true; do
-            runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=20" \
+            runs=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=20" \
               --jq '[.workflow_runs[] | "\(.status) \(.conclusion)"] | join(",")') || runs=""
             echo "CI runs on $SHA: ${runs:-none}"
             case ",$runs," in
@@ -133,7 +134,7 @@ jobs:
               exit 1
             fi
             if [ "$SECONDS" -ge "$deadline" ]; then
-              echo "::error::No green CI run on $SHA after 60 min (${runs:-no run at all}). A commit off main needs a PR so CI runs on it."
+              echo "::error::No green CI run on $SHA after 60 min (${runs:-no run at all}). A hotfix must sit on a pushed main or release/** branch so CI runs on push."
               exit 1
             fi
             sleep 30

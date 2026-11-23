@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # release/** = hotfix branches off an older tag; release.yml needs a green push run on the tagged commit.
+    branches: [main, "release/**"]
   pull_request:
 
 permissions:

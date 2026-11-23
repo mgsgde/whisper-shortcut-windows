@@ -8,7 +8,7 @@
 #
 # Before running: commit the version bump (<Version> in src/WhisperShortcut/WhisperShortcut.csproj) and the
 # German notes in .github/RELEASE_NOTES.md, push the branch, and let CI go green on HEAD.
-# HEAD may be main or a hotfix branch (e.g. release/0.7.14 off v0.7.13, with a PR so CI runs on it).
+# HEAD may be main or a hotfix branch release/x.y.z (e.g. release/0.7.14 off v0.7.13; CI runs on its pushes).
 #
 # Keep it a draft to install and test first: gh variable set RELEASE_AS_DRAFT --body true (before pushing),
 # then gh release edit vX.Y.Z --draft=false --latest, and gh variable delete RELEASE_AS_DRAFT.
@@ -44,11 +44,12 @@ if [ -n "$PREV" ] && git diff --quiet "$PREV" "$SHA" -- "$NOTES"; then
 fi
 
 # release.yml checks this too; checking here means a red or running CI never leaves a tag behind.
-CI=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&per_page=20" \
+# Push runs only: a pull_request run may skip the dictation smoke check (no secret) and still be green.
+CI=$(gh api "repos/$REPO/actions/workflows/ci.yml/runs?head_sha=$SHA&event=push&per_page=20" \
   --jq '[.workflow_runs[] | "\(.status) \(.conclusion)"] | join(",")')
 case ",$CI," in
   *",completed success,"*) ;;
-  *) fail "CI is not green on $SHA (${CI:-no run}). Wait for it, re-run a flaky job, or open a PR for a hotfix branch." ;;
+  *) fail "CI is not green on $SHA (${CI:-no run}). Wait for it, re-run a flaky job, or push a hotfix as release/x.y.z so CI runs on push." ;;
 esac
 
 echo "Release $TAG"
