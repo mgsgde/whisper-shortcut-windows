@@ -289,6 +289,9 @@ public sealed partial class Settings
     /// <summary>Look for a new version at start and once a day; only shows a notice, installs nothing by itself.</summary>
     public bool AutoUpdateCheck { get; set; } = true;
 
+    /// <summary>Stable (promoted releases only, default) or Latest (every release at once). No downgrade either way.</summary>
+    public UpdateChannel UpdateChannel { get; set; } = UpdateChannel.Stable;
+
     /// <summary>
     /// What happens to the clipboard after auto-paste (ignored when <see cref="AutoPaste"/> is off). New installs leave
     /// the dictation there like the Mac; older files map their "restoreClipboard" switch (see <see cref="Choices.AfterPasteFromFile"/>).
@@ -527,6 +530,7 @@ public sealed partial class Settings
         [JsonPropertyName("autoPaste")] public bool? AutoPaste { get; set; }
         [JsonPropertyName("sounds")] public bool? Sounds { get; set; }
         [JsonPropertyName("autoUpdateCheck")] public bool? AutoUpdateCheck { get; set; }
+        [JsonPropertyName("updateChannel")] public string? UpdateChannel { get; set; }
         [JsonPropertyName("restoreClipboard")] public bool? RestoreClipboard { get; set; }
         [JsonPropertyName("clipboardAfterPaste")] public string? ClipboardAfterPaste { get; set; }
         [JsonPropertyName("welcomeCompleted")] public bool? WelcomeCompleted { get; set; }

@@ -64,6 +64,7 @@
   "autoPaste": false,
   "sounds": true,
   "autoUpdateCheck": false,
+  "updateChannel": "latest",
   "restoreClipboard": true,
   "clipboardAfterPaste": "restore",
   "welcomeCompleted": true,

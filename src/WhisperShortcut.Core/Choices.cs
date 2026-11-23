@@ -59,6 +59,15 @@ public static class Choices
         new Choice<PunctuationMode>(PunctuationMode.SpokenOnly, "spokenOnly", "Nur gesprochen"),
     }, PunctuationMode.Automatic);
 
+    /// <summary>Update channel (Mac order and German strings, explanations in du-form). Unknown or missing = Stable.</summary>
+    public static readonly ChoiceSet<UpdateChannel> UpdateChannel = new(new[]
+    {
+        new Choice<UpdateChannel>(Core.UpdateChannel.Stable, "stable", "Stabil",
+            "Empfohlen für die Arbeit. Eine neue Version kommt erst, wenn sie etwa eine Woche im Alltag gelaufen ist, höchstens alle zwei Wochen."),
+        new Choice<UpdateChannel>(Core.UpdateChannel.Latest, "latest", "Neueste",
+            "Jede Version am Tag ihres Erscheinens, mit den neuesten Funktionen und Korrekturen. Beim Wechsel zurück zu Stabil bleibt deine Version; das nächste Update kommt, sobald Stabil neuer ist."),
+    }, Core.UpdateChannel.Stable);
+
     /// <summary>Mac raw values "dictate" / "live"; anything else is the default.</summary>
     public static readonly ChoiceSet<DictateMode> DictateMode = new(new[]
     {

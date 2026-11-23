@@ -78,5 +78,6 @@ Templates = []
 TranscriptionLanguage = "auto"
 TranscriptionTemperature = 0
 TranscriptionThinking = "minimal"
+UpdateChannel = Stable
 WelcomeCompleted = False
 WelcomeStep = 2

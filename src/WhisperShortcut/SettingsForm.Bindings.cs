@@ -148,6 +148,7 @@ internal sealed partial class SettingsForm
             Bind(s => key.Active(s), (s, v) => StoreKey(s, key, v), () => box.Value, v => box.SetValue(v, notify: true), gate: () => _keysOk);
         }
         BindToggle(_rightCtrl, s => s.RightCtrlDictation, (s, v) => s.RightCtrlDictation = v);
+        BindChoice<Core.UpdateChannel>(_updateChannel, s => s.UpdateChannel, (s, v) => s.UpdateChannel = v);
         BindToggle(_autoUpdate, s => s.AutoUpdateCheck, (s, v) => s.AutoUpdateCheck = v);
         BindToggle(_autoPaste, s => s.AutoPaste, (s, v) => s.AutoPaste = v);
         BindChoice<Core.ClipboardAfterPaste>(_afterPaste, s => s.ClipboardAfterPaste, (s, v) => s.ClipboardAfterPaste = v);

@@ -50,6 +50,7 @@ internal sealed partial class SettingsForm : FastShowForm
     private readonly ToggleSwitch _autoStart;
     private readonly ToggleSwitch _autoPaste;
     private readonly FluentCombo _afterPaste;
+    private FluentCombo _updateChannel = null!;
     private readonly ToggleSwitch _sounds;
     private ThemedLabel _updateStatus = null!;
     private FluentButton _updateButton = null!;
@@ -766,7 +767,7 @@ internal sealed partial class SettingsForm : FastShowForm
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
         var dirtyTimer = _applyTimer;
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
-        var combos = new[] { _mic, _llmChoice, _templateChoice, _punctuation, _dictateMode, _afterPaste, _language, _temperature, _thinking }
+        var combos = new[] { _mic, _llmChoice, _templateChoice, _punctuation, _dictateMode, _afterPaste, _updateChannel, _language, _temperature, _thinking }
             .Concat(_dictateStep.Combos).Concat(_promptStep.Combos).ToArray();
         dirtyTimer.Tick += (_, _) =>
         {
@@ -953,6 +954,13 @@ internal sealed partial class SettingsForm : FastShowForm
         // The app builds this window in advance (TrayApp.ScheduleSpareSettings), before the first automatic check
         // a minute after start: a version found since then shows when the window does.
         VisibleChanged += (_, _) => { if (Visible && _updates.Available is { } found) ShowUpdateFound(found); };
+        // Mac "Update-Kanal": the help line follows the chosen option (same pattern as "Nach dem Einfügen").
+        _updateChannel = new FluentCombo { Width = ComboWidth, AccessibleName = "Update-Kanal" };
+        FillChoices(_updateChannel, Core.Choices.UpdateChannel, _settings.UpdateChannel);
+        card.AddRow(SettingRow("Update-Kanal", "", _updateChannel, ComboWidth, out var channelText));
+        void DescribeChannel() => channelText.Text = Core.Choices.UpdateChannel.Explanation(((ChoiceItem<Core.UpdateChannel>)_updateChannel.SelectedItem!).Value);
+        _updateChannel.SelectedIndexChanged += (_, _) => DescribeChannel();
+        DescribeChannel();
         _autoUpdate = new ToggleSwitch { Checked = _settings.AutoUpdateCheck, AccessibleName = "Automatisch nach Updates suchen" };
         // The practice runs in offline mode, which promises that nothing leaves the PC: say plainly what this one request sends.
         card.AddRow(SettingRow("Automatisch nach Updates suchen", "Kurz nach dem Start und einmal am Tag. Eine neue Version meldet sich "
@@ -2101,7 +2109,7 @@ internal sealed partial class SettingsForm : FastShowForm
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.Dictate.Gemini}/{_settings.Prompt.Gemini}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, engines {_settings.Dictate.Engine}/{_settings.Prompt.Engine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.Dictate.OpenAi}/{_settings.Prompt.OpenAi}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode}, dictate mode {_settings.DictateMode})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.Dictate.Gemini}/{_settings.Prompt.Gemini}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, channel {Core.Choices.UpdateChannel.Token(_settings.UpdateChannel)}, engines {_settings.Dictate.Engine}/{_settings.Prompt.Engine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.Dictate.OpenAi}/{_settings.Prompt.OpenAi}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode}, dictate mode {_settings.DictateMode})");
         foreach (var b in written) b.Commit(_settings);
         // Also with a key problem: what stays edited (the refused shortcuts) is not written again until the user edits something.
         _holdSave = _bindings.Any(b => b.Edited);

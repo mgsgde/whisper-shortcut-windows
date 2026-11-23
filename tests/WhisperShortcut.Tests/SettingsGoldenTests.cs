@@ -87,6 +87,7 @@ public class SettingsGoldenTests
         s.AutoPaste = false;
         s.Sounds = true;
         s.AutoUpdateCheck = false;
+        s.UpdateChannel = UpdateChannel.Latest;
         s.ClipboardAfterPaste = ClipboardAfterPaste.RestorePrevious;
         s.WelcomeCompleted = true;
         s.MoveOfferDismissed = new() { @"C:\x\WhisperShortcut.exe" };
