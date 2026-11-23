@@ -61,7 +61,7 @@ die echtes Windows brauchen, und der Umfang (Chat, Vorlesen, eigener Server).
 | Leere Antwort ist wiederholbar, Aufnahme bleibt | `emptyModelReply` | „Nichts erkannt“, Aufnahme gelöscht | **PR #36** |
 | Bare-Edit-Befehl ohne Markierung | `isBareEditCommand` | `BareEditCommand` | erledigt |
 | Eigene Schnellanweisungen ohne Markierung (R119) | wurden abgelehnt (Bug) | wirken auf das Diktierte | bewusst anders (Bug kann nicht auftreten) |
-| Anzahl Schnellanweisungen | bis 9 | bis 9 (Strg+1–9) | erledigt |
+| Anzahl Schnellanweisungen | bis 9 eigene, Karte zeigt die 3 meistgenutzten (30 Tage, ⌃1–3) | bis 9 eigene, Karte zeigt die 3 meistgenutzten (Strg+1–3); gezählt werden die Klicks/Kürzel auf der Karte (Windows hat kein Interaktionsprotokoll) | erledigt |
 | Getippte Anweisung in der Overlay-Karte | Textfeld, Return | nur Sprache / Strg+Zahl | offen (UI, Fokus, braucht echtes Windows) |
 | Gelernte Schnellanweisungen aus dem Nutzungslog | ja | kein Log | bewusst anders (keine Diktate gespeichert) |
 | Vorlagen als eigener Durchlauf (#275, #290) | ja | ja | erledigt |

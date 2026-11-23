@@ -49,7 +49,7 @@ public sealed class OverlayTests : IDisposable
         Sta.Run(() =>
         {
             using var overlay = new RecordingOverlay();
-            var quick = Core.QuickActionList.Defaults.Concat(new[] { "Als E-Mail formulieren", "Als Angebot formulieren" }).ToList();
+            var quick = Core.QuickActionCard.Select(Core.QuickActionList.Defaults, new Dictionary<string, int>());
             float level = 0.6f;
             var states = new (string Name, Action Show)[]
             {

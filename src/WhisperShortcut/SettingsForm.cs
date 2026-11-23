@@ -263,7 +263,7 @@ internal sealed partial class SettingsForm : FastShowForm
             + "Aus: Nur das Symbol und die Anzeige am Bildschirm zeigen, was gerade passiert.", _sounds, ToggleWidth, out _));
         var fixedCard = new Card();
         fixedCard.AddRow(SettingRow("Aufnahme verwerfen oder Verarbeitung abbrechen", null, KeyCap("Esc"), ButtonWidth + 40, out _));
-        fixedCard.AddRow(SettingRow("Schnellanweisung anwenden (nur bei Dictate Prompt)", null, KeyCap(Core.QuickActionList.KeyRange), ButtonWidth + 40, out _));
+        fixedCard.AddRow(SettingRow("Schnellanweisung anwenden (nur bei Dictate Prompt)", null, KeyCap(Core.QuickActionCard.KeyRange), ButtonWidth + 40, out _));
         AddAdvanced(general,
             Section("Töne", first: true), soundCard,
             Section("Während einer Aufnahme", subtitle: "Diese Tasten sind nur belegt, solange die Anzeige unten zu sehen ist. "
@@ -467,18 +467,20 @@ internal sealed partial class SettingsForm : FastShowForm
         prompt.Controls.Add(_screenshotOff);
 
         prompt.Controls.Add(Section("Schnellanweisungen"));
-        prompt.Controls.Add(Wrap($"Erscheinen bei Dictate Prompt ({Hotkey.Display(settings.ActivePromptHotkey.Length > 0 ? settings.ActivePromptHotkey : settings.PromptHotkey)}) unten in der Anzeige. "
-            + $"{Core.QuickActionList.KeyRange} oder ein Klick wendet sie sofort an: auf die Markierung oder, ohne Markierung, auf das gerade "
-            + "Diktierte. Beispiel: Text markieren, Strg+3, schon kürzer. Leere Felder werden ausgelassen.", 0));
+        // Mac wording (QuickActionStore.cardEntries = 3): "Die drei meistgenutzten erscheinen über der Aufnahmeanzeige …".
+        prompt.Controls.Add(Wrap($"Die drei meistgenutzten der letzten 30 Tage erscheinen in der Anzeige, während du einen Prompt diktierst "
+            + $"({Hotkey.Display(settings.ActivePromptHotkey.Length > 0 ? settings.ActivePromptHotkey : settings.PromptHotkey)}). "
+            + $"Klick einen an oder drück {Core.QuickActionCard.KeyRange}, statt zu sprechen: Er wirkt auf die Markierung oder, ohne Markierung, "
+            + "auf das gerade Diktierte. Bei Gleichstand gewinnt die obere. Leere Felder werden ausgelassen.", 0));
         var quickTable = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0) };
         quickTable.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
         quickTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         for (int i = 0; i < _quick.Length; i++)
         {
-            quickTable.Controls.Add(new ThemedLabel { Text = $"Strg+{i + 1}", Tone = Tone.Secondary, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 8, 0) }, 0, i);
+            quickTable.Controls.Add(new ThemedLabel { Text = $"{i + 1}.", Tone = Tone.Secondary, AutoSize = true, Anchor = AnchorStyles.Left, Margin = new Padding(0, 0, 8, 0) }, 0, i);
             _quick[i] = new TextBox
             {
-                MaxLength = Core.QuickActionList.MaxLength, AccessibleName = $"Schnellanweisung Strg+{i + 1}",
+                MaxLength = Core.QuickActionList.MaxLength, AccessibleName = $"Schnellanweisung {i + 1}",
                 Text = i < settings.QuickActions.Count ? settings.QuickActions[i] : "",
                 PlaceholderText = i == 0 ? "z. B. Als Arztbrief formulieren" : "",
             };
