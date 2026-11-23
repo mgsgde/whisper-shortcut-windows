@@ -266,7 +266,9 @@ jobs:
           if [ "$MODE" = "dryrun" ]; then
             name="dryrun-$VERSION-${{ github.run_id }}"
             echo "name=$name" >> "$GITHUB_OUTPUT"  # before creating, so the cleanup step finds a half-made draft too
-            gh release create "$name" -R "$REPO" --draft --target "$SHA" \
+            # Target main, not the PR commit: a release pointing at a commit that changes workflow files would need
+            # the `workflows` permission, which GITHUB_TOKEN never has. The assets are built from $SHA either way.
+            gh release create "$name" -R "$REPO" --draft --target "${{ github.event.repository.default_branch }}" \
               --title "Probelauf $VERSION (wird gelöscht)" --notes-file .github/RELEASE_NOTES.md "${assets[@]}"
             exit 0
           fi
@@ -324,4 +326,11 @@ jobs:
 
       - name: Delete the dry-run draft
         if: always() && needs.gate.outputs.mode == 'dryrun' && steps.draft.outputs.name != ''
-        run: gh release delete "${{ steps.draft.outputs.name }}" -R "$REPO" --yes
+        env:
+          NAME: ${{ steps.draft.outputs.name }}
+        run: |
+          if gh release view "$NAME" -R "$REPO" >/dev/null 2>&1; then
+            gh release delete "$NAME" -R "$REPO" --yes
+          else
+            echo "No draft $NAME to delete."
+          fi
