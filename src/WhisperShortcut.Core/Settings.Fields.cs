@@ -269,6 +269,9 @@ public sealed partial class Settings
         // Off for a fresh install (the Mac has no tones); an older file without the field keeps them.
         Flag("sounds", s => s.Sounds, (s, v) => s.Sounds = v, false, missing: _ => true),
         Flag("autoUpdateCheck", s => s.AutoUpdateCheck, (s, v) => s.AutoUpdateCheck = v, true, missing: _ => true),
+        // Missing or unknown = Stable: existing installs stay on the promoted releases, no migration.
+        Parsed("updateChannel", s => s.UpdateChannel, (s, v) => s.UpdateChannel = v, UpdateChannel.Stable,
+            missing: _ => UpdateChannel.Stable, Choices.UpdateChannel.Parse, Choices.UpdateChannel.Token),
         // Missing = a file from before the tour counts as finished when that install was set up. Reads the keys and OfflineMode
         // (above: rows run in this order, the keys are read first by ApplyDto).
         Flag("welcomeCompleted", s => s.WelcomeCompleted, (s, v) => s.WelcomeCompleted = v, false,

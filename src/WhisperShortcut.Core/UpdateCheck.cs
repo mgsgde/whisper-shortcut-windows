@@ -23,6 +23,12 @@ public static class UpdateCheck
     /// <summary>Where <see cref="CheckAsync"/> asks; <c>--update-feed &lt;url&gt;</c> points it at a local test release (VM loop).</summary>
     public static string ApiUrl { get; set; } = LatestReleaseApi;
 
+    /// <summary>GitHub API: all releases, newest first, prereleases included (channel Latest).</summary>
+    public const string ReleaseListApi = "https://api.github.com/repos/mgsgde/whisper-shortcut-windows/releases?per_page=30";
+
+    /// <summary>Where <see cref="CheckAsync"/> asks for channel Latest; settable so tests can point it elsewhere.</summary>
+    public static string ListUrl { get; set; } = ReleaseListApi;
+
     /// <summary>Page to send the user to.</summary>
     public const string ReleasesPage = "https://github.com/mgsgde/whisper-shortcut-windows/releases/latest";
 
@@ -32,18 +38,56 @@ public static class UpdateCheck
         try
         {
             using var doc = JsonDocument.Parse(json);
-            if (doc.RootElement.ValueKind != JsonValueKind.Object) return null;
-            if (!doc.RootElement.TryGetProperty("tag_name", out var tag) || tag.ValueKind != JsonValueKind.String) return null;
+            return ParseRelease(doc.RootElement);
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// Channel Latest: the highest-version release of a <c>releases</c> JSON array, drafts skipped, prereleases included.
+    /// Null for an empty list, bad JSON or no usable entry.
+    /// </summary>
+    public static UpdateInfo? ParseList(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind != JsonValueKind.Array) return null;
+            UpdateInfo? best = null;
+            foreach (var el in doc.RootElement.EnumerateArray())
+            {
+                if (el.ValueKind != JsonValueKind.Object) continue;
+                if (el.TryGetProperty("draft", out var d) && d.ValueKind == JsonValueKind.True) continue;
+                var info = ParseRelease(el);
+                if (info == null) continue;
+                if (best == null || IsNewer(info.Version, best.Version)) best = info;
+            }
+            return best;
+        }
+        catch (JsonException)
+        {
+            return null;
+        }
+    }
+
+    private static UpdateInfo? ParseRelease(JsonElement root)
+    {
+        {
+            if (root.ValueKind != JsonValueKind.Object) return null;
+            if (!root.TryGetProperty("tag_name", out var tag) || tag.ValueKind != JsonValueKind.String) return null;
             var version = tag.GetString()!.Trim().TrimStart('v', 'V');
             if (version.Length == 0) return null;
             string url = ReleasesPage;
-            if (doc.RootElement.TryGetProperty("html_url", out var u) && u.ValueKind == JsonValueKind.String
+            if (root.TryGetProperty("html_url", out var u) && u.ValueKind == JsonValueKind.String
                 && NetworkPolicy.IsAllowedBrowserUrl(u.GetString()))
                 url = u.GetString()!;
-            string notes = doc.RootElement.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.String
+            string notes = root.TryGetProperty("body", out var b) && b.ValueKind == JsonValueKind.String
                 ? b.GetString() ?? "" : "";
             var assets = new Dictionary<string, string>();
-            if (doc.RootElement.TryGetProperty("assets", out var arr) && arr.ValueKind == JsonValueKind.Array)
+            if (root.TryGetProperty("assets", out var arr) && arr.ValueKind == JsonValueKind.Array)
                 foreach (var a in arr.EnumerateArray())
                 {
                     if (a.ValueKind != JsonValueKind.Object) continue;
@@ -53,10 +97,6 @@ public static class UpdateCheck
                         assets[n.GetString()!] = d.GetString()!;
                 }
             return new UpdateInfo(version, url) { Notes = notes, Assets = assets };
-        }
-        catch (JsonException)
-        {
-            return null;
         }
     }
 
@@ -98,19 +138,23 @@ public static class UpdateCheck
     }
 
     /// <summary>
-    /// Fetches the latest release. Null when no release exists (404). Throws <see cref="HttpRequestException"/>
+    /// Fetches the newest release of <paramref name="channel"/>: Stable asks <c>releases/latest</c>, Latest the release list
+    /// (highest non-draft version, prereleases included). The caller still compares with the running version, so a switch
+    /// back to Stable never installs an older one. Null when no release exists (404). Throws <see cref="HttpRequestException"/>
     /// on network failure or any other bad status, so the caller can say "keine Verbindung".
     /// </summary>
-    public static async Task<UpdateInfo?> CheckAsync(HttpClient http, CancellationToken ct)
+    public static async Task<UpdateInfo?> CheckAsync(HttpClient http, UpdateChannel channel, CancellationToken ct)
     {
-        if (!NetworkPolicy.IsAllowedDownloadUrl(ApiUrl))
+        var url = channel == UpdateChannel.Latest ? ListUrl : ApiUrl;
+        if (!NetworkPolicy.IsAllowedDownloadUrl(url))
             throw new HttpRequestException("Update feed URL is not HTTPS or localhost.");
-        using var request = new HttpRequestMessage(HttpMethod.Get, ApiUrl);
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.UserAgent.Add(new ProductInfoHeaderValue("WhisperShortcut-Windows", null));
         request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         using var response = await http.SendAsync(request, ct).ConfigureAwait(false);
         if (response.StatusCode == HttpStatusCode.NotFound) return null;
         response.EnsureSuccessStatusCode();
-        return Parse(await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false));
+        var json = await response.Content.ReadAsStringAsync(ct).ConfigureAwait(false);
+        return channel == UpdateChannel.Latest ? ParseList(json) : Parse(json);
     }
 }

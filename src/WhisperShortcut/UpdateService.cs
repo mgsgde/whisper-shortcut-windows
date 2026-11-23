@@ -59,7 +59,7 @@ internal sealed class UpdateService : IDisposable
         try
         {
             using var http = Core.NetworkPolicy.CreateApiClient(TimeSpan.FromSeconds(15));
-            var latest = await Core.UpdateCheck.CheckAsync(http, CancellationToken.None);
+            var latest = await Core.UpdateCheck.CheckAsync(http, _settings.UpdateChannel, CancellationToken.None);
             Core.Log.Info($"Update check ({(manual ? "manual" : "automatic")}): latest {latest?.Version ?? "none"}, running {CurrentVersion}");
             var newer = latest != null && Core.UpdateCheck.IsNewer(latest.Version, CurrentVersion) ? latest : null;
             bool fresh = newer != null && newer.Version != Available?.Version;

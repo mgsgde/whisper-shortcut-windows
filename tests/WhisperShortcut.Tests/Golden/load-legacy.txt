@@ -78,5 +78,6 @@ Templates = [Template("t1", "N", "a\nb", "")]
 TranscriptionLanguage = "auto"
 TranscriptionTemperature = 0
 TranscriptionThinking = "minimal"
+UpdateChannel = Stable
 WelcomeCompleted = True
 WelcomeStep = 0
