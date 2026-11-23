@@ -1,0 +1,119 @@
+name: Release nightly
+
+# The macOS repo's nightly release and Tuesday Stable promotion (scripts/release-nightly-job.sh and
+# scripts/stable-promote-job.sh there), as GitHub Actions. Logic: tools/automation/release-nightly.sh.
+#
+#   nightly    main changed since the newest tag and CI (with the dictation smoke check) is green on its tip
+#              -> German notes, "Version X" commit on main, tag, CI on the tag, then release.yml -> Latest
+#   Tuesday    the newest prerelease published at least 6 days ago, CI green on it -> Stable (releases/latest)
+#
+# Stop it:
+#   gh variable set RELEASE_HOLD --body "Grund"     # no nightly release     (gh variable delete RELEASE_HOLD)
+#   gh variable set STABLE_HOLD --body "Grund"      # no Tuesday promotion   (gh variable delete STABLE_HOLD)
+#   gh workflow disable release-nightly.yml          # both off
+# Hotfix now:   gh workflow run release-nightly.yml -f action=release -f force=true
+#   then, to Stable at once:   gh workflow run release-nightly.yml -f action=promote -f tag=vX.Y.Z
+# Failures open an issue that mentions the owner (GitHub mails it).
+
+on:
+  schedule:
+    - cron: "17 1 * * *"   # nightly, 02:17 Berlin (winter)
+    - cron: "0 7 * * 2"    # Tuesday 08:00 Berlin (winter): Stable promotion
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "release (nightly step now) or promote (Stable)"
+        type: choice
+        options: [release, promote]
+        default: release
+      force:
+        description: "release: even if nothing new since the last tag (hotfix)"
+        type: boolean
+        default: false
+      tag:
+        description: "promote: this tag now, without the 6-day rule (hotfix)"
+        type: string
+        default: ""
+      dry_run:
+        description: "Decide and print; no push, tag, release or promotion"
+        type: boolean
+        default: false
+  # A PR touching this automation runs prepare and promote as a dry run (real notes from Gemini, no push/tag).
+  pull_request:
+    paths:
+      - .github/workflows/release-nightly.yml
+      - tools/automation/release-nightly.sh
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+concurrency:
+  group: release-nightly-${{ github.event_name == 'pull_request' && github.head_ref || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Version, notes, tag
+    if: github.event.schedule == '17 1 * * *' || inputs.action == 'release' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.prepare.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Prepare the release
+        id: prepare
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          RELEASE_HOLD: ${{ vars.RELEASE_HOLD }}
+          FORCE: ${{ inputs.force == true || github.event_name == 'pull_request' }}
+          DRY_RUN: ${{ inputs.dry_run == true || github.event_name == 'pull_request' }}
+        # Run a copy: the script checks out main's tip, which may not contain this very file (bash reads as it goes).
+        run: cp tools/automation/release-nightly.sh "$RUNNER_TEMP/" && bash "$RUNNER_TEMP/release-nightly.sh" prepare
+
+  release:
+    name: Release
+    needs: prepare
+    if: needs.prepare.outputs.tag != ''
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.prepare.outputs.tag }}
+    secrets: inherit
+
+  promote:
+    name: Promote to Stable
+    if: github.event.schedule == '0 7 * * 2' || inputs.action == 'promote' || github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Promote
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          STABLE_HOLD: ${{ vars.STABLE_HOLD }}
+          DRY_RUN: ${{ inputs.dry_run == true || github.event_name == 'pull_request' }}
+        run: bash tools/automation/release-nightly.sh promote "${{ inputs.tag }}"
+
+  notify:
+    name: Tell the owner
+    needs: [prepare, release, promote]
+    if: failure() && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Open an issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue create -R "${{ github.repository }}" \
+            --title "Release-Automatik fehlgeschlagen ($(date -u +%Y-%m-%d))" \
+            --body "@${{ github.repository_owner }} Der Lauf ist fehlgeschlagen: $URL
+
+          Nichts wurde befördert oder (bei einem Fehler vor dem Upload) veröffentlicht; ein Release-Entwurf kann liegen bleiben (\`gh release list\`). Neu anstoßen: \`gh workflow run release-nightly.yml -f action=release\` bzw. \`release.yml -f tag=vX.Y.Z\`."
