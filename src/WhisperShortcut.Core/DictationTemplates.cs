@@ -101,7 +101,7 @@ public static class TemplatePrompt
     {
         var spoken = transcript.Trim();
         if (string.IsNullOrWhiteSpace(selection))
-            return Prompts.DictatePromptComposeMarker + "\n\nVOICE INSTRUCTION:\n" + spoken;
+            return Prompts.DictatePromptComposeMarker + "\n\n" + Prompts.VoiceInstructionLabel + "\n" + spoken;
         var turn = SelectionHeader + "\n\n" + selection;
         if (spoken.Length > 0) turn += "\n\n" + DictationHeader + "\n" + spoken;
         return turn;

@@ -741,9 +741,9 @@ public class SpokenPunctuationPilotTests
     [Fact]
     public void TrailingSplitIgnoresAMidPieceGlue()
     {
-        Assert.Equal("Kniepunkt und Hüfte", LiveDictation.SplittingGluedTrailingPunkt("Kniepunkt und Hüfte"));
+        Assert.Equal("Kniepunkt und Hüfte", OfflineTranscriptFinisher.SplittingGluedTrailingPunkt("Kniepunkt und Hüfte"));
         Assert.Equal("Knie. Und Hüfte", Pipeline("Kniepunkt und Hüfte"));
-        Assert.Equal("Kein Juckreiz Punkt?!", LiveDictation.SplittingGluedTrailingPunkt("Kein Juckreizpunkt?!"));
+        Assert.Equal("Kein Juckreiz Punkt?!", OfflineTranscriptFinisher.SplittingGluedTrailingPunkt("Kein Juckreizpunkt?!"));
     }
 }
 

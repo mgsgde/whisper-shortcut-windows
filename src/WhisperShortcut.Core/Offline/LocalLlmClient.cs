@@ -47,7 +47,7 @@ public static class DictatePromptText
 
     /// <summary>User turn for a text-only model: selection block, then the transcribed instruction (Mac SpeechService).</summary>
     public static string LocalUserTurn(string? selection, string instruction) =>
-        SelectionBlock(selection) + "\n\nVOICE INSTRUCTION:\n" + instruction;
+        SelectionBlock(selection) + "\n\n" + Prompts.VoiceInstructionLabel + "\n" + instruction;
 }
 
 /// <summary>Talks to llama-server's OpenAI-compatible chat endpoint.</summary>

@@ -78,6 +78,33 @@ public class GermanNumberWordsTests
     }
 
     [Fact]
+    public void AYearOrAFollowingNounIsProseNotADigitNeighbourOrAZuRatio()
+    {
+        Assert.Equal("Seit 2020 zwei Operationen", Digits("Seit 2020 zwei Operationen"));
+        Assert.Equal("Zimmer 12 drei Betten", Digits("Zimmer 12 drei Betten"));
+        Assert.Equal("Der Patient kam 2023 zu vier Terminen", Digits("Der Patient kam 2023 zu vier Terminen"));
+        // Still digits: not a year, no noun after the number.
+        Assert.Equal("140 zu 90", Digits("140 zu neunzig"));
+        Assert.Equal("Werte 140 90", Digits("Werte 140 neunzig"));
+    }
+
+    [Fact]
+    public void LowerCaseGradAndASmallSchlaegeCountStayWordsTheNounGradAndAPulseDoNot()
+    {
+        Assert.Equal("die zwei grad besprochenen Punkte", Digits("die zwei grad besprochenen Punkte"));
+        Assert.Equal("drei Schläge auf den Rücken", Digits("drei Schläge auf den Rücken"));
+        Assert.Equal("Puls 60 Schläge", Digits("Puls sechzig Schläge"));
+        Assert.Equal("38 Grad", Digits("achtunddreißig Grad"));
+    }
+
+    [Fact]
+    public void ClockMinutesBecomeDigitsOnceTheHourIsDigitsAWordHourLeavesThem()
+    {
+        Assert.Equal("um 14 Uhr 30", Digits("um vierzehn Uhr dreißig"));
+        Assert.Equal("um zehn Uhr dreißig", Digits("um zehn Uhr dreißig"));
+    }
+
+    [Fact]
     public void ProseStays()
     {
         foreach (var text in new[]

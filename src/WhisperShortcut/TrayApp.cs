@@ -1481,6 +1481,7 @@ internal sealed partial class TrayApp : ApplicationContext
         string text = Reply(await answer, selection == null ? new[] { instruction, systemPrompt } : null);
         Core.Log.Info($"Prompt: answer {text.Length} chars");
         text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
+        GuardPromptReply(text, selection, instructionKnown && instruction.Length > 0 ? instruction : null);
         RememberPrompt(selection, selection == null ? instruction : Core.PromptConversationMemory.SpokenPlaceholder, text);
         return text;
     }
@@ -1545,6 +1546,18 @@ internal sealed partial class TrayApp : ApplicationContext
             Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
             return "";
         }
+        // A mis-transcription ("0", "Oh.", a subtitle timestamp) is no instruction: nothing is sent to the model.
+        // A near-miss of exactly one saved quick prompt becomes that prompt (Mac #459).
+        if (Core.PromptInstructionGuard.IsNotUnderstood(instruction))
+        {
+            Core.Log.Warn($"Prompt: transcribed instruction ({instruction.Length} chars) is not an instruction, model not called");
+            throw new Core.InstructionNotUnderstoodException();
+        }
+        if (Core.PromptInstructionGuard.Snapped(instruction, _settings.QuickActions) is { } snapped && snapped != instruction)
+        {
+            Core.Log.Info("Prompt: transcribed instruction snapped to a saved quick prompt");
+            instruction = snapped;
+        }
         if (selection == null && Core.BareEditCommand.Matches(instruction))
         {
             Core.Log.Info("Prompt: bare edit command without selection, refused");
@@ -1558,6 +1571,7 @@ internal sealed partial class TrayApp : ApplicationContext
         string text = Reply(await PromptTextAsync(selection, instruction, systemPrompt, ct), new[] { instruction, selection, systemPrompt });
         Core.Log.Info($"Prompt via transcript: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
         text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
+        GuardPromptReply(text, selection, instruction);
         RememberPrompt(selection, instruction, text);
         return text;
     }
@@ -1597,9 +1611,22 @@ internal sealed partial class TrayApp : ApplicationContext
         string text = Reply(raw, new[] { transcript, selection, quick, systemPrompt });
         Core.Log.Info($"Prompt quick action: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
         text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
+        GuardPromptReply(text, fromDictation ? null : target, instruction);
         // A dictated target is a compose turn: remembered without a selection, like the Mac.
         RememberPrompt(fromDictation ? null : target, instruction, text);
         return text;
+    }
+
+    /// <summary>
+    /// Leaked reasoning or a runaway reply is never pasted over the selection (Mac #459). The retry keeps the
+    /// recording. <paramref name="instruction"/> is null when the spoken instruction is unknown.
+    /// </summary>
+    private static void GuardPromptReply(string reply, string? selection, string? instruction)
+    {
+        var verdict = Core.PromptReplyGuard.Check(reply, selection, instruction);
+        if (verdict == Core.PromptReplyGuard.Verdict.Ok) return;
+        Core.Log.Warn($"Prompt: reply withheld ({verdict}): {reply.Length} chars, selection {selection?.Length ?? 0} chars, instruction {instruction?.Length ?? 0} chars");
+        throw new Core.PromptReplyRejectedException();
     }
 
     /// <summary>
@@ -1631,7 +1658,7 @@ internal sealed partial class TrayApp : ApplicationContext
         var policy = Core.TranscriptionPolicy.For(purpose, engine);
         var punctuation = policy.Punctuation(_settings.PunctuationMode, engine);
         var raw = engine == Core.Engine.Local
-            ? await _engines.Local.TranscribeAsync(wav, punctuation, ct)
+            ? await _engines.Local.TranscribeAsync(wav, punctuation, finishTranscript: purpose == Core.TranscribePurpose.Dictation, ct)
             : await TranscribeOnlineAsync(_engines.Speech(step), wav, ct, policy);
         return policy.GlossaryBackstops ? GlossaryBackstops(raw, policy.EchoStrip) : raw;
     }

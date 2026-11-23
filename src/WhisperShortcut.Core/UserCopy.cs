@@ -107,6 +107,12 @@ public static class UserCopy
     /// <summary>Mac "⚠️ No Reply".</summary>
     public const string NoReplyTitle = "⚠️ Keine Antwort";
 
+    /// <summary>Mac "⚠️ Reply Not Pasted" (Mac #459).</summary>
+    public const string ReplyNotPastedTitle = "⚠️ Antwort nicht eingefügt";
+
+    /// <summary>Mac "🎤 Not Understood" (Mac #459).</summary>
+    public const string InstructionNotUnderstoodTitle = "🎤 Nicht verstanden";
+
     /// <summary>Mac "⚠️ Offline Model Error".</summary>
     public const string OfflineModelErrorTitle = "⚠️ Fehler beim Offline-Modell";
 

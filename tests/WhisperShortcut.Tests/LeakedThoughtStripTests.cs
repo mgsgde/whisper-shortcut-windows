@@ -175,6 +175,23 @@ public class LeakedThoughtStripTests
     }
 
     [Fact]
+    public void AGluePointAfterAnAbbreviationOrAShortWordNeverCutsARealAnswer()
+    {
+        const string usOffice = "Task: Ship it to the U.S. office";
+        Assert.Equal(usOffice, TextCleanup.StripLeakedPlanning([usOffice]));
+        const string doctor = "Details: call Dr.Meyer tomorrow";
+        Assert.Equal(doctor, TextCleanup.StripLeakedPlanning([doctor]));
+    }
+
+    [Fact]
+    public void AGluedLeakAfterALowercaseWordOrADigitStillCuts()
+    {
+        Assert.Equal("Hello Anna, thanks",
+            TextCleanup.StripLeakedPlanning(["Task: rewrite the email politely.Hello Anna, thanks"]));
+        Assert.Equal("Results follow", TextCleanup.StripLeakedPlanning(["Plan: list 2025.Results follow"]));
+    }
+
+    [Fact]
     public void ExtractTextDropsASeparatePlanningPartAndSkipsThoughtParts()
     {
         var planning = "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Notice from the audio:\\n\\\"Hi?\\\"\"},{\"text\":\"Hi Christina, danke.\"}]}}]}";
