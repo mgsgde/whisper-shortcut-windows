@@ -231,9 +231,20 @@ public class SpeechActivityTests
         var spans = vad.Detect(samples);
         Assert.NotEmpty(spans);
         Assert.NotEqual(SpeechVerdict.NoSpeech, SpeechActivity.Decide(spans, (double)samples.Length / rate).Verdict);
-        Assert.NotNull(SpeechActivityGate.Apply(speech, vad.Detect));
-        foreach (var name in new[] { "angebot-ohne-markierung.wav", "anweisung-freundlicher.wav", "glossar-goedde.wav" })
-            Assert.NotNull(SpeechActivityGate.Apply(File.ReadAllBytes(Paths.TestAudio(name)), vad.Detect));
+        var trimmed = SpeechActivityGate.Apply(speech, vad.Detect);
+        Assert.NotNull(trimmed);
+        // Regression: fed the whole recording at once, the detector reported one ~0.3 s span at the very end.
+        Assert.True(Wav.DurationSeconds(trimmed!) >= 0.6 * Wav.DurationSeconds(speech), "trim must keep most of the dictation");
+        foreach (var name in new[] { "diktat.wav", "angebot-ohne-markierung.wav", "anweisung-freundlicher.wav", "glossar-goedde.wav" })
+        {
+            var wav = File.ReadAllBytes(Paths.TestAudio(name));
+            Assert.NotNull(SpeechActivityGate.Apply(wav, vad.Detect));
+            var s = Wav.ReadMonoFloat(wav, out _);
+            var sp = vad.Detect(s);
+            var total = (double)s.Length / SileroVad.SampleRate;
+            Assert.True(sp.Sum(x => x.End - x.Start) >= 0.4 * total, $"{name}: speech covers too little of the recording");
+            Assert.True(sp[0].Start < total / 2, $"{name}: first span starts too late");
+        }
 
         var quiet = File.ReadAllBytes(Paths.TestAudio("stille.wav"));
         Assert.Null(SpeechActivityGate.Apply(quiet, vad.Detect));
@@ -248,7 +259,12 @@ public sealed class SileroModelFactAttribute : FactAttribute
         if (ModelPath() == null) Skip = "silero_vad.onnx not found (set WSW_SILERO_VAD or let the app download it)";
     }
 
-    public static string? ModelPath()
+    // Resolved once: ModelDownloaderTests points WSW_OFFLINE_ROOT at a temp folder while other tests run in parallel.
+    private static readonly Lazy<string?> Resolved = new(Resolve);
+
+    public static string? ModelPath() => Resolved.Value;
+
+    private static string? Resolve()
     {
         var env = Environment.GetEnvironmentVariable("WSW_SILERO_VAD");
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
