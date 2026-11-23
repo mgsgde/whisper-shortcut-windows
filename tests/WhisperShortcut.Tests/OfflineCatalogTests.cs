@@ -55,4 +55,19 @@ public class OfflineCatalogTests
         }
         Assert.EndsWith(".gguf", OfflineCatalog.Llms[0].GgufPath);
     }
+
+    [Fact]
+    public void HuggingFaceUrls_ArePinnedToARevision()
+    {
+        var all = new List<OfflineComponent>
+        {
+            OfflineCatalog.Parakeet,
+            OfflineCatalog.SileroVad,
+            OfflineCatalog.LlamaServer(Architecture.X64),
+            OfflineCatalog.LlamaServer(Architecture.Arm64),
+        };
+        all.AddRange(OfflineCatalog.Llms.Select(l => l.Component));
+        foreach (var f in all.SelectMany(c => c.Files).Where(f => f.Url.Contains("huggingface.co")))
+            Assert.DoesNotContain("/resolve/main/", f.Url);
+    }
 }

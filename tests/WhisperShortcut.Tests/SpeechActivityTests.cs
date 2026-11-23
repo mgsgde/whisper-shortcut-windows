@@ -193,6 +193,32 @@ public class SpeechActivityTests
         Assert.True(NetworkPolicy.IsAllowedDownloadUrl(file.Url));
     }
 
+    [Fact]
+    public void Windows_ExactMultiple_HasNoPaddingWindow()
+    {
+        var windows = SileroVad.Windows(new float[1024], 512).ToList();
+        Assert.Equal(2, windows.Count);
+    }
+
+    [Fact]
+    public void Windows_Remainder_IsZeroPadded()
+    {
+        var samples = Enumerable.Repeat(1f, 1100).ToArray();
+        var windows = SileroVad.Windows(samples, 512).ToList();
+        Assert.Equal(3, windows.Count);
+        var last = windows[2];
+        Assert.All(last.Take(76), v => Assert.Equal(1f, v));
+        Assert.All(last.Skip(76), v => Assert.Equal(0f, v));
+    }
+
+    [Fact]
+    public void Windows_Empty_HasNoWindows() =>
+        Assert.Empty(SileroVad.Windows(Array.Empty<float>(), 512));
+
+    [Fact]
+    public void Windows_AllHaveWindowSize() =>
+        Assert.All(SileroVad.Windows(new float[1100], 512), w => Assert.Equal(512, w.Length));
+
     /// <summary>Runs the real model; skipped unless silero_vad.onnx is on this machine (env WSW_SILERO_VAD or the app's folder).</summary>
     [SileroModelFact]
     public void RealModel_SeparatesSpeechFromSilence()
@@ -205,9 +231,20 @@ public class SpeechActivityTests
         var spans = vad.Detect(samples);
         Assert.NotEmpty(spans);
         Assert.NotEqual(SpeechVerdict.NoSpeech, SpeechActivity.Decide(spans, (double)samples.Length / rate).Verdict);
-        Assert.NotNull(SpeechActivityGate.Apply(speech, vad.Detect));
-        foreach (var name in new[] { "angebot-ohne-markierung.wav", "anweisung-freundlicher.wav", "glossar-goedde.wav" })
-            Assert.NotNull(SpeechActivityGate.Apply(File.ReadAllBytes(Paths.TestAudio(name)), vad.Detect));
+        var trimmed = SpeechActivityGate.Apply(speech, vad.Detect);
+        Assert.NotNull(trimmed);
+        // Regression: fed the whole recording at once, the detector reported one ~0.3 s span at the very end.
+        Assert.True(Wav.DurationSeconds(trimmed!) >= 0.6 * Wav.DurationSeconds(speech), "trim must keep most of the dictation");
+        foreach (var name in new[] { "diktat.wav", "angebot-ohne-markierung.wav", "anweisung-freundlicher.wav", "glossar-goedde.wav" })
+        {
+            var wav = File.ReadAllBytes(Paths.TestAudio(name));
+            Assert.NotNull(SpeechActivityGate.Apply(wav, vad.Detect));
+            var s = Wav.ReadMonoFloat(wav, out _);
+            var sp = vad.Detect(s);
+            var total = (double)s.Length / SileroVad.SampleRate;
+            Assert.True(sp.Sum(x => x.End - x.Start) >= 0.4 * total, $"{name}: speech covers too little of the recording");
+            Assert.True(sp[0].Start < total / 2, $"{name}: first span starts too late");
+        }
 
         var quiet = File.ReadAllBytes(Paths.TestAudio("stille.wav"));
         Assert.Null(SpeechActivityGate.Apply(quiet, vad.Detect));
@@ -222,7 +259,12 @@ public sealed class SileroModelFactAttribute : FactAttribute
         if (ModelPath() == null) Skip = "silero_vad.onnx not found (set WSW_SILERO_VAD or let the app download it)";
     }
 
-    public static string? ModelPath()
+    // Resolved once: ModelDownloaderTests points WSW_OFFLINE_ROOT at a temp folder while other tests run in parallel.
+    private static readonly Lazy<string?> Resolved = new(Resolve);
+
+    public static string? ModelPath() => Resolved.Value;
+
+    private static string? Resolve()
     {
         var env = Environment.GetEnvironmentVariable("WSW_SILERO_VAD");
         if (!string.IsNullOrWhiteSpace(env) && File.Exists(env)) return env;
