@@ -42,51 +42,80 @@ Parakeet download failed):
 - Manual tests on the Windows PC: dictate only after `SPEECH-GATE: Silero VAD ready` is in the log, and test once
   with the offline folder deleted (details: `tools/e2e/CASES.md` → Conventions).
 
-## Releases: the agent owns them
+## Merging and releasing are automatic
 
-Magnus, 2026-10-28: „dass du hier dafür Sorge trägst zentral, dass alles deployed wird bezüglich
-Windows“. Whoever works in this repo makes sure every finished change reaches a GitHub release; Magnus
-does not have to ask for it. No separate „Soll ich releasen?“: merged and verified means released.
+Same pipeline as the macOS app (`mgsgde/whisper-shortcut`, AGENTS.md „Merging and releasing are automatic“,
+owner ruling 2026-11-20), here as GitHub Actions so nothing depends on the PC being on. Magnus, 2026-11-23: the
+Mac flow in full for Windows. **No session merges or releases by hand**, and there is no release session to hand
+over to. Your job ends with a green PR. (Replaces the 2026-10-28 rule „the agent owns releases“: the pipeline
+owns them now.)
 
-Releases run in CI, the same way as the macOS app (`mgsgde/whisper-shortcut`, `release.yml`): a pushed
-`v*` tag is the release. Since 2026-11-23, after an evening where a tag landed on the default branch, a session
-published although it said it had aborted, and an unreviewed 0.7.14 had to be deleted.
+1. **You:** branch, commit, push, open the PR (German title and body; say what you tested, with the verbatim
+   `dotnet test` summary). Anything users see: label `needs-device-test` until it was checked on the Windows PC.
+   Needs Magnus's word first (user-visible behaviour he has not seen, a changed default): label `hold` with his
+   open question in the body. Must not merge for another reason: `hold` or a draft. No stacked PRs.
+2. **Merge train** (`.github/workflows/merge-train.yml`, every 20 min): merges every green, conflict-free,
+   non-draft PR of the owner without `hold` / `needs-device-test` / `merge-train-failed`, as a merge commit,
+   branches not updated first. While CI on `main` is red it merges nothing and opens one issue that mentions
+   Magnus. A red or conflicting PR gets `merge-train-failed` plus a comment; fix it and remove the label. PRs that
+   change `.github/workflows/` are never merged by the train (the Actions token may not): Magnus merges those.
+3. **Nightly release** (`.github/workflows/release-nightly.yml`, 02:17): if `main` changed since the newest tag
+   and its CI is green (unit, UI, real Silero audio, and the dictation smoke check through the published exe),
+   it writes German notes into `.github/RELEASE_NOTES.md` (Gemini, from the commits), bumps the patch version
+   in the csproj, commits „Version x.y.z“ on `main`, tags it, runs CI on the tag and calls `release.yml`, which
+   publishes it as a **prerelease = channel Latest**.
+4. **Stable on Tuesday** (same workflow, 08:00): the newest prerelease published at least 6 days ago whose CI
+   was green becomes Stable (prerelease flag cleared, `releases/latest`). The app's update channel (Settings →
+   Updates → Update-Kanal) defaults to Stable; copies older than that setting read `releases/latest` = Stable too.
+   No downgrade, no deleted assets: roll back by shipping the good code with a higher version.
+5. **Monday list** (`merge-train.yml`, Mondays 08:30): PRs open 3 days or more go into one issue to Magnus with
+   their reason; after 14 days they are closed, the branch is kept.
 
-1. Branch → PR → merge to `main` (tests green, check on the Windows PC for anything users see).
-2. Bump `<Version>` in `src/WhisperShortcut/WhisperShortcut.csproj` (semver; fixes = patch) and replace
-   `.github/RELEASE_NOTES.md` with the German notes (what changes for the user, short); commit both as
-   „Version x.y.z“, push, wait for CI green on that commit. Coordinate with other sessions first: one release
-   at a time, and say in their notes folder which version you are cutting.
-3. `tools/release.sh` (Git Bash; asks before tagging, `--yes` skips): refuses a dirty tree, an unpushed HEAD, an
-   existing tag, unchanged notes or a CI that is not green on HEAD; then tags HEAD (annotated, explicit commit)
-   and pushes the tag. Nothing is built or signed on the PC.
-4. `.github/workflows/release.yml` takes over: waits for the whole `CI` workflow green on the tagged commit in a
-   push run (a PR run may skip the smoke check without its secret), so every gate in `ci.yml`, including the dictation smoke check, blocks a release; builds both exes and
-   ZIPs (x64, arm64), signs them with the repository secret `UPDATE_SIGNING_KEY` and checks every signature
-   against the public key in `UpdateSignature.cs`, uploads to a draft, downloads the assets back and verifies
-   them, and only then publishes. Only a higher version becomes Latest (what `UpdateCheck` reads), so a
-   hotfix on an older line never hijacks the update feed. A published release's assets are never replaced:
-   ship a higher version.
-5. Verify: `gh run watch` on the release run until green; `gh release view vx.y.z` lists both exes, both ZIPs,
-   all four `.sig`, `ANLEITUNG.txt`; on the Windows PC the previous version finds and installs the update.
-6. Report the release link to Magnus. Testers (e.g. Christoph) get it through the in-app update.
+Notifications are GitHub issues that mention `@mgsgde` (GitHub mails them), not a mail script.
 
-- **Draft first** (to install it on the PC before users get it): `gh variable set RELEASE_AS_DRAFT --body true`
-  before pushing the tag, or dispatch the workflow with `draft=true`; publish with
-  `gh release edit vx.y.z --draft=false --latest`, then `gh variable delete RELEASE_AS_DRAFT`.
-- **Re-drive a tag** whose run failed (flaky CI re-run, outage): Actions → Release → Run workflow,
-  `tag=vx.y.z` (or `gh workflow run release.yml -f tag=vx.y.z`). An existing draft gets its assets replaced.
-- **Hotfix off an older version:** branch `release/x.y.z` from the old tag, bump, notes, push (CI runs on
-  pushes to `release/**`), then `tools/release.sh` on that branch. The tag points at that branch's commit, never at `main`.
-- **Abort:** before the tag is pushed nothing has happened. After it, cancel the run
-  (`gh run cancel <id>`) and check `gh release view vx.y.z`: the workflow publishes only in its last step, so a
-  cancelled run leaves at most a draft. Say "not published" only after that check.
-- **Dry run:** every PR touching `release.yml`, `tools/release.sh`, `dist/ANLEITUNG.txt` or `UpdateSignature.cs`
-  runs the whole pipeline against a throwaway draft (`dryrun-<version>-<run>`, no tag) and deletes it.
-- **Signing key:** `UPDATE_SIGNING_KEY` holds the PEM of `~/.config/whispershortcut-windows-update/ecdsa-p256-private.pem`
-  (the PC keeps the original as backup). Never commit it, never print it; losing it means installed copies can
-  never auto-update again. Not ported from the Mac: nightly auto-release and the Latest/Stable split (the Windows
-  updater reads only `releases/latest`).
+### Stop any of it
+
+| What | Hold | Resume |
+|---|---|---|
+| Merge train | `gh variable set MERGE_TRAIN_HOLD --body "Grund"` | `gh variable delete MERGE_TRAIN_HOLD` |
+| Nightly release | `gh variable set RELEASE_HOLD --body "Grund"` | `gh variable delete RELEASE_HOLD` |
+| Stable promotion | `gh variable set STABLE_HOLD --body "Grund"` | `gh variable delete STABLE_HOLD` |
+| Keep new releases drafts | `gh variable set RELEASE_AS_DRAFT --body true` | `gh variable delete RELEASE_AS_DRAFT` |
+| A whole workflow | `gh workflow disable merge-train.yml` / `release-nightly.yml` | `gh workflow enable …` |
+| One PR | label `hold` or `needs-device-test`, or a draft | remove it |
+
+### Release mechanics (`release.yml`)
+
+- Starts from a `v*` tag push, from `release-nightly.yml` (workflow_call), or by hand:
+  `gh workflow run release.yml -f tag=vx.y.z` (re-drive a failed run; `draft=true` keeps it a draft,
+  `stable=true` publishes straight to Stable). It never creates or moves a tag.
+- Gate: the tag exists, csproj `<Version>` = tag, notes not empty, and the whole `CI` workflow green on the tagged
+  commit in a push or dispatch run (a PR run may skip the smoke check without its secret). Commits pushed by
+  Actions start no push run, so the train and the nightly job dispatch CI themselves (`ci.yml` has
+  `workflow_dispatch`).
+- Builds both exes and ZIPs (x64, arm64), signs them and checks every signature against the public key in
+  `UpdateSignature.cs`, uploads everything to a draft, downloads it back and verifies it, and only then publishes.
+  A published release's assets are never replaced.
+- **Signing key:** secret `UPDATE_SIGNING_KEY` in the GitHub environment `release`, which GitHub hands only to
+  runs on `main` or a `v*` tag; pull-request runs never see it. It is the PEM of
+  `~/.config/whispershortcut-windows-update/ecdsa-p256-private.pem` (the PC keeps the original as backup). Never
+  commit or print it; losing it means installed copies can never auto-update again.
+- **Dry run:** a PR touching `release.yml`, `tools/release.sh`, `dist/ANLEITUNG.txt` or `UpdateSignature.cs` runs
+  the whole release against a throwaway draft (throwaway key, no tag) and deletes it; a PR touching
+  `release-nightly.yml` or `tools/automation/release-nightly.sh` runs prepare and promote dry (real Gemini notes,
+  nothing pushed).
+
+### Hotfix
+
+- Now, from `main`: merge the fix (Magnus merges by hand if the train is held), then
+  `gh workflow run release-nightly.yml -f action=release -f force=true`; to Stable at once afterwards:
+  `gh workflow run release-nightly.yml -f action=promote -f tag=vx.y.z`. CI must still be green; there is no
+  „skip tests“.
+- Off an older version: branch `release/x.y.z` from the old tag, bump `<Version>`, replace
+  `.github/RELEASE_NOTES.md`, push (CI runs on pushes to `release/**`), then `tools/release.sh` there: it checks
+  and tags HEAD; `release.yml` publishes to Latest. Only a higher version ever becomes Stable.
+- **Abort:** cancel the run (`gh run cancel <id>`) and check `gh release view vx.y.z`: publishing is the last step,
+  so a cancelled run leaves at most a draft. Say „not published“ only after that check.
 
 ## Model tiering: Opus 5.5 thinks, cheap hands type
 
