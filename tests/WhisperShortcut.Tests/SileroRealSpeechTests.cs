@@ -26,6 +26,34 @@ public class SileroRealSpeechTests
     [SileroModelFact]
     public void Pause_GateKeepsAllSpeech() => CheckGate("pause-hedda");
 
+    /// <summary>
+    /// TTS is loud and clean; this covers a quiet, noisy, long dictation (over a minute in one piece,
+    /// the length of real dictations) until real microphone recordings exist.
+    /// </summary>
+    [SileroModelFact]
+    public void LongQuietNoisy_AllPhrasesAreFound()
+    {
+        const int repeats = 7;
+        const double scale = 0.1;     // -20 dB: quiet speaker / far microphone
+        const float noise = 0.003f;   // uniform +-0.003, roughly -50 dBFS
+        var (wav, clip, clipTruth) = Load("pause-hedda");
+        var clipSeconds = Wav.DurationSeconds(wav);
+        var rng = new Random(42);
+
+        var samples = new float[clip.Length * repeats];
+        for (var k = 0; k < repeats; k++)
+            for (var i = 0; i < clip.Length; i++)
+                samples[k * clip.Length + i] = (float)(clip[i] * scale) + (float)((rng.NextDouble() * 2 - 1) * noise);
+        var truth = Enumerable.Range(0, repeats)
+            .SelectMany(k => clipTruth.Select(t => new[] { t[0] + k * clipSeconds, t[1] + k * clipSeconds }))
+            .ToArray();
+        Assert.True(samples.Length / 16000.0 > 60, "test recording must be longer than a minute");
+
+        using var vad = LoadVad();
+        var spans = vad.Detect(samples);
+        AssertCovered(spans, truth, 0.75, $"Silero found {Fmt(spans)} but speech is {Fmt(truth)}");
+    }
+
     private static (byte[] Wav, float[] Samples, double[][] Truth) Load(string name)
     {
         var wav = File.ReadAllBytes(Paths.TestAudio(name + ".wav"));
@@ -59,16 +87,21 @@ public class SileroRealSpeechTests
         var spans = vad.Detect(samples);
         var what = $"Silero found {Fmt(spans)} but speech is {Fmt(truth)}";
 
+        AssertCovered(spans, truth, MinCoverage, what);
+        Assert.NotEmpty(spans);
+        Assert.True(spans[0].Start <= truth[0][0] + EdgeTolerance, $"{what}; first span starts too late");
+        Assert.True(spans[^1].End >= truth[^1][1] - EdgeTolerance, $"{what}; last span ends too early");
+    }
+
+    private static void AssertCovered(IReadOnlyList<SpeechSpan> spans, double[][] truth, double minCoverage, string what)
+    {
         foreach (var t in truth)
         {
             var len = t[1] - t[0];
             var covered = spans.Sum(s => Math.Max(0, Math.Min(s.End, t[1]) - Math.Max(s.Start, t[0])));
-            Assert.True(covered >= MinCoverage * len,
-                $"{what}; only {F(covered)} s of {F(t[0])}–{F(t[1])} are covered ({covered / len:P0}, need {MinCoverage:P0})");
+            Assert.True(covered >= minCoverage * len,
+                $"{what}; only {F(covered)} s of {F(t[0])}–{F(t[1])} are covered ({covered / len:P0}, need {minCoverage:P0})");
         }
-        Assert.NotEmpty(spans);
-        Assert.True(spans[0].Start <= truth[0][0] + EdgeTolerance, $"{what}; first span starts too late");
-        Assert.True(spans[^1].End >= truth[^1][1] - EdgeTolerance, $"{what}; last span ends too early");
     }
 
     private static void CheckGate(string name)

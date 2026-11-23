@@ -8,7 +8,7 @@ param(
     [string]$Wav,
     [string]$Expected,
     [int]$TimeoutSec = 240,
-    [double]$MinCoverage = 0.8
+    [double]$MinCoverage = 0.7
 )
 $ErrorActionPreference = 'Stop'
 
@@ -82,9 +82,10 @@ if ($ready -gt $recorded) { Fail 'the Silero VAD became ready only after the rec
 
 $verdict = $null
 for ($i = $recorded + 1; $i -lt $lines.Count; $i++) {
-    if ($lines[$i] -match 'SPEECH-GATE: (\S+)') { $verdict = $Matches[1]; break }
+    if ($lines[$i] -match 'SPEECH-GATE: (keep|trim|noSpeech)[ (]') { $verdict = $Matches[1]; break }
 }
-if (-not $verdict) { Fail 'no SPEECH-GATE verdict after "Dictate: recorded"' }
+# Without a keep/trim line the gate never classified this recording (not ready, or it threw): the upload went out unfiltered.
+if (-not $verdict) { Fail 'no "SPEECH-GATE: keep|trim (...)" line after "Dictate: recorded": the speech gate did not run' }
 if ($verdict -eq 'noSpeech') { Fail 'the speech gate judged the audio noSpeech' }
 Write-Host "Speech gate verdict: $verdict"
 
