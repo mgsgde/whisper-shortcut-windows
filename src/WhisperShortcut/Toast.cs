@@ -38,13 +38,16 @@ internal sealed class Toast : OverlayForm
     private string _title = "", _text = "";
     private string? _actionLabel;
     private ToolTipIcon _kind;
-    private Action? _onAction;
+    private Action? _onAction, _onReport;
+
+    /// <summary>Mac: every error popup ends with „Problem melden …“ (PopupNotificationWindow.reportProblemClicked).</summary>
+    public const string ReportLabel = "Problem melden …";
     private DateTime _appearStart;
     private DateTime? _until, _fadeStart;
     private Point _basePos;
     // Hit areas in client coordinates, set while painting.
-    private RectangleF _actionRect, _closeRect;
-    private enum Hot { None, Action, Close }
+    private RectangleF _actionRect, _reportRect, _closeRect;
+    private enum Hot { None, Action, Report, Close }
     private Hot _hot;
     // The last frame drawn showed the card at rest: until it fades, nothing on it moves (hover redraws itself).
     private bool _settled;
@@ -78,14 +81,15 @@ internal sealed class Toast : OverlayForm
 
     /// <summary>
     /// Shows the notice. With <paramref name="onAction"/> a button labelled <paramref name="actionLabel"/> runs it
-    /// (and closes the notice).
+    /// (and closes the notice). <paramref name="onReport"/> adds „Problem melden …“ after it (errors only).
     /// </summary>
-    public void Present(string title, string text, ToolTipIcon kind, Action? onAction, string? actionLabel)
+    public void Present(string title, string text, ToolTipIcon kind, Action? onAction, string? actionLabel, Action? onReport = null)
     {
         _title = title;
         _text = text;
         _kind = kind;
         _onAction = onAction;
+        _onReport = kind == ToolTipIcon.Error ? onReport : null;
         _actionLabel = onAction == null ? null : string.IsNullOrWhiteSpace(actionLabel) ? "Öffnen" : actionLabel;
         _fadeStart = null;
         _hot = Hot.None;
@@ -109,7 +113,13 @@ internal sealed class Toast : OverlayForm
         _basePos = new Point(area.Left + (area.Width - size.Width) / 2, cardBottom - (int)Math.Ceiling(card.Height) - m);
         if (Size != size || Location != _basePos) SetBounds(_basePos.X, _basePos.Y, size.Width, size.Height);
         AccessibleName = title;
-        AccessibleDescription = _actionLabel == null ? text : $"{text} ({_actionLabel})";
+        AccessibleDescription = (_actionLabel, _onReport) switch
+        {
+            (null, null) => text,
+            (null, _) => $"{text} ({ReportLabel})",
+            (_, null) => $"{text} ({_actionLabel})",
+            _ => $"{text} ({_actionLabel}, {ReportLabel})",
+        };
         if (!Visible)
         {
             _appearStart = DateTime.UtcNow;
@@ -159,7 +169,7 @@ internal sealed class Toast : OverlayForm
     private SizeF CardSize(Graphics g)
     {
         float s = S;
-        float buttons = _actionLabel == null ? 0 : (ButtonGap + ButtonH) * s;
+        float buttons = _actionLabel == null && _onReport == null ? 0 : (ButtonGap + ButtonH) * s;
         return new SizeF(CardW * s, (Pad + 20) * s + 4 * s + BodyHeight(g) + buttons + Pad * s);
     }
 
@@ -263,19 +273,37 @@ internal sealed class Toast : OverlayForm
             g.DrawLine(cross, cx + k, cy - k, cx - k, cy + k);
         }
 
-        // The action as a real button under the text (Mac: Retry, Top up, Sign in …).
-        _actionRect = RectangleF.Empty;
+        // The action as a real button under the text (Mac: Retry, Top up, Sign in …), then „Problem melden …“.
+        _actionRect = _reportRect = RectangleF.Empty;
+        float buttonX = textX, buttonY = y + 24 * s + bodyH + ButtonGap * s;
+        using var centred = new StringFormat(_line) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
         if (_actionLabel != null)
         {
             var labelSize = g.MeasureString(_actionLabel, _buttonFont!, PointF.Empty, _line);
-            float w = Math.Min(labelSize.Width + 28 * s, card.Right - textX - Pad * s);
-            _actionRect = new RectangleF(textX, y + 24 * s + bodyH + ButtonGap * s, w, ButtonH * s);
+            float w = Math.Min(labelSize.Width + 28 * s, card.Right - buttonX - Pad * s);
+            _actionRect = new RectangleF(buttonX, buttonY, w, ButtonH * s);
             using var path = Theme.Rounded(_actionRect, 6 * s);
             var fill = Hc ? SystemColors.Highlight : _hot == Hot.Action ? Color.FromArgb(120, 190, 255) : Color.FromArgb(96, 175, 255);
             using (var brush = new SolidBrush(fill)) g.FillPath(brush, path);
             using var ink = new SolidBrush(Hc ? SystemColors.HighlightText : Color.FromArgb(16, 18, 24));
-            using var centred = new StringFormat(_line) { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
             g.DrawString(_actionLabel, _buttonFont!, ink, _actionRect, centred);
+            buttonX = _actionRect.Right + 8 * s;
+        }
+        if (_onReport != null)
+        {
+            // Secondary: an outlined button, so the action (Erneut versuchen …) stays the obvious one.
+            var labelSize = g.MeasureString(ReportLabel, _buttonFont!, PointF.Empty, _line);
+            float w = Math.Min(labelSize.Width + 28 * s, card.Right - buttonX - Pad * s);
+            _reportRect = new RectangleF(buttonX, buttonY, w, ButtonH * s);
+            using var path = Theme.Rounded(_reportRect, 6 * s);
+            if (_hot == Hot.Report && !Hc)
+            {
+                using var hover = new SolidBrush(Color.FromArgb(36, 255, 255, 255));
+                g.FillPath(hover, path);
+            }
+            using (var edge = new Pen(Hc ? SystemColors.WindowText : Color.FromArgb(110, 255, 255, 255), 1f * s)) g.DrawPath(edge, path);
+            using var ink = new SolidBrush(primary);
+            g.DrawString(ReportLabel, _buttonFont!, ink, _reportRect, centred);
         }
     }
 
@@ -306,7 +334,7 @@ internal sealed class Toast : OverlayForm
     }
 
     private Hot HitTest(Point p) =>
-        _closeRect.Contains(p) ? Hot.Close : _actionRect.Contains(p) ? Hot.Action : Hot.None;
+        _closeRect.Contains(p) ? Hot.Close : _actionRect.Contains(p) ? Hot.Action : _reportRect.Contains(p) ? Hot.Report : Hot.None;
 
     protected override void OnMouseMove(MouseEventArgs e)
     {
@@ -330,7 +358,7 @@ internal sealed class Toast : OverlayForm
     {
         base.OnMouseClick(e);
         // The button runs the action; ✕ and any other spot just close (Mac: a click on the popup hides it).
-        var action = HitTest(e.Location) == Hot.Action ? _onAction : null;
+        var action = HitTest(e.Location) switch { Hot.Action => _onAction, Hot.Report => _onReport, _ => null };
         Dismiss();
         action?.Invoke();
     }

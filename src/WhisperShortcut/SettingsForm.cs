@@ -896,26 +896,16 @@ internal sealed partial class SettingsForm : FastShowForm
         headCard.AddRow(head);
         info.Controls.Add(headCard);
 
-        info.Controls.Add(Section("Hilfe und Entwickler"));
+        // Mac #549 SupportFeedbackSection: one way to give feedback, the same window as the tray's „Problem melden …“.
+        info.Controls.Add(Section("Support & Feedback", subtitle: "Funktioniert etwas nicht, hast du eine Idee oder eine Frage? "
+            + "Melde es hier. Deine Konfiguration geht mit, damit ich das Problem nachstellen kann."));
         var links = new Card();
+        var report = new FluentButton("Problem melden …", accent: true) { MinimumSize = new Size(ButtonWidth + 40, 32), AccessibleName = "Problem melden" };
+        report.Click += (_, _) => ProblemReportWindow.Open(startOnGeneral: true);
+        links.AddRow(SettingRow("Problem melden", "Schick dem Entwickler ein Problem, eine Idee oder eine Frage, mit deiner Konfiguration "
+            + $"im Anhang. Du siehst alles, bevor es gesendet wird. Oder schreib an {Core.FeedbackLinks.SupportEmail}.", report, ButtonWidth + 40, out _));
         links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
             LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
-        // Mac #344 „Meine Einstellungen senden“: sits with the contact ways because it is one.
-        var sendSettings = new FluentButton("Senden …") { MinimumSize = new Size(96, 32), AccessibleName = "Meine Einstellungen senden" };
-        sendSettings.Click += (_, _) => FeedbackReportDialog.Open(this, _settings, _mcp);
-        links.AddRow(SettingRow("Meine Einstellungen senden", "Teile deine Einstellungen mit dem Entwickler, wenn etwas nicht "
-            + "funktioniert hat: Version, Modelle, Tastenkürzel und welche Anweisungen geändert sind, nie ein Schlüssel. Du siehst "
-            + "vorher alles und kannst es bearbeiten.", sendSettings, 96, out _));
-        var report = new FluentButton("Melden …") { MinimumSize = new Size(96, 32), AccessibleName = "Problem melden" };
-        report.Click += (_, _) => ReportProblem();
-        var reportLog = new FluentButton("Protokoll") { MinimumSize = new Size(96, 32), AccessibleName = "Protokollordner zum Anhängen öffnen" };
-        reportLog.Click += (_, _) => OpenFolder(Core.AppData.LogFolder);
-        var reportButtons = new FlowLayoutPanel { AutoSize = true, WrapContents = false, Margin = new Padding(0) };
-        reportButtons.Controls.Add(report);
-        reportButtons.Controls.Add(reportLog);
-        links.AddRow(SettingRow("Problem melden", "Öffnet ein GitHub-Issue, schon ausgefüllt mit Version, Windows, Modellen und den "
-            + "letzten Protokollzeilen, ohne diktierte Texte und ohne Schlüssel. Oben eintragen, was passiert ist, und vor dem "
-            + "Absenden durchsehen. Klappt der Link nicht: die Protokolldatei aus dem Ordner anhängen.", reportButtons, 208, out _));
         info.Controls.Add(links);
 
         info.Controls.Add(Section("Lizenz"));
@@ -991,33 +981,6 @@ internal sealed partial class SettingsForm : FastShowForm
     }
 
     private static string AppVersion => Application.ProductVersion.Split('+')[0];
-
-    /// <summary>Opens a prefilled GitHub issue; a body too long for the URL goes to the clipboard instead.</summary>
-    internal void ReportProblem()
-    {
-        var info = new Core.ProblemReportInfo(AppVersion, Environment.OSVersion.Version.ToString(),
-            System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString().ToLowerInvariant(), _settings.OfflineMode,
-            _settings.Dictate.Gemini, _settings.Prompt.Gemini, _settings.OfflineLlmId);
-        var body = Core.ProblemReport.Body(info, Core.ProblemReport.TailLog(Core.Log.DefaultPath));
-        var (url, bodyInUrl) = Core.ProblemReport.IssueUrl($"Problem in Version {AppVersion}", body);
-        if (!bodyInUrl)
-        {
-            try
-            {
-                Clipboard.SetText(body);
-                MessageBox.Show(this, "Der Bericht ist zu lang für den Link und liegt jetzt in der Zwischenablage. Im Browser ins "
-                    + "Textfeld klicken und Strg+V drücken.", "Problem melden", MessageBoxButtons.OK, MessageBoxIcon.Information);
-            }
-            catch (Exception e)
-            {
-                Core.Log.Error($"Copying the problem report failed: {e.GetType().Name}");
-                Warn("Der Bericht konnte nicht in die Zwischenablage. Bitte die Protokolldatei aus dem Ordner an das Issue anhängen.");
-                OpenFolder(Core.AppData.LogFolder);
-            }
-        }
-        Core.Log.Info($"Problem report opened (body in URL: {bodyInUrl})");
-        OpenWeb(url);
-    }
 
     private async Task CheckUpdateAsync()
     {

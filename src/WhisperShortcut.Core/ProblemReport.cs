@@ -2,41 +2,17 @@ using System.Text;
 
 namespace WhisperShortcut.Core;
 
-/// <summary>What the user's problem report says about the installation (no content, no secrets).</summary>
-public sealed record ProblemReportInfo(
-    string AppVersion, string WindowsVersion, string Architecture, bool Offline,
-    string TranscriptionModel, string PromptModel, string OfflineLlm);
-
-/// <summary>Builds the prefilled GitHub issue behind "Problem melden".</summary>
+/// <summary>Helpers of "Problem melden": secret redaction and the log tail.</summary>
 public static class ProblemReport
 {
-    /// <summary>Longest issue URL we open; browsers and GitHub choke far above this.</summary>
-    public const int MaxUrlLength = 7000;
-
-    /// <summary>Body used instead of the report when it does not fit into the URL (the UI copies the report to the clipboard).</summary>
-    public const string ClipboardHint = "Bitte den Bericht aus der Zwischenablage hier einfügen (Strg+V).";
-
-    private const string IssuesNew = "https://github.com/mgsgde/whisper-shortcut-windows/issues/new";
-
     /// <summary>Masks Gemini and OpenAI keys and bearer tokens.</summary>
     public static string Redact(string line) => SecretRedactor.Redact(line);
 
-    /// <summary>The Markdown body: an empty "what happened" section to type into, the environment and the log tail.</summary>
-    public static string Body(ProblemReportInfo info, IEnumerable<string> logLines)
+    /// <summary>The log tail as a report section; "" when there are no lines. Lines are redacted.</summary>
+    public static string LogSection(IEnumerable<string> lines)
     {
-        var sb = new StringBuilder();
-        sb.Append("**Was ist passiert?**\n\n\n\n");
-        sb.Append("**Umgebung**\n\n");
-        sb.Append($"- Version: {info.AppVersion}\n");
-        sb.Append($"- Windows: {info.WindowsVersion} ({info.Architecture})\n");
-        sb.Append($"- Modus: {(info.Offline ? "offline" : "online")}\n");
-        sb.Append($"- Diktat-Modell: {info.TranscriptionModel}\n");
-        sb.Append($"- Prompt-Modell: {info.PromptModel}\n");
-        sb.Append($"- Offline-Sprachmodell: {(info.OfflineLlm.Length == 0 ? "-" : info.OfflineLlm)}\n\n");
-        sb.Append("**Protokoll (letzte Zeilen)**\n\n```\n");
-        foreach (var line in logLines) sb.Append(Redact(line)).Append('\n');
-        sb.Append("```\n");
-        return sb.ToString();
+        var list = lines.Select(Redact).ToList();
+        return list.Count == 0 ? "" : "## Log (last lines)\n```\n" + string.Join("\n", list) + "\n```";
     }
 
     /// <summary>
@@ -63,16 +39,5 @@ public static class ProblemReport
         {
             return Array.Empty<string>();
         }
-    }
-
-    /// <summary>
-    /// The prefilled new-issue URL. When the full body would make the URL longer than <see cref="MaxUrlLength"/>
-    /// the URL carries only <see cref="ClipboardHint"/> and BodyInUrl is false: the caller puts the body on the clipboard.
-    /// </summary>
-    public static (string Url, bool BodyInUrl) IssueUrl(string title, string body)
-    {
-        string Make(string b) => $"{IssuesNew}?title={Uri.EscapeDataString(title)}&body={Uri.EscapeDataString(b)}";
-        var full = Make(body);
-        return full.Length <= MaxUrlLength ? (full, true) : (Make(ClipboardHint), false);
     }
 }

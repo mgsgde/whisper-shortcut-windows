@@ -177,9 +177,9 @@ internal sealed partial class TrayApp : ApplicationContext
         // Mac #346: „Nach Updates suchen …“ in the status menu (the app menu of a menu bar app); the switch stays in Allgemein → Updates.
         _checkUpdatesItem = new ToolStripMenuItem("Nach Updates suchen …", null, (_, _) => _ = CheckForUpdatesFromTrayAsync());
         _finishSetupItem = new ToolStripMenuItem("Einrichtung abschließen …", null, (_, _) => OpenWelcome()) { Visible = false };
-        // Mac: „Feedback senden“ with the problem report first. Windows adds the log, which the report points to.
-        var feedbackItem = new ToolStripMenuItem("Feedback senden");
-        AddFeedbackItems(feedbackItem); // TrayApp.Feedback.cs
+        // Mac #549: one flat „Problem melden …“ instead of the „Feedback senden“ submenu; every kind of feedback goes there.
+        var feedbackItem = new ToolStripMenuItem("Problem melden …", null, (_, _) => OpenProblemReportFromTray()); // TrayApp.Feedback.cs
+        SetUpProblemReport();
         var quitItem = _quitItem = new ToolStripMenuItem("WhisperShortcut beenden", null, (_, _) => Quit());
         _ui = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
         // Popups sit above the recording pill while it is on screen (Mac centerBottomPillClearance).
@@ -215,6 +215,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _mcp.StartIfEnabled();
         ScheduleSpareSettings(5000);
         _readAloud = new ReadAloudController(_settings, _paster, (t, m, i, a) => Notify(t, m, i, a), () => ShowSettings(), TrySave, _ui);
+        _readAloud.Spoken += (text, model, voice) => _results.SetReadAloud(new Core.ReadAloudResult(DateTime.Now, text, model, voice));
         _readAloud.StateChanged += () =>
         {
             if (IsIdle) RefreshStatus();
@@ -1101,7 +1102,11 @@ internal sealed partial class TrayApp : ApplicationContext
                     _lastLive.Remember(outcome.Text, live.TargetApp);
                 }
 
-                if (finalText.Length > 0) _recent.Add(finalText);
+                if (finalText.Length > 0)
+                {
+                    _recent.Add(finalText);
+                    RememberDictationResult(finalText, "Dictate Live", seconds);
+                }
                 if (outcome.FailedPieces == 0) _lastFailed = null;
                 if (!keepCheckpoint) Core.RecordingCheckpoint.DiscardAll();
 
@@ -1268,6 +1273,8 @@ internal sealed partial class TrayApp : ApplicationContext
                 _lastFailed = null; // this run worked; the old failure is history
                 Core.RecordingCheckpoint.DiscardAll();
                 _recent.Add(text);
+                if (take.Mode != Mode.Prompt)
+                    RememberDictationResult(text, take.Mode == Mode.Template ? "Template" : "Dictate", seconds, take.Template?.DisplayName, take.ReportRaw);
                 // Mac: a template shaped this dictation; for 10 minutes the same audio can run without it.
                 if (take.Mode == Mode.Template && wav is { Length: > 0 } && take.Template != null)
                 {
@@ -1408,6 +1415,7 @@ internal sealed partial class TrayApp : ApplicationContext
         // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
         if (Core.TextCleanup.LooksLikeRefusal(text)) text = "";
         Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup, punctuation {punctuation}");
+        if (_take != null) _take.ReportRaw = raw;
         if (text.Length == 0) Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
         return text;
     }
@@ -1486,7 +1494,8 @@ internal sealed partial class TrayApp : ApplicationContext
         Core.Log.Info($"Prompt: answer {text.Length} chars");
         text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
         GuardPromptReply(text, selection, instructionKnown && instruction.Length > 0 ? instruction : null);
-        RememberPrompt(selection, selection == null ? instruction : Core.PromptConversationMemory.SpokenPlaceholder, text);
+        RememberPrompt(selection, selection == null ? instruction : Core.PromptConversationMemory.SpokenPlaceholder, text,
+            reportInstruction: instructionKnown ? instruction : Core.PromptConversationMemory.SpokenPlaceholder);
         return text;
     }
 
@@ -1724,8 +1733,9 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     /// <summary>Keeps a finished turn so "jetzt noch kürzer" still sees the previous edit.</summary>
-    private void RememberPrompt(string? selection, string instruction, string response)
+    private void RememberPrompt(string? selection, string instruction, string response, string? reportInstruction = null)
     {
+        RememberPromptResult(selection, reportInstruction ?? instruction, response);
         if (!Core.PromptConversationMemory.Records(_settings.OfflineMode)) return;
         _promptMemory.Append(selection, instruction, response);
     }
@@ -1916,7 +1926,7 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         if (_recent.Items.Count == 0) return;
         _recentMenu.DropDownItems.Add(new ToolStripSeparator());
-        _recentMenu.DropDownItems.Add(new ToolStripMenuItem("Liste leeren", null, (_, _) => _recent.Clear()));
+        _recentMenu.DropDownItems.Add(new ToolStripMenuItem("Liste leeren", null, (_, _) => { _recent.Clear(); _results.Clear(); }));
         _recentMenu.DropDownItems.Add(new ToolStripMenuItem("Die Liste steht nur im Arbeitsspeicher und ist nach dem Beenden weg.") { Enabled = false });
     }
 
@@ -2086,7 +2096,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private void Notify(string title, string text, ToolTipIcon icon, Action? onAction = null, string? actionLabel = null)
     {
         Core.Log.Info($"Notify: {title}");  // title only: the text can quote an error message
-        _toast.Present(title, text, icon, onAction, actionLabel);
+        _toast.Present(title, text, icon, onAction, actionLabel, onReport: () => ReportError(title, text));
     }
 
     /// <summary>

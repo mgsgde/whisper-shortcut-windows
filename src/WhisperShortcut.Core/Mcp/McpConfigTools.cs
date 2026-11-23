@@ -510,7 +510,7 @@ public sealed class McpConfigTools(McpToolContext ctx) : IMcpToolProvider, IMcpR
         try { ctx.Host.OpenProblemReport(path); }
         catch (Exception ex) { AppLog.Error("MCP: opening the problem report failed", ex); }
         AppLog.Info("MCP: report_problem saved");
-        return new McpToolResult($"Saved as a problem report and opened for the user in WhisperShortcut's folder (file {Path.GetFileName(path)}). Nothing is sent; the user decides whether to report it.", false);
+        return new McpToolResult($"Saved as a problem report (file {Path.GetFileName(path)}) and opened in WhisperShortcut's „Problem melden“ window. Nothing is sent; the user reviews it and decides whether to send it by e-mail.", false);
     }
 
     // ---- get_proposal_status -----------------------------------------------------------------------------------

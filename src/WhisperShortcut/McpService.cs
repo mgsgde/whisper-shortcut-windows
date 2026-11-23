@@ -262,14 +262,23 @@ internal sealed class McpService : IMcpHost, IDisposable
     public void OpenProblemReport(string path)
     {
         Core.Log.Info("MCP: problem report saved");
+        // Mac #549: the AI app's report opens in „Problem melden“ without taking the keyboard; the user sends it from
+        // there with the configuration attached. One window at a time: an open draft stays.
         _ui.Post(_ =>
         {
-            try { Process.Start(new ProcessStartInfo("notepad.exe") { ArgumentList = { path }, UseShellExecute = false }); }
-            catch (Exception e)
+            string message;
+            try { message = Core.Mcp.McpProblemReport.MessageFor(File.ReadAllText(path)); }
+            catch (Exception e) when (e is IOException or UnauthorizedAccessException)
             {
-                Core.Log.Error($"Opening the problem report failed: {e.GetType().Name}");
-                try { Process.Start(new ProcessStartInfo(Path.GetDirectoryName(path)!) { UseShellExecute = true }); } catch { }
+                Core.Log.Error($"Reading the problem report failed: {e.GetType().Name}");
+                return;
             }
+            if (ProblemReportWindow.IsShowing)
+            {
+                Core.Log.Info("MCP: problem report left in its file; a report window is already open");
+                return;
+            }
+            ProblemReportWindow.Open(message: message, startOnGeneral: true, activate: false);
         }, null);
     }
 

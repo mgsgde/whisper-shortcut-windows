@@ -83,6 +83,9 @@ internal sealed class Take : IDisposable
 
     /// <summary>Dictate Prompt: the quick instructions on the card, in row order (Strg+1–3 pick from these).</summary>
     public IReadOnlyList<string> Card { get; set; } = Array.Empty<string>();
+
+    /// <summary>The recognizer's text before cleanup, for „Problem melden“ (Mac: rawOutput in the history entry).</summary>
+    public string? ReportRaw { get; set; }
     public Core.ScreenshotImage? Shot { get; set; }
     public CancellationTokenSource? Cts { get; set; }
     public string BusyStatus { get; set; } = Core.UserCopy.Processing;

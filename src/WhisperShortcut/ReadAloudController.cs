@@ -32,6 +32,9 @@ internal sealed class ReadAloudController : IDisposable
     /// <summary>Raised on the UI thread when it starts, starts speaking or ends.</summary>
     public event Action? StateChanged;
 
+    /// <summary>A text was synthesized (text, model id, voice): „Problem melden“ offers it (Mac LastResultStore.lastReadAloud).</summary>
+    public event Action<string, string, string?>? Spoken;
+
     public ReadAloudController(Core.Settings settings, ClipboardPaster paster,
         Action<string, string, ToolTipIcon, Action?> notify, Action showSettings, Action save, SynchronizationContext ui)
     {
@@ -150,6 +153,7 @@ internal sealed class ReadAloudController : IDisposable
             if (model.Provider == Core.TtsProvider.System) await WindowsVoice.SynthesizeAsync(voice, plain, OnAudio, ct);
             else failed = await _tts.SynthesizeAsync(model, voice, plain, OnAudio, ct);
             buffer.MarkComplete();
+            if (failed == 0) Spoken?.Invoke(plain, model.Id, voice);
             _ui.Post(_ =>
             {
                 if (run == _run && _player == null && buffer.BufferedSeconds <= 0)
