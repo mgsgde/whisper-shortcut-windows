@@ -38,6 +38,49 @@ public sealed class OverlayTests : IDisposable
         });
     }
 
+    /// <summary>
+    /// Every state of the Mac-style pill and card draws something opaque and keeps its ✕/✓ inside the window.
+    /// With WS_OVERLAY_SHOTS set to a folder, the frames are saved there as PNGs (the Mac/Windows comparison in the PR).
+    /// </summary>
+    [Fact]
+    public void AllStates_Render()
+    {
+        var shots = Environment.GetEnvironmentVariable("WS_OVERLAY_SHOTS");
+        Sta.Run(() =>
+        {
+            using var overlay = new RecordingOverlay();
+            var quick = Core.QuickActionList.Defaults.Concat(new[] { "Als E-Mail formulieren", "Als Angebot formulieren" }).ToList();
+            float level = 0.6f;
+            var states = new (string Name, Action Show)[]
+            {
+                ("1-diktat", () => overlay.ShowRecording(Mode.Dictate, "Alt+1", TimeSpan.FromMinutes(10), () => level, () => 0.5f)),
+                ("2-prompt-liest", () => overlay.ShowRecording(Mode.Prompt, "Alt+2", TimeSpan.FromMinutes(10), () => level, () => 0.5f, quick)),
+                ("3-prompt-auswahl", () => overlay.SetSelection("Sehr geehrte Damen und Herren, anbei sende ich Ihnen die Unterlagen für das Projekt.")),
+                ("4-prompt-nichts", () => { overlay.ShowRecording(Mode.Prompt, "Alt+2", TimeSpan.FromMinutes(10), () => level, () => 0.5f, quick, screenshot: true); overlay.SetSelection(null); }),
+                ("5-vorlage", () => { overlay.ShowRecording(Mode.Template, "Alt+3", TimeSpan.FromMinutes(10), () => level, () => 0.5f, templateName: "Praxisnotiz"); overlay.SetSelection(null); }),
+                ("6-verarbeitung", () => overlay.ShowProcessing(Core.UserCopy.RecognizingInstruction)),
+                ("7-fertig", () => overlay.ShowDone("Eingefügt")),
+                ("8-warnung", () => overlay.ShowWarning(new[] { "Ibuprofen", "600 mg", "dreimal täglich" }, pasted: true)),
+            };
+            foreach (var (name, show) in states)
+            {
+                show();
+                Application.DoEvents();
+                Thread.Sleep(250); // the fade-in and the check mark's pop are over
+                for (int i = 0; i < 12; i++) overlay.TickForTests();
+                using var frame = overlay.RenderForTests();
+                var centre = frame.GetPixel(frame.Width / 2, frame.Height / 2);
+                Assert.True(centre.A > 200, $"{name}: the centre of the frame is not opaque (alpha {centre.A})");
+                if (!string.IsNullOrEmpty(shots))
+                {
+                    Directory.CreateDirectory(shots);
+                    frame.Save(Path.Combine(shots, name + ".png"), System.Drawing.Imaging.ImageFormat.Png);
+                }
+            }
+            overlay.HideOverlay();
+        });
+    }
+
     /// <summary>A warning stays 30 s and used to be repainted 30 times a second.</summary>
     [Fact]
     public void ToastAtRest_DoesNotRepaint()
