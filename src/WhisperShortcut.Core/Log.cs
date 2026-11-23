@@ -17,9 +17,7 @@ public static class Log
     private static string? _path;
 
     /// <summary>Default location: %LOCALAPPDATA%\WhisperShortcut\wsw.log.</summary>
-    public static string DefaultPath => Path.Combine(
-        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-        "WhisperShortcut", "wsw.log");
+    public static string DefaultPath => AppIdentity.Current.LogPath; // Dev: "WhisperShortcut Dev"
 
     /// <summary>Sets the log file (created with its directory on first write). Null disables logging.</summary>
     public static void Init(string? path)

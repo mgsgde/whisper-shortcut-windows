@@ -37,9 +37,7 @@ public static class OfflineCatalog
         {
             var env = Environment.GetEnvironmentVariable("WSW_OFFLINE_ROOT");
             if (!string.IsNullOrWhiteSpace(env)) return env;
-            return Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "WhisperShortcut", "Offline");
+            return AppIdentity.Current.OfflineRoot; // shared: Dev uses the normal app's folder
         }
     }
 

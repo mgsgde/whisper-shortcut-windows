@@ -41,9 +41,15 @@ public sealed class ModelDownloader
         return new DirectoryInfo(dir).EnumerateFiles("*", SearchOption.AllDirectories).Sum(f => f.Length);
     }
 
-    /// <summary>Removes the component's folder with everything in it.</summary>
+    /// <summary>
+    /// Removes the component's folder with everything in it. Refused in the Dev instance (the normal app uses the
+    /// same models) and while the other instance downloads this component.
+    /// </summary>
     public static void Delete(OfflineComponent c)
     {
+        if (AppIdentity.Current.IsDev) throw new InvalidOperationException(AppIdentity.OfflineDeleteLockedReason);
+        using var gate = ComponentLock.TryAcquire(OfflineCatalog.Root, c.Id)
+            ?? throw new IOException("Das Modell wird gerade geladen (vielleicht von der anderen WhisperShortcut-Version).");
         if (Directory.Exists(c.FullPath)) Directory.Delete(c.FullPath, recursive: true);
     }
 
@@ -53,6 +59,12 @@ public sealed class ModelDownloader
     /// </summary>
     public async Task DownloadAsync(OfflineComponent c, IProgress<double>? progress, CancellationToken ct)
     {
+        if (IsInstalled(c)) { progress?.Report(1.0); return; }
+        // The models folder is shared with the other instance (normal app and Dev): one download per component at a
+        // time. The .part file is only ever touched under this lock, so nobody deletes or appends to a file another
+        // process is writing; the waiting one finds the component installed afterwards and skips.
+        using var gate = await ComponentLock.AcquireAsync(OfflineCatalog.Root, c.Id, ct,
+            waiting: () => Log.Info($"offline download: {c.Id} is being loaded by another instance, waiting")).ConfigureAwait(false);
         if (IsInstalled(c)) { progress?.Report(1.0); return; }
         var needGb = CheckFreeSpace(c);
         try { await DownloadCoreAsync(c, progress, ct).ConfigureAwait(false); }
