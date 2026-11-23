@@ -32,6 +32,23 @@ case "$(uname -s)" in
     ;;
 esac
 
+# The built exe for real, end to end (0.7.13 shipped with every test green and dictation broken): CI job
+# 'Dictation smoke (Windows)' publishes the exe from this commit, starts it with a fresh offline folder, waits
+# for „SPEECH-GATE: Silero VAD ready“, dictates test-audio/pause-hedda.wav via --test-wav through Gemini and
+# checks the words (tools/e2e/dictation-smoke.ps1). The Gemini key is the repository secret GEMINI_API_KEY,
+# never a file in the repo. On a Windows PC, run the script yourself instead: GEMINI_API_KEY in the
+# environment, SMOKE_EXE=path to the exe, your own app quit first (see tools/e2e/CASES.md).
+if [ -n "${SMOKE_EXE:-}" ]; then
+  powershell -NoProfile -ExecutionPolicy Bypass -File tools/e2e/dictation-smoke.ps1 -Exe "$SMOKE_EXE"
+else
+  smoke_conclusion=$(gh api "repos/{owner}/{repo}/commits/$(git rev-parse HEAD)/check-runs" --jq '.check_runs[] | select(.name=="Dictation smoke (Windows)") | .conclusion')
+  if [ "$smoke_conclusion" != "success" ]; then
+    echo "Dictation smoke: CI 'Dictation smoke (Windows)' on HEAD is not green (got: ${smoke_conclusion}). Is the secret GEMINI_API_KEY set?" >&2
+    exit 1
+  fi
+  echo "Dictation smoke: passed in CI on Windows for HEAD"
+fi
+
 PUB="$(mktemp)"
 openssl ec -in "$KEY" -pubout -out "$PUB" 2>/dev/null
 mkdir -p dist

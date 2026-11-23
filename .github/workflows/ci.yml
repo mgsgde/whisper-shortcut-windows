@@ -26,6 +26,32 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      # The real Silero model for the audio tests (0.7.13 shipped a VAD that only a real model on real speech
+      # shows). URL and SHA-256 come from OfflineCatalog.cs, so the cache follows the catalog.
+      - name: Read the Silero entry of the catalog
+        id: silero
+        shell: bash
+        run: |
+          entry=$(grep -A1 'new("silero_vad.onnx"' src/WhisperShortcut.Core/Offline/OfflineCatalog.cs)
+          echo "url=$(grep -o 'https://[^"]*silero_vad.onnx' <<<"$entry")" >> "$GITHUB_OUTPUT"
+          echo "sha=$(grep -o '[0-9a-f]\{64\}' <<<"$entry")" >> "$GITHUB_OUTPUT"
+
+      - name: Cache the Silero model
+        uses: actions/cache@v4
+        with:
+          path: .ci-cache/silero
+          key: silero-${{ steps.silero.outputs.sha }}
+
+      - name: Fetch and verify the Silero model
+        shell: bash
+        run: |
+          mkdir -p .ci-cache/silero
+          f=.ci-cache/silero/silero_vad.onnx
+          [ -f "$f" ] || curl -fsSL --retry 3 -o "$f" "${{ steps.silero.outputs.url }}"
+          echo "${{ steps.silero.outputs.sha }}  $f" | sha256sum -c -
+          echo "WSW_SILERO_VAD=$PWD/$f" >> "$GITHUB_ENV"
+          echo "WSW_REQUIRE_SILERO=1" >> "$GITHUB_ENV"
+
       - name: Run unit tests
         run: >
           dotnet test tests/WhisperShortcut.Tests
@@ -46,4 +72,43 @@ jobs:
         with:
           name: coverage
           path: TestResults/**
+          if-no-files-found: ignore
+
+  # The published exe, end to end: a fresh offline folder (Silero is downloaded), wait for „Silero VAD ready“,
+  # dictate test-audio/pause-hedda.wav through --test-wav to Gemini, check the words. tools/release.sh requires
+  # this check green on the released commit. Key: repository secret GEMINI_API_KEY. Pull requests without the
+  # secret (forks) skip with a warning; a push to main without it fails.
+  smoke:
+    name: Dictation smoke (Windows)
+    runs-on: windows-latest
+    needs: test
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Publish the exe as released
+        run: >
+          dotnet publish src/WhisperShortcut -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -o out/smoke
+
+      - name: Dictate a WAV through the exe
+        shell: pwsh
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          SMOKE_ALLOW_MISSING_KEY: ${{ github.event_name == 'pull_request' && '1' || '0' }}
+          SMOKE_LOG_DIR: ${{ runner.temp }}/smoke-log
+        run: ./tools/e2e/dictation-smoke.ps1 -Exe out/smoke/WhisperShortcut.exe
+
+      - name: Upload the app log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-log
+          path: ${{ runner.temp }}/smoke-log
           if-no-files-found: ignore

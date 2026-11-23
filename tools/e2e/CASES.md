@@ -14,6 +14,17 @@ Order inside each area = value. Restart the app when the next case needs a diffe
 - **Settings window:** there is no vm.sh verb to open it. Either start once with `--settings` (manual `prlctl exec ... WhisperShortcut.exe --settings --log Z:\Downloads\wsw-test\wsw.log` detached), or locate the tray icon in a screenshot and click it with `tools/click.ps1 X Y` (copy to the share, run via `$V run powershell -ExecutionPolicy Bypass -File Z:\Downloads\wsw-test\click.ps1 X Y`). Hotkeys are off while the settings window is in front (guide, step 4).
 - **Back up settings before any S/O case:** `$V run copy /y %APPDATA%\WhisperShortcut\settings.json %APPDATA%\WhisperShortcut\settings.bak`; restore after. Never print the key.
 - Wait for processing: poll the log for `Dictate: Pasted` / `Prompt: Pasted` (up to 30 s online, 60 s offline) instead of fixed sleeps.
+- **Cloud dictation: first dictate after `SPEECH-GATE: Silero VAD ready` is in the log.** Silero loads in the
+  background; until then the recording goes out unfiltered, so a quick test right after the start never runs the
+  speech gate (0.7.13 shipped a broken gate that way). Check the `SPEECH-GATE: trim|keep (… N segments)` line of
+  the dictation, too.
+- **Once per release test: start with the offline folder deleted** (`%LOCALAPPDATA%\WhisperShortcut\Offline`, or
+  `WSW_OFFLINE_ROOT` pointing at an empty folder) and let the app download Silero (and Parakeet, when offline mode is
+  tested). A folder kept from an older version hides a download that is broken today (0.7.13: Parakeet hashes).
+- **Automatic smoke:** `tools/e2e/dictation-smoke.ps1 -Exe <exe>` does both for one dictation (fresh offline folder,
+  waits for Silero, dictates `test-audio/pause-hedda.wav`, checks the words). Needs `GEMINI_API_KEY` in the
+  environment and no other WhisperShortcut running (single instance). It uses the settings of the Windows account
+  but never saves them; CI runs it on every push (`Dictation smoke (Windows)`), and `tools/release.sh` requires it.
 
 ---
 

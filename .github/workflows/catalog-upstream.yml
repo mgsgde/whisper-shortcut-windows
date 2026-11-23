@@ -1,0 +1,40 @@
+name: Offline catalog upstream
+
+# Every file in OfflineCatalog is pinned by size and SHA-256. When the upstream host swaps a file (0.7.13:
+# Parakeet on Hugging Face /resolve/main/), every new download ends in „Download beschädigt“. This job asks
+# the hosts every day: Hugging Face headers (X-Linked-Size / X-Linked-ETag) for the big files, a download
+# and hash for the small ones. Any difference fails the job, before a user hits it.
+on:
+  schedule:
+    - cron: "17 5 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - src/WhisperShortcut.Core/Offline/OfflineCatalog.cs
+      - tests/WhisperShortcut.Tests/CatalogUpstreamTests.cs
+      - .github/workflows/catalog-upstream.yml
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_CLI_TELEMETRY_OPTOUT: "1"
+  DOTNET_NOLOGO: "1"
+
+jobs:
+  check:
+    name: Catalog files match upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Compare size and SHA-256 with the hosts
+        env:
+          WSW_CATALOG_ONLINE: "1"
+        run: >
+          dotnet test tests/WhisperShortcut.Tests -c Release
+          --filter "Category=Upstream"
+          --logger "console;verbosity=normal"

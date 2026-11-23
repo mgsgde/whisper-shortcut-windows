@@ -13,6 +13,8 @@ internal sealed partial class TrayApp : ApplicationContext
 {
     private readonly string? _testWav;
     private readonly bool _fakeGemini;
+    /// <summary>Set by <c>--smoke-dictate</c>: where the headless CI run writes its text. Null in normal runs.</summary>
+    private readonly string? _smokeOut;
     private readonly NotifyIcon _icon;
     private readonly HotkeyService _hotkeys;
     private readonly ClipboardPaster _paster;
@@ -100,13 +102,19 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly McpService _mcp;
     private readonly ReadAloudController _readAloud;
 
-    public TrayApp(string? testWav, bool fakeGemini)
+    public TrayApp(string? testWav, bool fakeGemini, string? smokeOut = null)
     {
         _testWav = testWav;
         _fakeGemini = fakeGemini;
+        _smokeOut = smokeOut;
 
         bool firstRun = !File.Exists(Core.Settings.DefaultPath);
         _settings = Core.Settings.Load(Core.Settings.DefaultPath, new DpapiProtector());
+        if (_smokeOut != null && Environment.GetEnvironmentVariable("WSW_SMOKE_GEMINI_KEY") is { Length: > 0 } smokeKey)
+        {
+            _settings.ApiKey = smokeKey; // memory only: TrySave is off in smoke mode
+            Core.Log.Info("Smoke: Gemini key from the environment");
+        }
         Sounds.Enabled = _settings.Sounds;
         _appliedSettings = Core.SettingsDelta.Snapshot.Of(_settings);
         bool testRun = testWav != null || fakeGemini;
@@ -261,6 +269,7 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         // Posted after OpenWelcome's own post: the tour window is up first, the question comes on top of it.
         if (!testRun) _ui.Post(_ => OfferMoveToFixedPlace(), null);
+        if (_smokeOut != null) _ui.Post(_ => _ = RunSmokeDictationAsync(), null);
     }
 
     /// <summary>
@@ -2325,6 +2334,12 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void TrySave()
     {
+        if (_smokeOut != null)
+        {
+            // The smoke key must never land in settings.json.
+            if (!_smokeSaveLogged) { _smokeSaveLogged = true; Core.Log.Info("Smoke: settings are not saved"); }
+            return;
+        }
         try { _settings.Save(); }
         catch (Exception e)
         {
