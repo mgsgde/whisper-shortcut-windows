@@ -34,7 +34,8 @@ public sealed class SileroVad : IDisposable
         cfg.SampleRate = SampleRate;
         cfg.NumThreads = 1;
         cfg.Provider = "cpu";
-        return new SileroVad(new VoiceActivityDetector(cfg, 60f));
+        // Buffer above the longest upload piece (2.5 min) so one unbroken stretch of speech never overflows it.
+        return new SileroVad(new VoiceActivityDetector(cfg, 180f));
     }
 
     /// <summary>
