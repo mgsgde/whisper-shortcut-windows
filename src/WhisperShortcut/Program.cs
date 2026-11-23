@@ -65,18 +65,44 @@ internal static class Program
 
         string? testWav = TestWavPath(args);
         bool fakeGemini = args.Contains("--fake-gemini");
+        string? smokeOut = SmokeOutPath(args);
+        if (smokeOut == "")
+        {
+            Core.Log.Error("--smoke-dictate needs an output path");
+            Environment.Exit(2);
+        }
+        if (smokeOut != null && testWav == null)
+        {
+            Core.Log.Error("--smoke-dictate needs a test wav (--test-wav or WSW_TEST_WAV)");
+            Environment.Exit(2);
+        }
         Core.Log.Info($"Start {typeof(Program).Assembly.GetName().Version} ({System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture})"
-            + (testWav != null ? $", test wav {Path.GetFileName(testWav)}" : "") + (fakeGemini ? ", fake Gemini" : ""));
+            + (testWav != null ? $", test wav {Path.GetFileName(testWav)}" : "") + (fakeGemini ? ", fake Gemini" : "")
+            + (smokeOut != null ? ", smoke dictation" : ""));
 
         Application.ThreadException += (_, e) => Core.Log.Error("UI thread exception", e.Exception);
         AppDomain.CurrentDomain.UnhandledException += (_, e) => Core.Log.Error("Unhandled exception", e.ExceptionObject as Exception);
 
         ApplicationConfiguration.Initialize();
-        var app = new TrayApp(testWav, fakeGemini);
+        var app = new TrayApp(testWav, fakeGemini, smokeOut);
         if (args.Contains("--settings")) app.OpenSettingsOnStart();
         if (args.Contains("--welcome")) app.OpenWelcome();
         signals.Listen(app.ShowSettingsFromSecondStart, app.QuitFromUninstall);
         Application.Run(app);
+        // The smoke run sets Environment.ExitCode before it quits; returning from Main keeps it as the process exit code.
+        Environment.Exit(Environment.ExitCode);
+    }
+
+    /// <summary>
+    /// <c>--smoke-dictate &lt;path&gt;</c>: headless CI run of the whole dictation path on the test wav; the text goes to this file
+    /// (relative to the current directory). Null when absent, "" when the path is missing.
+    /// </summary>
+    private static string? SmokeOutPath(string[] args)
+    {
+        int i = Array.IndexOf(args, "--smoke-dictate");
+        if (i < 0) return null;
+        if (i + 1 >= args.Length || string.IsNullOrWhiteSpace(args[i + 1])) return "";
+        return Path.GetFullPath(args[i + 1]);
     }
 
     /// <summary>

@@ -251,11 +251,12 @@ public class SpeechActivityTests
     }
 }
 
-/// <summary>Skipped when the Silero model is not on disk.</summary>
+/// <summary>Skipped when the Silero model is not on disk, unless env WSW_REQUIRE_SILERO=1 (CI: a missing model must fail, not skip).</summary>
 public sealed class SileroModelFactAttribute : FactAttribute
 {
     public SileroModelFactAttribute()
     {
+        if (Environment.GetEnvironmentVariable("WSW_REQUIRE_SILERO") == "1") return;
         if (ModelPath() == null) Skip = "silero_vad.onnx not found (set WSW_SILERO_VAD or let the app download it)";
     }
 
