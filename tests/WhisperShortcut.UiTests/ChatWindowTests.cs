@@ -1,3 +1,4 @@
+using WhisperShortcut.TestSupport;
 using System.Diagnostics;
 using System.Windows.Forms;
 
@@ -37,7 +38,7 @@ public sealed class ChatWindowTests : IDisposable
             form.Show();
             Application.DoEvents();
             watch.Stop();
-            Assert.True(watch.ElapsedMilliseconds < 600, $"prewarmed chat window took {watch.ElapsedMilliseconds} ms to show");
+            Assert.True(watch.ElapsedMilliseconds < TimingBudget.Ms(600), $"prewarmed chat window took {watch.ElapsedMilliseconds} ms to show (budget {TimingBudget.Ms(600)} ms)");
         });
     }
 
@@ -54,7 +55,7 @@ public sealed class ChatWindowTests : IDisposable
             form.Show();
             Application.DoEvents();
             watch.Stop();
-            const int budget = 3000;
+            var budget = TimingBudget.Ms(3000);
             Assert.True(watch.ElapsedMilliseconds < budget, $"chat window took {watch.ElapsedMilliseconds} ms to open (budget {budget} ms)");
         });
     }

@@ -1,3 +1,4 @@
+using WhisperShortcut.TestSupport;
 using System.Diagnostics;
 using System.Reflection;
 using System.Windows.Forms;
@@ -45,7 +46,7 @@ public sealed class SettingsWindowTests : IDisposable
             watch.Stop();
 
             Assert.Equal(tiles, form.PickerTilesForTests); // same instances: nothing rebuilt
-            Assert.True(watch.ElapsedMilliseconds < 2000, $"200 progress ticks took {watch.ElapsedMilliseconds} ms");
+            Assert.True(watch.ElapsedMilliseconds < TimingBudget.Ms(2000), $"200 progress ticks took {watch.ElapsedMilliseconds} ms (budget {TimingBudget.Ms(2000)} ms)");
         });
     }
 
@@ -63,7 +64,7 @@ public sealed class SettingsWindowTests : IDisposable
             // Measured 04.11.2026 on Magnus's PC: 9.1 s before the lazy page layout, 5.4 s after, about 2 s once Show
             // stopped laying out per container (SettingsForm.SetVisibleCore). Without the app's prebuilt window this
             // is what the first Alt+0 costs.
-            const int budget = 4000;
+            var budget = TimingBudget.Ms(4000);
             Assert.True(watch.ElapsedMilliseconds < budget, $"settings window took {watch.ElapsedMilliseconds} ms to open (budget {budget} ms)");
         });
     }
@@ -90,7 +91,7 @@ public sealed class SettingsWindowTests : IDisposable
             form.Show();
             Application.DoEvents();
             watch.Stop();
-            Assert.True(watch.ElapsedMilliseconds < 600, $"prewarmed settings window took {watch.ElapsedMilliseconds} ms to show");
+            Assert.True(watch.ElapsedMilliseconds < TimingBudget.Ms(600), $"prewarmed settings window took {watch.ElapsedMilliseconds} ms to show (budget {TimingBudget.Ms(600)} ms)");
         });
     }
 
