@@ -2403,6 +2403,7 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void Quit()
     {
+        _paster.FlushPendingRestore(); // a paste's delayed clipboard restore must not die with the process
         _meeting.Shutdown(); // ends a running meeting properly; audio not transcribed yet stays on disk
         if (_take is { } running)
         {
