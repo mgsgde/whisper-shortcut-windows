@@ -25,8 +25,10 @@ internal sealed class OfflineEngine : IDisposable
     private int _hotwordsLoads;
     private int _reloadRequested;
     private int _reloadRunning;
+    private readonly object _llmGate = new();
     private Core.LlamaServerHost? _server;
     private string? _serverModelId;
+    private Task? _llmStart;
     private Download? _download;
 
     public OfflineEngine(Core.Settings settings)
@@ -34,7 +36,12 @@ internal sealed class OfflineEngine : IDisposable
         _settings = settings;
         _downloader = new Core.ModelDownloader(_http);
         _llm = new Core.LocalLlmClient(_llmHttp);
-        _idleTimer.Tick += (_, _) => _server?.StopIfIdle(LlmIdleTimeout);
+        _idleTimer.Tick += (_, _) =>
+        {
+            Core.LlamaServerHost? server;
+            lock (_llmGate) server = _server;
+            server?.StopIfIdle(LlmIdleTimeout);
+        };
         _idleTimer.Start();
     }
 
@@ -369,23 +376,94 @@ internal sealed class OfflineEngine : IDisposable
 
     private async Task<Core.LlamaServerHost> EnsureServerAsync(CancellationToken ct)
     {
-        var llm = SelectedLlm;
-        if (_server != null && _serverModelId != llm.Id) StopServer(); // model switched in the settings
-        var exe = Core.OfflineCatalog.LlamaServerExe(Arch);
-        if (_server == null) PlaceVcRuntime(Path.GetDirectoryName(exe)!);
-        _server ??= new Core.LlamaServerHost(exe, llm.GgufPath, _job.Assign);
-        _serverModelId = llm.Id;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        bool wasRunning = _server.IsRunning;
-        try { await _server.EnsureStartedAsync(ct).ConfigureAwait(false); }
-        catch (Core.UnsupportedCpuException)
+        while (true)
         {
-            // Crashed while loading, before any request: remember it too, so the next try fails at once.
-            RememberUnsupportedCpu();
-            throw;
+            Core.LlamaServerHost? retiring = null;
+            Task? retiringStart = null;
+            lock (_llmGate)
+            {
+                var llm = SelectedLlm;
+                if (_server != null && _serverModelId != llm.Id)
+                {
+                    retiring = _server;
+                    retiringStart = _llmStart;
+                    _server = null;
+                    _serverModelId = null;
+                    _llmStart = null;
+                }
+            }
+            if (retiring != null)
+            {
+                await FinishStart(retiringStart).ConfigureAwait(false);
+                DisposeHost(retiring);
+                continue;
+            }
+
+            Core.LlamaServerHost server;
+            lock (_llmGate)
+            {
+                var llm = SelectedLlm;
+                if (_server != null && _serverModelId != llm.Id) continue;
+                if (_server == null)
+                {
+                    var exe = Core.OfflineCatalog.LlamaServerExe(Arch);
+                    PlaceVcRuntime(Path.GetDirectoryName(exe)!);
+                    _server = new Core.LlamaServerHost(exe, llm.GgufPath, _job.Assign);
+                    _serverModelId = llm.Id;
+                }
+                server = _server;
+            }
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            bool wasRunning = server.IsRunning;
+            Task start;
+            lock (_llmGate)
+            {
+                if (!ReferenceEquals(_server, server)) continue;
+                start = server.EnsureStartedAsync(ct);
+                _llmStart = start;
+            }
+            var started = false;
+            try
+            {
+                await start.ConfigureAwait(false);
+                started = true;
+            }
+            catch (Core.UnsupportedCpuException)
+            {
+                // Crashed while loading, before any request: remember it too, so the next try fails at once.
+                RememberUnsupportedCpu();
+                throw;
+            }
+            catch (ObjectDisposedException)
+            {
+                // Stop disposed the host, or an idle stop ended this start, while the poll loop was running.
+            }
+            lock (_llmGate)
+            {
+                if (started && ReferenceEquals(_server, server) && _serverModelId == SelectedLlm.Id)
+                {
+                    if (!wasRunning) Core.Log.Info($"llama-server ready with {_serverModelId} after {sw.ElapsedMilliseconds} ms");
+                    return server;
+                }
+                // Cleared by Stop/Delete: do not start another host in this call.
+                if (_server == null)
+                    throw new Core.LocalLlmException("Das Sprachmodell wurde beendet. Bitte noch einmal versuchen.");
+            }
         }
-        if (!wasRunning) Core.Log.Info($"llama-server ready with {llm.Id} after {sw.ElapsedMilliseconds} ms");
-        return _server;
+    }
+
+    private static async Task FinishStart(Task? start)
+    {
+        if (start == null) return;
+        try { await start.ConfigureAwait(false); }
+        catch (Exception) { /* failed, replaced, or stopped: the host is disposed next either way */ }
+    }
+
+    private static void DisposeHost(Core.LlamaServerHost host)
+    {
+        try { host.Dispose(); }
+        catch (ObjectDisposedException) { }
     }
 
     /// <summary>
@@ -414,14 +492,32 @@ internal sealed class OfflineEngine : IDisposable
     }
 
     /// <summary>True while the language model is loaded, so the tray can say "Sprachmodell wird geladen" only when it is not.</summary>
-    public bool LlmReady => _server?.IsRunning == true && _serverModelId == SelectedLlm.Id;
+    public bool LlmReady
+    {
+        get { lock (_llmGate) return _server?.IsRunning == true && _serverModelId == SelectedLlm.Id; }
+    }
 
     private void StopServer()
     {
-        _server?.Stop();
-        _server?.Dispose();
-        _server = null;
-        _serverModelId = null;
+        Core.LlamaServerHost? old;
+        Task? start;
+        lock (_llmGate)
+        {
+            old = _server;
+            start = _llmStart;
+            _server = null;
+            _serverModelId = null;
+            _llmStart = null;
+        }
+        if (old == null) return;
+        // The start task may still be polling. Dispose (which kills the process) only after it has finished.
+        if (start != null && !start.IsCompleted)
+        {
+            _ = start.ContinueWith(_ => DisposeHost(old), CancellationToken.None,
+                TaskContinuationOptions.None, TaskScheduler.Default);
+            return;
+        }
+        DisposeHost(old);
     }
 
     public void Dispose()
