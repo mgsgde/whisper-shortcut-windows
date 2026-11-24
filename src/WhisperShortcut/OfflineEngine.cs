@@ -141,8 +141,13 @@ internal sealed class OfflineEngine : IDisposable
         if (Core.AppIdentity.Current.IsDev) throw new InvalidOperationException(Core.AppIdentity.OfflineDeleteLockedReason); // before unloading anything
         if (component == Core.OfflineCatalog.Parakeet)
         {
-            _parakeet?.Dispose();
-            _parakeet = null;
+            _parakeetLock.Wait();
+            try
+            {
+                _parakeet?.Dispose();
+                _parakeet = null;
+            }
+            finally { _parakeetLock.Release(); }
         }
         else
         {
@@ -186,18 +191,8 @@ internal sealed class OfflineEngine : IDisposable
     public async Task<string> TranscribeAsync(byte[] wav, CancellationToken ct)
     {
         if (!SpeechInstalled) throw new Core.OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
-        var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
         // Decoding cannot be interrupted; a cancel just drops the result (a minute of audio takes ~1 s).
-        var text = await Task.Run(async () =>
-        {
-            try { return parakeet.Transcribe(wav); }
-            catch (ObjectDisposedException)
-            {
-                // A Glossary reload swapped the instance between fetching and calling: use the new one.
-                var current = await LoadParakeetAsync().ConfigureAwait(false);
-                return current.Transcribe(wav);
-            }
-        }, CancellationToken.None).ConfigureAwait(false);
+        var text = await WithParakeetAsync(parakeet => parakeet.Transcribe(wav)).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         // Parakeet sometimes glues a comma to the next word; the Mac spaces it in every output.
         return Core.ParakeetPunctuationTiming.SpacingGluedCommas(text);
@@ -211,17 +206,7 @@ internal sealed class OfflineEngine : IDisposable
     public async Task<(string Text, bool Timed)> TranscribeSpokenMarksAsync(byte[] wav, CancellationToken ct)
     {
         if (!SpeechInstalled) throw new Core.OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
-        var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
-        var decode = await Task.Run(async () =>
-        {
-            try { return parakeet.TranscribeDetailed(wav); }
-            catch (ObjectDisposedException)
-            {
-                // A Glossary reload swapped the instance between fetching and calling: use the new one.
-                var current = await LoadParakeetAsync().ConfigureAwait(false);
-                return current.TranscribeDetailed(wav);
-            }
-        }, CancellationToken.None).ConfigureAwait(false);
+        var decode = await WithParakeetAsync(parakeet => parakeet.TranscribeDetailed(wav)).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         var text = Core.ParakeetPunctuationTiming.KeepSpokenMarks(decode.Text, decode.Tokens, decode.AudioSeconds, out var timed);
         return (text, timed);
@@ -269,6 +254,32 @@ internal sealed class OfflineEngine : IDisposable
         catch (Exception m) { Core.Log.Error("Could not write the unsupported-CPU marker", m); }
     }
 
+    /// <summary>Model folder and thread count shared by the first load and a glossary reload.</summary>
+    private readonly record struct ParakeetLoadSpec(string Directory, int Threads);
+
+    private static ParakeetLoadSpec ParakeetSpec() => new(
+        Path.Combine(Core.OfflineCatalog.Root, Core.OfflineCatalog.Parakeet.Directory),
+        // Half the cores: decoding stays fast and Word keeps responding while it runs.
+        Math.Clamp(Environment.ProcessorCount / 2, 1, 8));
+
+    /// <summary>
+    /// Runs <paramref name="work"/> on the loaded model. A glossary reload may dispose the instance
+    /// between the fetch and the call; the disposed one is tried again on the instance that replaced it.
+    /// </summary>
+    private async Task<T> WithParakeetAsync<T>(Func<Core.ParakeetTranscriber, T> work)
+    {
+        var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
+        return await Task.Run(async () =>
+        {
+            try { return work(parakeet); }
+            catch (ObjectDisposedException)
+            {
+                var current = await LoadParakeetAsync().ConfigureAwait(false);
+                return work(current);
+            }
+        }, CancellationToken.None).ConfigureAwait(false);
+    }
+
     private async Task<Core.ParakeetTranscriber> LoadParakeetAsync()
     {
         if (_parakeet != null) return _parakeet;
@@ -277,13 +288,11 @@ internal sealed class OfflineEngine : IDisposable
         {
             if (_parakeet != null) return _parakeet;
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var dir = Path.Combine(Core.OfflineCatalog.Root, Core.OfflineCatalog.Parakeet.Directory);
-            // Half the cores: decoding stays fast and Word keeps responding while it runs.
-            int threads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
+            var spec = ParakeetSpec();
             var terms = Core.ParakeetHotwords.FromGlossary(_settings.Glossary);
-            var loaded = await Task.Run(() => LoadWithHotwords(dir, threads, terms)).ConfigureAwait(false);
+            var loaded = await Task.Run(() => LoadWithHotwords(spec.Directory, spec.Threads, terms)).ConfigureAwait(false);
             _parakeet = loaded;
-            Core.Log.Info($"Parakeet loaded in {sw.ElapsedMilliseconds} ms ({threads} threads, {terms.Count} glossary terms)");
+            Core.Log.Info($"Parakeet loaded in {sw.ElapsedMilliseconds} ms ({spec.Threads} threads, {terms.Count} glossary terms)");
             return loaded;
         }
         finally { _parakeetLock.Release(); }
@@ -347,9 +356,8 @@ internal sealed class OfflineEngine : IDisposable
                 var terms = Core.ParakeetHotwords.FromGlossary(_settings.Glossary);
                 if (old.Hotwords.SequenceEqual(terms, StringComparer.Ordinal)) return;
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var dir = Path.Combine(Core.OfflineCatalog.Root, Core.OfflineCatalog.Parakeet.Directory);
-                int threads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
-                var fresh = await Task.Run(() => LoadWithHotwords(dir, threads, terms)).ConfigureAwait(false);
+                var spec = ParakeetSpec();
+                var fresh = await Task.Run(() => LoadWithHotwords(spec.Directory, spec.Threads, terms)).ConfigureAwait(false);
                 _parakeet = fresh;
                 old.Dispose(); // waits for a running Transcribe; later callers retry on the new instance
                 Core.Log.Info($"Parakeet reloaded for glossary ({terms.Count} terms) in {sw.ElapsedMilliseconds} ms");
