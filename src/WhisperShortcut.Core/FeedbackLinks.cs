@@ -6,49 +6,20 @@ public static class FeedbackLinks
     /// <summary>E-mail address for feedback.</summary>
     public const string SupportEmail = "mgsgde@gmail.com";
 
-    /// <summary>The context is cut to this many characters before the mailto link is built (Mac).</summary>
-    public const int MailtoContextLimit = 6000;
-
     /// <summary>Subject of the feedback mail.</summary>
     public static string EmailSubject(string appVersion) => $"Feedback zu WhisperShortcut ({appVersion})";
 
-    /// <summary>The message: greeting, the optional <paramref name="context"/>, then app and Windows version.</summary>
-    public static string MessageBody(string? context, string appVersion, string windowsVersion)
-    {
-        var text = "Hallo, ich habe Feedback zu WhisperShortcut:";
-        if (!string.IsNullOrWhiteSpace(context)) text += "\n\n" + SecretRedactor.Redact(context.Trim()); // never a key in the mail
-        return text + $"\n\n---\nApp-Version: {appVersion}\nWindows: {windowsVersion}";
-    }
+    /// <summary>
+    /// The body of the mail that <see cref="MailtoUrl"/> opens. A mailto: link holds about 2,000 characters, the report
+    /// is far longer: it waits on the clipboard, and this line says where it goes. Should the user forget to paste,
+    /// the line still tells the developer that the report is missing.
+    /// </summary>
+    public const string PasteHint = "[Hier Strg+V drücken: Der Bericht von WhisperShortcut ist in der Zwischenablage.]";
 
-    /// <summary>The mailto link with subject and <see cref="MessageBody"/> filled in.</summary>
-    public static Uri MailtoUrl(string? context, string appVersion, string windowsVersion) =>
+    /// <summary>The mailto link: recipient, subject and <see cref="PasteHint"/>.</summary>
+    public static Uri MailtoUrl(string appVersion) =>
         new("mailto:" + SupportEmail + "?subject=" + Uri.EscapeDataString(EmailSubject(appVersion))
-            + "&body=" + Uri.EscapeDataString(MessageBody(context, appVersion, windowsVersion)));
-
-    /// <summary>
-    /// Longest mailto: link we open. Classic Outlook and other handlers cut or refuse links around 2,000 characters, and
-    /// escaping makes a German text two to three times longer (umlauts, line breaks). The full report is in the file.
-    /// </summary>
-    public const int MaxMailtoLength = 1900;
-
-    /// <summary>
-    /// <see cref="MailtoUrl"/> with <paramref name="context"/> shortened (and marked with "…") until the whole link fits
-    /// <paramref name="maxLength"/>. The start of the context survives, so anything that must arrive goes first.
-    /// </summary>
-    public static Uri MailtoUrlWithin(string? context, string appVersion, string windowsVersion, int maxLength = MaxMailtoLength)
-    {
-        var text = (context ?? "").Trim();
-        var url = MailtoUrl(text, appVersion, windowsVersion);
-        if (url.OriginalString.Length <= maxLength) return url;
-        int lo = 0, hi = text.Length; // largest prefix length that fits
-        while (lo < hi)
-        {
-            int mid = (lo + hi + 1) / 2;
-            if (MailtoUrl(Truncated(text, mid), appVersion, windowsVersion).OriginalString.Length <= maxLength) lo = mid;
-            else hi = mid - 1;
-        }
-        return MailtoUrl(lo == 0 ? "" : Truncated(text, lo), appVersion, windowsVersion);
-    }
+            + "&body=" + Uri.EscapeDataString(PasteHint));
 
     /// <summary><paramref name="text"/> trimmed; when longer than <paramref name="limit"/>, the first <paramref name="limit"/> characters plus "…".</summary>
     public static string Truncated(string text, int limit)

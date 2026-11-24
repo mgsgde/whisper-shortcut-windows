@@ -29,6 +29,14 @@ Thunderbird), sonst `mailto:` + Datei im Explorer markiert und kopiert (Mac ohne
 zeigen“ statt Teilen-Menü; Protokollende statt Hang-Berichten; Ergebnisse nur im Speicher, Berichtsdateien nach einem
 Tag gelöscht (Mac 7 Tage); Schlüssel werden im ganzen Bericht geschwärzt; kein Audio.
 
+**Neu gestaltet am 24.11.2026 (bewusst einfacher als der Mac, Vorlage für den Mac):** „Problem melden“ ist ein einziges
+Textfeld: oben die Nachricht, unter „Wird mitgeschickt“ das neueste Ergebnis und die Konfiguration samt Protokollende,
+Schlüssel schon vor der Anzeige geschwärzt. Gesendet wird genau, was im Feld steht. Weg sind Ergebnis-Auswahl,
+„Details ansehen“, der Schalter „Konfiguration mitsenden“, „Bericht ansehen“, „Im Explorer zeigen“ und die
+Berichtsdatei: Der Bericht geht als Text in die Mail (Simple MAPI), sonst in die Zwischenablage (nicht im
+Win+V-Verlauf) und `mailto:` öffnet eine Mail mit „Hier Strg+V drücken“. Grund: Das neue Outlook und Gmail im Browser
+nehmen keine Anhänge an; der Explorer-Ordner verwirrte. Kurzbeschreibung für den Mac: `docs/mac-problem-melden-einfach.md`.
+
 **Reihenfolge der übrigen Lücken** (je ein kleiner PR mit eigenem Release):
 1. Modelle: Gemini 4 Hydrogen/Neon, Argon → Neon (#562, zeitkritisch: Argon wird ab 01.12. teurer), GPT-6.1 Terra (#384).
 2. Textschutz: Planungsblock nicht an Abkürzungen schneiden (#538), Dictate-Prompt-Schutz gegen geleakte/überlange

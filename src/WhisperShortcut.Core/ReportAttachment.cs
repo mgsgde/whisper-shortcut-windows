@@ -3,7 +3,10 @@ using System.Text;
 
 namespace WhisperShortcut.Core;
 
-/// <summary>The report written as a .txt file next to the app's other data, to attach to the mail (Mac ReportAttachment).</summary>
+/// <summary>
+/// The folder where earlier versions wrote the report as a .txt file (Mac ReportAttachment). The report now travels as
+/// text in the mail; the app only clears what older versions left behind, since a report can quote a dictation.
+/// </summary>
 public static class ReportAttachment
 {
     // Mac keeps report files 7 days. A report can quote a dictation, and Windows keeps dictations nowhere on disk
@@ -12,23 +15,6 @@ public static class ReportAttachment
 
     /// <summary>The default folder of the report files.</summary>
     public static string DefaultDirectory => Path.Combine(AppData.LocalFolder, "Reports");
-
-    /// <summary>
-    /// Writes <paramref name="text"/> to WhisperShortcut-Report-yyyy-MM-dd-HHmmss.txt (UTF-8 with BOM, CRLF line endings),
-    /// after pruning files older than a day. Returns the full path.
-    /// </summary>
-    public static string Write(string text, DateTime now, string? directory = null)
-    {
-        var folder = directory ?? DefaultDirectory;
-        Directory.CreateDirectory(folder);
-        PruneOld(now, folder);
-        var name = "WhisperShortcut-Report-" + now.ToString("yyyy-MM-dd-HHmmss", CultureInfo.InvariantCulture) + ".txt";
-        var path = Path.Combine(folder, name);
-        var crlf = text.Replace("\r\n", "\n").Replace("\r", "\n").Replace("\n", "\r\n");
-        File.WriteAllText(path, crlf, new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
-        Log.Info($"DICTATION-REPORT: Wrote {name} ({text.Length} chars)");
-        return path;
-    }
 
     /// <summary>Deletes report files last written more than a day before <paramref name="now"/>. A missing folder is nothing.</summary>
     public static void PruneOld(DateTime now, string? directory = null)

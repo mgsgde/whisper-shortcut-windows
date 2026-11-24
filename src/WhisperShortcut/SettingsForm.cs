@@ -903,8 +903,8 @@ internal sealed partial class SettingsForm : FastShowForm
         var links = new Card();
         var report = new FluentButton("Problem melden …", accent: true) { MinimumSize = new Size(ButtonWidth + 40, 32), AccessibleName = "Problem melden" };
         report.Click += (_, _) => ProblemReportWindow.Open(startOnGeneral: true);
-        links.AddRow(SettingRow("Problem melden", "Schick dem Entwickler ein Problem, eine Idee oder eine Frage, mit deiner Konfiguration "
-            + $"im Anhang. Du siehst alles, bevor es gesendet wird. Oder schreib an {Core.FeedbackLinks.SupportEmail}.", report, ButtonWidth + 40, out _));
+        links.AddRow(SettingRow("Problem melden", "Schick dem Entwickler ein Problem, eine Idee oder eine Frage, samt deiner Konfiguration. "
+            + $"Du siehst alles, bevor es gesendet wird. Oder schreib an {Core.FeedbackLinks.SupportEmail}.", report, ButtonWidth + 40, out _));
         links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
             LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
         info.Controls.Add(links);

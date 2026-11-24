@@ -273,7 +273,7 @@ internal sealed class McpService : IMcpHost, IDisposable
     {
         Core.Log.Info("MCP: problem report saved");
         // Mac #549: the AI app's report opens in „Problem melden“ without taking the keyboard; the user sends it from
-        // there with the configuration attached. One window at a time: an open window stays, and the AI app is told.
+        // there with the configuration. One window at a time: an open window stays, and the AI app is told.
         if (ProblemReportWindow.IsShowing)
         {
             Core.Log.Info("MCP: problem report left in its file; a report window is already open");
