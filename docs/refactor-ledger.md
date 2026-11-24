@@ -19,7 +19,7 @@ Status values: `applied` · `deferred` · `rejected` · `superseded`.
 | W7  | **Bug:** failed settings save not reported | cross-file | applied (#89) | 1 | `Settings.TrySave` with rollback; tour, window, tray |
 | W8  | **Bugs:** quit during paste loses clipboard restore; last live insertion forgotten before a refused start; drift measurement not cancelled; malformed 200 reply = "no speech" | cross-file | applied (#89) | 1 | W8a–d |
 | W9  | Processing pipeline inside `TrayApp`, reads shared `_take!`; two result paths | hot path | applied (#95) | 1 | `Core.DictationPipeline` → `TakeResult` with one Stop path; TrayApp −295 lines |
-| W10 | `Mode` + `RecordingKindName` translated into each other, ~52 branches; ~15 ownerless recording fields | hot path | in PR #97 | 1 | `TakeProfile` table, `RecordingController`, `KeptAudio` (one expiry timer). `StartRecording` stays in TrayApp |
+| W10 | `Mode` + `RecordingKindName` translated into each other, ~52 branches; ~15 ownerless recording fields | hot path | applied (#97) | 1 | `TakeProfile` table, `RecordingController`, `KeptAudio` (one expiry timer). `StartRecording` stays in TrayApp |
 | W11 | One setting = 6 edits in 4 files, default written 3×; tester report misses settings | cross-file | applied (#96) | 1 | descriptor per `Fields` row; bindings by key; catalog ids/titles + report derived. Catalog option/validation logic for model/engine entries still hand-written |
 | W12 | Shortcuts: 3 properties + 2 JSON fields + 2 rows each, ~12 edits to add one | cross-file | applied (#94) | 1 | `Dictionary<HotkeyAction, HotkeyBinding>` + `HotkeySlots.All`; JSON unchanged; `get_configuration` lists all 10 |
 | W13 | Gemini-or-OpenAI decision repeated; two cloned `SendAsync` retry loops; everything named "Gemini" | cross-file | applied (#92) | 1 | `CloudProvider` table, `CloudHttp.SendWithRetryAsync`, `CloudException`; dead `gemini-3.1-pro` entries removed |
@@ -49,4 +49,4 @@ Status values: `applied` · `deferred` · `rejected` · `superseded`.
 
 ## Run log
 
-- Run 1 (2026-11-24, base `523a520`): two Opus sweeps, W1–W25, Magnus: "fix all". Bugs first (#89, #90, #91), then refactors W13 → W12 → W9 → W11 → W10 one at a time (each touches TrayApp or Settings). Typed by Grok 4.7 (#89, #90) and Sonnet 5.5 after Grok's daily cap (#91–#97), reviewed by Opus 5.5. Bug fixes released as v0.7.18. Lesson: batch A silently left out W4/W5; check every ID of a batch against the PR before closing it.
+- Run 1 (2026-11-24, base `523a520`): two Opus sweeps, W1–W25, Magnus: "fix all". Bugs first (#89, #90, #91), then refactors W13 → W12 → W9 → W11 → W10 one at a time (each touches TrayApp or Settings). Typed by Grok 4.7 (#89, #90) and Sonnet 5.5 after Grok's daily cap (#91–#97), reviewed by Opus 5.5. Bug fixes released as v0.7.18, refactors as v0.7.19. Lesson: batch A silently left out W4/W5; check every ID of a batch against the PR before closing it.
