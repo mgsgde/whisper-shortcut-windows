@@ -17,9 +17,20 @@ public interface ISecretProtector
 /// <summary>The settings as <see cref="Settings.Capture"/> took them. Opaque: only <see cref="Settings.Restore"/> reads it.</summary>
 public sealed class SettingsState
 {
-    internal SettingsState(string json) => Json = json;
+    internal SettingsState(string json, string? retainedApiKeyBlob = null, string? retainedOpenAiKeyBlob = null)
+    {
+        Json = json;
+        RetainedApiKeyBlob = retainedApiKeyBlob;
+        RetainedOpenAiKeyBlob = retainedOpenAiKeyBlob;
+    }
 
     internal string Json { get; }
+
+    /// <summary>Protected blob kept because it could not be decrypted; null when the key was readable or empty.</summary>
+    internal string? RetainedApiKeyBlob { get; }
+
+    /// <summary>Protected blob kept because it could not be decrypted; null when the key was readable or empty.</summary>
+    internal string? RetainedOpenAiKeyBlob { get; }
 
     /// <summary>Never the content: it holds the API keys in the clear.</summary>
     public override string ToString() => nameof(SettingsState);
@@ -48,6 +59,11 @@ public sealed partial class Settings
 
     private readonly string _path;
     private readonly ISecretProtector _protector;
+    private string _apiKey = "";
+    private string _openAiKey = "";
+    // The on-disk blob when Unprotect failed. Written back unchanged until the user sets a new key.
+    private string? _retainedApiKeyBlob;
+    private string? _retainedOpenAiKeyBlob;
 
     private Settings(string path, ISecretProtector protector)
     {
@@ -60,10 +76,18 @@ public sealed partial class Settings
     public static string DefaultPath => AppIdentity.Current.SettingsPath; // Dev: "WhisperShortcut Dev"
 
     /// <summary>Gemini API key (plain in memory, protected on disk). Read at call time by GeminiClient.</summary>
-    public string ApiKey { get; set; } = "";
+    public string ApiKey
+    {
+        get => _apiKey;
+        set => SetKey(ref _apiKey, ref _retainedApiKeyBlob, value);
+    }
 
     /// <summary>OpenAI API key (plain in memory, protected on disk). Read at call time by OpenAiClient.</summary>
-    public string OpenAiKey { get; set; } = "";
+    public string OpenAiKey
+    {
+        get => _openAiKey;
+        set => SetKey(ref _openAiKey, ref _retainedOpenAiKeyBlob, value);
+    }
 
     /// <summary>Provider and models of speech recognition (Dictate). Use <see cref="EffectiveSpeechEngine"/> to decide where it runs.</summary>
     public ModelSelection Dictate { get; set; } = ModelSelection.Default(ModelStep.Transcription);
@@ -490,11 +514,49 @@ public sealed partial class Settings
     /// Everything that is saved, kept in memory (keys in the clear, never written anywhere), to put back with <see cref="Restore"/>
     /// when writing fails: built on the same Dto as the file, so a new setting is covered the day it gets its JSON field.
     /// </summary>
-    public SettingsState Capture() => new(JsonSerializer.Serialize(ToDto(key => key), Json));
+    public SettingsState Capture() => new(JsonSerializer.Serialize(ToDto(key => key), Json),
+        ApiKey.Length == 0 ? _retainedApiKeyBlob : null,
+        OpenAiKey.Length == 0 ? _retainedOpenAiKeyBlob : null);
 
     /// <summary>Puts every saved setting back as it was at <see cref="Capture"/>. Not saved; settings that are not persisted stay as they are.</summary>
-    public void Restore(SettingsState state) =>
+    public void Restore(SettingsState state)
+    {
         ApplyDto(JsonSerializer.Deserialize<Dto>(state.Json, Json)!, new PlainSecretProtector(), exact: true);
+        // The snapshot stores an undecryptable blob as the protected field. The plaintext protector reads that
+        // as a key; put the empty key and the blob back.
+        if (state.RetainedApiKeyBlob != null)
+        {
+            _apiKey = "";
+            _retainedApiKeyBlob = state.RetainedApiKeyBlob;
+        }
+        if (state.RetainedOpenAiKeyBlob != null)
+        {
+            _openAiKey = "";
+            _retainedOpenAiKeyBlob = state.RetainedOpenAiKeyBlob;
+        }
+    }
+
+    private static void SetKey(ref string field, ref string? retainedBlob, string? value)
+    {
+        var next = value ?? "";
+        if (field == next) return;
+        field = next;
+        retainedBlob = null; // a new value, including clearing a key the user could read, drops the old blob
+    }
+
+    private void KeepUndecryptable(bool openAi, string blob)
+    {
+        if (openAi)
+        {
+            _openAiKey = "";
+            _retainedOpenAiKeyBlob = blob;
+        }
+        else
+        {
+            _apiKey = "";
+            _retainedApiKeyBlob = blob;
+        }
+    }
 
     private Dto ToDto(Func<string, string> protect)
     {

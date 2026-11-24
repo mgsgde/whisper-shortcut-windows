@@ -393,6 +393,45 @@ public class SettingsTests
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UndecryptableBlob_IsWrittenBackUntilTheUserSetsAKey(bool returnsNull)
+    {
+        ISecretProtector protector = returnsNull ? new NullUnprotect() : new ThrowingUnprotect();
+        var path = TempSettingsFile("{\"apiKeyProtected\":\"blob-gemini\",\"openAiKeyProtected\":\"blob-openai\"}");
+        var s = Settings.Load(path, protector);
+        Assert.Equal("", s.ApiKey);
+        Assert.Equal("", s.OpenAiKey);
+        s.Glossary = new() { "Alpha" };
+        s.Save();
+        var raw = File.ReadAllText(path);
+        Assert.Contains("\"apiKeyProtected\": \"blob-gemini\"", raw);
+        Assert.Contains("\"openAiKeyProtected\": \"blob-openai\"", raw);
+
+        var state = s.Capture();
+        s.ApiKey = "replaced";
+        s.Glossary = new() { "Beta" };
+        s.Restore(state);
+        Assert.Equal("", s.ApiKey);
+        Assert.Equal(new[] { "Alpha" }, s.Glossary);
+        s.Save();
+        raw = File.ReadAllText(path);
+        Assert.Contains("\"apiKeyProtected\": \"blob-gemini\"", raw);
+
+        s.ApiKey = "new-key";
+        s.Save();
+        raw = File.ReadAllText(path);
+        Assert.Contains("\"apiKeyProtected\": \"new-key\"", raw);
+        Assert.Contains("\"openAiKeyProtected\": \"blob-openai\"", raw);
+
+        s.OpenAiKey = "sk-new";
+        s.OpenAiKey = "";
+        s.Save();
+        Assert.Contains("\"openAiKeyProtected\": \"\"", File.ReadAllText(path));
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
     [Fact]
     public void EmptyKeys_AreStoredEmpty_NotProtected()
     {
