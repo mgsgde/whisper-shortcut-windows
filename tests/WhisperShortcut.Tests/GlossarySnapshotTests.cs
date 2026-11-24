@@ -4,10 +4,23 @@ namespace WhisperShortcut.Tests;
 
 public class GlossarySnapshotTests
 {
+    private sealed class Plain : ISecretProtector
+    {
+        public string Protect(string plain) => plain;
+        public string? Unprotect(string protectedValue) => protectedValue;
+    }
+
+    private static Settings NewSettings()
+    {
+        var s = Settings.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json"), new Plain());
+        s.Glossary = new() { "Alpha" };
+        return s;
+    }
+
     [Fact]
     public void TryAddGlossaryTerm_SwapsAWholeNewList()
     {
-        var s = new Settings { Glossary = new() { "Alpha" } };
+        var s = NewSettings();
         var before = s.Glossary;
         Assert.Equal(GlossaryAddResult.Added, s.TryAddGlossaryTerm("Beta", out _));
         Assert.Equal(new[] { "Alpha" }, before); // the published snapshot is untouched
@@ -19,7 +32,7 @@ public class GlossarySnapshotTests
     [Fact]
     public async Task ConcurrentReadsDuringAdds_NeverThrow()
     {
-        var s = new Settings { Glossary = new() { "Start" } };
+        var s = NewSettings();
         using var stop = new CancellationTokenSource();
         var readers = Enumerable.Range(0, 4).Select(_ => Task.Run(() =>
         {
