@@ -1457,15 +1457,12 @@ internal sealed partial class SettingsForm : FastShowForm
     {
         var before = gemini ? _settings.ApiKey : _settings.OpenAiKey;
         if (key == before || !_loaded) return false;
+        var snapshot = _settings.Capture();
         if (gemini) _settings.ApiKey = key; else _settings.OpenAiKey = key;
-        try
+        if (!_settings.TrySave(out var error))
         {
-            _settings.Save();
-        }
-        catch (Exception e)
-        {
-            Core.Log.Error($"Saving the checked key failed: {e.GetType().Name}");
-            if (gemini) _settings.ApiKey = before; else _settings.OpenAiKey = before;
+            _settings.Restore(snapshot);
+            Warn(error ?? Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", null));
             return false;
         }
         Core.Log.Info($"{(gemini ? "Gemini" : "OpenAI")} key saved after a successful check");
@@ -2094,18 +2091,14 @@ internal sealed partial class SettingsForm : FastShowForm
     {
         _keyProblem = KeyProblem();
         _keysOk = _keyProblem == null;
+        // Before the bindings are applied: a failed write must not leave those edits in the running app.
         var before = _settings.Capture();
         var written = _bindings.Where(b => b.Apply(_settings)).ToList();
-        try
+        if (!_settings.TrySave(out var error))
         {
-            _settings.Save();
-        }
-        catch (Exception e)
-        {
-            Core.Log.Error($"Saving settings failed: {e.GetType().Name}");
             _settings.Restore(before);
             // Said once, then in the status line: this runs after every edit.
-            var error = Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message);
+            error ??= Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", null);
             if (error != _lastSaveError) Warn(error);
             _lastSaveError = error;
             _holdSave = true; // the edits stay in the window; not tried again until the user edits something

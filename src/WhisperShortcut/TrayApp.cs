@@ -2389,14 +2389,10 @@ internal sealed partial class TrayApp : ApplicationContext
             if (!_smokeSaveLogged) { _smokeSaveLogged = true; Core.Log.Info("Smoke: settings are not saved"); }
             return;
         }
-        try { _settings.Save(); }
-        catch (Exception e)
-        {
-            Core.Log.Error("Saving settings failed", e);
-            Notify("Speichern fehlgeschlagen",
-                e is Core.DiskFullException ? e.Message : "Die Einstellungen konnten nicht gespeichert werden.",
-                ToolTipIcon.Warning);
-        }
+        if (_settings.TrySave(out var error)) return;
+        Notify("Speichern fehlgeschlagen",
+            error ?? "Die Einstellungen konnten nicht gespeichert werden.",
+            ToolTipIcon.Warning);
     }
 
     private static void OpenLog()

@@ -483,6 +483,32 @@ public sealed partial class Settings
         }
     }
 
+    /// <summary>
+    /// Saves. On failure the in-memory settings return to the snapshot taken at the call and
+    /// <paramref name="error"/> is German text for the user (the same wording as the settings window).
+    /// A caller that changed settings and wants the earlier state back restores its own snapshot afterwards.
+    /// </summary>
+    public bool TrySave(out string? error)
+    {
+        var snapshot = Capture();
+        try
+        {
+            Save();
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            try { Restore(snapshot); }
+            catch (Exception restoreEx) { Log.Error("Restoring settings after a failed save failed", restoreEx); }
+            error = ex is DiskFullException disk
+                ? disk.Message
+                : UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", ex.Message);
+            Log.Error("Saving settings failed", ex);
+            return false;
+        }
+    }
+
     private void SaveCore()
     {
         var dir = Path.GetDirectoryName(_path);

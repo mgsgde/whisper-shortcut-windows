@@ -312,6 +312,43 @@ public class SettingsTests
     }
 
     [Fact]
+    public void TrySave_WhenTheWriteFails_ReturnsGermanError_AndKeepsTheCallState()
+    {
+        var blocker = Path.GetTempFileName();
+        try
+        {
+            var path = Path.Combine(blocker, "settings.json");
+            var s = Settings.Load(path, new PlainSecretProtector());
+            var before = s.Capture();
+            s.ApiKey = "AIza-kept";
+            s.OfflineMode = true;
+            Assert.False(s.TrySave(out var error));
+            Assert.Contains("Einstellungen", error);
+            Assert.Equal("AIza-kept", s.ApiKey);
+            Assert.True(s.OfflineMode);
+            s.Restore(before);
+            Assert.Equal("", s.ApiKey);
+            Assert.False(s.OfflineMode);
+        }
+        finally
+        {
+            File.Delete(blocker);
+        }
+    }
+
+    [Fact]
+    public void TrySave_Success_WritesAndClearsTheError()
+    {
+        var path = TempSettingsFile("{}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.Glossary = new() { "Alpha" };
+        Assert.True(s.TrySave(out var error));
+        Assert.Null(error);
+        Assert.Contains("Alpha", File.ReadAllText(path));
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
     public void Save_FlushesAndKeepsThePreviousFile()
     {
         var path = TempSettingsFile("{}");

@@ -383,8 +383,9 @@ internal sealed class WelcomeForm : FastShowForm
 
     private void TrySaveSettings()
     {
-        try { _settings.Save(); }
-        catch (Exception e) { Core.Log.Error($"Welcome: saving settings failed: {e.GetType().Name}"); }
+        if (_settings.TrySave(out var error)) return;
+        MessageBox.Show(this, error ?? Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", null),
+            Core.AppIdentity.Current.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
     }
 
     // ---------------- Einrichtung ----------------
@@ -491,16 +492,14 @@ internal sealed class WelcomeForm : FastShowForm
     {
         var before = gemini ? _settings.ApiKey : _settings.OpenAiKey;
         if (key == before) return false;
+        var snapshot = _settings.Capture();
         if (gemini) _settings.ApiKey = key; else _settings.OpenAiKey = key;
         Core.WelcomeTour.ChooseCloud(_settings);
-        try
+        if (!_settings.TrySave(out var error))
         {
-            _settings.Save();
-        }
-        catch (Exception e)
-        {
-            Core.Log.Error($"Welcome: saving the checked key failed: {e.GetType().Name}");
-            if (gemini) _settings.ApiKey = before; else _settings.OpenAiKey = before;
+            _settings.Restore(snapshot);
+            MessageBox.Show(this, error ?? Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", null),
+                Core.AppIdentity.Current.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
         Core.Log.Info($"Welcome: {(gemini ? "Gemini" : "OpenAI")} key saved after a successful check");
