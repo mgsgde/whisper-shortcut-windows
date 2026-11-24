@@ -2,8 +2,6 @@ using System.Diagnostics;
 
 namespace WhisperShortcut;
 
-internal enum Mode { Dictate, Prompt, Template }
-
 /// <summary>
 /// Tray icon, hotkeys and the recording state machine. Same toggle behaviour as the Mac:
 /// 1st press starts, 2nd press stops and processes, a press while processing cancels.
@@ -48,19 +46,18 @@ internal sealed partial class TrayApp : ApplicationContext
     private static readonly Hotkey[] QuickKeys =
         Enumerable.Range(0, Core.QuickActionList.Max).Select(i => new Hotkey(NativeMethods.MOD_CONTROL, Keys.D1 + i)).ToArray();
 
-    // The run in progress, from the hotkey press to the end of its processing; null = idle. Set up in StartRecording
-    // and RunAgain, torn down by Take.Dispose.
-    private Take? _take;
-    private FailedRun? _lastFailed;
-    private bool IsIdle => _take == null;
-    private bool IsRecording => _take is { Phase: TakePhase.Recording };
-    private bool IsProcessing => _take is { Phase: TakePhase.Processing };
-    private string PhaseName => _take?.Phase.ToString() ?? "Idle";
-    /// <summary>The take that is still recording: a late event of an earlier take must not stop the next one.</summary>
-    private bool IsRunning(Take take) => ReferenceEquals(_take, take) && take.Phase == TakePhase.Recording;
-
-    private long _recordingSerial; // the last Take.Serial handed out
-    private long _rightCtrlRecording = -1;
+    // The owner of the run in progress (from the hotkey press to the end of its processing; none = idle), the serial
+    // counter and the right-Ctrl serial. Set up in StartRecording and RunAgain, torn down by Take.Dispose via End.
+    private readonly Core.RecordingController<Take> _rec = new();
+    // Everything kept for a later run (failed run, cancelled dictation, template replay, held screenshot) and when it goes.
+    private readonly Core.KeptAudio _kept = new(() => DateTime.UtcNow);
+    // The one timer that lets time-limited kept items expire (Mac: both lifetimes are checked lazily; here also while idle).
+    private readonly System.Windows.Forms.Timer _keptExpiry = new() { Interval = 15_000 };
+    private bool IsIdle => _rec.IsIdle;
+    private bool IsRecording => _rec.IsRecording;
+    private bool IsProcessing => _rec.IsProcessing;
+    private string PhaseName => _rec.PhaseName;
+    private bool IsRunning(Take take) => _rec.IsRunning(take);
     /// <summary>What the previous live dictation ended with, while nothing has moved the caret since.</summary>
     private readonly LiveInsertionMemory _lastLive;
     private SettingsForm? _settingsForm;
@@ -89,13 +86,6 @@ internal sealed partial class TrayApp : ApplicationContext
     private Keys _armedKey;
     private long _armedKeyDeadline;
     private readonly SynchronizationContext _ui;
-    // Screenshot hotkey: the image waits here for the next Dictate Prompt or template run (memory only, 5 min).
-    private readonly Core.ScreenshotHold _heldShot = new(() => DateTime.UtcNow);
-    private readonly System.Windows.Forms.Timer _shotExpiry = new() { Interval = 15_000 };
-    // Mac transcribeCancelledRecording / runAgainWithoutTemplate: audio kept in memory only.
-    private readonly Core.CancelledRecording _cancelled = new();
-    private readonly Core.TemplateReplay _templateReplay = new();
-    private readonly System.Windows.Forms.Timer _replayExpiry = new() { Interval = 15_000 };
     private readonly ToolStripMenuItem _cancelledItem, _withoutTemplateItem;
     private readonly ToolStripMenuItem _welcomeItem;
     private readonly ToolStripMenuItem _checkUpdatesItem;
@@ -161,8 +151,8 @@ internal sealed partial class TrayApp : ApplicationContext
         _stopItem = new ToolStripMenuItem("Stopp", null, (_, _) => StopCurrentOperation()) { Visible = false };
         _stopSeparator = new ToolStripSeparator { Visible = false };
         _proposalsItem = new ToolStripMenuItem("Änderungen von KI-Apps prüfen …", null, (_, _) => _mcp?.ShowPendingProposals()) { Visible = false };
-        _dictateItem = new ToolStripMenuItem("Diktieren", null, (_, _) => OnHotkey(Mode.Dictate));
-        _promptItem = new ToolStripMenuItem("Dictate Prompt", null, (_, _) => OnHotkey(Mode.Prompt));
+        _dictateItem = new ToolStripMenuItem("Diktieren", null, (_, _) => OnHotkey(Core.HotkeyFamily.Dictate));
+        _promptItem = new ToolStripMenuItem("Dictate Prompt", null, (_, _) => OnHotkey(Core.HotkeyFamily.Prompt));
         _screenshotItem = new ToolStripMenuItem("Bildschirmfoto", null, (_, _) => OnScreenshotHotkey());
         _readAloudItem = new ToolStripMenuItem("Vorlesen", null, (_, _) => OnReadAloudHotkey());
         _glossaryItem = new ToolStripMenuItem("Auswahl zum Glossar hinzufügen", null, (_, _) => _ = AddSelectionToGlossaryAsync());
@@ -235,19 +225,15 @@ internal sealed partial class TrayApp : ApplicationContext
         };
 
         _keyUpTimer.Tick += (_, _) => PollArmedKey();
-        _replayExpiry.Tick += (_, _) =>
+        _kept.Expired += item => Core.Log.Info(item == Core.KeptItem.Screenshot
+            ? "Screenshot dropped: unused for 5 minutes"
+            : "Template replay dropped: unused for 10 minutes");
+        _keptExpiry.Tick += (_, _) =>
         {
-            if (_templateReplay.DropIfExpired(DateTime.UtcNow))
-            {
-                Core.Log.Info("Template replay dropped: unused for 10 minutes");
-                _replayExpiry.Stop();
-            }
+            _kept.ExpireDue();
+            if (!_kept.NeedsTimer) _keptExpiry.Stop();
         };
-        _shotExpiry.Tick += (_, _) =>
-        {
-            if (_heldShot.DropIfExpired()) Core.Log.Info("Screenshot dropped: unused for 5 minutes");
-            if (!_heldShot.HasImage) _shotExpiry.Stop();
-        };
+        _rec.PhaseChanged += RefreshStatus;
         RegisterHotkeys();
         RefreshStatus();
         // A finished download changes the idle status ("Modelle noch nicht geladen" → "Bereit").
@@ -303,7 +289,7 @@ internal sealed partial class TrayApp : ApplicationContext
         bool lostTemplate = kind == Core.RecordingKindName.Template && template == null;
         var replayKind = template != null ? Core.RecordingKindName.Template
             : kind == Core.RecordingKindName.Prompt ? Core.RecordingKindName.Prompt : Core.RecordingKindName.Dictate;
-        _lastFailed = new FailedRun(rec.Wav, replayKind, rec.Seconds, Template: template,
+        _kept.LastFailed = new Core.FailedRun(rec.Wav, replayKind, rec.Seconds, Template: template,
             StopKey: replayKind == Core.RecordingKindName.Prompt ? _settings.Key(Core.HotkeyAction.Prompt)
                 : template != null ? (template.Hotkey.Length > 0 ? template.Hotkey : _settings.Key(Core.HotkeyAction.TemplatePicker))
                 : _settings.Key(Core.HotkeyAction.Dictate));
@@ -382,8 +368,8 @@ internal sealed partial class TrayApp : ApplicationContext
     /// <summary>What a registered shortcut does.</summary>
     private Action ActionFor(Core.HotkeyAction action) => action switch
     {
-        Core.HotkeyAction.Dictate => () => OnHotkey(Mode.Dictate),
-        Core.HotkeyAction.Prompt => () => OnHotkey(Mode.Prompt),
+        Core.HotkeyAction.Dictate => () => OnHotkey(Core.HotkeyFamily.Dictate),
+        Core.HotkeyAction.Prompt => () => OnHotkey(Core.HotkeyFamily.Prompt),
         Core.HotkeyAction.Glossary => () => _ = AddSelectionToGlossaryAsync(),
         Core.HotkeyAction.Meeting => _meeting.Toggle, // no meeting key by default: the tray menu starts a meeting
         Core.HotkeyAction.LiveDictate => OnLiveHotkey,
@@ -415,7 +401,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _proposalsItem.Visible = _mcp != null && _mcp.Proposals.Pending.Count > 0;
         _finishSetupItem.Visible = !_settings.WelcomeCompleted;
         _welcomeItem.Visible = _settings.WelcomeCompleted; // Mac: „Einführung …“ hides while „Einrichtung abschließen …“ shows
-        var recording = _take is { Phase: TakePhase.Recording } r ? r.Kind : (Core.RecordingKindName?)null;
+        var recording = _rec.Current is { Phase: Core.TakePhase.Recording } r ? r.Kind : (Core.RecordingKindName?)null;
         _dictateItem.Text = recording == Core.RecordingKindName.Dictate ? "Diktat beenden" : "Diktieren";
         _promptItem.Text = recording == Core.RecordingKindName.Prompt ? "Prompt-Diktat beenden" : "Dictate Prompt";
         _readAloudItem.Text = _readAloud?.IsActive == true ? "Vorlesen beenden" : "Vorlesen";
@@ -429,9 +415,9 @@ internal sealed partial class TrayApp : ApplicationContext
         // Mac: both history rows hide while the history is empty.
         _copyLast.Visible = _recent.Latest != null;
         _recentMenu.Visible = _recent.Items.Count > 0;
-        _retryItem.Visible = _lastFailed != null && idle;
-        _cancelledItem.Visible = _cancelled.HasRecording;
-        var replay = _templateReplay.Current(DateTime.UtcNow);
+        _retryItem.Visible = _kept.LastFailed != null && idle;
+        _cancelledItem.Visible = _kept.HasCancelled;
+        var replay = _kept.CurrentTemplate();
         _withoutTemplateItem.Visible = replay != null;
         if (replay != null)
             _withoutTemplateItem.ToolTipText = $"Führt dein letztes Diktat noch einmal mit dem System-Prompt von Dictate Prompt aus statt mit „{replay.Value.TemplateName}“. "
@@ -481,16 +467,16 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         Core.Log.Info($"Menu Stopp in state {PhaseName}");
         if (IsRecording) _ = StopAndProcessAsync();
-        else if (IsProcessing) _take?.Cts?.Cancel();
+        else if (IsProcessing) _rec.CancelProcessing();
         else if (_readAloud.IsActive) _readAloud.Stop();
     }
 
-    private void OnHotkey(Mode mode)
+    private void OnHotkey(Core.HotkeyFamily family)
     {
-        var stored = mode == Mode.Dictate ? _settings.Key(Core.HotkeyAction.Dictate) : _settings.Key(Core.HotkeyAction.Prompt);
+        var stored = family == Core.HotkeyFamily.Dictate ? _settings.Key(Core.HotkeyAction.Dictate) : _settings.Key(Core.HotkeyAction.Prompt);
         // Stop, cancel and busy stay as they are: the Diktieren key ends whichever recording runs, Live included (Mac).
-        HandleHotkeyPress(mode, stored, canStopOrCancel: true,
-            () => { if (mode == Mode.Dictate) StartDictateByMode(stored, "Diktieren shortcut"); else StartRecording(Take.KindOf(mode), stored); });
+        HandleHotkeyPress(family, stored, canStopOrCancel: true,
+            () => { if (family == Core.HotkeyFamily.Dictate) StartDictateByMode(stored, "Diktieren shortcut"); else StartRecording(Core.TakeProfile.ForFamily(family).Kind, stored); });
     }
 
     /// <summary>
@@ -546,7 +532,7 @@ internal sealed partial class TrayApp : ApplicationContext
             Core.Log.Info("Hotkey RightCtrl in state Idle");
             app.StartDictateByMode(Core.HotkeyText.RightCtrl, "Right Ctrl");
             // Right Ctrl ends only the recording it started, never one another shortcut began, even of the same kind.
-            app._rightCtrlRecording = app._take is { Phase: TakePhase.Recording } t ? t.Serial : -1;
+            app._rec.RightCtrlSerial = app._rec.Current is { Phase: Core.TakePhase.Recording } t ? t.Serial : -1;
             return IsRecording();
         }
 
@@ -560,28 +546,28 @@ internal sealed partial class TrayApp : ApplicationContext
             if (IsRecording()) app.OnEscape();
         }
 
-        public bool IsRecording() => app._take is { Phase: TakePhase.Recording, Mode: Mode.Dictate } t
-            && t.Serial == app._rightCtrlRecording;
+        public bool IsRecording() => app._rec.Current is { Phase: Core.TakePhase.Recording, Profile.Family: Core.HotkeyFamily.Dictate } t
+            && t.Serial == app._rec.RightCtrlSerial;
 
-        public bool IsProcessing() => app._take is { Phase: TakePhase.Processing, Mode: Mode.Dictate };
+        public bool IsProcessing() => app._rec.Current is { Phase: Core.TakePhase.Processing, Profile.Family: Core.HotkeyFamily.Dictate };
 
         public void CancelProcessing()
         {
             // Same rule as the Dictate hotkey (Mac #396): a second press while Live is still inserting
             // its last pieces must not throw that text away. A normal dictation still cancels.
-            if (app._take?.Kind == Core.RecordingKindName.Live)
+            if (app._rec.Current?.Kind == Core.RecordingKindName.Live)
             {
                 Core.Log.Info("LIVE-DICTATE: shortcut ignored — the last pieces are still being inserted");
                 return;
             }
-            app._take?.Cts?.Cancel();
+            app._rec.CancelProcessing();
         }
     }
 
     private void OnLiveHotkey()
     {
         var stored = _settings.Key(Core.HotkeyAction.LiveDictate);
-        HandleHotkeyPress(Mode.Dictate, stored, canStopOrCancel: true, () => StartLiveDictation(stored));
+        HandleHotkeyPress(Core.HotkeyFamily.Dictate, stored, canStopOrCancel: true, () => StartLiveDictation(stored));
     }
 
     /// <summary>
@@ -589,7 +575,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// stopped or cancelled by it: a template key must not end a Dictate or Dictate Prompt recording (Mac).
     /// </summary>
     private void OnTemplateHotkey(string? templateId, string stored) =>
-        HandleHotkeyPress(Mode.Template, stored, canStopOrCancel: _take?.Mode == Mode.Template, () =>
+        HandleHotkeyPress(Core.HotkeyFamily.Template, stored, canStopOrCancel: _rec.Current?.Profile.Family == Core.HotkeyFamily.Template, () =>
         {
             var found = templateId == null
                 ? Core.TemplatePicker.Pick(_settings.Templates, _settings.LastTemplateId)
@@ -614,12 +600,12 @@ internal sealed partial class TrayApp : ApplicationContext
     /// The toggle shared by every hotkey: idle starts, a press while recording stops, while processing cancels.
     /// Presses the gate rejects, or that may not stop the current run, are only logged.
     /// </summary>
-    private void HandleHotkeyPress(Mode mode, string stored, bool canStopOrCancel, Action startIdle)
+    private void HandleHotkeyPress(Core.HotkeyFamily family, string stored, bool canStopOrCancel, Action startIdle)
     {
-        var label = mode.ToString();
+        var label = family.ToString();
         Core.Log.Info($"Hotkey {label} in state {PhaseName}");
         // Vorlesen copies the selection while preparing: a second copy now could lose the user's clipboard.
-        if (IsIdle && mode != Mode.Dictate && _readAloud?.IsActive == true && !_readAloud.IsSpeaking)
+        if (IsIdle && family != Core.HotkeyFamily.Dictate && _readAloud?.IsActive == true && !_readAloud.IsSpeaking)
         {
             Core.Log.Info($"Hotkey {label} ignored: Vorlesen is preparing");
             Sounds.Error();
@@ -634,14 +620,14 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         if (!IsIdle && !canStopOrCancel)
         {
-            Core.Log.Info($"Hotkey {label} in state {PhaseName} ignored: a {_take!.Mode} run is active");
+            Core.Log.Info($"Hotkey {label} in state {PhaseName} ignored: a {_rec.Current!.Profile.Name} run is active");
             return;
         }
-        var liveFinishing = _take?.Kind == Core.RecordingKindName.Live;
+        var liveFinishing = _rec.Current?.Kind == Core.RecordingKindName.Live;
         var decision = Core.RecordingHotkeyPolicy.Decide(
             recording: IsRecording,
             processing: IsProcessing,
-            sameMode: mode == _take?.Mode,
+            sameMode: family == _rec.Current?.Profile.Family,
             gateOpen: gateOpen,
             liveFinishing: liveFinishing);
         if (decision == Core.RecordingHotkeyDecision.Ignore)
@@ -661,7 +647,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 _ = StopAndProcessAsync();
                 break;
             case Core.RecordingHotkeyDecision.Cancel:
-                _take?.Cts?.Cancel();
+                _rec.CancelProcessing();
                 break;
         }
         if (PhaseName != before && Hotkey.TryParse(stored, out var key))
@@ -700,15 +686,12 @@ internal sealed partial class TrayApp : ApplicationContext
         Core.Log.Info($"Esc in state {PhaseName}");
         // Esc in the screenshot picker cancels the picker, not the recording behind it.
         if (_snipCts != null) { _snipCts.Cancel(); return; }
-        if (_take is not { } take) return;
-        if (take.Phase == TakePhase.Processing)
-        {
-            take.Cts?.Cancel(); // same path as a hotkey press during processing
-            return;
-        }
+        if (_rec.Current is not { } take) return;
         // Text already inserted stays: it is in another window.
-        if (take.Live != null) _paster.EndLive(LiveClipboardAtEnd(null, false), null);
-        EndTake(take); // stops the microphone and the selection copy; Esc also drops the crash checkpoint
+        if (take.Phase == Core.TakePhase.Recording && take.Live != null) _paster.EndLive(LiveClipboardAtEnd(null, false), null);
+        // Processing: same path as a hotkey press during processing. Recording: stops the microphone and the selection
+        // copy; Esc also drops the crash checkpoint. The status refresh follows the overlay below, as before.
+        if (_rec.Cancel(raise: false) != Core.CancelOutcome.RecordingDiscarded) return;
         Core.RecordingCheckpoint.DiscardAll();
         Sounds.Stop();
         _overlay.HideOverlay();
@@ -716,11 +699,7 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     /// <summary>Tears the run down (<see cref="Take.Dispose"/>) and leaves idle; the caller then refreshes overlay and status.</summary>
-    private void EndTake(Take take)
-    {
-        take.Dispose();
-        if (ReferenceEquals(_take, take)) _take = null;
-    }
+    private void EndTake(Take take) => _rec.End(take, raise: false);
 
     // Live diktieren ends: the clipboard setting decides between restore, keep and clear (Mac "After auto-paste").
     private Core.LiveClipboardEnd LiveClipboardAtEnd(Core.LiveDictationOutcome? outcome, bool fallbackHasText) =>
@@ -733,7 +712,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private void OnQuickAction(int index)
     {
-        if (_take is not { Phase: TakePhase.Recording, Kind: Core.RecordingKindName.Prompt } take || index >= take.Card.Count) return;
+        if (_rec.Current is not { Phase: Core.TakePhase.Recording, Kind: Core.RecordingKindName.Prompt } take || index >= take.Card.Count) return;
         Core.Log.Info($"Quick action {index + 1}");
         take.QuickAction = take.Card[index];
         _quickUsage.Record(take.QuickAction, DateTime.UtcNow);
@@ -796,14 +775,14 @@ internal sealed partial class TrayApp : ApplicationContext
                 return;
             }
             // Recording a Dictate Prompt or template right now: the picture belongs to this instruction.
-            if (_take is { Phase: TakePhase.Recording, Kind: Core.RecordingKindName.Prompt or Core.RecordingKindName.Template, Shot: null } running)
+            if (_rec.Current is { Phase: Core.TakePhase.Recording, Kind: Core.RecordingKindName.Prompt or Core.RecordingKindName.Template, Shot: null } running)
             {
                 running.Shot = image;
                 Core.Log.Info($"Screenshot attached to the running {running.Kind} ({image.Data.Length / 1024} KB)");
                 return;
             }
-            _heldShot.Hold(image);
-            _shotExpiry.Start();
+            _kept.HoldShot(image);
+            _keptExpiry.Start();
             Core.Log.Info($"Screenshot held for the next turn ({image.Data.Length / 1024} KB)");
             ShowDoneIfFree("Bildschirmfoto in der Zwischenablage und für die nächste Anweisung gemerkt");
         }
@@ -819,8 +798,8 @@ internal sealed partial class TrayApp : ApplicationContext
     /// <summary>Screenshots switched off or offline: a held image must not go out later.</summary>
     private void DropScreenshotIfNotAllowed()
     {
-        if (Core.ScreenshotPolicy.Allowed(_settings) || !_heldShot.HasImage) return;
-        _heldShot.Clear();
+        if (Core.ScreenshotPolicy.Allowed(_settings) || !_kept.HasShot) return;
+        _kept.ClearShot();
         Core.Log.Info("Screenshot dropped: screenshots are off or offline");
     }
 
@@ -830,13 +809,13 @@ internal sealed partial class TrayApp : ApplicationContext
     /// The engines a mode uses: Dictate only speech recognition; Dictate Prompt the text engine and
     /// speech recognition too (the instruction is transcribed, or checked for a bare "korrigiere").
     /// </summary>
-    private static EngineStep StepFor(Mode mode) => mode == Mode.Dictate ? EngineStep.Dictation : EngineStep.Prompt;
+    private static EngineStep StepFor(Core.TakeProfile profile) => profile.UsesTextEngine ? EngineStep.Prompt : EngineStep.Dictation;
 
     /// <summary>HEAD the cloud API origin so TCP+TLS is done before the user presses Stop.</summary>
-    private void PrewarmCloudConnections(Mode mode)
+    private void PrewarmCloudConnections(Core.TakeProfile profile)
     {
         if (_fakeGemini) return;
-        _engines.Prewarm(StepFor(mode));
+        _engines.Prewarm(StepFor(profile));
     }
 
     /// <summary>Any mode lacks a key: for the tray tooltip.</summary>
@@ -844,23 +823,23 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void StartRecording(Core.RecordingKindName kind, string stored, Core.DictationTemplate? template = null, LiveRun? live = null)
     {
-        var mode = Take.ModeOf(kind);
+        var profile = Core.TakeProfile.Of(kind);
         // The snip UI is open: its image is about to arrive over the clipboard, a Ctrl+C now would collide with it.
         if (_snipCts != null)
         {
-            Core.Log.Info($"Hotkey {mode} ignored: waiting for the snip UI");
+            Core.Log.Info($"Hotkey {profile.Name} ignored: waiting for the snip UI");
             return;
         }
-        var ready = _engines.Check(StepFor(mode), checkKeys: !_fakeGemini);
+        var ready = _engines.Check(StepFor(profile), checkKeys: !_fakeGemini);
         if (ready.ModelsMissing)
         {
-            Core.Log.Info($"Hotkey {mode} with a local engine, models missing");
+            Core.Log.Info($"Hotkey {profile.Name} with a local engine, models missing");
             Sounds.Error();
             Notify(Core.UserCopy.ModelNotDownloadedTitle,
-                (mode == Mode.Dictate || !OfflineEngine.SpeechInstalled
+                (!profile.UsesTextEngine || !OfflineEngine.SpeechInstalled
                     ? "Die Offline-Spracherkennung ist noch nicht geladen."
                     : "Das Sprachmodell für Dictate Prompt ist noch nicht geladen.")
-                + (mode == Mode.Dictate || !OfflineEngine.SpeechInstalled
+                + (!profile.UsesTextEngine || !OfflineEngine.SpeechInstalled
                     ? " Du lädst es in den Einstellungen unter Diktieren."
                     : " Du lädst es in den Einstellungen unter Dictate Prompt."),
                 ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
@@ -868,7 +847,7 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         if (ready.LlmCpuUnsupported)
         {
-            Core.Log.Info($"Hotkey {mode} with the local text engine, but this CPU cannot run the language model");
+            Core.Log.Info($"Hotkey {profile.Name} with the local text engine, but this CPU cannot run the language model");
             Sounds.Error();
             Notify(Core.UserCopy.OfflineModelErrorTitle, Core.LlamaServerHost.UnsupportedCpuMessage, ToolTipIcon.Warning, ShowSettings, Core.UserCopy.ActionOpenSettings);
             return;
@@ -888,15 +867,14 @@ internal sealed partial class TrayApp : ApplicationContext
         // The take is idle until the microphone runs: a failed start leaves nothing behind (Dispose).
         var take = new Take(kind, stored, _paster) { Template = template, Live = live, PasteTarget = ClipboardPaster.ForegroundRoot() };
         // Copy the selection right away, while the user's selection is still there. It runs while recording.
-        if (mode != Mode.Dictate) take.StartSelectionCopy();
+        if (profile.CopiesSelection) take.StartSelectionCopy();
         // Loading the language model takes seconds to half a minute; do it while the user speaks.
-        if (mode != Mode.Dictate && _settings.EffectiveTextEngine == Core.Engine.Local) _offline.PrewarmLlm();
+        if (profile.UsesTextEngine && _settings.EffectiveTextEngine == Core.Engine.Local) _offline.PrewarmLlm();
         // TLS to Gemini/OpenAI while the user speaks: the first request after Stop skips the handshake.
-        PrewarmCloudConnections(mode);
+        PrewarmCloudConnections(profile);
 
-        // WHY Template gets the long limit: its path transcribes in chunks and sends text, so it is not bound by the
-        // 5-minute limit of the inline audio Dictate Prompt sends to Gemini.
-        var limit = mode == Mode.Prompt ? MicAudioSource.PromptLimit : MicAudioSource.DictateLimit;
+        // The limit is a column of the profile (Template gets the long one: see TakeProfile.Template).
+        var limit = profile.Limit;
         MicAudioSource? mic = null;
         if (_testWav != null)
         {
@@ -942,21 +920,19 @@ internal sealed partial class TrayApp : ApplicationContext
         }
         long micMs = feedback.ElapsedMilliseconds - beforeMic;
         Sounds.Start();
-        take.Serial = ++_recordingSerial;
         CancelDriftMeasurement();
         // Mac: the three most used of the user's quick instructions, in their Settings order; set before RefreshStatus registers Ctrl+1–3.
-        if (mode == Mode.Prompt) take.Card = Core.QuickActionCard.Select(_settings.QuickActions, _quickUsage.Counts(DateTime.UtcNow));
-        _take = take;
-        RefreshStatus();
+        if (profile.OffersQuickActions) take.Card = Core.QuickActionCard.Select(_settings.QuickActions, _quickUsage.Counts(DateTime.UtcNow));
+        _rec.Start(take); // phase, serial and the status refresh (PhaseChanged)
         // One turn only: a Dictate run leaves the image for the next Dictate Prompt or template run.
-        take.Shot = mode != Mode.Dictate && Core.ScreenshotPolicy.Allowed(_settings) ? _heldShot.Take() : null;
-        if (take.Shot != null) Core.Log.Info($"{mode}: screenshot attached ({take.Shot.Data.Length / 1024} KB)");
-        _overlay.ShowRecording(mode, Hotkey.Display(stored), limit,
+        take.Shot = profile.TakesScreenshot && Core.ScreenshotPolicy.Allowed(_settings) ? _kept.TakeShot() : null;
+        if (take.Shot != null) Core.Log.Info($"{profile.Name}: screenshot attached ({take.Shot.Data.Length / 1024} KB)");
+        _overlay.ShowRecording(profile, Hotkey.Display(stored), limit,
             mic != null ? () => mic.Level : null, mic != null ? () => mic.PeakSoFar : null,
             take.Card,
-            templateName: mode == Mode.Template ? template!.DisplayName : null, screenshot: take.Shot != null,
+            templateName: profile.Family == Core.HotkeyFamily.Template ? template!.DisplayName : null, screenshot: take.Shot != null,
             title: live != null ? Core.UserCopy.LiveTitle : null);
-        Core.Log.Info($"{mode}: overlay after {feedback.ElapsedMilliseconds} ms (setup {beforeMic} ms, microphone {micMs} ms)");
+        Core.Log.Info($"{profile.Name}: overlay after {feedback.ElapsedMilliseconds} ms (setup {beforeMic} ms, microphone {micMs} ms)");
         if (kind == Core.RecordingKindName.Dictate && _welcomeForm is { TakesTryResult: true } tour && take.PasteTarget == tour.Handle)
             tour.ShowTryListening();
         if (take.Selection is { } pending)
@@ -969,7 +945,7 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     private Task StopAndProcessAsync() =>
-        _take!.Kind == Core.RecordingKindName.Live ? ProcessLiveAsync(_take) : ProcessAsync(_take, null);
+        _rec.StopAsync(take => take.Kind == Core.RecordingKindName.Live ? ProcessLiveAsync(take) : ProcessAsync(take, null));
 
     // ---------------- live diktieren ----------------
 
@@ -1001,7 +977,7 @@ internal sealed partial class TrayApp : ApplicationContext
             return;
         }
         _lastLive.Forget(null); // only once the new session has started; a refusal keeps the previous ending
-        live.Target = _take!.PasteTarget;
+        live.Target = _rec.Current!.PasteTarget;
         _paster.BeginLive(_settings.RestoreClipboard);
         live.StartRetryTimer();
         var targetName = live.Target == IntPtr.Zero ? "none" : FocusedTextContext.ProcessName(live.Target) ?? "unknown";
@@ -1121,7 +1097,7 @@ internal sealed partial class TrayApp : ApplicationContext
                     _recent.Add(finalText);
                     RememberDictationResult(finalText, "Dictate Live", seconds);
                 }
-                if (outcome.FailedPieces == 0) _lastFailed = null;
+                if (outcome.FailedPieces == 0) _kept.LastFailed = null;
                 if (!keepCheckpoint) Core.RecordingCheckpoint.DiscardAll();
 
                 if (outcome.FailedPieces == 0 && outcome.Text.Length > 0 && !_fakeGemini)
@@ -1181,8 +1157,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private void RetryLast()
     {
-        if (!IsIdle || _lastFailed == null) return;
-        var run = _lastFailed;
+        if (!IsIdle || _kept.LastFailed is not { } run) return;
         Core.Log.Info($"{run.Kind}: retrying the last recording ({run.Seconds:0.0} s)");
         RunAgain(run);
     }
@@ -1202,9 +1177,9 @@ internal sealed partial class TrayApp : ApplicationContext
     private void TranscribeCancelledRecording()
     {
         if (NotIdleSayBusy()) return;
-        if (_cancelled.Take() is not { } kept) return;
+        if (_kept.TakeCancelled() is not { } kept) return;
         Core.Log.Info($"Dictate: transcribing the cancelled recording ({kept.Seconds:0.0} s)");
-        RunAgain(new FailedRun(kept.Wav, Core.RecordingKindName.Dictate, kept.Seconds, StopKey: _settings.Key(Core.HotkeyAction.Dictate)));
+        RunAgain(new Core.FailedRun(kept.Wav, Core.RecordingKindName.Dictate, kept.Seconds, StopKey: _settings.Key(Core.HotkeyAction.Dictate)));
     }
 
     /// <summary>
@@ -1214,23 +1189,24 @@ internal sealed partial class TrayApp : ApplicationContext
     private void RunAgainWithoutTemplate()
     {
         if (NotIdleSayBusy()) return;
-        if (_templateReplay.Current(DateTime.UtcNow) is not { } kept) return;
+        if (_kept.CurrentTemplate() is not { } kept) return;
         Core.Log.Info($"Prompt: running the last template dictation again without its template ({kept.Seconds:0.0} s)");
-        RunAgain(new FailedRun(kept.Wav, Core.RecordingKindName.Prompt, kept.Seconds, StopKey: _settings.Key(Core.HotkeyAction.Prompt), NoNewTextTemplate: true));
+        RunAgain(new Core.FailedRun(kept.Wav, Core.RecordingKindName.Prompt, kept.Seconds, StopKey: _settings.Key(Core.HotkeyAction.Prompt), NoNewTextTemplate: true));
     }
 
     /// <summary>Runs kept audio through the pipeline from idle (retry, cancelled recording, without template).</summary>
-    private void RunAgain(FailedRun run)
+    private void RunAgain(Core.FailedRun run)
     {
         // The screenshot may be switched off or offline since. Nothing of the old recording is left to clean up: every
         // take ends in Dispose, which also drops its late-copy watch.
         CancelDriftMeasurement();
-        var take = _take = Take.Replay(run, _paster, Core.ScreenshotPolicy.Allowed(_settings));
+        var take = Take.Replay(run, _paster, Core.ScreenshotPolicy.Allowed(_settings));
+        _rec.Attach(take);
         _ = ProcessAsync(take, run);
     }
 
     /// <param name="take">The run: a recording to stop (<paramref name="retry"/> null) or a replay of <paramref name="retry"/>.</param>
-    private Task ProcessAsync(Take take, FailedRun? retry)
+    private Task ProcessAsync(Take take, Core.FailedRun? retry)
     {
         var audio = take.Audio;
         take.Audio = null;
@@ -1238,20 +1214,20 @@ internal sealed partial class TrayApp : ApplicationContext
         double seconds = 0;
         string? selection = null;
         var busy = take.QuickAction != null ? Core.UserCopy.QuickActionBusy(take.QuickAction)
-            : take.Mode == Mode.Dictate ? Core.UserCopy.Transcribing
-            : take.Mode == Mode.Template && take.Template != null ? Core.UserCopy.TemplateBusy(take.Template.DisplayName)
+            : take.Profile.Family == Core.HotkeyFamily.Dictate ? Core.UserCopy.Transcribing
+            : take.Profile.Family == Core.HotkeyFamily.Template && take.Template != null ? Core.UserCopy.TemplateBusy(take.Template.DisplayName)
             : Core.UserCopy.RecognizingInstruction;
 
-        return ProcessTakeAsync(take, take.Mode.ToString(), busy, Core.FailureContext.Dictation,
+        return ProcessTakeAsync(take, take.Profile.Name, busy, Core.FailureContext.Dictation,
             // What a retry needs; null when the audio itself is lost (then there is nothing to try again).
             failed: () => wav == null ? null : take.ToReplay(wav, seconds, selection),
             // Mac: a cancel is one keystroke and can be an accident; keep a dictation for the tray menu (only dictation:
             // an instruction run again as dictation would paste the instruction).
             onCancelled: () =>
             {
-                if (take.Mode == Mode.Dictate && wav is { Length: > 0 })
+                if (take.Profile.Family == Core.HotkeyFamily.Dictate && wav is { Length: > 0 })
                 {
-                    _cancelled.Keep(wav, seconds);
+                    _kept.KeepCancelled(wav, seconds);
                     Core.Log.Info($"Dictate: kept the cancelled recording ({seconds:0.0} s) for the tray menu");
                 }
             },
@@ -1268,7 +1244,7 @@ internal sealed partial class TrayApp : ApplicationContext
                     {
                         wav = await audio!.StopAsync();
                     }
-                    catch (Core.AudioSilentException) when (take.QuickAction != null || take.Mode == Mode.Template)
+                    catch (Core.AudioSilentException) when (take.QuickAction != null || take.Profile.Family == Core.HotkeyFamily.Template)
                     {
                         // Text marked, Ctrl+1 pressed without a word (or a template run on a selection): the selection alone is the input.
                         // A silent template run with nothing marked is still a microphone problem.
@@ -1277,21 +1253,21 @@ internal sealed partial class TrayApp : ApplicationContext
                         wav = Array.Empty<byte>();
                     }
                     seconds = wav.Length == 0 ? 0 : Core.Wav.DurationSeconds(wav);
-                    Core.Log.Info($"{take.Mode}: recorded {seconds:0.0} s");
+                    Core.Log.Info($"{take.Profile.Name}: recorded {seconds:0.0} s");
                     // A quick instruction needs no speech: mark text, press the hotkey and right away Ctrl+1.
                     // A template may format a selection with no speech, so it needs the selection before it can judge "too short".
-                    if (take.Mode == Mode.Template && take.Selection != null && selection == null) selection = await take.Selection;
+                    if (take.Profile.Family == Core.HotkeyFamily.Template && take.Selection != null && selection == null) selection = await take.Selection;
                     if (seconds < 0.5 && take.QuickAction == null
-                        && !(take.Mode == Mode.Template && Core.TemplatePrompt.AcceptsEmptyTranscript(selection)))
+                        && !(take.Profile.Family == Core.HotkeyFamily.Template && Core.TemplatePrompt.AcceptsEmptyTranscript(selection)))
                     {
                         // A double press, not a recording: say so instead of a misleading microphone error.
                         Core.RecordingCheckpoint.DiscardAll();
                         return Core.Presentation.Notice("Aufnahme zu kurz", "Kürzel drücken, sprechen, dann erneut drücken.", Core.Severity.Info);
                     }
-                    if (take.Mode == Mode.Prompt && take.Selection != null) selection = await take.Selection;
+                    if (take.Profile.Family == Core.HotkeyFamily.Prompt && take.Selection != null) selection = await take.Selection;
                 }
 
-                var input = new Core.TakeInput(Take.KindOf(take.Mode), wav, seconds, selection, retry != null,
+                var input = new Core.TakeInput(Core.TakeProfile.ForFamily(take.Profile.Family).Kind, wav, seconds, selection, retry != null,
                     take.Template, take.NoNewTextTemplate, take.QuickAction, take.Shot, () => take.LateWatch.Arrived);
                 var result = await _pipeline.RunAsync(input, new Core.SyncProgress<string>(SetBusy), ct);
                 take.ReportRaw = result.RawText;
@@ -1301,23 +1277,23 @@ internal sealed partial class TrayApp : ApplicationContext
                 if (text.Length == 0)
                 {
                     Core.RecordingCheckpoint.DiscardAll();
-                    if (take.Mode == Mode.Dictate && _welcomeForm is { TakesTryResult: true } silentTour && take.PasteTarget == silentTour.Handle) silentTour.ShowTryResult("");
+                    if (take.Profile.Family == Core.HotkeyFamily.Dictate && _welcomeForm is { TakesTryResult: true } silentTour && take.PasteTarget == silentTour.Handle) silentTour.ShowTryResult("");
                     return result.Stop; // the one place a "nothing to do" exit is shown
                 }
-                _lastFailed = null; // this run worked; the old failure is history
+                _kept.LastFailed = null; // this run worked; the old failure is history
                 Core.RecordingCheckpoint.DiscardAll();
                 _recent.Add(text);
-                if (take.Mode != Mode.Prompt)
-                    RememberDictationResult(text, take.Mode == Mode.Template ? "Template" : "Dictate", seconds, take.Template?.DisplayName, take.ReportRaw);
+                if (take.Profile.Family != Core.HotkeyFamily.Prompt)
+                    RememberDictationResult(text, take.Profile.Family == Core.HotkeyFamily.Template ? "Template" : "Dictate", seconds, take.Template?.DisplayName, take.ReportRaw);
                 // Mac: a template shaped this dictation; for 10 minutes the same audio can run without it.
-                if (take.Mode == Mode.Template && wav is { Length: > 0 } && take.Template != null)
+                if (take.Profile.Family == Core.HotkeyFamily.Template && wav is { Length: > 0 } && take.Template != null)
                 {
-                    _templateReplay.Keep(wav, seconds, take.Template.DisplayName, DateTime.UtcNow);
-                    _replayExpiry.Start();
+                    _kept.KeepTemplate(wav, seconds, take.Template.DisplayName);
+                    _keptExpiry.Start();
                 }
 
                 // The tour's „Ausprobieren“ step started this dictation in its own window: show the text there.
-                if (take.Mode == Mode.Dictate && retry == null && _welcomeForm is { TakesTryResult: true } tour
+                if (take.Profile.Family == Core.HotkeyFamily.Dictate && retry == null && _welcomeForm is { TakesTryResult: true } tour
                     && take.PasteTarget != IntPtr.Zero && take.PasteTarget == tour.Handle)
                 {
                     _paster.KeepOnClipboard(text);
@@ -1328,7 +1304,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 // A quick-action rewrite that lost most of a long selection must not silently replace it. Spoken
                 // instructions are unknown here (Gemini hears them) and "fass zusammen" is a normal request, so
                 // they rely on the MAX_TOKENS check alone.
-                if (take.Mode == Mode.Prompt && selection != null && take.QuickAction != null
+                if (take.Profile.Family == Core.HotkeyFamily.Prompt && selection != null && take.QuickAction != null
                     && Core.ReplyGuards.AnswerSuspiciouslyShort(selection.Length, text.Length, take.QuickAction))
                 {
                     Core.Log.Info($"Prompt: answer {text.Length} chars for a selection of {selection.Length}, not pasted");
@@ -1343,7 +1319,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 var outcome = keepOnly
                     ? (_paster.KeepOnClipboard(text) ? Core.PasteOutcome.ClipboardOnlyByChoice : Core.PasteOutcome.Failed)
                     : await _paster.PasteAsync(text, take.PasteTarget, _settings.ClipboardAfterPaste, ct);
-                Core.Log.Info($"{take.Mode}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, after paste {Core.Choices.AfterPaste.Token(_settings.ClipboardAfterPaste)}");
+                Core.Log.Info($"{take.Profile.Name}: {outcome}, {text.Length} chars, autoPaste {(_settings.AutoPaste ? "on" : "off")}, after paste {Core.Choices.AfterPaste.Token(_settings.ClipboardAfterPaste)}");
                 return Core.RunOutcomes.ForPaste(outcome, take.Unsupported.Count > 0);
             });
     }
@@ -1355,13 +1331,12 @@ internal sealed partial class TrayApp : ApplicationContext
     /// <paramref name="onCancelled"/> keeps; <paramref name="onFailed"/> runs after a failure was shown.
     /// </summary>
     private async Task ProcessTakeAsync(Take take, string label, string busyStatus, Core.FailureContext context,
-        Func<FailedRun?> failed, Action? onCancelled, Action? onFailed, Func<CancellationToken, Task<Core.Presentation?>> body)
+        Func<Core.FailedRun?> failed, Action? onCancelled, Action? onFailed, Func<CancellationToken, Task<Core.Presentation?>> body)
     {
         take.Cts = new CancellationTokenSource();
         var ct = take.Cts.Token;
         take.BusyStatus = busyStatus;
-        take.Phase = TakePhase.Processing;
-        RefreshStatus();
+        _rec.BeginProcessing(take); // phase and the status refresh (PhaseChanged); already Processing after a stop
         _overlay.ShowProcessing(take.BusyStatus);
         Sounds.Stop();
         bool done = false;
@@ -1400,7 +1375,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// Shows one <see cref="Core.Presentation"/>: the pill, the warning card or a toast with its sound and follow-up.
     /// <paramref name="failed"/> is what a retry would run. True when the overlay shows a result (it must not be hidden).
     /// </summary>
-    private bool Present(Core.Presentation p, Take take, FailedRun? failed)
+    private bool Present(Core.Presentation p, Take take, Core.FailedRun? failed)
     {
         switch (p.Kind)
         {
@@ -1412,7 +1387,7 @@ internal sealed partial class TrayApp : ApplicationContext
                 return true;
             case Core.PresentationKind.Toast:
                 if (p.ErrorSound) Sounds.Error();
-                if (p.KeepAudio) _lastFailed = failed;
+                if (p.KeepAudio) _kept.LastFailed = failed;
                 var url = p.Url;
                 var (onClick, label) = p.Action switch
                 {
@@ -1696,10 +1671,10 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         if (IsIdle) _hotkeys.Unregister(Escape);
         else if (!_hotkeys.IsRegistered(Escape)) _hotkeys.Register(Escape, OnEscape);
-        bool quick = _take is { Phase: TakePhase.Recording, Kind: Core.RecordingKindName.Prompt };
+        bool quick = _rec.Current is { Phase: Core.TakePhase.Recording, Kind: Core.RecordingKindName.Prompt };
         for (int i = 0; i < QuickKeys.Length; i++)
         {
-            if (!quick || i >= _take!.Card.Count) _hotkeys.Unregister(QuickKeys[i]);
+            if (!quick || i >= _rec.Current!.Card.Count) _hotkeys.Unregister(QuickKeys[i]);
             else if (!_hotkeys.IsRegistered(QuickKeys[i]))
             {
                 int index = i;
@@ -1709,15 +1684,15 @@ internal sealed partial class TrayApp : ApplicationContext
         }
     }
 
-    /// <summary>Hotkeys, tray icon and status text follow the take (none = idle). Call after every change of <c>_take</c> or its phase.</summary>
+    /// <summary>Hotkeys, tray icon and status text follow the take (none = idle). Call after every change of <c>_rec.Current</c> or its phase.</summary>
     private void RefreshStatus()
     {
         SyncSessionHotkeys();
         SyncGlobalHotkeys();
-        (string status, Icon icon) = _take switch
+        (string status, Icon icon) = _rec.Current switch
         {
-            { Phase: TakePhase.Recording } t => (Core.UserCopy.RecordingStatus(Hotkey.Display(t.StopKey), prompt: t.Mode != Mode.Dictate), TrayIcons.Recording),
-            { Phase: TakePhase.Processing } => (TrayProcessingStatus(), TrayIcons.Processing),
+            { Phase: Core.TakePhase.Recording } t => (Core.UserCopy.RecordingStatus(Hotkey.Display(t.StopKey), prompt: t.Profile.Family != Core.HotkeyFamily.Dictate), TrayIcons.Recording),
+            { Phase: Core.TakePhase.Processing } => (TrayProcessingStatus(), TrayIcons.Processing),
             _ when _readAloud?.IsActive == true => (_readAloud.StatusText, _readAloud.IsSpeaking ? TrayIcons.Ready : TrayIcons.Processing),
             _ when MissingKey => ("Kein API-Schlüssel eingetragen", TrayIcons.Warning),
             _ when _engines.Check(EngineStep.Dictation, checkKeys: false).ModelsMissing => ("Spracherkennung noch nicht geladen", TrayIcons.Warning),
@@ -1810,7 +1785,7 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void SetBusy(string status)
     {
-        if (_take is { Phase: TakePhase.Processing } take)
+        if (_rec.Current is { Phase: Core.TakePhase.Processing } take)
         {
             take.BusyStatus = status;
             SetStatusText(TrayProcessingStatus());
@@ -1819,7 +1794,7 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     /// <summary>Mac AppState processing lines: the tray says what runs, the pill shows the step (<see cref="Take.BusyStatus"/>).</summary>
-    private string TrayProcessingStatus() => _take is { Mode: Mode.Dictate, QuickAction: null }
+    private string TrayProcessingStatus() => _rec.Current is { Profile.Family: Core.HotkeyFamily.Dictate, QuickAction: null }
         ? Core.UserCopy.ProcessingDictationStatus
         : Core.UserCopy.ProcessingPromptStatus;
 
@@ -2135,7 +2110,7 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         _paster.FlushPendingRestore(); // a paste's delayed clipboard restore must not die with the process
         _meeting.Shutdown(); // ends a running meeting properly; audio not transcribed yet stays on disk
-        if (_take is { } running)
+        if (_rec.Current is { } running)
         {
             running.KeepCheckpoint = true; // a recording cut off by quitting stays recoverable on the next start
             running.Dispose();
@@ -2144,11 +2119,10 @@ internal sealed partial class TrayApp : ApplicationContext
         _icon.Dispose();
         _keyUpTimer.Dispose();
         _lastLive.Dispose();
-        _templateReplay.Clear();
-        _replayExpiry.Dispose();
+        _kept.ClearTemplate();
+        _keptExpiry.Dispose();
         _snipCts?.Cancel();
         CancelDriftMeasurement();
-        _shotExpiry.Dispose();
         _updateNoticeTimer.Dispose();
         _updates.Dispose();
         _readAloud.Dispose();

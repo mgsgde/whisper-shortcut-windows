@@ -1,24 +1,12 @@
 namespace WhisperShortcut;
 
-internal enum TakePhase { Recording, Processing }
-
-/// <summary>
-/// A recording whose processing failed for a reason a second try can fix (network, quota, local model), or kept audio
-/// that runs again (cancelled recording, "Nochmal ohne Vorlage", a take recovered after a crash). Replays are always
-/// clipboard-only: the window the take was made for is whatever the user did since. <see cref="Kind"/> is never Live:
-/// a live dictation replays as a plain dictation of its audio. Built from a running take by <see cref="Take.ToReplay"/>.
-/// </summary>
-internal sealed record FailedRun(byte[] Wav, Core.RecordingKindName Kind, double Seconds, string StopKey = "",
-    string? Selection = null, string? QuickAction = null, IntPtr Target = default, Core.DictationTemplate? Template = null,
-    Core.ScreenshotImage? Screenshot = null, bool NoNewTextTemplate = false);
-
 /// <summary>
 /// One dictation / prompt / template / live run, from the hotkey press to the end of its processing. Everything the
 /// run owns lives here, so there is one place that sets it up (<c>TrayApp.StartRecording</c>, <see cref="Replay"/>) and
 /// one that tears it down: <see cref="Dispose"/>. Idle is "no take". Only touched on the UI thread (the live feed has
 /// its own lock, see <see cref="LiveRun"/>).
 /// </summary>
-internal sealed class Take : IDisposable
+internal sealed class Take : Core.IRecordingTake
 {
     private readonly ClipboardPaster _paster;
     private CancellationTokenSource? _selectionCts;
@@ -34,27 +22,13 @@ internal sealed class Take : IDisposable
         _paster = paster;
     }
 
-    /// <summary>Live is its own kind, but the hotkeys treat it as part of Diktieren (<see cref="Mode"/>).</summary>
+    /// <summary>Live is its own kind, but the hotkeys treat it as part of Diktieren (<see cref="Core.TakeProfile.Family"/>).</summary>
     public Core.RecordingKindName Kind { get; }
 
-    /// <summary>The hotkey family: what the engines, the overlay and "same key stops" see. Live is Dictate.</summary>
-    public Mode Mode => ModeOf(Kind);
+    /// <summary>What this kind of take is and does (family, selection copy, limit, screenshot, quick actions). Live's family is Dictate.</summary>
+    public Core.TakeProfile Profile => Core.TakeProfile.Of(Kind);
 
-    public static Mode ModeOf(Core.RecordingKindName kind) => kind switch
-    {
-        Core.RecordingKindName.Prompt => Mode.Prompt,
-        Core.RecordingKindName.Template => Mode.Template,
-        _ => Mode.Dictate,
-    };
-
-    public static Core.RecordingKindName KindOf(Mode mode) => mode switch
-    {
-        Mode.Prompt => Core.RecordingKindName.Prompt,
-        Mode.Template => Core.RecordingKindName.Template,
-        _ => Core.RecordingKindName.Dictate,
-    };
-
-    public TakePhase Phase { get; set; } = TakePhase.Recording;
+    public Core.TakePhase Phase { get; set; } = Core.TakePhase.Recording;
 
     /// <summary>The stored hotkey that started the run; shown in the overlay hint and the status text.</summary>
     public string StopKey { get; }
@@ -103,7 +77,7 @@ internal sealed class Take : IDisposable
     public string CheckpointMode => Core.RecordingKind.Format(Kind, Template?.Id);
 
     /// <summary>A take that runs kept audio from idle (<paramref name="shotAllowed"/>: screenshots may be off or offline since).</summary>
-    public static Take Replay(FailedRun run, ClipboardPaster paster, bool shotAllowed) => new(run.Kind, run.StopKey, paster)
+    public static Take Replay(Core.FailedRun run, ClipboardPaster paster, bool shotAllowed) => new(run.Kind, run.StopKey, paster)
     {
         Template = run.Template,
         NoNewTextTemplate = run.NoNewTextTemplate,
@@ -111,11 +85,11 @@ internal sealed class Take : IDisposable
         QuickAction = run.QuickAction,
         Shot = shotAllowed ? run.Screenshot : null,
         PasteTarget = run.Target,
-        Phase = TakePhase.Processing,
+        Phase = Core.TakePhase.Processing,
     };
 
-    /// <summary>What a retry needs. The one place a <see cref="FailedRun"/> is built from a running take.</summary>
-    public FailedRun ToReplay(byte[] wav, double seconds, string? selection) =>
+    /// <summary>What a retry needs. The one place a <see cref="Core.FailedRun"/> is built from a running take.</summary>
+    public Core.FailedRun ToReplay(byte[] wav, double seconds, string? selection) =>
         new(wav, Kind == Core.RecordingKindName.Live ? Core.RecordingKindName.Dictate : Kind, seconds, StopKey, selection,
             QuickAction, PasteTarget, Template, Shot, NoNewTextTemplate);
 
@@ -147,6 +121,6 @@ internal sealed class Take : IDisposable
         Cts?.Cancel();
         Cts?.Dispose();
         Cts = null;
-        Shot = null; // a failed run keeps its copy in the FailedRun
+        Shot = null; // a failed run keeps its copy in the Core.FailedRun
     }
 }

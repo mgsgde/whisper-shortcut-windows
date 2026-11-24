@@ -54,11 +54,11 @@ public sealed class OverlayTests : IDisposable
             float level = 0.6f;
             var states = new (string Name, Action Show)[]
             {
-                ("1-diktat", () => overlay.ShowRecording(Mode.Dictate, "Alt+1", TimeSpan.FromMinutes(10), () => level, () => 0.5f)),
-                ("2-prompt-liest", () => overlay.ShowRecording(Mode.Prompt, "Alt+2", TimeSpan.FromMinutes(10), () => level, () => 0.5f, quick)),
+                ("1-diktat", () => overlay.ShowRecording(Core.TakeProfile.Dictate, "Alt+1", TimeSpan.FromMinutes(10), () => level, () => 0.5f)),
+                ("2-prompt-liest", () => overlay.ShowRecording(Core.TakeProfile.Prompt, "Alt+2", TimeSpan.FromMinutes(10), () => level, () => 0.5f, quick)),
                 ("3-prompt-auswahl", () => overlay.SetSelection("Sehr geehrte Damen und Herren, anbei sende ich Ihnen die Unterlagen für das Projekt.")),
-                ("4-prompt-nichts", () => { overlay.ShowRecording(Mode.Prompt, "Alt+2", TimeSpan.FromMinutes(10), () => level, () => 0.5f, quick, screenshot: true); overlay.SetSelection(null); }),
-                ("5-vorlage", () => { overlay.ShowRecording(Mode.Template, "Alt+3", TimeSpan.FromMinutes(10), () => level, () => 0.5f, templateName: "Praxisnotiz"); overlay.SetSelection(null); }),
+                ("4-prompt-nichts", () => { overlay.ShowRecording(Core.TakeProfile.Prompt, "Alt+2", TimeSpan.FromMinutes(10), () => level, () => 0.5f, quick, screenshot: true); overlay.SetSelection(null); }),
+                ("5-vorlage", () => { overlay.ShowRecording(Core.TakeProfile.Template, "Alt+3", TimeSpan.FromMinutes(10), () => level, () => 0.5f, templateName: "Praxisnotiz"); overlay.SetSelection(null); }),
                 ("6-verarbeitung", () => overlay.ShowProcessing(Core.UserCopy.RecognizingInstruction)),
                 ("7-fertig", () => overlay.ShowDone("Eingefügt")),
                 ("8-warnung", () => overlay.ShowWarning(new[] { "Ibuprofen", "600 mg", "dreimal täglich" }, pasted: true)),

@@ -60,8 +60,8 @@ internal sealed partial class TrayApp
             var (engine, _) = _settings.Prompt.Effective(_settings.OfflineMode);
             _results.SetPrompt(new Core.PromptResult(DateTime.Now, instruction,
                 selection == null ? null : Core.FeedbackLinks.Truncated(selection, 500), response,
-                ReportModel(_settings.Prompt, _settings.OfflineLlmId), engine.ToString(), _take?.Shot != null,
-                HistoryFor(selection)?.Count ?? 0, _take?.QuickAction));
+                ReportModel(_settings.Prompt, _settings.OfflineLlmId), engine.ToString(), _rec.Current?.Shot != null,
+                HistoryFor(selection)?.Count ?? 0, _rec.Current?.QuickAction));
         }
         catch (Exception e)
         {

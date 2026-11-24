@@ -35,8 +35,8 @@ internal sealed partial class TrayApp
             }
 
             // Idle, so the press gate does not apply: the same entry as the tray menu.
-            OnHotkey(Mode.Dictate);
-            if (_take is not { Phase: TakePhase.Recording, Kind: Core.RecordingKindName.Dictate })
+            OnHotkey(Core.HotkeyFamily.Dictate);
+            if (_rec.Current is not { Phase: Core.TakePhase.Recording, Kind: Core.RecordingKindName.Dictate })
             {
                 SmokeFail($"ERROR: dictation did not start (state {PhaseName})", 1);
                 return;
