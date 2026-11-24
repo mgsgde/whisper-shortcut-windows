@@ -40,6 +40,7 @@ internal sealed partial class ChatWindow
         {
             _meetingStore.Changed -= OnMeetingsChanged;
             _meetingTips.Dispose();
+            _attachmentTips.Dispose();
         };
     }
 

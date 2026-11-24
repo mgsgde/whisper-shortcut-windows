@@ -164,9 +164,13 @@ internal sealed partial class ChatWindow
         return ms.ToArray();
     }
 
+    // One for every attachment chip: a new ToolTip per chip was never disposed when the chips were rebuilt.
+    private readonly ToolTip _attachmentTips = new();
+
     private void RefreshChips()
     {
         _chips.SuspendLayout();
+        _attachmentTips.RemoveAll();
         foreach (Control c in _chips.Controls) c.Dispose();
         _chips.Controls.Clear();
         foreach (var a in _pending)
@@ -177,7 +181,7 @@ internal sealed partial class ChatWindow
             {
                 AutoSize = true, Height = 28, Margin = new Padding(0, 0, 6, 4), AccessibleName = $"Anhang {a.FileName} entfernen",
             };
-            new ToolTip().SetToolTip(chip, $"{a.FileName} – klicken entfernt den Anhang");
+            _attachmentTips.SetToolTip(chip, $"{a.FileName} – klicken entfernt den Anhang");
             chip.Click += (_, _) =>
             {
                 _pending.Remove(attachment);
