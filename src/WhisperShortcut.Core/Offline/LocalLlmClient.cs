@@ -58,16 +58,20 @@ public sealed class LocalLlmClient
     /// <summary>
     /// Output-token limit of a dictation-template turn. WHY: a several-minute dictation comes back about as long as
     /// it went in (roughly 5-6k tokens for ten minutes of speech), so the 4096 default would cut it off; the
-    /// server runs with -c 16384, which holds this plus the transcript.
+    /// server runs with <see cref="LocalLlm.ContextTokens"/> (<c>-c</c>), which holds this plus the transcript.
     /// </summary>
     public const int TemplateMaxTokens = 8192;
+
+    /// <summary>Total deadline for a local meeting summary. A long transcript on CPU can take several minutes.</summary>
+    public static readonly TimeSpan SummaryDeadline = TimeSpan.FromMinutes(10);
 
     private readonly HttpClient _http;
 
     /// <summary>
-    /// How long one completion may sit with no answer (the Mac's stall watchdog). The caller
-    /// still uses <c>HttpClient.Timeout = Timeout.InfiniteTimeSpan</c> and cancels through the token.
-    /// Tests set this to a few hundred milliseconds.
+    /// Total deadline for one completion. The request is not streamed, so this bounds the whole answer,
+    /// not the gap between pieces. The caller still uses <c>HttpClient.Timeout = Timeout.InfiniteTimeSpan</c>
+    /// and cancels through the token. Tests set this to a few hundred milliseconds.
+    /// A local meeting summary passes <see cref="SummaryDeadline"/> instead of this default.
     /// </summary>
     public TimeSpan RequestTimeout { get; set; } = TimeSpan.FromSeconds(90);
 
@@ -78,7 +82,7 @@ public sealed class LocalLlmClient
     /// Runs one chat completion (greedy, thinking off) and returns the trimmed answer. An answer that hits
     /// <paramref name="maxTokens"/> throws instead of being returned cut off.
     /// </summary>
-    public async Task<string> CompleteAsync(Uri baseUrl, string system, string user, CancellationToken ct, int maxTokens = 4096)
+    public async Task<string> CompleteAsync(Uri baseUrl, string system, string user, CancellationToken ct, int maxTokens = 4096, TimeSpan? deadline = null)
     {
         var body = new JsonObject
         {
@@ -95,7 +99,7 @@ public sealed class LocalLlmClient
 
         string text;
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        timeout.CancelAfter(RequestTimeout);
+        timeout.CancelAfter(deadline ?? RequestTimeout);
         try
         {
             using var resp = await _http.PostAsync(new Uri(baseUrl, "v1/chat/completions"),
@@ -110,7 +114,7 @@ public sealed class LocalLlmClient
         }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested)
         {
-            Log.Error("local LLM timeout");
+            Log.Error("local LLM deadline exceeded");
             throw new LocalLlmException("Das lokale Sprachmodell hat nicht geantwortet. Details im Protokoll.");
         }
         catch (HttpRequestException ex)

@@ -165,7 +165,8 @@ public sealed class LlamaServerHost : IDisposable
             RedirectStandardError = true,
         };
         foreach (var a in new[] { "-m", _modelPath, "--host", "127.0.0.1", "--port", port.ToString(),
-                     "-c", "16384", "--jinja", "--no-webui", "-ngl", "99" })
+                     "-c", LocalLlm.ContextTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                     "--jinja", "--no-webui", "-ngl", "99" })
             psi.ArgumentList.Add(a);
 
         Process p;

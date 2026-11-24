@@ -220,12 +220,12 @@ internal sealed class OfflineEngine : IDisposable
     }
 
     /// <summary>Selection + spoken instruction (already transcribed) to the local language model.</summary>
-    public Task<string> PromptAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct) =>
+    public Task<string> PromptAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct, TimeSpan? deadline = null) =>
         CompleteAsync(Core.DictatePromptText.SystemPrompt(customSystemPrompt),
-            Core.DictatePromptText.LocalUserTurn(selection, instruction), 4096, ct);
+            Core.DictatePromptText.LocalUserTurn(selection, instruction), 4096, ct, deadline);
 
     /// <summary>A complete system prompt and user turn to the local language model, answer limited to <paramref name="maxTokens"/>.</summary>
-    public async Task<string> CompleteAsync(string systemPrompt, string userText, int maxTokens, CancellationToken ct)
+    public async Task<string> CompleteAsync(string systemPrompt, string userText, int maxTokens, CancellationToken ct, TimeSpan? deadline = null)
     {
         if (!LlmInstalled(SelectedLlm)) throw new Core.OfflineNotReadyException("Das Offline-Sprachmodell ist noch nicht geladen.");
         if (LlmUnsupportedCpu) throw new Core.LocalLlmException(Core.LlamaServerHost.UnsupportedCpuMessage);
@@ -240,7 +240,7 @@ internal sealed class OfflineEngine : IDisposable
         }
         try
         {
-            var answer = await _llm.CompleteAsync(baseUrl, systemPrompt, userText, ct, maxTokens).ConfigureAwait(false);
+            var answer = await _llm.CompleteAsync(baseUrl, systemPrompt, userText, ct, maxTokens, deadline).ConfigureAwait(false);
             server.MarkUsed();
             return answer;
         }

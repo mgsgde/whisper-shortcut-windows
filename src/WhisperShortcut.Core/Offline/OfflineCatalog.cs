@@ -17,6 +17,9 @@ public sealed record OfflineComponent(string Id, string DisplayName, string Dire
 public sealed record LocalLlm(string Id, string DisplayName, string Description,
     OfflineComponent Component, long MinRamBytes)
 {
+    /// <summary>Context window llama-server is started with (<c>-c</c>). One value for every local model.</summary>
+    public const int ContextTokens = 16384;
+
     /// <summary>Absolute path of the GGUF file.</summary>
     public string GgufPath => Path.Combine(Component.FullPath, Component.Files[0].RelativePath);
 }

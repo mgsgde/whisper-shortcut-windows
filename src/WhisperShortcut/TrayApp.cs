@@ -1860,7 +1860,7 @@ internal sealed partial class TrayApp : ApplicationContext
     private Task<string> SummarizeMeetingAsync(string transcript, CancellationToken ct)
     {
         if (_fakeGemini) return Task.FromResult("Hauptpunkte:\n- Testmeeting ohne Gemini");
-        return SummarizeMeetingWithModelAsync(Core.MeetingPrompts.Clip(transcript), ct); // TrayApp.Meetings.cs
+        return SummarizeMeetingWithModelAsync(Core.MeetingPrompts.Clip(transcript, _engines.TextEngine(EngineStep.Meeting)), ct); // TrayApp.Meetings.cs
     }
 
     // ---------------- glossary ----------------
