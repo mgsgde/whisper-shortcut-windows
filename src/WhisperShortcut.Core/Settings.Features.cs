@@ -6,10 +6,10 @@ namespace WhisperShortcut.Core;
 public sealed partial class Settings
 {
     /// <summary>Chosen Windows voice for Read Aloud (its name); "" = the voice of the Windows language.</summary>
-    public string ReadAloudVoiceSystem { get; set; } = "";
+    public string ReadAloudVoiceSystem { get; set; }
 
     /// <summary>The user's own Smart Rewrite instruction (Mac: Rewrite Prompt). Empty = <see cref="ReadAloud.DefaultRewritePrompt"/>.</summary>
-    public string ReadAloudRewritePrompt { get; set; } = "";
+    public string ReadAloudRewritePrompt { get; set; }
 
     /// <summary>The rewrite instruction actually sent.</summary>
     [JsonIgnore]
@@ -26,7 +26,7 @@ public sealed partial class Settings
     /// Where meeting chunks are transcribed, once the user picked it (<see cref="MeetingSpeechEngineExplicit"/>). Until then
     /// meetings follow the dictation engine: see <see cref="ConfiguredMeetingSpeechEngine"/>.
     /// </summary>
-    public ModelSelection MeetingTranscription { get; set; } = ModelSelection.Default(ModelStep.Transcription);
+    public ModelSelection MeetingTranscription { get; set; }
 
     /// <summary>
     /// The user picked the meeting engine in Einstellungen → Meetings (Mac: the meetings model key is set). False = meetings
@@ -42,13 +42,13 @@ public sealed partial class Settings
     /// Where the meeting summary is written and with which models (Mac default Gemini 3.5 Flash-Lite). Missing in an older file
     /// = the Dictate Prompt choice. Named like the engine key (meetingTextEngine): <see cref="MeetingSummary"/> is the on switch.
     /// </summary>
-    public ModelSelection MeetingText { get; set; } = ModelSelection.Default(ModelStep.Text) with { Gemini = MeetingOptions.DefaultSummaryModel };
+    public ModelSelection MeetingText { get; set; }
 
     /// <summary>Longest meeting chunk in seconds, one of <see cref="MeetingOptions.ChunkSeconds"/> (Mac Chunk Interval).</summary>
-    public int MeetingChunkSeconds { get; set; } = MeetingOptions.DefaultChunkSeconds;
+    public int MeetingChunkSeconds { get; set; }
 
     /// <summary>Ask „Langes Meeting“ after this many minutes; 0 = never (Mac Meeting Safeguard).</summary>
-    public int MeetingSafeguardMinutes { get; set; } = MeetingOptions.DefaultSafeguardMinutes;
+    public int MeetingSafeguardMinutes { get; set; }
 
     /// <summary>The meeting speech engine actually used: Offline-Modus overrides it with <see cref="Engine.Local"/>.</summary>
     [JsonIgnore]
@@ -61,16 +61,16 @@ public sealed partial class Settings
     // ---------------- Chat (Mac ChatSettingsTab) ----------------
 
     /// <summary>Who answers in the chat and with which models (Mac default Gemini 3.8 Flash). Missing in an older file = the Dictate Prompt choice.</summary>
-    public ModelSelection Chat { get; set; } = ModelSelection.Default(ModelStep.Text);
+    public ModelSelection Chat { get; set; }
 
     /// <summary>The user's own chat instruction. Empty = <see cref="ChatPrompts.DefaultSystemPrompt"/>.</summary>
-    public string ChatSystemPrompt { get; set; } = "";
+    public string ChatSystemPrompt { get; set; }
 
     /// <summary>Gemini answers with Google Search grounding and shows its sources (Mac: web search on by default).</summary>
-    public bool ChatWebSearch { get; set; } = true;
+    public bool ChatWebSearch { get; set; }
 
     /// <summary>Mac chatCloseOnFocusLoss: the chat closes when another app comes to the front (on by default; /pin keeps it).</summary>
-    public bool ChatCloseOnFocusLoss { get; set; } = true;
+    public bool ChatCloseOnFocusLoss { get; set; }
 
     /// <summary>Who answers in practice and with which model id ("local" on this PC): Offline-Modus overrides the provider.</summary>
     [JsonIgnore]

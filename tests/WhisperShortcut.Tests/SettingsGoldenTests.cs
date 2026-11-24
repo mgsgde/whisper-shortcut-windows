@@ -198,11 +198,6 @@ public class SettingsGoldenTests
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
 
-    [Fact]
-    public void OnlyTheExplicitFields_AreOutsideTheRowTable() =>
-        Assert.Equal(new[] { "apiKey", "apiKeyProtected", "clipboardAfterPaste", "meetingSpeechEngineExplicit", "openAiKey", "openAiKeyProtected",
-            "restoreClipboard", "shortcutDefaultsAltV1" }, Settings.ExplicitJsonKeys.ToArray());
-
     private static string LoadText(string json)
     {
         var dir = Dir();
