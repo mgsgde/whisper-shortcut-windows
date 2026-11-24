@@ -52,6 +52,14 @@ internal static class UpdateInstaller
                 Core.Log.Error("Update: staged exe path changed after re-verify");
                 return false;
             }
+            // Held from the re-check until the installer exits. FileShare.Read lets the elevated process
+            // read and start the exe, and denies a swap (write or delete) during the UAC prompt.
+            await using var locked = new FileStream(exe, FileMode.Open, FileAccess.Read, FileShare.Read);
+            if (locked.Length == 0)
+            {
+                Core.Log.Error("Update: staged exe is empty");
+                return false;
+            }
             bool elevate = !CanWriteNextToExe();
             Core.Log.Info($"Update: starting installer, elevation {(elevate ? "needed" : "not needed")}");
             var psi = new ProcessStartInfo(exe)

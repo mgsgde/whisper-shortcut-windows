@@ -25,9 +25,10 @@ internal sealed class DpapiProtector : Core.ISecretProtector
         }
         catch (Exception e) when (e is CryptographicException or FormatException)
         {
-            // Settings copied from another user or PC: the key can't be decrypted, ask for it again.
-            Core.Log.Error("API key could not be decrypted, treating as empty");
-            return "";
+            // Settings copied from another user or PC. Null means "cannot decrypt": Settings keeps the blob
+            // and writes it back until the user sets a new key. "" would be saved over it on the next write.
+            Core.Log.Error("API key could not be decrypted; the stored value is kept");
+            return null;
         }
     }
 }

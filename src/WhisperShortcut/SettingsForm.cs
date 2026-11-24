@@ -767,11 +767,10 @@ internal sealed partial class SettingsForm : FastShowForm
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
         var dirtyTimer = _applyTimer;
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
-        var combos = new[] { _mic, _llmChoice, _templateChoice, _punctuation, _dictateMode, _afterPaste, _updateChannel, _language, _temperature, _thinking }
-            .Concat(_dictateStep.Combos).Concat(_promptStep.Combos).ToArray();
+        // Every FluentCombo, not a hand-written list: Read Aloud and Meetings were missing from that list.
         dirtyTimer.Tick += (_, _) =>
         {
-            if (!_loaded || combos.Any(c => c.DroppedDown)) return;
+            if (!_loaded || AnyComboDropped(this)) return;
             bool edited = PollBindings(out bool moved);
             if (!edited) _holdSave = false;
             else if (moved) (_holdSave, _pendingSince) = (false, Environment.TickCount64);
@@ -804,6 +803,17 @@ internal sealed partial class SettingsForm : FastShowForm
             _meterTimer.Dispose();
             _sampleMenu.Dispose();
         };
+    }
+
+    /// <summary>True when any drop-down on the form is open. Walks every <see cref="FluentCombo"/>, including ones on a page built later.</summary>
+    private static bool AnyComboDropped(Control root)
+    {
+        foreach (Control child in root.Controls)
+        {
+            if (child is FluentCombo combo && combo.IsHandleCreated && combo.DroppedDown) return true;
+            if (AnyComboDropped(child)) return true;
+        }
+        return false;
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -905,8 +915,8 @@ internal sealed partial class SettingsForm : FastShowForm
         report.Click += (_, _) => ProblemReportWindow.Open(startOnGeneral: true);
         links.AddRow(SettingRow("Problem melden", "Schick dem Entwickler ein Problem, eine Idee oder eine Frage, samt deiner Konfiguration. "
             + $"Du siehst alles, bevor es gesendet wird. Oder schreib an {Core.FeedbackLinks.SupportEmail}.", report, ButtonWidth + 40, out _));
-        links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
-            LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
+        links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/" + Core.AppIdentity.GitHubRepo,
+            LinkButton("GitHub", "https://github.com/" + Core.AppIdentity.GitHubRepo), ButtonWidth, out _));
         info.Controls.Add(links);
 
         info.Controls.Add(Section("Lizenz"));
@@ -1447,15 +1457,12 @@ internal sealed partial class SettingsForm : FastShowForm
     {
         var before = gemini ? _settings.ApiKey : _settings.OpenAiKey;
         if (key == before || !_loaded) return false;
+        var snapshot = _settings.Capture();
         if (gemini) _settings.ApiKey = key; else _settings.OpenAiKey = key;
-        try
+        if (!_settings.TrySave(out var error))
         {
-            _settings.Save();
-        }
-        catch (Exception e)
-        {
-            Core.Log.Error($"Saving the checked key failed: {e.GetType().Name}");
-            if (gemini) _settings.ApiKey = before; else _settings.OpenAiKey = before;
+            _settings.Restore(snapshot);
+            Warn(error ?? Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", null));
             return false;
         }
         Core.Log.Info($"{(gemini ? "Gemini" : "OpenAI")} key saved after a successful check");
@@ -2084,18 +2091,14 @@ internal sealed partial class SettingsForm : FastShowForm
     {
         _keyProblem = KeyProblem();
         _keysOk = _keyProblem == null;
+        // Before the bindings are applied: a failed write must not leave those edits in the running app.
         var before = _settings.Capture();
         var written = _bindings.Where(b => b.Apply(_settings)).ToList();
-        try
+        if (!_settings.TrySave(out var error))
         {
-            _settings.Save();
-        }
-        catch (Exception e)
-        {
-            Core.Log.Error($"Saving settings failed: {e.GetType().Name}");
             _settings.Restore(before);
             // Said once, then in the status line: this runs after every edit.
-            var error = Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", e.Message);
+            error ??= Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", null);
             if (error != _lastSaveError) Warn(error);
             _lastSaveError = error;
             _holdSave = true; // the edits stay in the window; not tried again until the user edits something

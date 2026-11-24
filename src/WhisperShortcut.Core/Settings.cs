@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -16,9 +17,20 @@ public interface ISecretProtector
 /// <summary>The settings as <see cref="Settings.Capture"/> took them. Opaque: only <see cref="Settings.Restore"/> reads it.</summary>
 public sealed class SettingsState
 {
-    internal SettingsState(string json) => Json = json;
+    internal SettingsState(string json, string? retainedApiKeyBlob = null, string? retainedOpenAiKeyBlob = null)
+    {
+        Json = json;
+        RetainedApiKeyBlob = retainedApiKeyBlob;
+        RetainedOpenAiKeyBlob = retainedOpenAiKeyBlob;
+    }
 
     internal string Json { get; }
+
+    /// <summary>Protected blob kept because it could not be decrypted; null when the key was readable or empty.</summary>
+    internal string? RetainedApiKeyBlob { get; }
+
+    /// <summary>Protected blob kept because it could not be decrypted; null when the key was readable or empty.</summary>
+    internal string? RetainedOpenAiKeyBlob { get; }
 
     /// <summary>Never the content: it holds the API keys in the clear.</summary>
     public override string ToString() => nameof(SettingsState);
@@ -47,6 +59,11 @@ public sealed partial class Settings
 
     private readonly string _path;
     private readonly ISecretProtector _protector;
+    private string _apiKey = "";
+    private string _openAiKey = "";
+    // The on-disk blob when Unprotect failed. Written back unchanged until the user sets a new key.
+    private string? _retainedApiKeyBlob;
+    private string? _retainedOpenAiKeyBlob;
 
     private Settings(string path, ISecretProtector protector)
     {
@@ -59,10 +76,18 @@ public sealed partial class Settings
     public static string DefaultPath => AppIdentity.Current.SettingsPath; // Dev: "WhisperShortcut Dev"
 
     /// <summary>Gemini API key (plain in memory, protected on disk). Read at call time by GeminiClient.</summary>
-    public string ApiKey { get; set; } = "";
+    public string ApiKey
+    {
+        get => _apiKey;
+        set => SetKey(ref _apiKey, ref _retainedApiKeyBlob, value);
+    }
 
     /// <summary>OpenAI API key (plain in memory, protected on disk). Read at call time by OpenAiClient.</summary>
-    public string OpenAiKey { get; set; } = "";
+    public string OpenAiKey
+    {
+        get => _openAiKey;
+        set => SetKey(ref _openAiKey, ref _retainedOpenAiKeyBlob, value);
+    }
 
     /// <summary>Provider and models of speech recognition (Dictate). Use <see cref="EffectiveSpeechEngine"/> to decide where it runs.</summary>
     public ModelSelection Dictate { get; set; } = ModelSelection.Default(ModelStep.Transcription);
@@ -338,7 +363,10 @@ public sealed partial class Settings
         static string Normalize(string v) => v.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
     }
 
-    /// <summary>Loads the settings; a missing or corrupt file yields defaults (a corrupt file is kept as .bak).</summary>
+    /// <summary>
+    /// Loads the settings. A missing file yields defaults. An empty or corrupt file is kept as .bak and the
+    /// previous good file (<c>settings.json.prev</c>) is used before defaults.
+    /// </summary>
     public static Settings Load(string path, ISecretProtector protector)
     {
         var s = new Settings(path, protector);
@@ -348,23 +376,57 @@ public sealed partial class Settings
         // old defaults, not the new ones (Mac: the pin in ShortcutConfigManager.loadConfiguration), so an update never
         // moves the user's shortcuts. Also for an unreadable file: it existed, so this PC ran an earlier version.
         s.PinLegacyShortcuts();
+        if (!TryReadDto(path, out var dto, out var error))
+        {
+            Log.Error("settings.json empty or unreadable, trying settings.json.prev", error);
+            try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
+            if (TryReadDto(PreviousPath(path), out dto, out var prevError))
+            {
+                Log.Info("settings.json.prev loaded");
+                ApplyLoaded(s, dto!, protector);
+            }
+            else
+            {
+                Log.Error(prevError == null
+                    ? "settings.json.prev missing or empty, using defaults"
+                    : "settings.json.prev unreadable, using defaults", prevError);
+            }
+            return s;
+        }
+        ApplyLoaded(s, dto!, protector);
+        return s;
+    }
+
+    /// <summary>True when <paramref name="path"/> holds a settings object. Empty, missing and broken JSON are false.</summary>
+    private static bool TryReadDto(string path, out Dto? dto, out Exception? error)
+    {
+        dto = null;
+        error = null;
         try
         {
-            var dto = JsonSerializer.Deserialize<Dto>(File.ReadAllText(path), Json);
-            if (dto == null) return s;
-            // A leftover plaintext key field is imported by ApplyDto and must leave the file on the next write.
-            if (s.ApplyDto(dto, protector, exact: false))
-            {
-                try { s.Save(); } catch { }
-            }
+            if (!File.Exists(path)) return false;
+            var text = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            dto = JsonSerializer.Deserialize<Dto>(text, Json);
+            return dto != null;
         }
         catch (Exception ex)
         {
-            Log.Error("settings.json unreadable, using defaults", ex);
-            try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
+            error = ex;
+            return false;
         }
-        return s;
     }
+
+    private static void ApplyLoaded(Settings s, Dto dto, ISecretProtector protector)
+    {
+        // A leftover plaintext key field is imported by ApplyDto and must leave the file on the next write.
+        if (s.ApplyDto(dto, protector, exact: false))
+        {
+            try { s.Save(); } catch { }
+        }
+    }
+
+    private static string PreviousPath(string path) => path + ".prev";
 
     /// <summary>
     /// Takes the values of <paramref name="dto"/> over (the one place that knows how a stored file becomes settings). Returns true
@@ -421,14 +483,50 @@ public sealed partial class Settings
         }
     }
 
+    /// <summary>
+    /// Saves. On failure the in-memory settings return to the snapshot taken at the call and
+    /// <paramref name="error"/> is German text for the user (the same wording as the settings window).
+    /// A caller that changed settings and wants the earlier state back restores its own snapshot afterwards.
+    /// </summary>
+    public bool TrySave(out string? error)
+    {
+        var snapshot = Capture();
+        try
+        {
+            Save();
+            error = null;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            try { Restore(snapshot); }
+            catch (Exception restoreEx) { Log.Error("Restoring settings after a failed save failed", restoreEx); }
+            error = ex is DiskFullException disk
+                ? disk.Message
+                : UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", ex.Message);
+            Log.Error("Saving settings failed", ex);
+            return false;
+        }
+    }
+
     private void SaveCore()
     {
         var dir = Path.GetDirectoryName(_path);
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var dto = ToDto(_protector.Protect);
         var tmp = _path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
-        File.Move(tmp, _path, overwrite: true);
+        var json = JsonSerializer.Serialize(dto, Json);
+        using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            var bytes = Encoding.UTF8.GetBytes(json);
+            stream.Write(bytes, 0, bytes.Length);
+            stream.Flush(true); // the rename must not publish a buffer that a crash can leave empty
+        }
+        // A good current file becomes settings.json.prev. An empty or corrupt one must not replace that backup.
+        if (TryReadDto(_path, out _, out _))
+            File.Replace(tmp, _path, PreviousPath(_path), ignoreMetadataErrors: true);
+        else
+            File.Move(tmp, _path, overwrite: true);
     }
 
     /// <summary>
@@ -442,11 +540,49 @@ public sealed partial class Settings
     /// Everything that is saved, kept in memory (keys in the clear, never written anywhere), to put back with <see cref="Restore"/>
     /// when writing fails: built on the same Dto as the file, so a new setting is covered the day it gets its JSON field.
     /// </summary>
-    public SettingsState Capture() => new(JsonSerializer.Serialize(ToDto(key => key), Json));
+    public SettingsState Capture() => new(JsonSerializer.Serialize(ToDto(key => key), Json),
+        ApiKey.Length == 0 ? _retainedApiKeyBlob : null,
+        OpenAiKey.Length == 0 ? _retainedOpenAiKeyBlob : null);
 
     /// <summary>Puts every saved setting back as it was at <see cref="Capture"/>. Not saved; settings that are not persisted stay as they are.</summary>
-    public void Restore(SettingsState state) =>
+    public void Restore(SettingsState state)
+    {
         ApplyDto(JsonSerializer.Deserialize<Dto>(state.Json, Json)!, new PlainSecretProtector(), exact: true);
+        // The snapshot stores an undecryptable blob as the protected field. The plaintext protector reads that
+        // as a key; put the empty key and the blob back.
+        if (state.RetainedApiKeyBlob != null)
+        {
+            _apiKey = "";
+            _retainedApiKeyBlob = state.RetainedApiKeyBlob;
+        }
+        if (state.RetainedOpenAiKeyBlob != null)
+        {
+            _openAiKey = "";
+            _retainedOpenAiKeyBlob = state.RetainedOpenAiKeyBlob;
+        }
+    }
+
+    private static void SetKey(ref string field, ref string? retainedBlob, string? value)
+    {
+        var next = value ?? "";
+        if (field == next) return;
+        field = next;
+        retainedBlob = null; // a new value, including clearing a key the user could read, drops the old blob
+    }
+
+    private void KeepUndecryptable(bool openAi, string blob)
+    {
+        if (openAi)
+        {
+            _openAiKey = "";
+            _retainedOpenAiKeyBlob = blob;
+        }
+        else
+        {
+            _apiKey = "";
+            _retainedApiKeyBlob = blob;
+        }
+    }
 
     private Dto ToDto(Func<string, string> protect)
     {

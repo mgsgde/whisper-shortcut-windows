@@ -100,6 +100,9 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _checkUpdatesItem;
     private readonly ToolStripMenuItem _switchVersionItem;
     private CancellationTokenSource? _snipCts;
+    // The live-dictation drift measurement. Cancelled when another recording starts, so it does not
+    // keep the offline model busy (and so it is not tied to CancellationToken.None).
+    private CancellationTokenSource? _driftCts;
     private readonly MeetingController _meeting;
     private readonly McpService _mcp;
     private readonly ReadAloudController _readAloud;
@@ -938,6 +941,7 @@ internal sealed partial class TrayApp : ApplicationContext
         long micMs = feedback.ElapsedMilliseconds - beforeMic;
         Sounds.Start();
         take.Serial = ++_recordingSerial;
+        CancelDriftMeasurement();
         // Mac: the three most used of the user's quick instructions, in their Settings order; set before RefreshStatus registers Ctrl+1–3.
         if (mode == Mode.Prompt) take.Card = Core.QuickActionCard.Select(_settings.QuickActions, _quickUsage.Counts(DateTime.UtcNow));
         _take = take;
@@ -983,7 +987,6 @@ internal sealed partial class TrayApp : ApplicationContext
         Core.Log.Info(caret != readCaret
             ? $"LIVE-DICTATE: caret context from last dictation ({caret.LogKind})"
             : $"LIVE-DICTATE: caret context {caret.LogKind}");
-        _lastLive.Forget(null); // the new session records its own ending; the old memory is spent either way
         // Like Diktieren: "Nur gesprochen" applies offline, outside meetings (Live never runs in a meeting).
         var punctuation = Core.PunctuationModes.Effective(_settings.PunctuationMode, isOffline: true, duringMeeting: false);
         // The session exists before the recording starts, so a failed start (Take.Dispose) finds it and discards it.
@@ -995,6 +998,7 @@ internal sealed partial class TrayApp : ApplicationContext
             live.Dispose(); // refused before the take existed; no clipboard change yet: BeginLive was not called
             return;
         }
+        _lastLive.Forget(null); // only once the new session has started; a refusal keeps the previous ending
         live.Target = _take!.PasteTarget;
         _paster.BeginLive(_settings.RestoreClipboard);
         live.StartRetryTimer();
@@ -1119,7 +1123,12 @@ internal sealed partial class TrayApp : ApplicationContext
                 if (!keepCheckpoint) Core.RecordingCheckpoint.DiscardAll();
 
                 if (outcome.FailedPieces == 0 && outcome.Text.Length > 0 && !_fakeGemini)
-                    _ = MeasureLiveDriftAsync(outcome.Text, wav);
+                {
+                    var drift = new CancellationTokenSource();
+                    var previous = Interlocked.Exchange(ref _driftCts, drift);
+                    try { previous?.Cancel(); } catch (ObjectDisposedException) { }
+                    _ = MeasureLiveDriftAsync(outcome.Text, wav, drift);
+                }
                 return shown;
             });
     }
@@ -1128,23 +1137,38 @@ internal sealed partial class TrayApp : ApplicationContext
     /// Accuracy measurement for the Mac's falsifier: how far the piecewise text is from one decode of the whole
     /// recording. Counts only, never words. Skipped when the app is busy again.
     /// </summary>
-    private async Task MeasureLiveDriftAsync(string inserted, byte[] wav)
+    private void CancelDriftMeasurement()
+    {
+        try { _driftCts?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task MeasureLiveDriftAsync(string inserted, byte[] wav, CancellationTokenSource owned)
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(10));
+            await Task.Delay(TimeSpan.FromSeconds(10), owned.Token);
             if (!IsIdle)
             {
                 Core.Log.Info("LIVE-DICTATE: drift measurement skipped, the app is busy");
                 return;
             }
-            var whole = await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, CancellationToken.None);
+            var whole = await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, owned.Token);
             var (insertedWords, wholeWords, distance) = Core.LiveDictation.Drift(inserted, whole);
             Core.Log.Info($"LIVE-DICTATE: drift insertedWords={insertedWords} wholeFileWords={wholeWords} wordEditDistance={distance}");
+        }
+        catch (OperationCanceledException)
+        {
+            Core.Log.Info("LIVE-DICTATE: drift measurement cancelled");
         }
         catch (Exception e)
         {
             Core.Log.Info($"LIVE-DICTATE: drift measurement failed ({e.GetType().Name})");
+        }
+        finally
+        {
+            if (ReferenceEquals(_driftCts, owned)) _driftCts = null;
+            owned.Dispose();
         }
     }
 
@@ -1198,6 +1222,7 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         // The screenshot may be switched off or offline since. Nothing of the old recording is left to clean up: every
         // take ends in Dispose, which also drops its late-copy watch.
+        CancelDriftMeasurement();
         var take = _take = Take.Replay(run, _paster, Core.ScreenshotPolicy.Allowed(_settings));
         _ = ProcessAsync(take, run);
     }
@@ -2389,14 +2414,10 @@ internal sealed partial class TrayApp : ApplicationContext
             if (!_smokeSaveLogged) { _smokeSaveLogged = true; Core.Log.Info("Smoke: settings are not saved"); }
             return;
         }
-        try { _settings.Save(); }
-        catch (Exception e)
-        {
-            Core.Log.Error("Saving settings failed", e);
-            Notify("Speichern fehlgeschlagen",
-                e is Core.DiskFullException ? e.Message : "Die Einstellungen konnten nicht gespeichert werden.",
-                ToolTipIcon.Warning);
-        }
+        if (_settings.TrySave(out var error)) return;
+        Notify("Speichern fehlgeschlagen",
+            error ?? "Die Einstellungen konnten nicht gespeichert werden.",
+            ToolTipIcon.Warning);
     }
 
     private static void OpenLog()
@@ -2407,6 +2428,7 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void Quit()
     {
+        _paster.FlushPendingRestore(); // a paste's delayed clipboard restore must not die with the process
         _meeting.Shutdown(); // ends a running meeting properly; audio not transcribed yet stays on disk
         if (_take is { } running)
         {
@@ -2420,6 +2442,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _templateReplay.Clear();
         _replayExpiry.Dispose();
         _snipCts?.Cancel();
+        CancelDriftMeasurement();
         _shotExpiry.Dispose();
         _updateNoticeTimer.Dispose();
         _updates.Dispose();

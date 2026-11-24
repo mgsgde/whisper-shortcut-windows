@@ -261,14 +261,19 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         catch (JsonException) { return ""; }
     }
 
-    /// <summary>choices[0].message.content; "" when absent. A "length" finish throws, so a cut-off rewrite is never pasted over the selection.</summary>
+    /// <summary>
+    /// choices[0].message.content. A "length" finish throws, so a cut-off rewrite is never pasted over the selection.
+    /// A 200 that is not this shape throws <see cref="GeminiErrorKind.Malformed"/> instead of looking like silence.
+    /// An empty <c>content</c> string is a real empty reply and stays "".
+    /// </summary>
     internal static string ExtractChatText(string responseJson)
     {
         try
         {
             using var doc = JsonDocument.Parse(responseJson);
             if (!doc.RootElement.TryGetProperty("choices", out var choices)
-                || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0) return "";
+                || choices.ValueKind != JsonValueKind.Array || choices.GetArrayLength() == 0)
+                throw MalformedResponse();
             var choice = choices[0];
             if (choice.TryGetProperty("finish_reason", out var fr)
                 && fr.ValueKind == JsonValueKind.String && fr.GetString() == "length")
@@ -277,10 +282,17 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
                 throw new GeminiException("OpenAI", GeminiErrorKind.Truncated,
                     "Die Antwort ist zu lang geworden und wurde abgeschnitten. Bitte einen kleineren Teil markieren.");
             }
-            return choice.TryGetProperty("message", out var msg)
-                && msg.TryGetProperty("content", out var c) && c.ValueKind == JsonValueKind.String
-                ? c.GetString() ?? "" : "";
+            if (!choice.TryGetProperty("message", out var msg)
+                || !msg.TryGetProperty("content", out var c) || c.ValueKind != JsonValueKind.String)
+                throw MalformedResponse();
+            return c.GetString() ?? "";
         }
-        catch (JsonException) { return ""; }
+        catch (JsonException)
+        {
+            throw MalformedResponse();
+        }
     }
+
+    private static GeminiException MalformedResponse() =>
+        new("OpenAI", GeminiErrorKind.Malformed, "Die Antwort ließ sich nicht lesen. Bitte noch einmal versuchen.");
 }

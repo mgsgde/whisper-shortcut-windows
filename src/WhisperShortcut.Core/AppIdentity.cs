@@ -24,6 +24,9 @@ public sealed record AppIdentity(bool IsDev, string RoamingRoot, string LocalRoo
     public const string OfflineDeleteLockedReason =
         "In der Dev-Version gesperrt: Die normale App nutzt dieselben Offline-Modelle.";
 
+    /// <summary>GitHub repository this build is published from (<c>owner/name</c>). Scripts such as release.sh keep their own copy.</summary>
+    public const string GitHubRepo = "mgsgde/whisper-shortcut-windows";
+
     private const string NormalName = "WhisperShortcut";
     private const string DevName = "WhisperShortcut Dev";
 

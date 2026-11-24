@@ -312,6 +312,105 @@ public class SettingsTests
     }
 
     [Fact]
+    public void TrySave_WhenTheWriteFails_ReturnsGermanError_AndKeepsTheCallState()
+    {
+        var blocker = Path.GetTempFileName();
+        try
+        {
+            var path = Path.Combine(blocker, "settings.json");
+            var s = Settings.Load(path, new PlainSecretProtector());
+            var before = s.Capture();
+            s.ApiKey = "AIza-kept";
+            s.OfflineMode = true;
+            Assert.False(s.TrySave(out var error));
+            Assert.Contains("Einstellungen", error);
+            Assert.Equal("AIza-kept", s.ApiKey);
+            Assert.True(s.OfflineMode);
+            s.Restore(before);
+            Assert.Equal("", s.ApiKey);
+            Assert.False(s.OfflineMode);
+        }
+        finally
+        {
+            File.Delete(blocker);
+        }
+    }
+
+    [Fact]
+    public void TrySave_Success_WritesAndClearsTheError()
+    {
+        var path = TempSettingsFile("{}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.Glossary = new() { "Alpha" };
+        Assert.True(s.TrySave(out var error));
+        Assert.Null(error);
+        Assert.Contains("Alpha", File.ReadAllText(path));
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Save_FlushesAndKeepsThePreviousFile()
+    {
+        var path = TempSettingsFile("{}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.Glossary = new() { "Alpha" };
+        s.Save();
+        s.Glossary = new() { "Beta" };
+        s.Save();
+
+        Assert.Contains("Beta", File.ReadAllText(path));
+        Assert.Contains("Alpha", File.ReadAllText(path + ".prev"));
+        Assert.False(File.Exists(path + ".tmp"));
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Load_EmptyOrCorruptFile_UsesPreviousBeforeDefaults()
+    {
+        var path = TempSettingsFile("{}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.Glossary = new() { "Alpha" };
+        s.DictateHotkey = "Ctrl+Shift+X";
+        s.Save();
+        s.Glossary = new() { "Beta" };
+        s.Save();
+        File.WriteAllText(path, "");
+        var fromEmpty = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(new[] { "Alpha" }, fromEmpty.Glossary);
+        Assert.Equal("Ctrl+Shift+X", fromEmpty.DictateHotkey);
+
+        File.WriteAllText(path, "{ not json");
+        var fromCorrupt = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(new[] { "Alpha" }, fromCorrupt.Glossary);
+        Assert.True(File.Exists(path + ".bak"));
+
+        File.WriteAllText(path + ".prev", "still not json");
+        var fromNeither = Settings.Load(path, new PlainSecretProtector());
+        Assert.Empty(fromNeither.Glossary);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
+    public void Save_DoesNotReplacePreviousWithACorruptFile()
+    {
+        var path = TempSettingsFile("{}");
+        var s = Settings.Load(path, new PlainSecretProtector());
+        s.Glossary = new() { "Alpha" };
+        s.Save();
+        s.Glossary = new() { "Beta" };
+        s.Save();
+        File.WriteAllText(path, "{ not json");
+        var loaded = Settings.Load(path, new PlainSecretProtector());
+        Assert.Equal(new[] { "Alpha" }, loaded.Glossary);
+        loaded.Glossary = new() { "Gamma" };
+        loaded.Save();
+        Assert.Contains("Gamma", File.ReadAllText(path));
+        Assert.Contains("Alpha", File.ReadAllText(path + ".prev"));
+        Assert.DoesNotContain("not json", File.ReadAllText(path + ".prev"));
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Fact]
     public void UnprotectFailure_ClearsTheKey()
     {
         var path = TempSettingsFile("{\"apiKeyProtected\":\"x\",\"openAiKeyProtected\":\"y\"}");
@@ -328,6 +427,45 @@ public class SettingsTests
         var s = Settings.Load(path, new NullUnprotect());
         Assert.Equal("", s.ApiKey);
         Assert.Equal("", s.OpenAiKey);
+        Directory.Delete(Path.GetDirectoryName(path)!, true);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public void UndecryptableBlob_IsWrittenBackUntilTheUserSetsAKey(bool returnsNull)
+    {
+        ISecretProtector protector = returnsNull ? new NullUnprotect() : new ThrowingUnprotect();
+        var path = TempSettingsFile("{\"apiKeyProtected\":\"blob-gemini\",\"openAiKeyProtected\":\"blob-openai\"}");
+        var s = Settings.Load(path, protector);
+        Assert.Equal("", s.ApiKey);
+        Assert.Equal("", s.OpenAiKey);
+        s.Glossary = new() { "Alpha" };
+        s.Save();
+        var raw = File.ReadAllText(path);
+        Assert.Contains("\"apiKeyProtected\": \"blob-gemini\"", raw);
+        Assert.Contains("\"openAiKeyProtected\": \"blob-openai\"", raw);
+
+        var state = s.Capture();
+        s.ApiKey = "replaced";
+        s.Glossary = new() { "Beta" };
+        s.Restore(state);
+        Assert.Equal("", s.ApiKey);
+        Assert.Equal(new[] { "Alpha" }, s.Glossary);
+        s.Save();
+        raw = File.ReadAllText(path);
+        Assert.Contains("\"apiKeyProtected\": \"blob-gemini\"", raw);
+
+        s.ApiKey = "new-key";
+        s.Save();
+        raw = File.ReadAllText(path);
+        Assert.Contains("\"apiKeyProtected\": \"new-key\"", raw);
+        Assert.Contains("\"openAiKeyProtected\": \"blob-openai\"", raw);
+
+        s.OpenAiKey = "sk-new";
+        s.OpenAiKey = "";
+        s.Save();
+        Assert.Contains("\"openAiKeyProtected\": \"\"", File.ReadAllText(path));
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 

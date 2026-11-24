@@ -18,19 +18,19 @@ public sealed record UpdateInfo(string Version, string Url)
 public static class UpdateCheck
 {
     /// <summary>GitHub API: latest published (non-draft, non-prerelease) release.</summary>
-    public const string LatestReleaseApi = "https://api.github.com/repos/mgsgde/whisper-shortcut-windows/releases/latest";
+    public const string LatestReleaseApi = "https://api.github.com/repos/" + AppIdentity.GitHubRepo + "/releases/latest";
 
     /// <summary>Where <see cref="CheckAsync"/> asks; <c>--update-feed &lt;url&gt;</c> points it at a local test release (VM loop).</summary>
     public static string ApiUrl { get; set; } = LatestReleaseApi;
 
     /// <summary>GitHub API: all releases, newest first, prereleases included (channel Latest).</summary>
-    public const string ReleaseListApi = "https://api.github.com/repos/mgsgde/whisper-shortcut-windows/releases?per_page=30";
+    public const string ReleaseListApi = "https://api.github.com/repos/" + AppIdentity.GitHubRepo + "/releases?per_page=30";
 
     /// <summary>Where <see cref="CheckAsync"/> asks for channel Latest; settable so tests can point it elsewhere.</summary>
     public static string ListUrl { get; set; } = ReleaseListApi;
 
     /// <summary>Page to send the user to.</summary>
-    public const string ReleasesPage = "https://github.com/mgsgde/whisper-shortcut-windows/releases/latest";
+    public const string ReleasesPage = "https://github.com/" + AppIdentity.GitHubRepo + "/releases/latest";
 
     /// <summary>Reads <c>tag_name</c> (leading v/V stripped) and <c>html_url</c>; null on bad JSON or missing tag.</summary>
     public static UpdateInfo? Parse(string json)

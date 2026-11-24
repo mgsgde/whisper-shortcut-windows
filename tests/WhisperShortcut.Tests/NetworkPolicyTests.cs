@@ -20,7 +20,7 @@ public class NetworkPolicyTests
         Assert.Equal(allowed, NetworkPolicy.IsAllowedDownloadUrl(url));
 
     [Theory]
-    [InlineData("https://github.com/mgsgde/whisper-shortcut-windows/releases/latest", true)]
+    [InlineData(UpdateCheck.ReleasesPage, true)]
     [InlineData("http://github.com/x", false)]
     [InlineData("javascript:alert(1)", false)]
     [InlineData("file:///C:/Windows/notepad.exe", false)]

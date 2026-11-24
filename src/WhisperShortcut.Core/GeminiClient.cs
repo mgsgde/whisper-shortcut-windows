@@ -23,6 +23,8 @@ public enum GeminiErrorKind
     Server,
     /// <summary>The reply hit the output-token limit and is cut off (finishReason MAX_TOKENS).</summary>
     Truncated,
+    /// <summary>HTTP 200 whose body is not the expected reply. Shown as an error, not as "no speech".</summary>
+    Malformed,
     /// <summary>The provider account has no credit / billing set up; retrying cannot help. See <see cref="GeminiException.BillingUrl"/>.</summary>
     Billing,
 }
@@ -505,10 +507,11 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
 
     /// <summary>
     /// Visible text of candidates[0]: thought parts skipped, then a leaked English planning block
-    /// dropped (<see cref="TextCleanup.StripLeakedPlanning"/>, Mac #457). "" when absent.
+    /// dropped (<see cref="TextCleanup.StripLeakedPlanning"/>, Mac #457).
     /// With <paramref name="rejectTruncated"/> a MAX_TOKENS finish throws, so a cut-off rewrite is
     /// never pasted over the selection. A leaked <c>start_thought</c> marker inside a visible part
     /// is removed later by <see cref="TextCleanup.NormalizeReply"/>.
+    /// A 200 that is not this shape throws <see cref="GeminiErrorKind.Malformed"/> instead of looking like silence.
     /// </summary>
     internal static string ExtractText(string responseJson, bool rejectTruncated = false)
     {
@@ -516,7 +519,8 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         {
             using var doc = JsonDocument.Parse(responseJson);
             if (!doc.RootElement.TryGetProperty("candidates", out var cands)
-                || cands.ValueKind != JsonValueKind.Array || cands.GetArrayLength() == 0) return "";
+                || cands.ValueKind != JsonValueKind.Array || cands.GetArrayLength() == 0)
+                throw MalformedResponse("Gemini");
             if (rejectTruncated && cands[0].TryGetProperty("finishReason", out var fr)
                 && fr.ValueKind == JsonValueKind.String && fr.GetString() == "MAX_TOKENS")
             {
@@ -526,7 +530,8 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
             }
             if (!cands[0].TryGetProperty("content", out var content)
                 || !content.TryGetProperty("parts", out var parts)
-                || parts.ValueKind != JsonValueKind.Array) return "";
+                || parts.ValueKind != JsonValueKind.Array)
+                throw MalformedResponse("Gemini");
             var texts = new List<string>();
             foreach (var part in parts.EnumerateArray())
             {
@@ -535,11 +540,15 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
                     && t.GetString() is { } text)
                     texts.Add(text);
             }
+            if (texts.Count == 0) throw MalformedResponse("Gemini");
             return TextCleanup.StripLeakedPlanning(texts);
         }
         catch (JsonException)
         {
-            return "";
+            throw MalformedResponse("Gemini");
         }
     }
+
+    private static GeminiException MalformedResponse(string provider) =>
+        new(provider, GeminiErrorKind.Malformed, "Die Antwort ließ sich nicht lesen. Bitte noch einmal versuchen.");
 }

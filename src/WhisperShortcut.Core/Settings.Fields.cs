@@ -298,25 +298,44 @@ public sealed partial class Settings
         // Restore: a key the state does not hold is empty, not whatever the settings hold now (Load starts from "" anyway).
         if (exact) { ApiKey = ""; OpenAiKey = ""; }
         var rewrite = !string.IsNullOrEmpty(dto.ApiKeyPlain) || !string.IsNullOrEmpty(dto.OpenAiKeyPlain);
-        if (!string.IsNullOrEmpty(dto.ApiKeyProtected))
-        {
-            try { ApiKey = protector.Unprotect(dto.ApiKeyProtected) ?? ""; }
-            catch (Exception) { ApiKey = ""; }
-        }
-        else if (!string.IsNullOrEmpty(dto.ApiKeyPlain))
-        {
-            ApiKey = dto.ApiKeyPlain;
-        }
-        if (!string.IsNullOrEmpty(dto.OpenAiKeyProtected))
-        {
-            try { OpenAiKey = protector.Unprotect(dto.OpenAiKeyProtected) ?? ""; }
-            catch (Exception) { OpenAiKey = ""; }
-        }
-        else if (!string.IsNullOrEmpty(dto.OpenAiKeyPlain))
-        {
-            OpenAiKey = dto.OpenAiKeyPlain;
-        }
+        ApplyStoredKey(dto.ApiKeyProtected, dto.ApiKeyPlain, openAi: false, protector, exact);
+        ApplyStoredKey(dto.OpenAiKeyProtected, dto.OpenAiKeyPlain, openAi: true, protector, exact);
         return rewrite;
+    }
+
+    /// <summary>
+    /// A failed decrypt leaves the key empty and keeps <paramref name="protectedText"/> so the next save writes
+    /// that blob back. Null and a thrown exception both mean "cannot decrypt" (<see cref="ISecretProtector"/>).
+    /// </summary>
+    private void ApplyStoredKey(string? protectedText, string? plainText, bool openAi, ISecretProtector protector, bool exact)
+    {
+        if (!string.IsNullOrEmpty(protectedText))
+        {
+            string? plain = null;
+            var failed = false;
+            try { plain = protector.Unprotect(protectedText); }
+            catch (Exception) { failed = true; }
+            if (failed || plain == null)
+            {
+                KeepUndecryptable(openAi, protectedText);
+                return;
+            }
+            if (openAi) OpenAiKey = plain;
+            else ApiKey = plain;
+            if (openAi) _retainedOpenAiKeyBlob = null;
+            else _retainedApiKeyBlob = null;
+            return;
+        }
+        if (!string.IsNullOrEmpty(plainText))
+        {
+            if (openAi) OpenAiKey = plainText;
+            else ApiKey = plainText;
+            return;
+        }
+        if (!exact) return;
+        // The snapshot holds no key: drop a blob that belonged to the state we are leaving.
+        if (openAi) { _openAiKey = ""; _retainedOpenAiKeyBlob = null; }
+        else { _apiKey = ""; _retainedApiKeyBlob = null; }
     }
 
     /// <summary>
@@ -348,8 +367,9 @@ public sealed partial class Settings
     /// <summary>Writes the explicit fields onto the Dto (the table writes the rest).</summary>
     private void WriteExplicit(Dto dto, Func<string, string> protect)
     {
-        dto.ApiKeyProtected = ApiKey.Length == 0 ? "" : protect(ApiKey);
-        dto.OpenAiKeyProtected = OpenAiKey.Length == 0 ? "" : protect(OpenAiKey);
+        // Empty in memory with a retained blob: the user did not set a new key, so the stored ciphertext stays.
+        dto.ApiKeyProtected = ApiKey.Length == 0 ? (_retainedApiKeyBlob ?? "") : protect(ApiKey);
+        dto.OpenAiKeyProtected = OpenAiKey.Length == 0 ? (_retainedOpenAiKeyBlob ?? "") : protect(OpenAiKey);
         // Every shortcut value is written out, so from now on a missing field means the new default.
         dto.ShortcutDefaultsAltV1 = true;
         dto.RestoreClipboard = RestoreClipboard;

@@ -30,6 +30,7 @@ internal sealed class ClipboardPaster
     private ClipboardSnapshot? _pendingOriginal;
     private uint _pendingSequence;
     private CancellationTokenSource? _pendingRestore;
+    private bool _pendingClears;
 
     // Sequence number after our last clipboard write (text or restore): a change to it is not a copy.
     private uint _lastOwnWriteSequence;
@@ -182,6 +183,7 @@ internal sealed class ClipboardPaster
         _pendingRestore = restore;
         _pendingOriginal = original;
         _pendingSequence = ourSequence;
+        _pendingClears = afterPaste == Core.ClipboardAfterPaste.Clear;
 
         try { await Task.Delay(Core.ClipboardPasteGuard.PrePasteDelay, ct); }
         catch (OperationCanceledException)
@@ -221,9 +223,37 @@ internal sealed class ClipboardPaster
             // No restore wanted: the user's old text stays gone, and a later paste must not bring it back.
             _pendingRestore = null;
             _pendingOriginal = null;
+            _pendingClears = false;
             restore.Dispose();
         }
         return Core.PasteOutcome.Pasted;
+    }
+
+    /// <summary>
+    /// Settles a clipboard restore or clear that is still waiting out its delay. Quit calls this, so the
+    /// user's previous clipboard is not dropped when the process ends before the delay.
+    /// </summary>
+    public void FlushPendingRestore()
+    {
+        var self = _pendingRestore;
+        if (self == null) return;
+        var previous = _pendingOriginal;
+        var sequence = _pendingSequence;
+        var clears = _pendingClears;
+        if (Core.ClipboardPasteGuard.RestoreAllowed(sequence, GetClipboardSequenceNumber()))
+        {
+            if (clears)
+                Core.Log.Info(Clear() ? "Paste: cleared clipboard on quit" : "Paste: clearing the clipboard on quit failed");
+            else if (previous != null)
+                Core.Log.Info(Restore(previous) ? "Paste: restored previous clipboard on quit" : "Paste: restore on quit failed");
+        }
+        self.Cancel(); // the delayed task must not do it again
+        if (_pendingRestore == self)
+        {
+            _pendingRestore = null;
+            _pendingOriginal = null;
+            _pendingClears = false;
+        }
     }
 
     /// <summary>Puts text on the clipboard without pasting (tray menu: "Letzten Text kopieren").</summary>
