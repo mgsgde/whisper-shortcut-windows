@@ -265,6 +265,10 @@ public sealed partial class Settings
         // ---- Offline, paste, sounds, updates, tour ----
         Flag("offlineMode", s => s.OfflineMode, (s, v) => s.OfflineMode = v, false, missing: _ => false),
         Text("offlineLlmId", s => s.OfflineLlmId, (s, v) => s.OfflineLlmId = v, "", missing: _ => ""),
+        // Missing = no GPU failure remembered (try the GPU). An empty object is the same as missing.
+        Items<OfflineLlmGpuFallback?, GpuFallbackDto?>("offlineLlmGpuFallback",
+            s => s.OfflineLlmGpuFallback, (s, v) => s.OfflineLlmGpuFallback = v, null, missing: _ => null,
+            ReadGpuFallback, WriteGpuFallback),
         Flag("autoPaste", s => s.AutoPaste, (s, v) => s.AutoPaste = v, true, missing: _ => true),
         // Off for a fresh install (the Mac has no tones); an older file without the field keeps them.
         Flag("sounds", s => s.Sounds, (s, v) => s.Sounds = v, false, missing: _ => true),

@@ -50,17 +50,24 @@ public class SettingsTests
         var old = Settings.Load(path, new PlainSecretProtector());
         Assert.False(old.OfflineMode);
         Assert.Equal("", old.OfflineLlmId);
+        Assert.Null(old.OfflineLlmGpuFallback);
         Assert.Equal("Ctrl+Shift+K", old.GlossaryHotkey);
 
         old.OfflineMode = true;
         old.OfflineLlmId = "qwen3-4b-instruct-2507";
+        old.OfflineLlmGpuFallback = new OfflineLlmGpuFallback("0.7.17", "qwen.gguf");
         old.Save();
-        Assert.Contains("\"offlineMode\": true", File.ReadAllText(path));
-        Assert.Contains("\"offlineLlmId\": \"qwen3-4b-instruct-2507\"", File.ReadAllText(path));
+        var json = File.ReadAllText(path);
+        Assert.Contains("\"offlineMode\": true", json);
+        Assert.Contains("\"offlineLlmId\": \"qwen3-4b-instruct-2507\"", json);
+        Assert.Contains("\"offlineLlmGpuFallback\"", json);
+        Assert.Contains("\"appVersion\": \"0.7.17\"", json);
+        Assert.Contains("\"modelFile\": \"qwen.gguf\"", json);
         Assert.Contains("\"glossaryHotkey\":", File.ReadAllText(path));
         var t = Settings.Load(path, new PlainSecretProtector());
         Assert.True(t.OfflineMode);
         Assert.Equal("qwen3-4b-instruct-2507", t.OfflineLlmId);
+        Assert.Equal(new OfflineLlmGpuFallback("0.7.17", "qwen.gguf"), t.OfflineLlmGpuFallback);
         Assert.Equal("Ctrl+Shift+K", t.GlossaryHotkey);
         Directory.Delete(dir, true);
     }

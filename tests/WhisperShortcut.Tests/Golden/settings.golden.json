@@ -57,6 +57,10 @@
   "meetingSummary": false,
   "offlineMode": true,
   "offlineLlmId": "llm-x",
+  "offlineLlmGpuFallback": {
+    "appVersion": "9.9.9",
+    "modelFile": "fallback.gguf"
+  },
   "quickActions": [
     "K\u00FCrzer",
     "H\u00F6flicher"

@@ -83,6 +83,7 @@ public class SettingsGoldenTests
         s.MeetingSummary = false;
         s.OfflineMode = true;
         s.OfflineLlmId = "llm-x";
+        s.OfflineLlmGpuFallback = new OfflineLlmGpuFallback("9.9.9", "fallback.gguf");
         s.QuickActions = new() { "Kürzer", "Höflicher" };
         s.AutoPaste = false;
         s.Sounds = true;

@@ -240,26 +240,41 @@ internal sealed class OfflineEngine : IDisposable
         var server = await EnsureServerAsync(ct).ConfigureAwait(false);
         server.MarkUsed();
         // A model switch or Delete can stop the server between the start and here: start it again once.
-        var baseUrl = server.BaseUrl;
-        if (baseUrl == null)
+        if (server.BaseUrl == null)
         {
             server = await EnsureServerAsync(ct).ConfigureAwait(false);
-            baseUrl = server.BaseUrl ?? throw new Core.LocalLlmException("Das Sprachmodell wurde beendet. Bitte noch einmal versuchen.");
+            server.MarkUsed();
+            if (server.BaseUrl == null)
+                throw new Core.LocalLlmException("Das Sprachmodell wurde beendet. Bitte noch einmal versuchen.");
         }
         try
         {
-            var answer = await _llm.CompleteAsync(baseUrl, systemPrompt, userText, ct, maxTokens).ConfigureAwait(false);
-            server.MarkUsed();
-            return answer;
+            return await CompleteOnceAsync(server, systemPrompt, userText, maxTokens, ct).ConfigureAwait(false);
         }
         catch (Core.LocalLlmException e)
         {
             // Give the process a moment to report its exit code; it dies while answering.
             await Task.Delay(500, CancellationToken.None).ConfigureAwait(false);
-            if (!server.CrashedOnUnsupportedCpu) throw;
-            RememberUnsupportedCpu();
-            throw new Core.LocalLlmException(Core.LlamaServerHost.UnsupportedCpuMessage, e);
+            if (server.CrashedOnUnsupportedCpu)
+            {
+                RememberUnsupportedCpu();
+                throw new Core.LocalLlmException(Core.LlamaServerHost.UnsupportedCpuMessage, e);
+            }
+            // The GPU process died under this one request. One CPU restart, then the same request again.
+            if (!server.ShouldRetryOnCpu(e)) throw;
+            Core.Log.Info("llama-server died during a completion, retrying on CPU");
+            await server.RestartOnCpuAsync(ct).ConfigureAwait(false);
+            return await CompleteOnceAsync(server, systemPrompt, userText, maxTokens, ct).ConfigureAwait(false);
         }
+    }
+
+    private async Task<string> CompleteOnceAsync(Core.LlamaServerHost server, string systemPrompt, string userText, int maxTokens, CancellationToken ct)
+    {
+        server.MarkUsed();
+        var baseUrl = server.BaseUrl ?? throw new Core.LocalLlmException("Das Sprachmodell wurde beendet. Bitte noch einmal versuchen.");
+        var answer = await _llm.CompleteAsync(baseUrl, systemPrompt, userText, ct, maxTokens).ConfigureAwait(false);
+        server.MarkUsed();
+        return answer;
     }
 
     private static void RememberUnsupportedCpu()
@@ -365,7 +380,16 @@ internal sealed class OfflineEngine : IDisposable
         if (_server != null && _serverModelId != llm.Id) StopServer(); // model switched in the settings
         var exe = Core.OfflineCatalog.LlamaServerExe(Arch);
         if (_server == null) PlaceVcRuntime(Path.GetDirectoryName(exe)!);
-        _server ??= new Core.LlamaServerHost(exe, llm.GgufPath, _job.Assign);
+        if (_server == null)
+        {
+            var file = Path.GetFileName(llm.GgufPath);
+            var persisted = Core.OfflineLlmGpuFallback.Matches(
+                _settings.OfflineLlmGpuFallback, UpdateService.CurrentVersion, file);
+            _server = new Core.LlamaServerHost(exe, llm.GgufPath, _job.Assign,
+                persisted ? Core.LlamaStartMode.Cpu : Core.LlamaStartMode.Auto,
+                persisted ? Core.LlamaStartReason.Persisted : Core.LlamaStartReason.Default,
+                () => RememberGpuFallback(file));
+        }
         _serverModelId = llm.Id;
         var sw = System.Diagnostics.Stopwatch.StartNew();
         bool wasRunning = _server.IsRunning;
@@ -378,6 +402,23 @@ internal sealed class OfflineEngine : IDisposable
         }
         if (!wasRunning) Core.Log.Info($"llama-server ready with {llm.Id} after {sw.ElapsedMilliseconds} ms");
         return _server;
+    }
+
+    // The CPU retry became healthy. Remember it so the next prewarm does not spend a failed GPU start.
+    private void RememberGpuFallback(string modelFile)
+    {
+        var version = UpdateService.CurrentVersion;
+        if (Core.OfflineLlmGpuFallback.Matches(_settings.OfflineLlmGpuFallback, version, modelFile)) return;
+        _settings.OfflineLlmGpuFallback = new Core.OfflineLlmGpuFallback(version, modelFile);
+        try
+        {
+            _settings.Save();
+            Core.Log.Info($"llama-server CPU fallback stored ({version}, {modelFile})");
+        }
+        catch (Exception ex)
+        {
+            Core.Log.Error("Could not store the CPU fallback", ex);
+        }
     }
 
     /// <summary>

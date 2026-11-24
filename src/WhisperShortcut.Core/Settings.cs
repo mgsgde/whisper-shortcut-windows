@@ -277,6 +277,12 @@ public sealed partial class Settings
     /// <summary>Id of the chosen local LLM (see <see cref="OfflineCatalog"/>); empty = recommended for this PC.</summary>
     public string OfflineLlmId { get; set; } = "";
 
+    /// <summary>
+    /// Set when llama.cpp could not fit this model on the GPU. While it names the running app version and the
+    /// model file, the server starts on CPU. An update or a different model tries the GPU once more.
+    /// </summary>
+    public OfflineLlmGpuFallback? OfflineLlmGpuFallback { get; set; }
+
     /// <summary>Quick instructions offered while recording (see <see cref="QuickActionList"/>).</summary>
     public List<string> QuickActions { get; set; } = new(QuickActionList.Defaults);
 
@@ -465,6 +471,23 @@ public sealed partial class Settings
         [JsonPropertyName("hotkey")] public string? Hotkey { get; set; }
     }
 
+    private sealed class GpuFallbackDto
+    {
+        [JsonPropertyName("appVersion")] public string? AppVersion { get; set; }
+        [JsonPropertyName("modelFile")] public string? ModelFile { get; set; }
+    }
+
+    private static OfflineLlmGpuFallback? ReadGpuFallback(GpuFallbackDto? dto)
+    {
+        var version = dto?.AppVersion;
+        var file = dto?.ModelFile;
+        if (string.IsNullOrWhiteSpace(version) || string.IsNullOrWhiteSpace(file)) return null;
+        return new OfflineLlmGpuFallback(version, file);
+    }
+
+    private static GpuFallbackDto? WriteGpuFallback(OfflineLlmGpuFallback? value) =>
+        value == null ? null : new GpuFallbackDto { AppVersion = value.AppVersion, ModelFile = value.ModelFile };
+
     private sealed partial class Dto
     {
         [JsonPropertyName("apiKeyProtected")] public string? ApiKeyProtected { get; set; }
@@ -526,6 +549,7 @@ public sealed partial class Settings
         [JsonPropertyName("meetingSummary")] public bool? MeetingSummary { get; set; }
         [JsonPropertyName("offlineMode")] public bool? OfflineMode { get; set; }
         [JsonPropertyName("offlineLlmId")] public string? OfflineLlmId { get; set; }
+        [JsonPropertyName("offlineLlmGpuFallback")] public GpuFallbackDto? OfflineLlmGpuFallback { get; set; }
         [JsonPropertyName("quickActions")] public List<string>? QuickActions { get; set; }
         [JsonPropertyName("autoPaste")] public bool? AutoPaste { get; set; }
         [JsonPropertyName("sounds")] public bool? Sounds { get; set; }
@@ -537,4 +561,21 @@ public sealed partial class Settings
         [JsonPropertyName("welcomeStep")] public int? WelcomeStep { get; set; }
         [JsonPropertyName("moveOfferDismissed")] public List<string>? MoveOfferDismissed { get; set; }
     }
+}
+
+/// <summary>
+/// Remembers that this app version could not fit <see cref="ModelFile"/> on the GPU, so the next start skips the GPU attempt.
+/// </summary>
+/// <param name="AppVersion">The app version that fell back, e.g. "0.7.17" (no git hash).</param>
+/// <param name="ModelFile">File name of the GGUF, not the full path.</param>
+public sealed record OfflineLlmGpuFallback(string AppVersion, string ModelFile)
+{
+    /// <summary>
+    /// True when <paramref name="saved"/> was recorded for this app version and this model file.
+    /// Anything else (no record, an update, a different model, a blank value) tries the GPU once.
+    /// </summary>
+    public static bool Matches(OfflineLlmGpuFallback? saved, string? appVersion, string? modelFile) =>
+        saved is { AppVersion: { Length: > 0 } version, ModelFile: { Length: > 0 } file }
+        && string.Equals(version, appVersion, StringComparison.Ordinal)
+        && string.Equals(file, modelFile, StringComparison.Ordinal);
 }

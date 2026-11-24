@@ -46,6 +46,7 @@ MeetingText = ModelSelection { Engine = Gemini, Gemini = gemini-3.5-flash-lite, 
 MeetingTranscription = ModelSelection { Engine = Gemini, Gemini = gemini-3.1-flash-lite, OpenAi = gpt-transcribe }
 Microphone = ""
 MoveOfferDismissed = []
+OfflineLlmGpuFallback = null
 OfflineLlmId = ""
 OfflineMode = False
 OpenAiKey = ""

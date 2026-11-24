@@ -20,3 +20,13 @@ public sealed class UnsupportedCpuException : LocalLlmException
     /// <summary>Creates the error with the user message.</summary>
     public UnsupportedCpuException(string message) : base(message) { }
 }
+
+/// <summary>
+/// llama-server exited before it became healthy. Same user text as <see cref="LocalLlmException"/>;
+/// the type is how the host tells a GPU-fit failure (retry on CPU) from a timeout, a missing DLL or an unsupported CPU.
+/// </summary>
+public sealed class LlamaStartupExitException : LocalLlmException
+{
+    /// <summary>Creates the error with the user message.</summary>
+    public LlamaStartupExitException(string message) : base(message) { }
+}

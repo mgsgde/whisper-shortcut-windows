@@ -50,6 +50,7 @@ public class SettingsRoundTripTests
         [nameof(Settings.MeetingChunkSeconds)] = _ => 30,
         [nameof(Settings.MeetingSafeguardMinutes)] = _ => 120,
         [nameof(Settings.WelcomeStep)] = _ => 3,
+        [nameof(Settings.OfflineLlmGpuFallback)] = _ => new OfflineLlmGpuFallback("9.9.9", "fallback.gguf"),
         [nameof(Settings.Templates)] = _ => new List<DictationTemplate>
         {
             new() { Id = "11111111-1111-1111-1111-111111111111", Name = "Name", Instructions = "Anweisung", Hotkey = Hotkey },

@@ -294,6 +294,53 @@ public class LocalLlmTests
     public async Task Host_BadExecutable_ThrowsLocalLlmException()
     {
         using var host = new LlamaServerHost("/definitely/not/here", "x.gguf");
-        await Assert.ThrowsAsync<LocalLlmException>(() => host.EnsureStartedAsync(CancellationToken.None));
+        var e = await Assert.ThrowsAsync<LocalLlmException>(() => host.EnsureStartedAsync(CancellationToken.None));
+        Assert.IsNotType<LlamaStartupExitException>(e);
+    }
+
+    [Fact]
+    public void BuildArgs_Auto_LetsLlamaCppFitLayers()
+    {
+        var args = LlamaServerHost.BuildArgs("model.gguf", 12345, LlamaStartMode.Auto);
+        Assert.Equal(
+            new[] { "-m", "model.gguf", "--host", "127.0.0.1", "--port", "12345", "-c", "16384", "--jinja", "--no-webui" },
+            args);
+        Assert.DoesNotContain("-ngl", args);
+        Assert.DoesNotContain("99", args);
+    }
+
+    [Fact]
+    public void BuildArgs_Cpu_ForcesCpu()
+    {
+        var args = LlamaServerHost.BuildArgs("model.gguf", 9, LlamaStartMode.Cpu);
+        Assert.Equal(
+            new[] { "-m", "model.gguf", "--host", "127.0.0.1", "--port", "9", "-c", "16384", "--jinja", "--no-webui",
+                "-ngl", "0", "--device", "none" },
+            args);
+    }
+
+    [Fact]
+    public void GpuFallback_MatchesSameVersionAndModelOnly()
+    {
+        var saved = new OfflineLlmGpuFallback("0.7.17", "qwen.gguf");
+        Assert.True(OfflineLlmGpuFallback.Matches(saved, "0.7.17", "qwen.gguf"));
+        Assert.False(OfflineLlmGpuFallback.Matches(saved, "0.7.18", "qwen.gguf"));
+        Assert.False(OfflineLlmGpuFallback.Matches(saved, "0.7.17", "other.gguf"));
+        Assert.False(OfflineLlmGpuFallback.Matches(null, "0.7.17", "qwen.gguf"));
+        Assert.False(OfflineLlmGpuFallback.Matches(new OfflineLlmGpuFallback("", "qwen.gguf"), "", "qwen.gguf"));
+        Assert.False(OfflineLlmGpuFallback.Matches(saved, "0.7.17", null));
+    }
+
+    [Fact]
+    public void ShouldRetryOnCpu_OnlyWhenTheGpuServerDied()
+    {
+        const int illegal = unchecked((int)0xC000001D);
+        const int missingDll = unchecked((int)0xC0000135);
+        Assert.True(LlamaServerHost.ShouldRetryOnCpu(LlamaStartMode.Auto, exitCode: 1, connectionError: false));
+        Assert.True(LlamaServerHost.ShouldRetryOnCpu(LlamaStartMode.Auto, exitCode: null, connectionError: true));
+        Assert.False(LlamaServerHost.ShouldRetryOnCpu(LlamaStartMode.Auto, illegal, connectionError: true));
+        Assert.False(LlamaServerHost.ShouldRetryOnCpu(LlamaStartMode.Auto, missingDll, connectionError: true));
+        Assert.False(LlamaServerHost.ShouldRetryOnCpu(LlamaStartMode.Auto, exitCode: null, connectionError: false));
+        Assert.False(LlamaServerHost.ShouldRetryOnCpu(LlamaStartMode.Cpu, exitCode: 1, connectionError: true));
     }
 }
