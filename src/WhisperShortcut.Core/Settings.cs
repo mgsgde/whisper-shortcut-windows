@@ -144,8 +144,23 @@ public sealed partial class Settings
         _ => null,
     };
 
-    /// <summary>Vocabulary terms that bias transcription spelling.</summary>
-    public List<string> Glossary { get; set; } = new();
+    private volatile List<string> _glossary = new();
+
+    /// <summary>
+    /// Vocabulary terms that bias transcription spelling. Copy-on-write: a published list is never mutated, every
+    /// change builds a new list and swaps the whole value (<see cref="TryAddGlossaryTerm"/>, or assign a new list),
+    /// so the meeting worker can copy it off the UI thread while the glossary hotkey adds an entry.
+    /// </summary>
+    public List<string> Glossary { get => _glossary; set => _glossary = value; }
+
+    /// <summary>Appends the cleaned selection to a copy of the glossary and swaps it in only when it was added.</summary>
+    public GlossaryAddResult TryAddGlossaryTerm(string? selection, out string term)
+    {
+        var next = _glossary.ToList();
+        var result = GlossaryEdit.TryAdd(next, selection, out term);
+        if (result == GlossaryAddResult.Added) _glossary = next;
+        return result;
+    }
 
     /// <summary>
     /// The template ("Vorlage") for new texts in Dictate Prompt; appended to the editing prompt and applied only

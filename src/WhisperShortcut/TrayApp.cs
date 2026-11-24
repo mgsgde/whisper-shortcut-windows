@@ -1905,7 +1905,7 @@ internal sealed partial class TrayApp : ApplicationContext
         try
         {
             string? selection = await _paster.CopySelectionAsync();
-            var result = Core.GlossaryEdit.TryAdd(_settings.Glossary, selection, out string term);
+            var result = _settings.TryAddGlossaryTerm(selection, out string term);
             Core.Log.Info($"Glossary add: {result} ({term.Length} chars)");
             switch (result)
             {
