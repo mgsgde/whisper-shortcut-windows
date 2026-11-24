@@ -42,6 +42,21 @@ public class MeetingStoreTests : IDisposable
     }
 
     [Fact]
+    public void Create_and_MarkEnded_raise_Changed_and_Live_follows()
+    {
+        var n = 0;
+        _store.Changed += () => n++;
+        var m = _store.Create(T0, "mic");
+        Assert.Equal(1, n);
+        Assert.Equal(m.Id, _store.Live()!.Id);
+        _store.SetDuration(m.Id, 3);
+        Assert.Equal(1, n);
+        _store.MarkEnded(m.Id, T0.AddMinutes(1));
+        Assert.Equal(2, n);
+        Assert.Null(_store.Live());
+    }
+
+    [Fact]
     public void AppendChunk_in_order_appends_and_keeps_the_revision()
     {
         var m = _store.Create(T0, "mic");

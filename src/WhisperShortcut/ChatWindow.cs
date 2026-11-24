@@ -60,12 +60,13 @@ internal sealed partial class ChatWindow : FastShowForm
 
     /// <param name="toggleMeeting">/meeting: starts or stops the Live-Meeting.</param>
     /// <param name="save">Writes the settings after /model, /gemini, /gpt.</param>
-    public ChatWindow(Core.Settings settings, Core.ChatClient client, OfflineEngine offline, Action toggleMeeting, Func<bool> meetingActive,
-        Action openSettings, Action save)
+    public ChatWindow(Core.Settings settings, Core.ChatClient client, OfflineEngine offline, Core.MeetingStore meetings,
+        Action toggleMeeting, Func<bool> meetingActive, Action openSettings, Action save)
     {
         _settings = settings;
         _client = client;
         _offline = offline;
+        _meetingStore = meetings;
         _toggleMeeting = toggleMeeting;
         _meetingActive = meetingActive;
         _openSettings = openSettings;

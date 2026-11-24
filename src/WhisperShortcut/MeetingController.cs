@@ -101,6 +101,9 @@ internal sealed class MeetingController : IDisposable
     /// <summary>A meeting records or is finishing.</summary>
     public bool IsActive => _session != null;
 
+    /// <summary>The one meeting store. The chat window reads the same instance and listens for <see cref="Core.MeetingStore.Changed"/>.</summary>
+    public Core.MeetingStore Store => _store;
+
     /// <summary>Hotkey and "Meeting starten / beenden".</summary>
     public void Toggle()
     {

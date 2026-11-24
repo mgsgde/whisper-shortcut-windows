@@ -17,7 +17,7 @@ internal sealed partial class TrayApp
     {
         if (_chatWindow is { IsDisposed: false } w) return w;
         _chatClient ??= new Core.ChatClient(() => _settings.ApiKey, () => _settings.OpenAiKey);
-        return _chatWindow = new ChatWindow(_settings, _chatClient, _offline, _meeting.Toggle, () => _meeting.IsActive, ShowSettings, TrySave);
+        return _chatWindow = new ChatWindow(_settings, _chatClient, _offline, _meeting.Store, _meeting.Toggle, () => _meeting.IsActive, ShowSettings, TrySave);
     }
 
     /// <summary>The chat shortcut: opens the chat in front, or closes it when it is in front (Mac toggleChat).</summary>

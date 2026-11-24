@@ -140,6 +140,15 @@ public sealed class MeetingStore
     /// <summary>The newest meeting that is recording, or null.</summary>
     public MeetingInfo? Live() => List().FirstOrDefault(m => m.Status == MeetingStatus.Recording);
 
+    /// <summary>A meeting was created, ended or recovered. Raised on the caller thread, outside the store lock.</summary>
+    public event Action? Changed;
+
+    private void RaiseChanged()
+    {
+        try { Changed?.Invoke(); }
+        catch (Exception ex) { Log.Warn($"Meetings: Changed handler threw ({ex.GetType().Name})"); }
+    }
+
     /// <summary>The whole transcript.md; null for an unknown meeting.</summary>
     public string? ReadTranscript(string id)
     {
@@ -297,6 +306,7 @@ public sealed class MeetingStore
     /// <summary>Creates the folder (id "Meeting-yyyy-MM-dd-HHmmss", "-2", "-3" … when taken), meeting.json and the transcript header.</summary>
     public MeetingInfo Create(DateTimeOffset startedAt, string audioMode, string? title = null)
     {
+        MeetingInfo created;
         lock (_gate)
         {
             Directory.CreateDirectory(Root);
@@ -321,8 +331,10 @@ public sealed class MeetingStore
             };
             WriteTextAtomic(Path.Combine(folder, TranscriptFile), "# Meeting " + stamp + "\n\n");
             WriteDto(folder, dto);
-            return ToInfo(id, folder, dto);
+            created = ToInfo(id, folder, dto);
         }
+        RaiseChanged();
+        return created;
     }
 
     /// <summary>Start of a chunk in milliseconds. <see cref="AppendChunk"/> treats one key as one block.</summary>
@@ -476,11 +488,15 @@ public sealed class MeetingStore
     public void SetTitle(string id, string title) => Update(id, d => d.Title = title.Trim());
 
     /// <summary>Marks the meeting as ended at <paramref name="endedAt"/>.</summary>
-    public void MarkEnded(string id, DateTimeOffset endedAt) => Update(id, d =>
+    public void MarkEnded(string id, DateTimeOffset endedAt)
     {
-        d.Status = "ended";
-        d.EndedAt = endedAt;
-    });
+        Update(id, d =>
+        {
+            d.Status = "ended";
+            d.EndedAt = endedAt;
+        });
+        RaiseChanged();
+    }
 
     /// <summary>
     /// Meetings still marked Recording (except <paramref name="exceptId"/>) belong to a killed app: they become
@@ -507,7 +523,11 @@ public sealed class MeetingStore
                 if (info != null) changed.Add(info);
             }
         }
-        if (changed.Count > 0) Log.Info($"Meetings: {changed.Count} interrupted meeting(s) recovered");
+        if (changed.Count > 0)
+        {
+            Log.Info($"Meetings: {changed.Count} interrupted meeting(s) recovered");
+            RaiseChanged();
+        }
         return changed;
     }
 
