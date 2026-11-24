@@ -75,10 +75,10 @@ public sealed class TakeTests
     public void A_replay_take_is_processing_and_clipboard_only_and_keeps_what_the_run_had()
     {
         var template = new Core.DictationTemplate { Id = "t1", Name = "Befund", Instructions = "x" };
-        var run = new FailedRun(new byte[] { 9 }, Core.RecordingKindName.Template, 3, "Ctrl+Shift+T", "sel", "kürzen", new IntPtr(7), template,
+        var run = new Core.FailedRun(new byte[] { 9 }, Core.RecordingKindName.Template, 3, "Ctrl+Shift+T", "sel", "kürzen", new IntPtr(7), template,
             new Core.ScreenshotImage(new byte[] { 1 }, "image/png"), NoNewTextTemplate: true);
         var replay = Take.Replay(run, new ClipboardPaster(IntPtr.Zero), shotAllowed: false);
-        Assert.Equal(TakePhase.Processing, replay.Phase);
+        Assert.Equal(Core.TakePhase.Processing, replay.Phase);
         Assert.True(replay.ClipboardOnly);
         Assert.Null(replay.Shot); // screenshots were switched off since
         Assert.Equal("kürzen", replay.QuickAction);
