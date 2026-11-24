@@ -13,6 +13,7 @@ internal sealed partial class TrayApp : ApplicationContext
 {
     private readonly string? _testWav;
     private readonly bool _fakeGemini;
+    private readonly Core.DictationPipeline _pipeline;
     /// <summary>Set by <c>--smoke-dictate</c>: where the headless CI run writes its text. Null in normal runs.</summary>
     private readonly string? _smokeOut;
     private readonly NotifyIcon _icon;
@@ -142,6 +143,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _openAi = new Core.OpenAiClient(_settings);
         _offline = new OfflineEngine(_settings);
         _engines = new EngineSet(_settings, new LocalEngines(_offline), _gemini, _openAi);
+        _pipeline = new Core.DictationPipeline(new PipelineHost(this));
         _offline.Prewarm();
         PrepareSpeechGate();
 
@@ -1289,19 +1291,18 @@ internal sealed partial class TrayApp : ApplicationContext
                     if (take.Mode == Mode.Prompt && take.Selection != null) selection = await take.Selection;
                 }
 
-                string text = take.Mode switch
-                {
-                    Mode.Dictate => await DictateAsync(wav, seconds, ct),
-                    Mode.Template => await TemplateAsync(wav, seconds, selection, retry != null, ct),
-                    _ => await PromptAsync(wav, seconds, selection, retry != null, ct),
-                };
-                ct.ThrowIfCancellationRequested();
+                var input = new Core.TakeInput(Take.KindOf(take.Mode), wav, seconds, selection, retry != null,
+                    take.Template, take.NoNewTextTemplate, take.QuickAction, take.Shot, () => take.LateWatch.Arrived);
+                var result = await _pipeline.RunAsync(input, new Core.SyncProgress<string>(SetBusy), ct);
+                take.ReportRaw = result.RawText;
+                take.Unsupported = result.Unsupported;
+                var text = result.Text;
 
                 if (text.Length == 0)
                 {
                     Core.RecordingCheckpoint.DiscardAll();
                     if (take.Mode == Mode.Dictate && _welcomeForm is { TakesTryResult: true } silentTour && take.PasteTarget == silentTour.Handle) silentTour.ShowTryResult("");
-                    return null; // already reported
+                    return result.Stop; // the one place a "nothing to do" exit is shown
                 }
                 _lastFailed = null; // this run worked; the old failure is history
                 Core.RecordingCheckpoint.DiscardAll();
@@ -1437,262 +1438,6 @@ internal sealed partial class TrayApp : ApplicationContext
         catch (Exception e) { Core.Log.Error($"Opening the billing page failed: {e.GetType().Name}"); }
     }
 
-    private async Task<string> DictateAsync(byte[] wav, double seconds, CancellationToken ct)
-    {
-        var punctuation = PunctuationFor(Core.TranscribePurpose.Dictation);
-        string raw = _fakeGemini
-            ? Backstops(Core.TranscribePurpose.Dictation, "das ist ein test diktat aus der virtuellen maschine")
-            : await TranscribeAsync(Core.TranscribePurpose.Dictation, wav, ct);
-        string text = Core.TextCleanup.DiscardImplausible(
-            Core.TextCleanup.ForDictation(raw, addTrailingPeriod: punctuation == Core.PunctuationMode.Automatic, audioSeconds: seconds), seconds);
-        // A chatbot answer ("please provide the audio") or our own instruction is no dictation.
-        if (Core.TextCleanup.LooksLikeRefusal(text)) text = "";
-        Core.Log.Info($"Dictate: {raw.Length} chars raw, {text.Length} chars after cleanup, punctuation {punctuation}");
-        if (_take != null) _take.ReportRaw = raw;
-        if (text.Length == 0) Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
-        return text;
-    }
-
-    private async Task<string> PromptAsync(byte[] wav, double seconds, string? selection, bool isRetry, CancellationToken ct)
-    {
-        // A Ctrl+C that came after the 2 s deadline means there is a selection we never read: writing a
-        // new text now would replace it. (A retry has its own, finished selection.)
-        ThrowIfLateCopy("Prompt", selection, isRetry);
-        Core.Log.Info($"Prompt: {(selection == null ? "no selection (compose)" : $"selection {selection.Length} chars")}");
-
-        string systemPrompt = Core.DictatePromptText.BuildSystemPrompt(_settings.PromptModeSystemPrompt,
-            _take!.NoNewTextTemplate ? null : _settings.DictatePromptTemplate) ?? "";
-        if (_take!.QuickAction is { } quick) return await QuickActionAsync(quick, wav, seconds, selection, systemPrompt, ct);
-
-        if (_fakeGemini)
-        {
-            return selection == null
-                ? "Angebot (Testmodus ohne Gemini)"
-                : $"Bearbeitet (Testmodus ohne Gemini): {selection.Length} Zeichen markiert";
-        }
-
-        // Only Gemini hears the instruction itself, and only up to the Dictate Prompt limit (inline request); a local or
-        // OpenAI text model, or a longer take (a template recording replayed without its template), gets it transcribed.
-        // +1 s: a recording stopped by the limit can run a buffer past it and must still go inline.
-        if (Core.DictatePromptText.UsesTranscript(_settings.EffectiveTextEngine, seconds, MicAudioSource.PromptLimit.TotalSeconds + 1))
-            return await PromptFromTranscriptAsync(wav, selection, systemPrompt, ct);
-        if (!HasSpeech(wav))
-        {
-            Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
-            return "";
-        }
-        SetBusy(Core.UserCopy.EditingText);
-        var answer = _gemini.PromptAsync(wav, selection, systemPrompt, ct, HistoryFor(selection), _take!.Shot);
-
-        // "Mhm.", "Äh." or a lone "0" is not an instruction. With a selection Gemini hears the
-        // audio and would edit on a guess, so transcribe in parallel (the no-selection path
-        // already did this for a bare edit command) and paste nothing. With or without a selection.
-        // With a selection the transcript is only that check, so a failed transcription must not
-        // fail an edit Gemini answers fine: log it and go on without the check.
-        string instruction = "";
-        bool instructionKnown = true;
-        if (selection == null)
-            instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct);
-        else
-        {
-            try { instruction = await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct); }
-            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch (Exception ex)
-            {
-                Core.Log.Warn($"Prompt: filler check transcription failed, continuing without it: {ex.GetType().Name}");
-                instructionKnown = false;
-            }
-        }
-        if (instructionKnown && Core.FillerOnlyInstruction.Refuses(instruction))
-        {
-            Core.Log.Info("Prompt: instruction was only a filler, refused");
-            _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
-            Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
-            return "";
-        }
-        if (selection == null && Core.BareEditCommand.Matches(instruction))
-        {
-            // Nothing selected and the instruction is only "korrigiere" / "mach das freundlicher":
-            // there is nothing to edit, and the model would invent a text.
-            Core.Log.Info("Prompt: bare edit command without selection, refused");
-            _ = answer.ContinueWith(t => _ = t.Exception, TaskScheduler.Default); // observe, discard
-            Sounds.Error();
-            Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
-            return "";
-        }
-
-        // With a selection the transcript is only the filler check. Gemini heard the instruction
-        // itself, so the reply is not compared with the transcript.
-        string text = Reply(await answer, selection == null ? new[] { instruction, systemPrompt } : null);
-        Core.Log.Info($"Prompt: answer {text.Length} chars");
-        text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
-        GuardPromptReply(text, selection, instructionKnown && instruction.Length > 0 ? instruction : null);
-        RememberPrompt(selection, selection == null ? instruction : Core.PromptConversationMemory.SpokenPlaceholder, text,
-            reportInstruction: instructionKnown ? instruction : Core.PromptConversationMemory.SpokenPlaceholder);
-        return text;
-    }
-
-    /// <summary>
-    /// A dictation template run. The recording is transcribed in chunks (so a long dictation is not cut off) and the
-    /// transcript goes as text to the text engine, with the template's instructions as the whole system prompt.
-    /// A selection is formatted into the template; without one the dictation is.
-    /// </summary>
-    private async Task<string> TemplateAsync(byte[] wav, double seconds, string? selection, bool isRetry, CancellationToken ct)
-    {
-        var template = _take!.Template ?? throw new InvalidOperationException("Template run without a template");
-        // Same guard as Dictate Prompt: a late Ctrl+C means a selection we never read.
-        ThrowIfLateCopy("Template", selection, isRetry);
-
-        if (wav.Length > 0 && seconds >= 1.0) SetBusy(Core.UserCopy.Transcribing);
-        string transcript = wav.Length == 0 || seconds < 1.0 ? ""
-            : await TranscribeBodyAsync(Core.TranscribePurpose.TemplateBody, wav, ct);
-        transcript = transcript.Trim();
-        if (Core.TextCleanup.LooksLikeRefusal(transcript)) transcript = "";
-        Core.Log.Info($"Template: transcript {transcript.Length} chars, selection {selection?.Length ?? 0} chars");
-        if (transcript.Length == 0 && !Core.TemplatePrompt.AcceptsEmptyTranscript(selection))
-        {
-            Notify(Core.UserCopy.NoSpeechTitle, Core.UserCopy.NoSpeechText, ToolTipIcon.Info);
-            return "";
-        }
-
-        // Nothing from Dictate Prompt's stored prompt, the template for new texts or the quick instructions.
-        string system = Core.TemplatePrompt.SystemPrompt(template.Instructions);
-        string user = Core.TemplatePrompt.UserTurn(selection, transcript);
-
-        SetBusy(Core.UserCopy.TemplateBusy(template.DisplayName));
-        var sw = Stopwatch.StartNew();
-        string raw;
-        if (_fakeGemini)
-        {
-            raw = "Anamnese: Kopfschmerzen seit drei Tagen\nBefund: unauffällig\nTherapie: Ibuprofen 400 mg";
-        }
-        else
-        {
-            raw = await PromptProvider().CompleteTextAsync(system, user, _take!.Shot, ct);
-        }
-        string text = Reply(raw, new[] { transcript, selection }, template.Instructions, keepMarkdown: true);
-        Core.Log.Info($"Template: transcript {transcript.Length} chars, selection {selection?.Length ?? 0} chars, answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
-        text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
-        return text;
-    }
-
-    /// <summary>
-    /// Dictate Prompt with a text model that cannot hear (local, as on the Mac, or OpenAI): the
-    /// instruction is transcribed with the chosen speech engine and sent as text with the selection.
-    /// </summary>
-    private async Task<string> PromptFromTranscriptAsync(byte[] wav, string? selection, string systemPrompt, CancellationToken ct)
-    {
-        SetBusy(Core.UserCopy.Transcribing);
-        string instruction = (await TranscribeAsync(Core.TranscribePurpose.Instruction, wav, ct)).Trim();
-        Core.Log.Info($"Prompt via transcript ({_settings.EffectiveTextEngine}): instruction {instruction.Length} chars");
-        // "Mhm." is the same as nothing heard: do not send it on, and do not paste.
-        if (instruction.Length == 0 || Core.FillerOnlyInstruction.Refuses(instruction))
-        {
-            if (instruction.Length > 0) Core.Log.Info("Prompt: instruction was only a filler, refused");
-            Notify(Core.UserCopy.NoSpeechTitle, "In der Aufnahme war keine Anweisung zu hören. Sprich sie noch einmal.", ToolTipIcon.Info);
-            return "";
-        }
-        // A mis-transcription ("0", "Oh.", a subtitle timestamp) is no instruction: nothing is sent to the model.
-        // A near-miss of exactly one saved quick prompt becomes that prompt (Mac #459).
-        if (Core.PromptInstructionGuard.IsNotUnderstood(instruction))
-        {
-            Core.Log.Warn($"Prompt: transcribed instruction ({instruction.Length} chars) is not an instruction, model not called");
-            throw new Core.InstructionNotUnderstoodException();
-        }
-        if (Core.PromptInstructionGuard.Snapped(instruction, _settings.QuickActions) is { } snapped && snapped != instruction)
-        {
-            Core.Log.Info("Prompt: transcribed instruction snapped to a saved quick prompt");
-            instruction = snapped;
-        }
-        if (selection == null && Core.BareEditCommand.Matches(instruction))
-        {
-            Core.Log.Info("Prompt: bare edit command without selection, refused");
-            Sounds.Error();
-            Notify(Core.UserCopy.NothingSelectedTitle, Core.UserCopy.NothingSelectedText, ToolTipIcon.Info);
-            return "";
-        }
-
-        SetBusy(Core.UserCopy.EditingText);
-        var sw = Stopwatch.StartNew();
-        string text = Reply(await PromptTextAsync(selection, instruction, systemPrompt, ct), new[] { instruction, selection, systemPrompt });
-        Core.Log.Info($"Prompt via transcript: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
-        text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
-        GuardPromptReply(text, selection, instruction);
-        RememberPrompt(selection, instruction, text);
-        return text;
-    }
-
-    /// <summary>
-    /// A quick instruction (Ctrl+1–3 or a click while recording). Whatever was said is transcribed and
-    /// goes along as text, so this path always has a transcript to check the reply against.
-    /// </summary>
-    private async Task<string> QuickActionAsync(string quick, byte[] wav, double seconds, string? selection, string systemPrompt, CancellationToken ct)
-    {
-        // Under a second nothing was said yet; a recognizer would only guess at the silence.
-        if (seconds >= 1.0) SetBusy(Core.UserCopy.Transcribing);
-        string transcript = seconds < 1.0 ? ""
-            : await TranscribeBodyAsync(Core.TranscribePurpose.QuickActionTranscript, wav, ct);
-        var request = Core.QuickActionRequest.Build(quick, selection, transcript);
-        Core.Log.Info($"Prompt quick action: transcript {transcript.Trim().Length} chars, selection {selection?.Length ?? 0} chars");
-        if (request == null)
-        {
-            Sounds.Error();
-            Notify("Nichts zum Anwenden", $"Erst Text markieren oder etwas diktieren, dann {Core.QuickActionCard.KeyRange} drücken.", ToolTipIcon.Info);
-            return "";
-        }
-        var (target, instruction, fromDictation) = request.Value;
-        SetBusy(Core.UserCopy.QuickActionBusy(quick));
-
-        string raw;
-        var sw = Stopwatch.StartNew();
-        if (_fakeGemini)
-        {
-            // Test mode: Markdown and an invented drug, so the plain-text cleanup and the warning show.
-            raw = "## Anamnese\nKopfschmerzen seit drei Tagen\n\n**Therapie:**\n* Ibuprofen 400 mg";
-        }
-        else
-        {
-            raw = await PromptTextAsync(target, instruction, systemPrompt, ct, compose: fromDictation);
-        }
-        string text = Reply(raw, new[] { transcript, selection, quick, systemPrompt });
-        Core.Log.Info($"Prompt quick action: answer {text.Length} chars in {sw.ElapsedMilliseconds} ms");
-        text = Core.ReplyGuards.RequireReply(text, "Das Sprachmodell hat keinen Text geliefert.");
-        GuardPromptReply(text, fromDictation ? null : target, instruction);
-        // A dictated target is a compose turn: remembered without a selection, like the Mac.
-        RememberPrompt(fromDictation ? null : target, instruction, text);
-        return text;
-    }
-
-    /// <summary>
-    /// Leaked reasoning or a runaway reply is never pasted over the selection (Mac #459). The retry keeps the
-    /// recording. <paramref name="instruction"/> is null when the spoken instruction is unknown.
-    /// </summary>
-    private static void GuardPromptReply(string reply, string? selection, string? instruction)
-    {
-        var verdict = Core.PromptReplyGuard.Check(reply, selection, instruction);
-        if (verdict == Core.PromptReplyGuard.Verdict.Ok) return;
-        Core.Log.Warn($"Prompt: reply withheld ({verdict}): {reply.Length} chars, selection {selection?.Length ?? 0} chars, instruction {instruction?.Length ?? 0} chars");
-        throw new Core.PromptReplyRejectedException();
-    }
-
-    /// <summary>
-    /// Cleans a language-model reply for a plain text field and, when there is a transcript to compare
-    /// with, collects the words nobody dictated (<see cref="Take.Unsupported"/>, shown after the paste).
-    /// The template text is NOT a source: example content in it (a drug, a dose) must still be flagged when
-    /// nobody dictated it. Only a template's label words pass (<paramref name="templateInstructions"/>).
-    /// A template run keeps its Markdown (<paramref name="keepMarkdown"/>), as on the Mac.
-    /// </summary>
-    private string Reply(string raw, string?[]? sources, string? templateInstructions = null, bool keepMarkdown = false)
-    {
-        string text = Core.TextCleanup.NormalizeReply(raw);
-        if (!keepMarkdown) text = Core.TextCleanup.StripMarkdown(text);
-        if (sources == null || text.Length == 0) return text;
-        var unsupported = _take!.Unsupported = Core.DictationFidelityCheck.UnsupportedWords(text, sources, templateInstructions);
-        // Count only: the words are patient data and stay out of the log.
-        if (unsupported.Count > 0) Core.Log.Info($"Prompt: {unsupported.Count} word(s) in the reply are not in the dictation, warning shown");
-        return text;
-    }
-
     /// <summary>
     /// Speech recognition for a purpose with the chosen engine: Parakeet on this PC, or Gemini / OpenAI, then the
     /// backstops <see cref="Core.TranscriptionPolicy"/> lists for that purpose and engine.
@@ -1708,10 +1453,6 @@ internal sealed partial class TrayApp : ApplicationContext
             : await TranscribeOnlineAsync(_engines.Speech(step), wav, ct, policy);
         return policy.GlossaryBackstops ? GlossaryBackstops(raw, policy.EchoStrip) : raw;
     }
-
-    /// <summary>The transcript a template or quick instruction works on (test mode: a fixed sentence, no recognizer).</summary>
-    private async Task<string> TranscribeBodyAsync(Core.TranscribePurpose purpose, byte[] wav, CancellationToken ct) =>
-        _fakeGemini ? "Patient klagt über Kopfschmerzen seit drei Tagen" : await TranscribeAsync(purpose, wav, ct);
 
     private static EngineStep StepFor(Core.TranscribePurpose purpose) =>
         purpose == Core.TranscribePurpose.MeetingChunk ? EngineStep.Meeting : EngineStep.Dictation;
@@ -1735,25 +1476,6 @@ internal sealed partial class TrayApp : ApplicationContext
     }
 
     /// <summary>
-    /// A Ctrl+C that came after the 2 s deadline means there is a selection we never read: writing a new text now
-    /// would replace it. (A retry has its own, finished selection.)
-    /// </summary>
-    private void ThrowIfLateCopy(string what, string? selection, bool isRetry)
-    {
-        if (selection != null || isRetry || _take?.LateWatch.Arrived != true) return;
-        Core.Log.Info($"{what}: selection arrived after the deadline, not composing over it");
-        throw new Core.SelectionUnreadableException();
-    }
-
-    /// <summary>The text provider of Dictate Prompt, templates and quick instructions; says "loading" while the local model is not up yet.</summary>
-    private Core.ITextProvider PromptProvider()
-    {
-        if (_settings.EffectiveTextEngine == Core.Engine.Local && !_offline.LlmReady)
-            SetBusy(Core.UserCopy.LoadingLlm);
-        return _engines.Text(EngineStep.Prompt)!;
-    }
-
-    /// <summary>
     /// Earlier online edit turns to send with this request. Compose and Offline Mode send none
     /// (Mac SpeechService.includesPromptHistory).
     /// </summary>
@@ -1773,14 +1495,6 @@ internal sealed partial class TrayApp : ApplicationContext
         _promptMemory.Append(selection, instruction, response);
     }
 
-    /// <summary>A text-only Dictate Prompt call with the chosen text engine.</summary>
-    private Task<string> PromptTextAsync(string? selection, string instruction, string systemPrompt, CancellationToken ct, bool compose = false)
-    {
-        // compose: the target is the fresh transcript, not a selection, so no earlier turns go along.
-        var history = compose ? null : HistoryFor(selection);
-        return PromptProvider().PromptTextAsync(selection, instruction, systemPrompt, ct, history, _take!.Shot);
-    }
-
     /// <summary>
     /// Gemini or OpenAI. Gemini is cut above 2.5 min, OpenAI above 11 min (25 MB upload limit).
     /// Pieces are cut in pauses, four at a time: one request would hit Gemini's inline size limit
@@ -1798,7 +1512,7 @@ internal sealed partial class TrayApp : ApplicationContext
             async (piece, c) =>
             {
                 // Nothing but room noise: Gemini would answer with the glossary. Also saves the request.
-                if (!HasSpeech(piece)) return "";
+                if (!Core.DictationPipeline.HasSpeech(piece)) return "";
                 var chunk = piece;
                 if (policy.SpeechGate)
                 {
@@ -1827,15 +1541,6 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         if (_fakeGemini || _settings.EffectiveSpeechEngine == Core.Engine.Local) return;
         _offline.PrepareSpeechGate();
-    }
-
-    /// <summary>Speech gate for a recording or chunk going to Gemini or OpenAI; the file source of --test-wav passes through here too.</summary>
-    private static bool HasSpeech(byte[] wav)
-    {
-        var level = Core.SpeechGate.Analyze(wav);
-        if (Core.SpeechGate.HasSpeech(level)) return true;
-        Core.Log.Info($"No speech (peak {level.PeakDbfs:0} dBFS, loud frames {level.LoudFrames}/{level.Frames}), request skipped");
-        return false;
     }
 
     /// <summary>
