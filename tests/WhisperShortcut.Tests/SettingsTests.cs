@@ -15,17 +15,17 @@ public class SettingsTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new Reverse());
-        Assert.Equal("Alt+1", s.DictateHotkey);
-        Assert.Equal("Alt+2", s.PromptHotkey);
-        Assert.Equal("Alt+7", s.GlossaryHotkey);
+        Assert.Equal("Alt+1", s.Key(HotkeyAction.Dictate));
+        Assert.Equal("Alt+2", s.Key(HotkeyAction.Prompt));
+        Assert.Equal("Alt+7", s.Key(HotkeyAction.Glossary));
         Assert.Equal("gemini-3.1-flash-lite", s.Dictate.Gemini);
         Assert.Equal("gemini-3.8-flash", s.Prompt.Gemini);
 
         s.ApiKey = "abc123SECRET";
         s.Glossary = new() { "Kubernetes", "Müller" };
         s.DictatePromptTemplate = "Mein Prompt";
-        s.DictateHotkey = "Ctrl+Shift+X";
-        s.GlossaryHotkey = "Ctrl+Alt+G";
+        s.SetKey(HotkeyAction.Dictate, "Ctrl+Shift+X");
+        s.SetKey(HotkeyAction.Glossary, "Ctrl+Alt+G");
         s.Save();
 
         Assert.DoesNotContain("abc123SECRET", File.ReadAllText(path));
@@ -35,8 +35,8 @@ public class SettingsTests
         Assert.Equal("abc123SECRET", t.ApiKey);
         Assert.Equal(new[] { "Kubernetes", "Müller" }, t.Glossary);
         Assert.Equal("Mein Prompt", t.DictatePromptTemplate);
-        Assert.Equal("Ctrl+Shift+X", t.DictateHotkey);
-        Assert.Equal("Ctrl+Alt+G", t.GlossaryHotkey);
+        Assert.Equal("Ctrl+Shift+X", t.Key(HotkeyAction.Dictate));
+        Assert.Equal("Ctrl+Alt+G", t.Key(HotkeyAction.Glossary));
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
@@ -50,7 +50,7 @@ public class SettingsTests
         var old = Settings.Load(path, new PlainSecretProtector());
         Assert.False(old.OfflineMode);
         Assert.Equal("", old.OfflineLlmId);
-        Assert.Equal("Ctrl+Shift+K", old.GlossaryHotkey);
+        Assert.Equal("Ctrl+Shift+K", old.Key(HotkeyAction.Glossary));
 
         old.OfflineMode = true;
         old.OfflineLlmId = "qwen3-4b-instruct-2507";
@@ -61,7 +61,7 @@ public class SettingsTests
         var t = Settings.Load(path, new PlainSecretProtector());
         Assert.True(t.OfflineMode);
         Assert.Equal("qwen3-4b-instruct-2507", t.OfflineLlmId);
-        Assert.Equal("Ctrl+Shift+K", t.GlossaryHotkey);
+        Assert.Equal("Ctrl+Shift+K", t.Key(HotkeyAction.Glossary));
         Directory.Delete(dir, true);
     }
 
@@ -306,7 +306,7 @@ public class SettingsTests
         var s = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal("", s.ApiKey);
         Assert.Equal("", s.OpenAiKey);
-        Assert.Equal("Alt+1", s.DictateHotkey);
+        Assert.Equal("Alt+1", s.Key(HotkeyAction.Dictate));
         Assert.Equal(Engine.Gemini, s.Dictate.Engine);
         Assert.False(File.Exists(path));
     }
@@ -370,14 +370,14 @@ public class SettingsTests
         var path = TempSettingsFile("{}");
         var s = Settings.Load(path, new PlainSecretProtector());
         s.Glossary = new() { "Alpha" };
-        s.DictateHotkey = "Ctrl+Shift+X";
+        s.SetKey(HotkeyAction.Dictate, "Ctrl+Shift+X");
         s.Save();
         s.Glossary = new() { "Beta" };
         s.Save();
         File.WriteAllText(path, "");
         var fromEmpty = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal(new[] { "Alpha" }, fromEmpty.Glossary);
-        Assert.Equal("Ctrl+Shift+X", fromEmpty.DictateHotkey);
+        Assert.Equal("Ctrl+Shift+X", fromEmpty.Key(HotkeyAction.Dictate));
 
         File.WriteAllText(path, "{ not json");
         var fromCorrupt = Settings.Load(path, new PlainSecretProtector());
@@ -488,9 +488,9 @@ public class SettingsTests
     {
         var path = TempSettingsFile("{\"dictateHotkey\":\"  \",\"promptHotkey\":\"\",\"glossaryHotkey\":\"\\t\"}");
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal("Ctrl+Shift+D", s.DictateHotkey);
-        Assert.Equal("Ctrl+Shift+P", s.PromptHotkey);
-        Assert.Equal("Ctrl+Shift+K", s.GlossaryHotkey);
+        Assert.Equal("Ctrl+Shift+D", s.Key(HotkeyAction.Dictate));
+        Assert.Equal("Ctrl+Shift+P", s.Key(HotkeyAction.Prompt));
+        Assert.Equal("Ctrl+Shift+K", s.Key(HotkeyAction.Glossary));
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
@@ -820,13 +820,13 @@ public class QuickActionRequestTests
         var path = TempSettingsPath();
         var s = Settings.Load(path, new PlainSecretProtector());
         Assert.Empty(s.Templates);
-        Assert.Equal("", s.TemplateHotkey);
+        Assert.Equal("", s.Key(HotkeyAction.TemplatePicker));
         Assert.Equal("", s.LastTemplateId);
 
         var a = new DictationTemplate { Name = "Anamnese", Instructions = "Zeile 1\nZeile 2\n\nZeile 4", Hotkey = "Ctrl+Shift+1" };
         var b = new DictationTemplate { Name = "Brief", Instructions = "Schreibe einen Brief.", Hotkey = "" };
         s.Templates = new() { a, b };
-        s.TemplateHotkey = "Ctrl+Shift+T";
+        s.SetKey(HotkeyAction.TemplatePicker, "Ctrl+Shift+T");
         s.LastTemplateId = b.Id;
         s.Save();
 
@@ -838,7 +838,7 @@ public class QuickActionRequestTests
         Assert.Equal("Ctrl+Shift+1", t.Templates[0].Hotkey);
         Assert.Equal(b.Id, t.Templates[1].Id);
         Assert.Equal("", t.Templates[1].Hotkey);
-        Assert.Equal("Ctrl+Shift+T", t.TemplateHotkey);
+        Assert.Equal("Ctrl+Shift+T", t.Key(HotkeyAction.TemplatePicker));
         Assert.Equal(b.Id, t.LastTemplateId);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
@@ -850,9 +850,9 @@ public class QuickActionRequestTests
         File.WriteAllText(path, "{\"dictateHotkey\":\"Ctrl+Shift+X\",\"glossary\":[\"Müller\"],\"sounds\":false}");
         var s = Settings.Load(path, new PlainSecretProtector());
         Assert.Empty(s.Templates);
-        Assert.Equal("", s.TemplateHotkey);
+        Assert.Equal("", s.Key(HotkeyAction.TemplatePicker));
         Assert.Equal("", s.LastTemplateId);
-        Assert.Equal("Ctrl+Shift+X", s.DictateHotkey);
+        Assert.Equal("Ctrl+Shift+X", s.Key(HotkeyAction.Dictate));
         Assert.Equal(new[] { "Müller" }, s.Glossary);
         Assert.False(s.Sounds);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
@@ -872,7 +872,7 @@ public class QuickActionRequestTests
         Assert.True(Guid.TryParse(s.Templates[1].Id, out _));
         Assert.NotEqual(s.Templates[0].Id, s.Templates[1].Id);
         Assert.Equal("a\nb", s.Templates[1].Instructions);
-        Assert.Equal("", s.TemplateHotkey);
+        Assert.Equal("", s.Key(HotkeyAction.TemplatePicker));
         Assert.Equal(new[] { "G" }, s.Glossary);
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
@@ -886,7 +886,7 @@ public class QuickActionRequestTests
         File.WriteAllText(path, "{\"dictateHotkey\":\"Ctrl+Shift+X\"}");
         var old = Settings.Load(path, new PlainSecretProtector());
         Assert.False(old.SendScreenshots);
-        Assert.Equal("", old.ScreenshotHotkey);
+        Assert.Equal("", old.Key(HotkeyAction.Screenshot));
         Directory.Delete(dir, true);
     }
 
@@ -897,11 +897,11 @@ public class QuickActionRequestTests
         var path = Path.Combine(dir, "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
         s.SendScreenshots = true;
-        s.ScreenshotHotkey = "Ctrl+Shift+S";
+        s.SetKey(HotkeyAction.Screenshot, "Ctrl+Shift+S");
         s.Save();
         var t = Settings.Load(path, new PlainSecretProtector());
         Assert.True(t.SendScreenshots);
-        Assert.Equal("Ctrl+Shift+S", t.ScreenshotHotkey);
+        Assert.Equal("Ctrl+Shift+S", t.Key(HotkeyAction.Screenshot));
         Directory.Delete(dir, true);
     }
 
@@ -910,23 +910,23 @@ public class QuickActionRequestTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal("", s.MeetingHotkey);
+        Assert.Equal("", s.Key(HotkeyAction.Meeting));
         Assert.Equal("auto", s.MeetingAudioMode);
         Assert.True(s.MeetingSummary);
 
-        s.MeetingHotkey = "Ctrl+Shift+M";
+        s.SetKey(HotkeyAction.Meeting, "Ctrl+Shift+M");
         s.MeetingAudioMode = "mix";
         s.MeetingSummary = false;
         s.Save();
         var t = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal("Ctrl+Shift+M", t.MeetingHotkey);
+        Assert.Equal("Ctrl+Shift+M", t.Key(HotkeyAction.Meeting));
         Assert.Equal("mix", t.MeetingAudioMode);
         Assert.False(t.MeetingSummary);
 
         File.WriteAllText(path, "{\"meetingAudioMode\":\"bogus\",\"meetingHotkey\":\"\"}");
         var u = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal("auto", u.MeetingAudioMode);
-        Assert.Equal("", u.MeetingHotkey);
+        Assert.Equal("", u.Key(HotkeyAction.Meeting));
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
 
@@ -935,13 +935,13 @@ public class QuickActionRequestTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal("Alt+5", s.LiveDictateHotkey);
-        Assert.Equal("", s.ActiveLiveDictateHotkey);
+        Assert.Equal("Alt+5", s.Key(HotkeyAction.LiveDictate));
+        Assert.Equal("", s.ActiveKey(HotkeyAction.LiveDictate));
 
-        s.LiveDictateHotkey = "Ctrl+Alt+L";
+        s.SetKey(HotkeyAction.LiveDictate, "Ctrl+Alt+L");
         s.Save();
         var t = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal("Ctrl+Alt+L", t.LiveDictateHotkey);
+        Assert.Equal("Ctrl+Alt+L", t.Key(HotkeyAction.LiveDictate));
         Directory.Delete(Path.GetDirectoryName(path)!, true);
     }
     [Fact]
@@ -1109,7 +1109,7 @@ public class QuickActionRequestTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal("Alt+6", s.ActiveChatHotkey);
+        Assert.Equal("Alt+6", s.ActiveKey(HotkeyAction.Chat));
         Assert.Equal(Engine.Gemini, s.EffectiveChat.Engine);
         Assert.Equal("gemini-3.8-flash", s.EffectiveChat.Model);
         Assert.True(s.ChatWebSearch);
@@ -1121,7 +1121,7 @@ public class QuickActionRequestTests
         s.ChatWebSearch = false;
         s.ChatCloseOnFocusLoss = false;
         s.ChatSystemPrompt = "Antworte knapp.";
-        s.ChatHotkeyEnabled = false;
+        s.SetOn(HotkeyAction.Chat, false);
         s.Save();
         var t = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal(Engine.OpenAI, t.Chat.Engine);
@@ -1129,7 +1129,7 @@ public class QuickActionRequestTests
         Assert.False(t.ChatWebSearch);
         Assert.False(t.ChatCloseOnFocusLoss);
         Assert.Equal("Antworte knapp.", t.ChatSystemPrompt);
-        Assert.Equal("", t.ActiveChatHotkey);
+        Assert.Equal("", t.ActiveKey(HotkeyAction.Chat));
         t.OfflineMode = true;
         Assert.Equal(Engine.Local, t.EffectiveChat.Engine);
         Assert.Equal(ModelPickers.LocalId, t.EffectiveChat.Model);
@@ -1148,11 +1148,11 @@ public class QuickActionRequestTests
         var s = Settings.Load(path, new PlainSecretProtector());
         Assert.Equal(Engine.OpenAI, s.Chat.Engine);
         Assert.Equal("gpt-5.4-mini", s.Chat.OpenAi);
-        Assert.Equal("Alt+6", s.ChatHotkey);
-        Assert.False(s.ChatHotkeyEnabled); // Alt+6 already opens the template picker
+        Assert.Equal("Alt+6", s.Key(HotkeyAction.Chat));
+        Assert.False(s.IsOn(HotkeyAction.Chat)); // Alt+6 already opens the template picker
 
         File.WriteAllText(path, """{ "textEngine": "gemini" }""");
-        Assert.Equal("Alt+6", Settings.Load(path, new PlainSecretProtector()).ActiveChatHotkey);
+        Assert.Equal("Alt+6", Settings.Load(path, new PlainSecretProtector()).ActiveKey(HotkeyAction.Chat));
         Directory.Delete(dir, true);
     }
 
@@ -1176,8 +1176,8 @@ public class QuickActionRequestTests
     {
         var path = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json");
         var s = Settings.Load(path, new PlainSecretProtector());
-        s.ReadAloudHotkey = "Alt+8";
-        s.ReadAloudHotkeyEnabled = false;
+        s.SetKey(HotkeyAction.ReadAloud, "Alt+8");
+        s.SetOn(HotkeyAction.ReadAloud, false);
         s.ReadAloudModel = "gemini-3.8-flash-tts";
         s.ReadAloudVoiceGemini = "Kore";
         s.ReadAloudVoiceOpenAi = "marin";
@@ -1191,8 +1191,8 @@ public class QuickActionRequestTests
             Assert.Contains($"\"{name}\":", json);
 
         var t = Settings.Load(path, new PlainSecretProtector());
-        Assert.Equal("Alt+8", t.ReadAloudHotkey);
-        Assert.False(t.ReadAloudHotkeyEnabled);
+        Assert.Equal("Alt+8", t.Key(HotkeyAction.ReadAloud));
+        Assert.False(t.IsOn(HotkeyAction.ReadAloud));
         Assert.Equal("gemini-3.8-flash-tts", t.ReadAloudModel);
         Assert.Equal(TtsProvider.Gemini, t.ReadAloudTtsModel.Provider);
         Assert.Equal("Kore", t.ReadAloudVoiceGemini);

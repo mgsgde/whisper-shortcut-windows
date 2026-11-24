@@ -35,21 +35,21 @@ public class McpSettingsTests
     public void DisabledDictateKeys_ReadEmptyAndSwitchOnAndOff()
     {
         using var s = new McpStack();
-        s.Settings.DictateHotkeyEnabled = false;
-        s.Settings.PromptHotkeyEnabled = false;
+        s.Settings.SetOn(HotkeyAction.Dictate, false);
+        s.Settings.SetOn(HotkeyAction.Prompt, false);
         var list = s.ToolJson("get_settings", new JsonObject(), McpAccess.Read)["settings"]!.AsArray();
         Assert.Equal("", list.First(x => x!["id"]!.GetValue<string>() == "shortcuts.dictate")!["value"]!.GetValue<string>());
         Assert.Equal("", list.First(x => x!["id"]!.GetValue<string>() == "shortcuts.dictate_prompt")!["value"]!.GetValue<string>());
 
         Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.dictate\":\"Ctrl+Shift+X\"}},{R}}}"))["status"]!.GetValue<string>());
         var on = s.ReloadSettings();
-        Assert.True(on.DictateHotkeyEnabled);
-        Assert.Equal("Ctrl+Shift+X", on.ActiveDictateHotkey);
-        Assert.False(on.PromptHotkeyEnabled);
+        Assert.True(on.IsOn(HotkeyAction.Dictate));
+        Assert.Equal("Ctrl+Shift+X", on.ActiveKey(HotkeyAction.Dictate));
+        Assert.False(on.IsOn(HotkeyAction.Prompt));
 
         // Empty is for undo and rollback (like the glossary row), not for AI apps.
         s.Catalog.First(c => c.Id == "shortcuts.dictate").Write(System.Text.Json.Nodes.JsonValue.Create("")!);
-        Assert.False(s.Settings.DictateHotkeyEnabled);
+        Assert.False(s.Settings.IsOn(HotkeyAction.Dictate));
     }
 
     [Fact]
@@ -127,7 +127,7 @@ public class McpSettingsTests
         using var s = new McpStack();
         var r = s.Tool("update_settings", A($"{{\"changes\":{{\"shortcuts.dictate\":\"{hotkey}\"}},{R}}}"));
         Assert.True(r.IsError);
-        Assert.Equal("Ctrl+Shift+D", s.Settings.DictateHotkey);
+        Assert.Equal("Ctrl+Shift+D", s.Settings.Key(HotkeyAction.Dictate));
     }
 
     [Fact]
@@ -139,7 +139,7 @@ public class McpSettingsTests
         Assert.Contains("must be different", both.Text);
         var against = s.Tool("update_settings", A($"{{\"changes\":{{\"shortcuts.dictate\":\"Ctrl+Shift+P\"}},{R}}}"));
         Assert.True(against.IsError);
-        Assert.Equal("Ctrl+Shift+D", s.Settings.DictateHotkey);
+        Assert.Equal("Ctrl+Shift+D", s.Settings.Key(HotkeyAction.Dictate));
         // Swapping two is fine: the state the batch leaves is distinct.
         var swap = s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.dictate\":\"Ctrl+Shift+P\",\"shortcuts.dictate_prompt\":\"Ctrl+Shift+D\"}},{R}}}"));
         Assert.Equal("applied", swap["status"]!.GetValue<string>());
@@ -151,7 +151,7 @@ public class McpSettingsTests
         using var s = new McpStack();
         var o = s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.dictate\":{{\"key\":\"x\",\"modifiers\":[\"control\",\"shift\"]}}}},{R}}}"));
         Assert.Equal("applied", o["status"]!.GetValue<string>());
-        Assert.Equal("Ctrl+Shift+X", s.ReloadSettings().DictateHotkey);
+        Assert.Equal("Ctrl+Shift+X", s.ReloadSettings().Key(HotkeyAction.Dictate));
         Assert.Equal("Strg+Umschalt+D", o["changed"]![0]!["from"]!.GetValue<string>());
         Assert.Equal("Strg+Umschalt+X", o["changed"]![0]!["to"]!.GetValue<string>());
         Assert.Equal(1, s.Host.AfterApplyCount);
@@ -312,7 +312,7 @@ public class McpSettingsTests
     {
         using var s = new McpStack();
         Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.read_aloud\":\"Alt+4\"}},{R}}}"))["status"]!.GetValue<string>());
-        Assert.Equal("Alt+4", s.ReloadSettings().ReadAloudHotkey);
+        Assert.Equal("Alt+4", s.ReloadSettings().Key(HotkeyAction.ReadAloud));
         var clash = s.Tool("update_settings", A($"{{\"changes\":{{\"shortcuts.dictate\":\"Alt+4\"}},{R}}}"));
         Assert.True(clash.IsError);
         Assert.Contains("Tastenkürzel Vorlesen", clash.Text);
@@ -326,25 +326,25 @@ public class McpSettingsTests
     public void SwitchedOffGlossaryShortcut_ReadsAsEmpty_AndTurnsOnWhenSet_AndUndoTurnsItOff()
     {
         using var s = new McpStack();
-        s.Settings.GlossaryHotkeyEnabled = false; // a new install (the stack loads like an older one)
+        s.Settings.SetOn(HotkeyAction.Glossary, false); // a new install (the stack loads like an older one)
         Assert.Equal("", Value(s, "shortcuts.add_to_glossary")!.GetValue<string>());
 
         var o = s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.add_to_glossary\":\"Ctrl+Shift+G\"}},{R}}}"));
         Assert.Equal("applied", o["status"]!.GetValue<string>());
         var t = s.ReloadSettings();
-        Assert.Equal("Ctrl+Shift+G", t.GlossaryHotkey);
-        Assert.True(t.GlossaryHotkeyEnabled);
+        Assert.Equal("Ctrl+Shift+G", t.Key(HotkeyAction.Glossary));
+        Assert.True(t.IsOn(HotkeyAction.Glossary));
 
         Assert.Equal(McpUndoOutcome.Undone, s.Applier.Undo(o["change_id"]!.GetValue<string>()).Outcome);
-        Assert.False(s.ReloadSettings().GlossaryHotkeyEnabled);
+        Assert.False(s.ReloadSettings().IsOn(HotkeyAction.Glossary));
     }
 
     [Fact]
     public void SwitchedOffShortcut_IsNotTaken()
     {
         using var s = new McpStack();
-        s.Settings.GlossaryHotkey = "Alt+7";
-        s.Settings.GlossaryHotkeyEnabled = false;
+        s.Settings.SetKey(HotkeyAction.Glossary, "Alt+7");
+        s.Settings.SetOn(HotkeyAction.Glossary, false);
         var o = s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.read_aloud\":\"Alt+7\"}},{R}}}"));
         Assert.Equal("applied", o["status"]!.GetValue<string>());
     }
@@ -353,13 +353,13 @@ public class McpSettingsTests
     public void ShortcutClashingWithChat_IsRejected_UntilChatIsOff()
     {
         using var s = new McpStack();
-        var before = s.Settings.ReadAloudHotkey;
+        var before = s.Settings.Key(HotkeyAction.ReadAloud);
         var r = s.Tool("update_settings", A($"{{\"changes\":{{\"shortcuts.read_aloud\":\"Alt+6\"}},{R}}}"));
         Assert.True(r.IsError);
         Assert.Contains("Chat", r.Text);
-        Assert.Equal(before, s.ReloadSettings().ReadAloudHotkey);
+        Assert.Equal(before, s.ReloadSettings().Key(HotkeyAction.ReadAloud));
 
-        s.Settings.ChatHotkeyEnabled = false;
+        s.Settings.SetOn(HotkeyAction.Chat, false);
         Assert.Equal("applied", s.ToolJson("update_settings", A($"{{\"changes\":{{\"shortcuts.read_aloud\":\"Alt+6\"}},{R}}}"))["status"]!.GetValue<string>());
     }
 

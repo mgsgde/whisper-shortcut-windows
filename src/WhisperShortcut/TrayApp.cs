@@ -302,9 +302,9 @@ internal sealed partial class TrayApp : ApplicationContext
         var replayKind = template != null ? Core.RecordingKindName.Template
             : kind == Core.RecordingKindName.Prompt ? Core.RecordingKindName.Prompt : Core.RecordingKindName.Dictate;
         _lastFailed = new FailedRun(rec.Wav, replayKind, rec.Seconds, Template: template,
-            StopKey: replayKind == Core.RecordingKindName.Prompt ? _settings.PromptHotkey
-                : template != null ? (template.Hotkey.Length > 0 ? template.Hotkey : _settings.TemplateHotkey)
-                : _settings.DictateHotkey);
+            StopKey: replayKind == Core.RecordingKindName.Prompt ? _settings.Key(Core.HotkeyAction.Prompt)
+                : template != null ? (template.Hotkey.Length > 0 ? template.Hotkey : _settings.Key(Core.HotkeyAction.TemplatePicker))
+                : _settings.Key(Core.HotkeyAction.Dictate));
         Notify("Aufnahme unterbrochen",
             $"Eine {rec.Seconds:0} s lange Aufnahme war noch nicht fertig. Der Text landet nach dem Transkribieren{(lostTemplate ? " ohne Vorlage" : "")} in der Zwischenablage.",
             ToolTipIcon.Warning, RetryLast, "Transkribieren");
@@ -342,14 +342,14 @@ internal sealed partial class TrayApp : ApplicationContext
             .Where(a => a.Action is not (Core.HotkeyAction.TemplatePicker or Core.HotkeyAction.Template) && !a.IsRightCtrlSwitch)
             .Select(a => (a.Owner, a.Key)).ToArray();
         var templates = _settings.Templates;
-        var pickerActive = Core.TemplateHotkeys.PickerIsActive(_settings.TemplateHotkey, templates, appHotkeys, Core.HotkeySlots.Normalize);
+        var pickerActive = Core.TemplateHotkeys.PickerIsActive(_settings.Key(Core.HotkeyAction.TemplatePicker), templates, appHotkeys, Core.HotkeySlots.Normalize);
         if (pickerActive)
         {
-            var stored = _settings.TemplateHotkey;
+            var stored = _settings.Key(Core.HotkeyAction.TemplatePicker);
             if (!Hotkey.TryParse(stored, out var key) || !_hotkeys.Register(key, () => OnTemplateHotkey(null, stored)))
                 failed.Add(Hotkey.Display(stored));
         }
-        var bindings = Core.TemplateHotkeys.ActiveBindings(templates, appHotkeys, _settings.TemplateHotkey, Core.HotkeySlots.Normalize);
+        var bindings = Core.TemplateHotkeys.ActiveBindings(templates, appHotkeys, _settings.Key(Core.HotkeyAction.TemplatePicker), Core.HotkeySlots.Normalize);
         foreach (var (template, stored) in bindings)
         {
             var id = template.Id;
@@ -485,7 +485,7 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void OnHotkey(Mode mode)
     {
-        var stored = mode == Mode.Dictate ? _settings.DictateHotkey : _settings.PromptHotkey;
+        var stored = mode == Mode.Dictate ? _settings.Key(Core.HotkeyAction.Dictate) : _settings.Key(Core.HotkeyAction.Prompt);
         // Stop, cancel and busy stay as they are: the Diktieren key ends whichever recording runs, Live included (Mac).
         HandleHotkeyPress(mode, stored, canStopOrCancel: true,
             () => { if (mode == Mode.Dictate) StartDictateByMode(stored, "Diktieren shortcut"); else StartRecording(Take.KindOf(mode), stored); });
@@ -578,7 +578,7 @@ internal sealed partial class TrayApp : ApplicationContext
 
     private void OnLiveHotkey()
     {
-        var stored = _settings.LiveDictateHotkey;
+        var stored = _settings.Key(Core.HotkeyAction.LiveDictate);
         HandleHotkeyPress(Mode.Dictate, stored, canStopOrCancel: true, () => StartLiveDictation(stored));
     }
 
@@ -1202,7 +1202,7 @@ internal sealed partial class TrayApp : ApplicationContext
         if (NotIdleSayBusy()) return;
         if (_cancelled.Take() is not { } kept) return;
         Core.Log.Info($"Dictate: transcribing the cancelled recording ({kept.Seconds:0.0} s)");
-        RunAgain(new FailedRun(kept.Wav, Core.RecordingKindName.Dictate, kept.Seconds, StopKey: _settings.DictateHotkey));
+        RunAgain(new FailedRun(kept.Wav, Core.RecordingKindName.Dictate, kept.Seconds, StopKey: _settings.Key(Core.HotkeyAction.Dictate)));
     }
 
     /// <summary>
@@ -1214,7 +1214,7 @@ internal sealed partial class TrayApp : ApplicationContext
         if (NotIdleSayBusy()) return;
         if (_templateReplay.Current(DateTime.UtcNow) is not { } kept) return;
         Core.Log.Info($"Prompt: running the last template dictation again without its template ({kept.Seconds:0.0} s)");
-        RunAgain(new FailedRun(kept.Wav, Core.RecordingKindName.Prompt, kept.Seconds, StopKey: _settings.PromptHotkey, NoNewTextTemplate: true));
+        RunAgain(new FailedRun(kept.Wav, Core.RecordingKindName.Prompt, kept.Seconds, StopKey: _settings.Key(Core.HotkeyAction.Prompt), NoNewTextTemplate: true));
     }
 
     /// <summary>Runs kept audio through the pipeline from idle (retry, cancelled recording, without template).</summary>
@@ -1921,7 +1921,7 @@ internal sealed partial class TrayApp : ApplicationContext
                     break;
                 case Core.GlossaryAddResult.Empty:
                     Sounds.Error();
-                    Notify("Nichts markiert", $"Erst ein Wort oder einen Namen markieren, dann {Hotkey.Display(_settings.GlossaryHotkey)} drücken.", ToolTipIcon.Info);
+                    Notify("Nichts markiert", $"Erst ein Wort oder einen Namen markieren, dann {Hotkey.Display(_settings.Key(Core.HotkeyAction.Glossary))} drücken.", ToolTipIcon.Info);
                     break;
                 default:
                     Sounds.Error();

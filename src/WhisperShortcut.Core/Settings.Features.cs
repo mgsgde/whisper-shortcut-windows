@@ -60,16 +60,6 @@ public sealed partial class Settings
 
     // ---------------- Chat (Mac ChatSettingsTab) ----------------
 
-    /// <summary>Hotkey that opens and closes the chat window.</summary>
-    public string ChatHotkey { get; set; } = "";
-
-    /// <summary>Chat hotkey on. Use <see cref="ActiveChatHotkey"/> to register.</summary>
-    public bool ChatHotkeyEnabled { get; set; }
-
-    /// <summary>The chat key to register, "" when off.</summary>
-    [JsonIgnore]
-    public string ActiveChatHotkey => Active(ChatHotkey, ChatHotkeyEnabled);
-
     /// <summary>Who answers in the chat and with which models (Mac default Gemini 3.8 Flash). Missing in an older file = the Dictate Prompt choice.</summary>
     public ModelSelection Chat { get; set; } = ModelSelection.Default(ModelStep.Text);
 

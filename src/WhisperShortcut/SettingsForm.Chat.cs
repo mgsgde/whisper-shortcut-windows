@@ -17,7 +17,7 @@ internal sealed partial class SettingsForm
     /// <summary>The „Chat“ row of the shortcut list on Allgemein (Mac: Chat öffnen/schließen ⌥Space).</summary>
     private TableLayoutPanel ChatKeyRow()
     {
-        _chatKey = new HotkeyBox(_settings.ActiveChatHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Chat" };
+        _chatKey = KeyBox(Core.HotkeyAction.Chat);
         return KeyRow("Chat öffnen/schließen", "Öffnet das Chatfenster, ein zweiter Druck schließt es.", _chatKey);
     }
 

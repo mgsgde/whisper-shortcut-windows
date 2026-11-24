@@ -32,7 +32,7 @@ internal sealed partial class SettingsForm
     /// <summary>The „Vorlesen“ row of the shortcut list on Allgemein (Mac order: after Bildschirmfoto).</summary>
     private TableLayoutPanel ReadAloudKeyRow()
     {
-        _readAloudKey = new HotkeyBox(_settings.ActiveReadAloudHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Vorlesen" };
+        _readAloudKey = KeyBox(Core.HotkeyAction.ReadAloud);
         return KeyRow("Vorlesen", "Markierten Text vorlesen lassen. Ein zweiter Druck beendet es.", _readAloudKey);
     }
 

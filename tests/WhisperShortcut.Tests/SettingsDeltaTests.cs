@@ -45,10 +45,10 @@ public class SettingsDeltaTests
         {
             switch (which)
             {
-                case "dictate": s.DictateHotkey = "Ctrl+Alt+9"; break;
-                case "dictate-off": s.DictateHotkeyEnabled = false; break;
-                case "meeting": s.MeetingHotkey = "Ctrl+Alt+8"; break;
-                case "template-picker": s.TemplateHotkey = "Ctrl+Alt+7"; break;
+                case "dictate": s.SetKey(HotkeyAction.Dictate, "Ctrl+Alt+9"); break;
+                case "dictate-off": s.SetOn(HotkeyAction.Dictate, false); break;
+                case "meeting": s.SetKey(HotkeyAction.Meeting, "Ctrl+Alt+8"); break;
+                case "template-picker": s.SetKey(HotkeyAction.TemplatePicker, "Ctrl+Alt+7"); break;
                 case "right-ctrl": s.RightCtrlDictation = !s.RightCtrlDictation; break;
                 case "template-key": s.Templates = new() { new DictationTemplate { Id = "a", Hotkey = "Ctrl+1" } }; break;
             }
@@ -64,9 +64,9 @@ public class SettingsDeltaTests
     public void StoredKeyOfSwitchedOffShortcut_IsNotAHotkeyChange()
     {
         var s = Fresh();
-        s.GlossaryHotkeyEnabled = false;
+        s.SetOn(HotkeyAction.Glossary, false);
         var before = SettingsDelta.Snapshot.Of(s);
-        s.GlossaryHotkey = "Ctrl+Alt+6";
+        s.SetKey(HotkeyAction.Glossary, "Ctrl+Alt+6");
         Assert.Equal(default, SettingsDelta.Between(before, s));
     }
 

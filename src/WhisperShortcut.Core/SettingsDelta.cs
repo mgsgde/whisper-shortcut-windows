@@ -14,12 +14,9 @@ public readonly record struct SettingsDelta(bool GlossaryChanged, bool OfflineMo
             string.Join("\n", s.Glossary),
             s.OfflineMode,
             // Everything RegisterHotkeys reads; Active* is "" for a switched-off key.
-            string.Join("\u0001", new[]
-            {
-                s.ActiveDictateHotkey, s.ActivePromptHotkey, s.ActiveGlossaryHotkey, s.MeetingHotkey,
-                s.ActiveLiveDictateHotkey, s.ActiveScreenshotHotkey, s.ActiveReadAloudHotkey, s.ActiveChatHotkey,
-                s.ActiveOpenSettingsHotkey, s.TemplateHotkey, s.RightCtrlDictation ? "1" : "0",
-            }.Concat(s.Templates.Select(t => t.Id + "=" + t.Hotkey))));
+            string.Join("\u0001", HotkeySlots.All.Select(x => s.ActiveKey(x.Action))
+                .Append(s.RightCtrlDictation ? "1" : "0")
+                .Concat(s.Templates.Select(t => t.Id + "=" + t.Hotkey))));
     }
 
     public static SettingsDelta Between(Snapshot before, Snapshot after) => new(

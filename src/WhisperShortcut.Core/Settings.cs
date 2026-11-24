@@ -183,36 +183,6 @@ public sealed partial class Settings
     // Key defaults, legacy keys and the on switches live in HotkeySlots (one table); the constructor applies the new-install
     // values, Load pins the legacy ones for a file that predates the Mac digits.
 
-    /// <summary>Hotkey for plain dictation.</summary>
-    public string DictateHotkey { get; set; } = "";
-
-    /// <summary>Dictate hotkey on (Mac isEnabled). Use <see cref="ActiveDictateHotkey"/> to register.</summary>
-    public bool DictateHotkeyEnabled { get; set; }
-
-    /// <summary>Hotkey for Dictate Prompt.</summary>
-    public string PromptHotkey { get; set; } = "";
-
-    /// <summary>Dictate Prompt hotkey on. Use <see cref="ActivePromptHotkey"/> to register.</summary>
-    public bool PromptHotkeyEnabled { get; set; }
-
-    /// <summary>Hotkey that appends the selected text to the Glossary. With the flag off it is only the suggestion.</summary>
-    public string GlossaryHotkey { get; set; } = "";
-
-    /// <summary>Glossary hotkey on. Off for new installs, like the Mac. Use <see cref="ActiveGlossaryHotkey"/> to register.</summary>
-    public bool GlossaryHotkeyEnabled { get; set; }
-
-    /// <summary>Hotkey that opens the settings window; "" = unassigned.</summary>
-    public string OpenSettingsHotkey { get; set; } = "";
-
-    /// <summary>Open-settings hotkey on. Use <see cref="ActiveOpenSettingsHotkey"/> to register.</summary>
-    public bool OpenSettingsHotkeyEnabled { get; set; }
-
-    /// <summary>Hotkey that reads the selected text aloud; "" = unassigned.</summary>
-    public string ReadAloudHotkey { get; set; } = "";
-
-    /// <summary>Read Aloud hotkey on. Use <see cref="ActiveReadAloudHotkey"/> to register.</summary>
-    public bool ReadAloudHotkeyEnabled { get; set; }
-
     /// <summary>Read Aloud model id (see <see cref="Core.ReadAloud.Models"/>); unknown ids fall back to the default on load.</summary>
     public string ReadAloudModel { get; set; } = ReadAloud.DefaultModel;
 
@@ -246,35 +216,8 @@ public sealed partial class Settings
     /// </summary>
     public bool RightCtrlDictation { get; set; } = true;
 
-    /// <summary>The stored key when its flag is on, otherwise "" (nothing to register).</summary>
-    public static string Active(string hotkey, bool enabled) => enabled ? hotkey : "";
-
-    /// <summary>Dictate hotkey to register, "" when off.</summary>
-    public string ActiveDictateHotkey => Active(DictateHotkey, DictateHotkeyEnabled);
-
-    /// <summary>Dictate Prompt hotkey to register, "" when off.</summary>
-    public string ActivePromptHotkey => Active(PromptHotkey, PromptHotkeyEnabled);
-
-    /// <summary>Glossary hotkey to register, "" when off.</summary>
-    public string ActiveGlossaryHotkey => Active(GlossaryHotkey, GlossaryHotkeyEnabled);
-
-    /// <summary>Screenshot hotkey to register, "" when off or unassigned.</summary>
-    public string ActiveScreenshotHotkey => Active(ScreenshotHotkey, ScreenshotHotkeyEnabled);
-
-    /// <summary>Live diktieren hotkey to register, "" when off or unassigned.</summary>
-    public string ActiveLiveDictateHotkey => Active(LiveDictateHotkey, LiveDictateHotkeyEnabled);
-
-    /// <summary>Open-settings hotkey to register, "" when off or unassigned.</summary>
-    public string ActiveOpenSettingsHotkey => Active(OpenSettingsHotkey, OpenSettingsHotkeyEnabled);
-
-    /// <summary>Read Aloud hotkey to register, "" when off or unassigned.</summary>
-    public string ActiveReadAloudHotkey => Active(ReadAloudHotkey, ReadAloudHotkeyEnabled);
-
     /// <summary>Dictation templates ("Vorlagen"), in the order the user arranged them.</summary>
     public List<DictationTemplate> Templates { get; set; } = new();
-
-    /// <summary>Generic hotkey that applies the last-used template; "" = unassigned.</summary>
-    public string TemplateHotkey { get; set; } = "";
 
     /// <summary>
     /// Send a screenshot taken with the Screenshot hotkey along with the next Dictate Prompt or template request.
@@ -283,23 +226,8 @@ public sealed partial class Settings
     /// </summary>
     public bool SendScreenshots { get; set; } = true;
 
-    /// <summary>Hotkey that opens the Windows snip UI; "" = unassigned.</summary>
-    public string ScreenshotHotkey { get; set; } = "";
-
-    /// <summary>Screenshot hotkey on. Use <see cref="ActiveScreenshotHotkey"/> to register.</summary>
-    public bool ScreenshotHotkeyEnabled { get; set; }
-
     /// <summary>Id of the template the generic hotkey applied last; "" = none yet.</summary>
     public string LastTemplateId { get; set; } = "";
-
-    /// <summary>Hotkey that starts/stops a Live Meeting. Empty = no hotkey (unassigned by default).</summary>
-    public string MeetingHotkey { get; set; } = "";
-
-    /// <summary>Live diktieren (macOS Dictate Live). "" = unassigned. New installs get the suggestion Alt+5, switched off like the Mac.</summary>
-    public string LiveDictateHotkey { get; set; } = "";
-
-    /// <summary>Live diktieren hotkey on. Off for new installs. Use <see cref="ActiveLiveDictateHotkey"/> to register.</summary>
-    public bool LiveDictateHotkeyEnabled { get; set; }
 
     /// <summary>Which audio a Live Meeting records: "auto", "mic" or "mix" (see <see cref="MeetingAudioRouting"/>).</summary>
     public string MeetingAudioMode { get; set; } = "auto";

@@ -111,7 +111,8 @@ public class SettingsRoundTripTests
     public void Enumeration_SkipsNothing_AndTablesHaveNoStaleEntries()
     {
         var all = SettableProperties().Select(p => p.Name).ToHashSet();
-        Assert.True(all.Count > 60, $"only {all.Count} settable properties found: enumeration looks broken");
+        // The shortcuts are rows of HotkeySlots.All, not properties: HotkeyTableTests covers them per row.
+        Assert.True(all.Count > 40, $"only {all.Count} settable properties found: enumeration looks broken");
         Assert.Equal(all.Count, PropertyNames().Count() + Excluded.Count);
         Assert.All(Excluded, e => { Assert.Contains(e.Key, all); Assert.False(string.IsNullOrWhiteSpace(e.Value)); });
         Assert.All(Overrides.Keys, k => Assert.Contains(k, all));
@@ -146,23 +147,23 @@ public class SettingsRoundTripTests
         var s = Settings.Load(Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"), "settings.json"), new Reverse());
         s.ApiKey = "AIza-secret";
         s.OpenAiKey = "";
-        s.DictateHotkey = "";
-        s.GlossaryHotkey = "";
+        s.SetKey(HotkeyAction.Dictate, "");
+        s.SetKey(HotkeyAction.Glossary, "");
         s.Glossary = new List<string> { "Müller", "Schmidt" };
         var print = s.Fingerprint();
         var state = s.Capture();
 
         s.ApiKey = "";
         s.OpenAiKey = "sk-other";
-        s.DictateHotkey = "Alt+9";
-        s.GlossaryHotkey = "Alt+8";
+        s.SetKey(HotkeyAction.Dictate, "Alt+9");
+        s.SetKey(HotkeyAction.Glossary, "Alt+8");
         s.Glossary.Clear();
         s.Restore(state);
 
         Assert.Equal("AIza-secret", s.ApiKey);
         Assert.Equal("", s.OpenAiKey);
-        Assert.Equal("", s.DictateHotkey);
-        Assert.Equal("", s.GlossaryHotkey);
+        Assert.Equal("", s.Key(HotkeyAction.Dictate));
+        Assert.Equal("", s.Key(HotkeyAction.Glossary));
         Assert.Equal(new[] { "Müller", "Schmidt" }, s.Glossary);
         Assert.Equal(print, s.Fingerprint());
         Assert.DoesNotContain("AIza-secret", state.ToString());

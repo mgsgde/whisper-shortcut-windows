@@ -155,12 +155,28 @@ public sealed partial class Settings
     private static List<string> Clean(List<string>? list) => list!.Where(t => t != null).ToList();
 
     /// <summary>
+    /// The two rows (key, on switch) of every <see cref="HotkeySlots.All"/> row; a shortcut without an on switch has the key row only.
+    /// With a switch a missing field keeps what the settings hold now (the constructor's new-install key, or the legacy pin);
+    /// without one a missing key is "".
+    /// </summary>
+    private static IEnumerable<Field> HotkeyRows() => HotkeySlots.All.SelectMany(slot =>
+    {
+        var key = slot.HasSwitch
+            ? Text(slot.JsonKey, s => s.Key(slot.Action), (s, v) => s.SetKey(slot.Action, v), slot.NewDefault, keep: true,
+                blankIsMissing: slot.BlankKeyIsMissing)
+            : Text(slot.JsonKey, s => s.Key(slot.Action), (s, v) => s.SetKey(slot.Action, v), slot.NewDefault, missing: _ => "");
+        return slot.HasSwitch
+            ? new[] { key, Flag(slot.JsonOnKey!, s => s.IsOn(slot.Action), (s, v) => s.SetOn(slot.Action, v), slot.NewEnabled, keep: true) }
+            : new[] { key };
+    });
+
+    /// <summary>
     /// Every simple persisted setting, in load order (a row may read what an earlier row set: the model fallbacks, WelcomeCompleted).
     /// <c>missing:</c> = the value for a file without the field; <c>keep: true</c> = the field missing leaves the value the settings
     /// hold (the constructor's new-install key, or the legacy pin, see <see cref="Load"/>); <c>newDefault</c> = a fresh install.
     /// </summary>
     private static readonly Field[] Fields =
-    {
+    [
         // ---- Provider and models. A step missing from the file takes the fallback, which for meetings and chat is the choice
         //      older files followed (meetings: Dictate / Dictate Prompt, chat: Dictate Prompt). ----
         Pick(ModelStep.Transcription, "speechEngine", "transcriptionModel", "openAiTranscriptionModel", s => s.Dictate, (s, v) => s.Dictate = v,
@@ -202,26 +218,7 @@ public sealed partial class Settings
         // ---- Shortcuts. keep: = a missing field leaves the constructor's new-install key, or the legacy key Load pinned for a
         //      file without the pin flag (Mac: the pin in ShortcutConfigManager.loadConfiguration). A blank value of the first
         //      three is also "missing" (not for a Restore: there every field is stored); for the rest "" is a stored choice. ----
-        Text("dictateHotkey", s => s.DictateHotkey, (s, v) => s.DictateHotkey = v, "Alt+1", keep: true, blankIsMissing: true),
-        Text("promptHotkey", s => s.PromptHotkey, (s, v) => s.PromptHotkey = v, "Alt+2", keep: true, blankIsMissing: true),
-        Text("glossaryHotkey", s => s.GlossaryHotkey, (s, v) => s.GlossaryHotkey = v, "Alt+7", keep: true, blankIsMissing: true),
-        Text("openSettingsHotkey", s => s.OpenSettingsHotkey, (s, v) => s.OpenSettingsHotkey = v, "Alt+0", keep: true),
-        Text("screenshotHotkey", s => s.ScreenshotHotkey, (s, v) => s.ScreenshotHotkey = v, "Alt+3", keep: true),
-        Text("liveDictateHotkey", s => s.LiveDictateHotkey, (s, v) => s.LiveDictateHotkey = v, "Alt+5", keep: true),
-        Text("readAloudHotkey", s => s.ReadAloudHotkey, (s, v) => s.ReadAloudHotkey = v, "Alt+4", keep: true),
-        Flag("dictateHotkeyEnabled", s => s.DictateHotkeyEnabled, (s, v) => s.DictateHotkeyEnabled = v, true, keep: true),
-        Flag("promptHotkeyEnabled", s => s.PromptHotkeyEnabled, (s, v) => s.PromptHotkeyEnabled = v, true, keep: true),
-        Flag("glossaryHotkeyEnabled", s => s.GlossaryHotkeyEnabled, (s, v) => s.GlossaryHotkeyEnabled = v, false, keep: true),
-        Flag("screenshotHotkeyEnabled", s => s.ScreenshotHotkeyEnabled, (s, v) => s.ScreenshotHotkeyEnabled = v, true, keep: true),
-        Flag("liveDictateHotkeyEnabled", s => s.LiveDictateHotkeyEnabled, (s, v) => s.LiveDictateHotkeyEnabled = v, false, keep: true),
-        Flag("openSettingsHotkeyEnabled", s => s.OpenSettingsHotkeyEnabled, (s, v) => s.OpenSettingsHotkeyEnabled = v, true, keep: true),
-        Flag("readAloudHotkeyEnabled", s => s.ReadAloudHotkeyEnabled, (s, v) => s.ReadAloudHotkeyEnabled = v, true, keep: true),
-        // The chat did not exist in older files: its key is kept (the new one), its switch is on, then ApplyDto turns it off when
-        // an older file already uses that key.
-        Text("chatHotkey", s => s.ChatHotkey, (s, v) => s.ChatHotkey = v, "Alt+6", keep: true),
-        Flag("chatHotkeyEnabled", s => s.ChatHotkeyEnabled, (s, v) => s.ChatHotkeyEnabled = v, true, missing: _ => true),
-        Text("meetingHotkey", s => s.MeetingHotkey, (s, v) => s.MeetingHotkey = v, "", missing: _ => ""),
-        Text("templateHotkey", s => s.TemplateHotkey, (s, v) => s.TemplateHotkey = v, "", missing: _ => ""),
+        ..HotkeyRows(),
         Flag("rightCtrlDictation", s => s.RightCtrlDictation, (s, v) => s.RightCtrlDictation = v, true, missing: _ => true),
 
         // ---- Read Aloud ----
@@ -283,7 +280,7 @@ public sealed partial class Settings
         Items<List<string>, List<string>?>("quickActions", s => s.QuickActions, (s, v) => s.QuickActions = v, new(QuickActionList.Defaults),
             missing: _ => new(QuickActionList.Defaults),
             v => QuickActionList.IsLegacyDefaults(v!) ? new(QuickActionList.Defaults) : QuickActionList.Clean(v!), v => v),
-    };
+    ];
 
     // ---- The fields that stay explicit, and why ----
     // API keys: protector round-trip, plaintext import. Pin flag: written true by every save, read before everything else.
@@ -351,10 +348,10 @@ public sealed partial class Settings
         MeetingSpeechEngineExplicit = dto.MeetingSpeechEngineExplicit
             ?? (dto.MeetingSpeechEngine != null && MeetingTranscription.Engine != Engine.Gemini);
         // An update adds the chat key to a file that never had it. It must not take a key the user already uses.
-        if (dto.ChatHotkey == null && HotkeySlots.Clashes(this, HotkeyAction.Chat)) ChatHotkeyEnabled = false;
+        if (dto.ChatHotkey == null && HotkeySlots.Clashes(this, HotkeyAction.Chat)) SetOn(HotkeyAction.Chat, false);
         // Same for the Read Aloud key (checked after the chat key has been placed).
-        if (dto.ReadAloudHotkey == null && ReadAloudHotkeyEnabled && HotkeySlots.Clashes(this, HotkeyAction.ReadAloud))
-            ReadAloudHotkeyEnabled = false;
+        if (dto.ReadAloudHotkey == null && IsOn(HotkeyAction.ReadAloud) && HotkeySlots.Clashes(this, HotkeyAction.ReadAloud))
+            SetOn(HotkeyAction.ReadAloud, false);
         // gpt-4o-mini-tts is retired (shutdown 2027-01-06). Move it once, at load. The save that
         // follows stores the replacement, so a later Gemini key does not move the user off the
         // Windows voice (Mac: retiredReadAloudReplacement, no fallback record).
