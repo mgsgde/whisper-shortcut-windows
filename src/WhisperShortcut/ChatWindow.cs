@@ -49,6 +49,8 @@ internal sealed partial class ChatWindow : FastShowForm
     private readonly ContextMenuStrip _sessionMenu = new();
 
     private Core.ChatSession _session = Core.ChatSession.New(DateTimeOffset.Now);
+    // Chats the user deleted while an answer was still running. The cancel handler must not save them again.
+    private readonly HashSet<Guid> _discarded = new();
     private CancellationTokenSource? _cts;
     // Engine of the running answer (null while idle).
     private Core.Engine? _runningEngine;
@@ -505,7 +507,8 @@ internal sealed partial class ChatWindow : FastShowForm
         {
             Core.Log.Info("Chat: stopped by the user");
             if (IsDisposed) return;
-            if (partial.Length > 0)
+            // New chat keeps the partial answer. A deleted chat must not be written back by this cancel.
+            if (!_discarded.Contains(session.Id) && partial.Length > 0)
             {
                 session.Add(new Core.ChatMessage(Core.ChatRole.Model, partial.ToString().Trim() + " …", DateTimeOffset.Now, null, modelName));
                 Persist(session);
@@ -547,6 +550,7 @@ internal sealed partial class ChatWindow : FastShowForm
 
     private void Persist(Core.ChatSession session)
     {
+        if (_discarded.Contains(session.Id)) return;
         try
         {
             _store.Save(session);
@@ -597,6 +601,7 @@ internal sealed partial class ChatWindow : FastShowForm
         var answer = MessageBox.Show(this, $"„{s.Title}“ löschen?", "Chat löschen", MessageBoxButtons.OKCancel, MessageBoxIcon.Question);
         _holdOpen = false;
         if (answer != DialogResult.OK) return;
+        _discarded.Add(s.Id);
         try { _store.Delete(s.Id); }
         catch (Exception e) { Core.Log.Error("Chat could not be deleted", e); }
         if (s.Id == _session.Id) NewChat();
