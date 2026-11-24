@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 
@@ -338,7 +339,10 @@ public sealed partial class Settings
         static string Normalize(string v) => v.Replace("\r\n", "\n").Replace('\r', '\n').Trim();
     }
 
-    /// <summary>Loads the settings; a missing or corrupt file yields defaults (a corrupt file is kept as .bak).</summary>
+    /// <summary>
+    /// Loads the settings. A missing file yields defaults. An empty or corrupt file is kept as .bak and the
+    /// previous good file (<c>settings.json.prev</c>) is used before defaults.
+    /// </summary>
     public static Settings Load(string path, ISecretProtector protector)
     {
         var s = new Settings(path, protector);
@@ -348,23 +352,57 @@ public sealed partial class Settings
         // old defaults, not the new ones (Mac: the pin in ShortcutConfigManager.loadConfiguration), so an update never
         // moves the user's shortcuts. Also for an unreadable file: it existed, so this PC ran an earlier version.
         s.PinLegacyShortcuts();
+        if (!TryReadDto(path, out var dto, out var error))
+        {
+            Log.Error("settings.json empty or unreadable, trying settings.json.prev", error);
+            try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
+            if (TryReadDto(PreviousPath(path), out dto, out var prevError))
+            {
+                Log.Info("settings.json.prev loaded");
+                ApplyLoaded(s, dto!, protector);
+            }
+            else
+            {
+                Log.Error(prevError == null
+                    ? "settings.json.prev missing or empty, using defaults"
+                    : "settings.json.prev unreadable, using defaults", prevError);
+            }
+            return s;
+        }
+        ApplyLoaded(s, dto!, protector);
+        return s;
+    }
+
+    /// <summary>True when <paramref name="path"/> holds a settings object. Empty, missing and broken JSON are false.</summary>
+    private static bool TryReadDto(string path, out Dto? dto, out Exception? error)
+    {
+        dto = null;
+        error = null;
         try
         {
-            var dto = JsonSerializer.Deserialize<Dto>(File.ReadAllText(path), Json);
-            if (dto == null) return s;
-            // A leftover plaintext key field is imported by ApplyDto and must leave the file on the next write.
-            if (s.ApplyDto(dto, protector, exact: false))
-            {
-                try { s.Save(); } catch { }
-            }
+            if (!File.Exists(path)) return false;
+            var text = File.ReadAllText(path);
+            if (string.IsNullOrWhiteSpace(text)) return false;
+            dto = JsonSerializer.Deserialize<Dto>(text, Json);
+            return dto != null;
         }
         catch (Exception ex)
         {
-            Log.Error("settings.json unreadable, using defaults", ex);
-            try { File.Copy(path, path + ".bak", overwrite: true); } catch { }
+            error = ex;
+            return false;
         }
-        return s;
     }
+
+    private static void ApplyLoaded(Settings s, Dto dto, ISecretProtector protector)
+    {
+        // A leftover plaintext key field is imported by ApplyDto and must leave the file on the next write.
+        if (s.ApplyDto(dto, protector, exact: false))
+        {
+            try { s.Save(); } catch { }
+        }
+    }
+
+    private static string PreviousPath(string path) => path + ".prev";
 
     /// <summary>
     /// Takes the values of <paramref name="dto"/> over (the one place that knows how a stored file becomes settings). Returns true
@@ -427,8 +465,18 @@ public sealed partial class Settings
         if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
         var dto = ToDto(_protector.Protect);
         var tmp = _path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(dto, Json));
-        File.Move(tmp, _path, overwrite: true);
+        var json = JsonSerializer.Serialize(dto, Json);
+        using (var stream = new FileStream(tmp, FileMode.Create, FileAccess.Write, FileShare.None))
+        {
+            var bytes = Encoding.UTF8.GetBytes(json);
+            stream.Write(bytes, 0, bytes.Length);
+            stream.Flush(true); // the rename must not publish a buffer that a crash can leave empty
+        }
+        // A good current file becomes settings.json.prev. An empty or corrupt one must not replace that backup.
+        if (TryReadDto(_path, out _, out _))
+            File.Replace(tmp, _path, PreviousPath(_path), ignoreMetadataErrors: true);
+        else
+            File.Move(tmp, _path, overwrite: true);
     }
 
     /// <summary>
