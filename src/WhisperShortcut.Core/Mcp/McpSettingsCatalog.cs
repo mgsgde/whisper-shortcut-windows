@@ -206,19 +206,19 @@ public static class McpSettingsCatalog
     private static McpSetting HotkeySetting(Settings settings, HotkeySlot slot) => new()
     {
         Id = slot.McpId!, Title = "Tastenkürzel " + slot.Owner, Category = "shortcuts", Type = McpSettingType.Hotkey,
-        Read = () => !slot.On!(settings)
+        Read = () => !slot.IsOn(settings)
             ? JsonValue.Create("")
             : JsonValue.Create(HotkeyRules.TryNormalize(slot.Get(settings), out var n) ? n : slot.Get(settings)),
         Write = v =>
         {
             if (v is JsonValue j && j.TryGetValue<string>(out var text) && text.Trim().Length == 0)
             {
-                slot.SetOn!(settings, false);
+                slot.SetOn(settings, false);
                 return;
             }
             if (!TryHotkey(v, out var n)) throw new McpConfigException("Not a valid shortcut.");
             slot.Set(settings, n);
-            slot.SetOn!(settings, true);
+            slot.SetOn(settings, true);
         },
     };
 

@@ -595,7 +595,7 @@ internal sealed class WelcomeForm : FastShowForm
 
     private void DescribeTry()
     {
-        var key = _settings.ActiveDictateHotkey;
+        var key = _settings.ActiveKey(Core.HotkeyAction.Dictate);
         string how = key.Length > 0 ? Hotkey.Display(key)
             : _settings.RightCtrlDictation ? "die rechte Strg-Taste" : "im Menü am Symbol „Diktieren“";
         string again = key.Length > 0 || _settings.RightCtrlDictation ? "drück sie noch einmal" : "klick noch einmal";
@@ -662,25 +662,25 @@ internal sealed class WelcomeForm : FastShowForm
             _shortcutList.Controls.Add(row);
         }
         static string Show(string key) => Hotkey.Display(key);
-        if (_settings.ActiveDictateHotkey.Length > 0)
-            Add(Show(_settings.ActiveDictateHotkey), "Diktieren", "drücken und lossprechen, deine Worte werden zu Text");
+        if (_settings.ActiveKey(Core.HotkeyAction.Dictate).Length > 0)
+            Add(Show(_settings.ActiveKey(Core.HotkeyAction.Dictate)), "Diktieren", "drücken und lossprechen, deine Worte werden zu Text");
         if (_settings.RightCtrlDictation)
             Add("Rechte Strg", "Diktieren", "einmal drücken startet, noch einmal beendet das Diktat");
-        if (_settings.ActivePromptHotkey.Length > 0)
-            Add(Show(_settings.ActivePromptHotkey), "Dictate Prompt", "Text markieren, eine Anweisung sprechen, die Auswahl wird an Ort und Stelle umgeschrieben");
-        if (_settings.ActiveScreenshotHotkey.Length > 0)
-            Add(Show(_settings.ActiveScreenshotHotkey), "Bildschirmfoto", "einen Bereich wählen, das Bild geht mit der nächsten Anweisung mit");
+        if (_settings.ActiveKey(Core.HotkeyAction.Prompt).Length > 0)
+            Add(Show(_settings.ActiveKey(Core.HotkeyAction.Prompt)), "Dictate Prompt", "Text markieren, eine Anweisung sprechen, die Auswahl wird an Ort und Stelle umgeschrieben");
+        if (_settings.ActiveKey(Core.HotkeyAction.Screenshot).Length > 0)
+            Add(Show(_settings.ActiveKey(Core.HotkeyAction.Screenshot)), "Bildschirmfoto", "einen Bereich wählen, das Bild geht mit der nächsten Anweisung mit");
         // Mac WelcomeSteps: Chat and Vorlesen follow Bildschirmfoto.
-        if (_settings.ActiveChatHotkey.Length > 0)
-            Add(Show(_settings.ActiveChatHotkey), "Chat", "ein vollständiges Chatfenster, mit Bildschirmfotos und Dateien");
-        if (_settings.ActiveReadAloudHotkey.Length > 0)
-            Add(Show(_settings.ActiveReadAloudHotkey), "Vorlesen", "Text irgendwo markieren und vorlesen lassen");
-        if (_settings.ActiveLiveDictateHotkey.Length > 0)
-            Add(Show(_settings.ActiveLiveDictateHotkey), "Live diktieren", "der Text erscheint nach jeder Pause am Cursor");
-        if (_settings.ActiveGlossaryHotkey.Length > 0)
-            Add(Show(_settings.ActiveGlossaryHotkey), "Auswahl zum Glossar hinzufügen", "ein Wort markieren, damit es künftig richtig geschrieben wird");
-        if (_settings.ActiveOpenSettingsHotkey.Length > 0)
-            Add(Show(_settings.ActiveOpenSettingsHotkey), "Einstellungen", "öffnet und schließt die Einstellungen");
+        if (_settings.ActiveKey(Core.HotkeyAction.Chat).Length > 0)
+            Add(Show(_settings.ActiveKey(Core.HotkeyAction.Chat)), "Chat", "ein vollständiges Chatfenster, mit Bildschirmfotos und Dateien");
+        if (_settings.ActiveKey(Core.HotkeyAction.ReadAloud).Length > 0)
+            Add(Show(_settings.ActiveKey(Core.HotkeyAction.ReadAloud)), "Vorlesen", "Text irgendwo markieren und vorlesen lassen");
+        if (_settings.ActiveKey(Core.HotkeyAction.LiveDictate).Length > 0)
+            Add(Show(_settings.ActiveKey(Core.HotkeyAction.LiveDictate)), "Live diktieren", "der Text erscheint nach jeder Pause am Cursor");
+        if (_settings.ActiveKey(Core.HotkeyAction.Glossary).Length > 0)
+            Add(Show(_settings.ActiveKey(Core.HotkeyAction.Glossary)), "Auswahl zum Glossar hinzufügen", "ein Wort markieren, damit es künftig richtig geschrieben wird");
+        if (_settings.ActiveKey(Core.HotkeyAction.OpenSettings).Length > 0)
+            Add(Show(_settings.ActiveKey(Core.HotkeyAction.OpenSettings)), "Einstellungen", "öffnet und schließt die Einstellungen");
         Add("Esc", "Abbrechen", "verwirft eine laufende Aufnahme");
         _shortcutList.ResumeLayout(true);
         Theme.Apply(_shortcutList);

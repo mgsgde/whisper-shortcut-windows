@@ -10,14 +10,27 @@ public enum HotkeyAction
 /// One fixed global shortcut: the one place that says what it is called, which keys it has on a new install and on an install
 /// from before the Mac digits, whether it ships on, and how it is read from and written to <see cref="Settings"/>.
 /// <paramref name="Owner"/> is the German name as the UI says it (the Mac's wording). <paramref name="McpId"/> is the setting id
-/// AI apps may change; null = fixed for AI apps. <paramref name="On"/> is null for a key without an on switch (Live Meeting,
-/// Vorlagen): empty = unassigned.
+/// AI apps may change; null = fixed for AI apps (a deliberate choice per row). <paramref name="ConfigName"/> names it in the
+/// read-only get_configuration list, which shows every row. <paramref name="JsonKey"/> / <paramref name="JsonOnKey"/> are the
+/// settings.json fields (the Dto of <see cref="Settings"/> carries them; JsonOnKey is null for a key without an on switch: Live
+/// Meeting, Vorlagen). <paramref name="BlankKeyIsMissing"/>: an empty stored key counts as a missing field on load.
 /// </summary>
 public sealed record HotkeySlot(HotkeyAction Action, string Owner, string NewDefault, string Legacy, bool NewEnabled, string? McpId,
-    Func<Settings, string> Get, Action<Settings, string> Set, Func<Settings, bool>? On, Action<Settings, bool>? SetOn)
+    string ConfigName, string JsonKey, string? JsonOnKey, bool BlankKeyIsMissing = false)
 {
+    /// <summary>False for a key without an on switch (Live Meeting, Vorlagen): empty = unassigned.</summary>
+    public bool HasSwitch => JsonOnKey != null;
+
+    public string Get(Settings s) => s.Key(Action);
+
+    public void Set(Settings s, string key) => s.SetKey(Action, key);
+
+    public bool IsOn(Settings s) => s.IsOn(Action);
+
+    public void SetOn(Settings s, bool on) => s.SetOn(Action, on);
+
     /// <summary>The stored key when the shortcut is on, otherwise "" (nothing to register, nothing taken).</summary>
-    public string Active(Settings s) => On == null || On(s) ? Get(s) : "";
+    public string Active(Settings s) => s.ActiveKey(Action);
 }
 
 /// <summary>A key somebody holds right now. <paramref name="Key"/> is normalized when it can be, else as stored.</summary>
@@ -48,7 +61,7 @@ public sealed record HotkeyOverrides(Func<HotkeySlot, string?>? Key = null, IRea
 
 /// <summary>
 /// Every fixed global shortcut in one table, and the one clash check. The settings file, the settings window, the tray
-/// registration and the AI-app catalog all derive from it; a new shortcut is one row (plus its JSON field in Settings).
+/// registration and the AI-app catalog all derive from it; a new shortcut is one row (plus its two Dto fields in Settings and its field in the settings window).
 /// </summary>
 public static class HotkeySlots
 {
@@ -64,36 +77,37 @@ public static class HotkeySlots
     public static readonly IReadOnlyList<HotkeySlot> All = new[]
     {
         new HotkeySlot(HotkeyAction.Dictate, "Diktieren", "Alt+1", "Ctrl+Shift+D", true, "shortcuts.dictate",
-            s => s.DictateHotkey, (s, v) => s.DictateHotkey = v, s => s.DictateHotkeyEnabled, (s, v) => s.DictateHotkeyEnabled = v),
+            "dictate", "dictateHotkey", "dictateHotkeyEnabled", BlankKeyIsMissing: true),
         new HotkeySlot(HotkeyAction.Prompt, "Dictate Prompt", "Alt+2", "Ctrl+Shift+P", true, "shortcuts.dictate_prompt",
-            s => s.PromptHotkey, (s, v) => s.PromptHotkey = v, s => s.PromptHotkeyEnabled, (s, v) => s.PromptHotkeyEnabled = v),
+            "dictate_prompt", "promptHotkey", "promptHotkeyEnabled", BlankKeyIsMissing: true),
         new HotkeySlot(HotkeyAction.Screenshot, "Bildschirmfoto", "Alt+3", "", true, null,
-            s => s.ScreenshotHotkey, (s, v) => s.ScreenshotHotkey = v, s => s.ScreenshotHotkeyEnabled, (s, v) => s.ScreenshotHotkeyEnabled = v),
+            "screenshot", "screenshotHotkey", "screenshotHotkeyEnabled"),
         new HotkeySlot(HotkeyAction.ReadAloud, "Vorlesen", "Alt+4", "", true, "shortcuts.read_aloud",
-            s => s.ReadAloudHotkey, (s, v) => s.ReadAloudHotkey = v, s => s.ReadAloudHotkeyEnabled, (s, v) => s.ReadAloudHotkeyEnabled = v),
+            "read_aloud", "readAloudHotkey", "readAloudHotkeyEnabled"),
         // Ships off, like the Mac: the key is only the suggestion.
         new HotkeySlot(HotkeyAction.Glossary, "Ins Glossar", "Alt+7", "Ctrl+Shift+K", false, "shortcuts.add_to_glossary",
-            s => s.GlossaryHotkey, (s, v) => s.GlossaryHotkey = v, s => s.GlossaryHotkeyEnabled, (s, v) => s.GlossaryHotkeyEnabled = v),
+            "add_to_glossary", "glossaryHotkey", "glossaryHotkeyEnabled", BlankKeyIsMissing: true),
         new HotkeySlot(HotkeyAction.LiveDictate, "Live diktieren", "Alt+5", "", false, null,
-            s => s.LiveDictateHotkey, (s, v) => s.LiveDictateHotkey = v, s => s.LiveDictateHotkeyEnabled, (s, v) => s.LiveDictateHotkeyEnabled = v),
+            "live_dictate", "liveDictateHotkey", "liveDictateHotkeyEnabled"),
         // The Mac uses ⌥Space; on Windows Alt+Space opens every window's system menu, so the chat takes the free digit 6.
+        // The chat did not exist in older files: a missing key stays the new one (Settings switches it off when an older file already uses it).
         new HotkeySlot(HotkeyAction.Chat, "Chat", "Alt+6", "Alt+6", true, null,
-            s => s.ChatHotkey, (s, v) => s.ChatHotkey = v, s => s.ChatHotkeyEnabled, (s, v) => s.ChatHotkeyEnabled = v),
+            "chat", "chatHotkey", "chatHotkeyEnabled"),
         new HotkeySlot(HotkeyAction.OpenSettings, "Einstellungen öffnen", "Alt+0", "", true, null,
-            s => s.OpenSettingsHotkey, (s, v) => s.OpenSettingsHotkey = v, s => s.OpenSettingsHotkeyEnabled, (s, v) => s.OpenSettingsHotkeyEnabled = v),
+            "open_settings", "openSettingsHotkey", "openSettingsHotkeyEnabled"),
         // Set from the tray menu; unassigned by default.
         new HotkeySlot(HotkeyAction.Meeting, "Live Meeting", "", "", false, null,
-            s => s.MeetingHotkey, (s, v) => s.MeetingHotkey = v, null, null),
+            "meeting", "meetingHotkey", null),
         // The generic key that applies the last-used template.
         new HotkeySlot(HotkeyAction.TemplatePicker, "Vorlagen", "", "", false, null,
-            s => s.TemplateHotkey, (s, v) => s.TemplateHotkey = v, null, null),
+            "template_picker", "templateHotkey", null),
     };
 
     /// <summary>The slot of <paramref name="action"/> (not <see cref="HotkeyAction.Template"/>).</summary>
     public static HotkeySlot Of(HotkeyAction action) => All.First(x => x.Action == action);
 
     /// <summary>Slots with an on switch: the ones the defaults, the legacy pin and the reset apply to.</summary>
-    private static IEnumerable<HotkeySlot> Switchable => All.Where(x => x.On != null);
+    private static IEnumerable<HotkeySlot> Switchable => All.Where(x => x.HasSwitch);
 
     /// <summary>New-install keys and switches.</summary>
     public static void ApplyDefaults(Settings s)
@@ -101,7 +115,7 @@ public static class HotkeySlots
         foreach (var slot in Switchable)
         {
             slot.Set(s, slot.NewDefault);
-            slot.SetOn!(s, slot.NewEnabled);
+            slot.SetOn(s, slot.NewEnabled);
         }
     }
 
@@ -111,7 +125,7 @@ public static class HotkeySlots
         foreach (var slot in Switchable)
         {
             slot.Set(s, slot.Legacy);
-            slot.SetOn!(s, true);
+            slot.SetOn(s, true);
         }
     }
 

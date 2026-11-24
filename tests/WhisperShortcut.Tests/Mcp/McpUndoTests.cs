@@ -76,7 +76,7 @@ public class McpUndoTests
         Assert.Equal(McpUndoOutcome.Undone, s.Applier.Undo(id2).Outcome);
         var disk = s.ReloadSettings();
         Assert.True(disk.Sounds);
-        Assert.Equal("Ctrl+Shift+D", disk.DictateHotkey);
+        Assert.Equal("Ctrl+Shift+D", disk.Key(HotkeyAction.Dictate));
     }
 
     [Fact]

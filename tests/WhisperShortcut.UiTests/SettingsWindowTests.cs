@@ -217,8 +217,8 @@ public sealed class SettingsWindowTests : IDisposable
         {
             var path = Path.Combine(_dir, "settings.json");
             var seed = Core.Settings.Load(path, new Core.PlainSecretProtector());
-            seed.DictateHotkeyEnabled = false;
-            seed.PromptHotkeyEnabled = false;
+            seed.SetOn(Core.HotkeyAction.Dictate, false);
+            seed.SetOn(Core.HotkeyAction.Prompt, false);
             seed.Save();
 
             using var form = OpenSettings();
@@ -227,11 +227,11 @@ public sealed class SettingsWindowTests : IDisposable
             Assert.True((bool)typeof(SettingsForm).GetMethod("TrySave", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(form, null)!);
 
             var fresh = Core.Settings.Load(path, new Core.PlainSecretProtector());
-            Assert.False(fresh.DictateHotkeyEnabled);
-            Assert.False(fresh.PromptHotkeyEnabled);
-            Assert.Equal(seed.DictateHotkey, fresh.DictateHotkey);
-            Assert.Equal("", fresh.ActiveDictateHotkey);
-            Assert.Equal("", fresh.ActivePromptHotkey);
+            Assert.False(fresh.IsOn(Core.HotkeyAction.Dictate));
+            Assert.False(fresh.IsOn(Core.HotkeyAction.Prompt));
+            Assert.Equal(seed.Key(Core.HotkeyAction.Dictate), fresh.Key(Core.HotkeyAction.Dictate));
+            Assert.Equal("", fresh.ActiveKey(Core.HotkeyAction.Dictate));
+            Assert.Equal("", fresh.ActiveKey(Core.HotkeyAction.Prompt));
         });
     }
 
@@ -350,22 +350,22 @@ public sealed class SettingsWindowTests : IDisposable
         Sta.Run(() =>
         {
             using var form = OpenSettings(out var settings);
-            var (dictate, prompt) = (settings.DictateHotkey, settings.PromptHotkey);
+            var (dictate, prompt) = (settings.Key(Core.HotkeyAction.Dictate), settings.Key(Core.HotkeyAction.Prompt));
             var box = Field(form, "_dictateKey");
-            box.GetType().GetMethod("SetValue")!.Invoke(box, new object[] { settings.PromptHotkey, false }); // taken twice
+            box.GetType().GetMethod("SetValue")!.Invoke(box, new object[] { settings.Key(Core.HotkeyAction.Prompt), false }); // taken twice
             SetCombo(form, "_afterPaste", Core.ClipboardAfterPaste.Clear);
 
             Assert.True(Save(form));
 
             Assert.Equal(Core.ClipboardAfterPaste.Clear, settings.ClipboardAfterPaste);
-            Assert.Equal(dictate, settings.DictateHotkey);
-            Assert.Equal(prompt, settings.PromptHotkey);
+            Assert.Equal(dictate, settings.Key(Core.HotkeyAction.Dictate));
+            Assert.Equal(prompt, settings.Key(Core.HotkeyAction.Prompt));
             Assert.True(form.HasUnsavedChanges); // the refused key is still shown as edited
 
             // Fixing the clash lets the next save take the key.
             box.GetType().GetMethod("SetValue")!.Invoke(box, new object[] { "Alt+8", false });
             Assert.True(Save(form));
-            Assert.Equal("Alt+8", settings.DictateHotkey);
+            Assert.Equal("Alt+8", settings.Key(Core.HotkeyAction.Dictate));
             Assert.False(form.HasUnsavedChanges);
         });
     }

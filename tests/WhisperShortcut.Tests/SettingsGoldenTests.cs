@@ -55,16 +55,16 @@ public class SettingsGoldenTests
         s.DictateSystemPrompt = "Eigene Diktat-Anweisung";
         s.PromptModeSystemPrompt = "Eigene Prompt-Anweisung";
         s.Microphone = "Mikrofon X";
-        s.DictateHotkey = "Ctrl+Alt+F1"; s.DictateHotkeyEnabled = false;
-        s.PromptHotkey = "Ctrl+Alt+F2"; s.PromptHotkeyEnabled = false;
-        s.GlossaryHotkey = "Ctrl+Alt+F3"; s.GlossaryHotkeyEnabled = true;
-        s.OpenSettingsHotkey = "Ctrl+Alt+F4"; s.OpenSettingsHotkeyEnabled = false;
-        s.ReadAloudHotkey = "Ctrl+Alt+F5"; s.ReadAloudHotkeyEnabled = false;
-        s.ScreenshotHotkey = "Ctrl+Alt+F6"; s.ScreenshotHotkeyEnabled = false;
-        s.LiveDictateHotkey = "Ctrl+Alt+F7"; s.LiveDictateHotkeyEnabled = true;
-        s.ChatHotkey = "Ctrl+Alt+F8"; s.ChatHotkeyEnabled = false;
-        s.MeetingHotkey = "Ctrl+Alt+F9";
-        s.TemplateHotkey = "Ctrl+Alt+F10";
+        s.SetKey(HotkeyAction.Dictate, "Ctrl+Alt+F1"); s.SetOn(HotkeyAction.Dictate, false);
+        s.SetKey(HotkeyAction.Prompt, "Ctrl+Alt+F2"); s.SetOn(HotkeyAction.Prompt, false);
+        s.SetKey(HotkeyAction.Glossary, "Ctrl+Alt+F3"); s.SetOn(HotkeyAction.Glossary, true);
+        s.SetKey(HotkeyAction.OpenSettings, "Ctrl+Alt+F4"); s.SetOn(HotkeyAction.OpenSettings, false);
+        s.SetKey(HotkeyAction.ReadAloud, "Ctrl+Alt+F5"); s.SetOn(HotkeyAction.ReadAloud, false);
+        s.SetKey(HotkeyAction.Screenshot, "Ctrl+Alt+F6"); s.SetOn(HotkeyAction.Screenshot, false);
+        s.SetKey(HotkeyAction.LiveDictate, "Ctrl+Alt+F7"); s.SetOn(HotkeyAction.LiveDictate, true);
+        s.SetKey(HotkeyAction.Chat, "Ctrl+Alt+F8"); s.SetOn(HotkeyAction.Chat, false);
+        s.SetKey(HotkeyAction.Meeting, "Ctrl+Alt+F9");
+        s.SetKey(HotkeyAction.TemplatePicker, "Ctrl+Alt+F10");
         s.ReadAloudModel = ReadAloud.Models.First(m => m.Id != s.ReadAloudModel).Id;
         s.ReadAloudVoiceGemini = ReadAloud.Voices(TtsProvider.Gemini).First(v => v.Id != s.ReadAloudVoiceGemini).Id;
         s.ReadAloudVoiceOpenAi = ReadAloud.Voices(TtsProvider.OpenAI).First(v => v.Id != s.ReadAloudVoiceOpenAi).Id;
@@ -216,14 +216,32 @@ public class SettingsGoldenTests
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
 
+    /// <summary>
+    /// The shortcuts as the golden files list them since before the table (W12): per row the key, the switch and, with a switch, the
+    /// active key, under the names the properties had. The goldens did not change: the stored state is the same.
+    /// </summary>
+    private static IEnumerable<(string Name, string Value)> HotkeyLines(Settings s)
+    {
+        static string Pascal(string json) => char.ToUpperInvariant(json[0]) + json[1..];
+        foreach (var x in HotkeySlots.All)
+        {
+            yield return (Pascal(x.JsonKey), Dump(s.Key(x.Action)));
+            if (!x.HasSwitch) continue;
+            yield return (Pascal(x.JsonOnKey!), Dump(s.IsOn(x.Action)));
+            yield return ("Active" + Pascal(x.JsonKey), Dump(s.ActiveKey(x.Action)));
+        }
+    }
+
     private static string Dump(object? v) => v switch
     {
         null => "null",
         string t => "\"" + t.Replace("\n", "\\n").Replace("\r", "\\r") + "\"",
         Settings s => string.Join("\n", typeof(Settings).GetProperties(BindingFlags.Public | BindingFlags.Instance)
-            .Where(p => p.GetMethod is { IsPublic: true } && p.GetIndexParameters().Length == 0)
+            .Where(p => p.GetMethod is { IsPublic: true } && p.GetIndexParameters().Length == 0 && p.Name != nameof(Settings.Hotkeys))
+            .Select(p => (p.Name, Value: Dump(p.GetValue(s))))
+            .Concat(HotkeyLines(s))
             .OrderBy(p => p.Name, StringComparer.Ordinal)
-            .Select(p => p.Name + " = " + Dump(p.GetValue(s)))) + "\n",
+            .Select(p => p.Name + " = " + p.Value)) + "\n",
         DictationTemplate t => $"Template({Dump(t.Id)}, {Dump(t.Name)}, {Dump(t.Instructions)}, {Dump(t.Hotkey)})",
         System.Collections.IEnumerable e => "[" + string.Join(", ", e.Cast<object?>().Select(Dump)) + "]",
         _ => v.ToString()!,

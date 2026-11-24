@@ -438,7 +438,7 @@ internal sealed class MeetingController : IDisposable
     {
         bool active = _session != null;
         _startStop.Text = _stopping ? "Meeting wird abgeschlossen …" : active ? "Meeting beenden" : "Meeting starten";
-        if (!string.IsNullOrEmpty(_settings.MeetingHotkey) && !_stopping) _startStop.Text += $"  ({Hotkey.Display(_settings.MeetingHotkey)})";
+        if (!string.IsNullOrEmpty(_settings.Key(Core.HotkeyAction.Meeting)) && !_stopping) _startStop.Text += $"  ({Hotkey.Display(_settings.Key(Core.HotkeyAction.Meeting))})";
         _startStop.Enabled = !_stopping;
         var preference = Core.MeetingAudioRouting.Parse(_settings.MeetingAudioMode);
         _modeAuto.Checked = preference == Core.MeetingAudioPreference.Automatic;
@@ -447,9 +447,9 @@ internal sealed class MeetingController : IDisposable
         // The running meeting keeps what it started with; the choice applies to the next one.
         _modeAuto.Enabled = _modeMix.Enabled = _modeMic.Enabled = !active;
         _summaryItem.Checked = _settings.MeetingSummary;
-        _hotkeyItem.Text = string.IsNullOrEmpty(_settings.MeetingHotkey)
+        _hotkeyItem.Text = string.IsNullOrEmpty(_settings.Key(Core.HotkeyAction.Meeting))
             ? "Tastenkürzel festlegen …"
-            : $"Tastenkürzel: {Hotkey.Display(_settings.MeetingHotkey)} …";
+            : $"Tastenkürzel: {Hotkey.Display(_settings.Key(Core.HotkeyAction.Meeting))} …";
 
         int pending = 0;
         try
@@ -487,10 +487,10 @@ internal sealed class MeetingController : IDisposable
         _suspendHotkeys(true);
         try
         {
-            var picked = MeetingHotkeyDialog.Ask(_settings.MeetingHotkey, _otherHotkeys());
-            if (picked != null && picked != _settings.MeetingHotkey)
+            var picked = MeetingHotkeyDialog.Ask(_settings.Key(Core.HotkeyAction.Meeting), _otherHotkeys());
+            if (picked != null && picked != _settings.Key(Core.HotkeyAction.Meeting))
             {
-                _settings.MeetingHotkey = picked;
+                _settings.SetKey(Core.HotkeyAction.Meeting, picked);
                 _save();
                 Core.Log.Info($"Meeting: hotkey {(picked.Length == 0 ? "removed" : "set")}");
             }

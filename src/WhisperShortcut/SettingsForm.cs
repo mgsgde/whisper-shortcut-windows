@@ -177,14 +177,14 @@ internal sealed partial class SettingsForm : FastShowForm
         general.Controls.Add(Wrap("Globale Tastenkürzel – sie funktionieren in jeder App. Einmal drücken zum Starten, noch einmal zum Beenden. "
             + "Ins Feld klicken und die neue Kombination drücken, z. B. Alt+1; Entf entfernt ein Kürzel. Solange dieses Fenster vorne "
             + "ist, sind die Kürzel aus.", 0));
-        _dictateKey = new HotkeyBox(settings.ActiveDictateHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Diktieren" };
-        _promptKey = new HotkeyBox(settings.ActivePromptHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Dictate Prompt" };
-        _screenshotKey = new HotkeyBox(settings.ActiveScreenshotHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Bildschirmfoto" };
+        _dictateKey = KeyBox(Core.HotkeyAction.Dictate);
+        _promptKey = KeyBox(Core.HotkeyAction.Prompt);
+        _screenshotKey = KeyBox(Core.HotkeyAction.Screenshot);
         // Empty = off (Mac: Add to Glossary ships disabled); the stored key stays as the suggestion.
-        _glossaryKey = new HotkeyBox(settings.ActiveGlossaryHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Ins Glossar" };
+        _glossaryKey = KeyBox(Core.HotkeyAction.Glossary);
         // Live diktieren (macOS Dictate Live): off until the user picks a key (Mac: shortcut ships disabled).
-        _liveKey = new HotkeyBox(settings.ActiveLiveDictateHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Live diktieren" };
-        _settingsKey = new HotkeyBox(settings.ActiveOpenSettingsHotkey, allowEmpty: true) { AccessibleName = "Tastenkürzel Einstellungen öffnen" };
+        _liveKey = KeyBox(Core.HotkeyAction.LiveDictate);
+        _settingsKey = KeyBox(Core.HotkeyAction.OpenSettings);
         // Mac: „Also dictate with 🌐 Fn“. Windows has no Fn key; the right Ctrl takes its place (same toggle rules).
         // Mac #511: it sits right under Diktieren, the shortcut it is an alternative to.
         _rightCtrl = new ToggleSwitch { Checked = settings.RightCtrlDictation, AccessibleName = "Auch mit der rechten Strg-Taste diktieren" };
@@ -470,7 +470,7 @@ internal sealed partial class SettingsForm : FastShowForm
         prompt.Controls.Add(Section("Schnellanweisungen"));
         // Mac wording (QuickActionStore.cardEntries = 3): "Die drei meistgenutzten erscheinen über der Aufnahmeanzeige …".
         prompt.Controls.Add(Wrap($"Die drei meistgenutzten der letzten 30 Tage erscheinen in der Anzeige, während du einen Prompt diktierst "
-            + $"({Hotkey.Display(settings.ActivePromptHotkey.Length > 0 ? settings.ActivePromptHotkey : settings.PromptHotkey)}). "
+            + $"({Hotkey.Display(settings.ActiveKey(Core.HotkeyAction.Prompt).Length > 0 ? settings.ActiveKey(Core.HotkeyAction.Prompt) : settings.Key(Core.HotkeyAction.Prompt))}). "
             + $"Klick einen an oder drück {Core.QuickActionCard.KeyRange}, statt zu sprechen: Er wirkt auf die Markierung oder, ohne Markierung, "
             + "auf das gerade Diktierte. Bei Gleichstand gewinnt die obere. Leere Felder werden ausgelassen.", 0));
         var quickTable = new TableLayoutPanel { ColumnCount = 2, Dock = DockStyle.Top, AutoSize = true, Margin = new Padding(0) };
@@ -536,7 +536,7 @@ internal sealed partial class SettingsForm : FastShowForm
 
         // ================= page: Vorlagen (dictation templates) =================
         _templates = (settings.Templates ?? new()).Select(t => t.Clone()).ToList();
-        _templateKey = new HotkeyBox(settings.TemplateHotkey ?? "", allowEmpty: true) { AccessibleName = "Tastenkürzel Vorlage" };
+        _templateKey = KeyBox(Core.HotkeyAction.TemplatePicker, "Tastenkürzel Vorlage");
         templatesPage.Controls.Add(KeyCard(_templateKey, "Wendet die zuletzt benutzte Vorlage an. Ins Feld klicken und die Kombination "
             + "drücken, z. B. Strg+Umschalt+V. Entf entfernt das Kürzel."));
         _templateKey.ValueChanged += UpdateTemplateState;
@@ -1975,7 +1975,7 @@ internal sealed partial class SettingsForm : FastShowForm
         }
         // The open-settings hotkey closes the window again (Mac toggleSettings). The global hotkeys are off only while a
         // hotkey field is focused, so this branch is a fallback (e.g. a registration that failed); a hotkey field records the key instead.
-        if (ActiveControl is not HotkeyBox && Hotkey.TryParse(_settings.ActiveOpenSettingsHotkey, out var toggle)
+        if (ActiveControl is not HotkeyBox && Hotkey.TryParse(_settings.ActiveKey(Core.HotkeyAction.OpenSettings), out var toggle)
             && keyData == ToKeys(toggle))
         {
             Close();
@@ -2042,20 +2042,22 @@ internal sealed partial class SettingsForm : FastShowForm
     private string? KeyProblem() =>
         Core.HotkeySlots.Check(_settings, new Core.HotkeyOverrides(BoxValue, _templates, _rightCtrl.Checked)) is { } c ? KeyProblemText(c) : null;
 
-    /// <summary>The field of a slot; null = the window has no field for it (Live Meeting is set from the tray menu).</summary>
-    private HotkeyBox? BoxOf(Core.HotkeySlot slot) => slot.Action switch
+    /// <summary>The field of every slot that has one, filled by <see cref="KeyBox"/> (Live Meeting is set from the tray menu).</summary>
+    private readonly Dictionary<Core.HotkeyAction, HotkeyBox> _keyBoxes = new();
+
+    /// <summary>The field of a slot; null = the window has no field for it.</summary>
+    private HotkeyBox? BoxOf(Core.HotkeySlot slot) => _keyBoxes.GetValueOrDefault(slot.Action);
+
+    /// <summary>The field of <paramref name="action"/>, showing the key that is on now, registered for <see cref="BoxOf"/>.</summary>
+    private HotkeyBox KeyBox(Core.HotkeyAction action, string? accessibleName = null)
     {
-        Core.HotkeyAction.Dictate => _dictateKey,
-        Core.HotkeyAction.Prompt => _promptKey,
-        Core.HotkeyAction.Glossary => _glossaryKey,
-        Core.HotkeyAction.Screenshot => _screenshotKey,
-        Core.HotkeyAction.LiveDictate => _liveKey,
-        Core.HotkeyAction.OpenSettings => _settingsKey,
-        Core.HotkeyAction.ReadAloud => _readAloudKey, // SettingsForm.ReadAloud.cs
-        Core.HotkeyAction.Chat => _chatKey, // SettingsForm.Chat.cs
-        Core.HotkeyAction.TemplatePicker => _templateKey,
-        _ => null,
-    };
+        var box = new HotkeyBox(_settings.ActiveKey(action), allowEmpty: true)
+        {
+            AccessibleName = accessibleName ?? "Tastenkürzel " + Core.HotkeySlots.Of(action).Owner,
+        };
+        _keyBoxes[action] = box;
+        return box;
+    }
 
     /// <summary>The field value of a slot ("" = off); null = the window has no field for it.</summary>
     private string? BoxValue(Core.HotkeySlot slot) => BoxOf(slot)?.Value;
@@ -2075,7 +2077,7 @@ internal sealed partial class SettingsForm : FastShowForm
     /// <summary>One field's key to the settings (Mac isEnabled: empty switches a shortcut off and keeps the key as the suggestion).</summary>
     private static void StoreKey(Core.Settings s, Core.HotkeySlot slot, string box)
     {
-        if (slot.SetOn == null) { slot.Set(s, Core.HotkeySlots.Normalize(box) ?? ""); return; }
+        if (!slot.HasSwitch) { slot.Set(s, Core.HotkeySlots.Normalize(box) ?? ""); return; }
         var (key, on) = StoredKey(box, slot.Get(s));
         slot.Set(s, key);
         slot.SetOn(s, on);
@@ -2111,7 +2113,7 @@ internal sealed partial class SettingsForm : FastShowForm
             if (!(_autoStart.Checked ? AutoStart.Enable() : AutoStart.Disable()))
                 Warn("Der automatische Start konnte nicht geändert werden. Details stehen im Protokoll.");
         }
-        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.Dictate.Gemini}/{_settings.Prompt.Gemini}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, channel {Core.Choices.UpdateChannel.Token(_settings.UpdateChannel)}, engines {_settings.Dictate.Engine}/{_settings.Prompt.Engine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.Dictate.OpenAi}/{_settings.Prompt.OpenAi}, templates {_settings.Templates.Count}, template key {(_settings.TemplateHotkey.Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.ScreenshotHotkey.Length > 0 ? "set" : "none")}, live key {(_settings.LiveDictateHotkey.Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode}, dictate mode {_settings.DictateMode})");
+        Core.Log.Info($"Settings saved (autostart {AutoStart.IsEnabled}, offline {_settings.OfflineMode}, llm {_settings.OfflineLlmId}, key set: {_settings.ApiKey.Length > 0}, mic {(_settings.Microphone.Length > 0 ? _settings.Microphone : "default")}, glossary {_settings.Glossary.Count}, quick actions {_settings.QuickActions.Count}, template {_settings.DictatePromptTemplate.Length} chars, models {_settings.Dictate.Gemini}/{_settings.Prompt.Gemini}, own prompts {_settings.DictateSystemPrompt.Length}/{_settings.PromptModeSystemPrompt.Length} chars, auto-paste {_settings.AutoPaste}, after paste {_settings.ClipboardAfterPaste}, sounds {_settings.Sounds}, update check {_settings.AutoUpdateCheck}, channel {Core.Choices.UpdateChannel.Token(_settings.UpdateChannel)}, engines {_settings.Dictate.Engine}/{_settings.Prompt.Engine}, openai key set: {_settings.OpenAiKey.Length > 0}, openai models {_settings.Dictate.OpenAi}/{_settings.Prompt.OpenAi}, templates {_settings.Templates.Count}, template key {(_settings.Key(Core.HotkeyAction.TemplatePicker).Length > 0 ? "set" : "none")}, screenshots {_settings.SendScreenshots}, screenshot key {(_settings.Key(Core.HotkeyAction.Screenshot).Length > 0 ? "set" : "none")}, live key {(_settings.Key(Core.HotkeyAction.LiveDictate).Length > 0 ? "set" : "none")}, punctuation {_settings.PunctuationMode}, dictate mode {_settings.DictateMode})");
         foreach (var b in written) b.Commit(_settings);
         // Also with a key problem: what stays edited (the refused shortcuts) is not written again until the user edits something.
         _holdSave = _bindings.Any(b => b.Edited);

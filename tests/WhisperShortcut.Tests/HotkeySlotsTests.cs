@@ -20,7 +20,7 @@ public class HotkeySlotsTests
         {
             var slot = HotkeySlots.All[i];
             slot.Set(s, $"Ctrl+Shift+F{i + 1}");
-            slot.SetOn?.Invoke(s, true);
+            if (slot.HasSwitch) slot.SetOn(s, true);
         }
         return s;
     }
@@ -29,11 +29,10 @@ public class HotkeySlotsTests
         new() { Name = name, Hotkey = hotkey, Instructions = instructions };
 
     [Fact]
-    public void Table_OwnersAndDefaultsAreUnique_AndSwitchableSlotsHaveBothAccessors()
+    public void Table_OwnersAndDefaultsAreUnique()
     {
         Assert.Equal(HotkeySlots.All.Count, HotkeySlots.All.Select(x => x.Owner).Distinct().Count());
         Assert.Equal(HotkeySlots.All.Count, HotkeySlots.All.Select(x => x.Action).Distinct().Count());
-        Assert.All(HotkeySlots.All, x => Assert.Equal(x.On == null, x.SetOn == null));
         var keys = HotkeySlots.All.Select(x => x.NewDefault).Where(k => k.Length > 0).ToList();
         Assert.Equal(keys.Count, keys.Distinct(StringComparer.OrdinalIgnoreCase).Count());
         Assert.All(HotkeySlots.All.Where(x => x.NewDefault.Length > 0), x => Assert.True(WhisperShortcut.Core.Mcp.HotkeyRules.IsSafe(x.NewDefault)));
@@ -43,10 +42,10 @@ public class HotkeySlotsTests
     public void FreshInstall_FollowsTheTable_AndHasNoConflict()
     {
         var s = Fresh();
-        foreach (var slot in HotkeySlots.All.Where(x => x.On != null))
+        foreach (var slot in HotkeySlots.All.Where(x => x.HasSwitch))
         {
             Assert.Equal(slot.NewDefault, slot.Get(s));
-            Assert.Equal(slot.NewEnabled, slot.On!(s));
+            Assert.Equal(slot.NewEnabled, slot.IsOn(s));
         }
         Assert.Null(HotkeySlots.Check(s));
     }
@@ -74,12 +73,12 @@ public class HotkeySlotsTests
     public void SwitchedOffKey_IsNotTaken_UntilItIsSwitchedOn()
     {
         var s = AllDistinct();
-        s.GlossaryHotkey = s.DictateHotkey;
+        s.SetKey(HotkeyAction.Glossary, s.Key(HotkeyAction.Dictate));
         Assert.NotNull(HotkeySlots.Check(s));
-        s.GlossaryHotkeyEnabled = false;
+        s.SetOn(HotkeyAction.Glossary, false);
         Assert.Null(HotkeySlots.Check(s));
         Assert.DoesNotContain(HotkeySlots.Assignments(s), a => a.Action == HotkeyAction.Glossary);
-        s.GlossaryHotkeyEnabled = true;
+        s.SetOn(HotkeyAction.Glossary, true);
         Assert.Equal(HotkeyConflictKind.Taken, HotkeySlots.Check(s)!.Kind);
     }
 
@@ -89,7 +88,7 @@ public class HotkeySlotsTests
         var s = AllDistinct();
         var dictate = HotkeySlots.Of(HotkeyAction.Dictate);
         var glossary = HotkeySlots.Of(HotkeyAction.Glossary);
-        var same = s.DictateHotkey;
+        var same = s.Key(HotkeyAction.Dictate);
         Assert.NotNull(HotkeySlots.Check(s, new HotkeyOverrides(x => x == glossary ? same : null)));
         Assert.Null(HotkeySlots.Check(s, new HotkeyOverrides(x => x == glossary ? "" : null)));
         Assert.Null(HotkeySlots.Check(s, new HotkeyOverrides(x => x == dictate ? "Alt+8" : null)));
@@ -104,7 +103,7 @@ public class HotkeySlotsTests
     public void InvalidOrUnsafeKey_IsReportedOnItsOwner(string key, HotkeyConflictKind kind)
     {
         var s = AllDistinct();
-        s.OpenSettingsHotkey = key;
+        s.SetKey(HotkeyAction.OpenSettings, key);
         var c = HotkeySlots.Check(s);
         Assert.Equal(kind, c!.Kind);
         Assert.Equal(HotkeyAction.OpenSettings, c.Offender.Action);
@@ -119,7 +118,7 @@ public class HotkeySlotsTests
     public void SafeKeys_Pass(string key)
     {
         var s = AllDistinct();
-        s.MeetingHotkey = key;
+        s.SetKey(HotkeyAction.Meeting, key);
         Assert.Null(HotkeySlots.Check(s));
     }
 
@@ -127,7 +126,7 @@ public class HotkeySlotsTests
     public void TemplateKeys_CountWhenUsable_AndClashWithSlotsPickerAndEachOther()
     {
         var s = AllDistinct();
-        s.Templates = new() { Template("Mail", s.DictateHotkey), Template("Brief", "Ctrl+Shift+F20"), Template("Brief2", "ctrl+shift+f20") };
+        s.Templates = new() { Template("Mail", s.Key(HotkeyAction.Dictate)), Template("Brief", "Ctrl+Shift+F20"), Template("Brief2", "ctrl+shift+f20") };
         var c = HotkeySlots.Check(s)!;
         Assert.Equal(HotkeyAction.Template, c.Offender.Action);
         Assert.Equal("Vorlage „Mail“", c.Offender.Owner);
@@ -138,7 +137,7 @@ public class HotkeySlotsTests
         Assert.Equal("Vorlage „Brief2“", c.Offender.Owner);
         Assert.Equal("Vorlage „Brief“", c.Other!.Owner);
 
-        s.Templates[2].Hotkey = s.TemplateHotkey;
+        s.Templates[2].Hotkey = s.Key(HotkeyAction.TemplatePicker);
         c = HotkeySlots.Check(s)!;
         Assert.Equal("Vorlagen", c.Other!.Owner);
     }
@@ -147,7 +146,7 @@ public class HotkeySlotsTests
     public void TemplateWithoutInstructions_OwnsNoKey()
     {
         var s = AllDistinct();
-        s.Templates = new() { Template("Leer", s.DictateHotkey, instructions: " ") };
+        s.Templates = new() { Template("Leer", s.Key(HotkeyAction.Dictate), instructions: " ") };
         Assert.Null(HotkeySlots.Check(s));
         Assert.DoesNotContain(HotkeySlots.Assignments(s), a => a.Action == HotkeyAction.Template);
         Assert.Contains(HotkeySlots.Assignments(s, new HotkeyOverrides(Templates: new[] { Template("Voll", "Ctrl+Shift+F30") })),
@@ -158,7 +157,7 @@ public class HotkeySlotsTests
     public void RightCtrl_IsHeldWhileItDictates()
     {
         var s = AllDistinct();
-        s.MeetingHotkey = "RightCtrl";
+        s.SetKey(HotkeyAction.Meeting, "RightCtrl");
         Assert.Null(HotkeySlots.Check(s));
         s.RightCtrlDictation = true;
         var c = HotkeySlots.Check(s)!;
@@ -171,10 +170,10 @@ public class HotkeySlotsTests
     public void Focus_LimitsTheReportToTheKeysInvolved()
     {
         var s = AllDistinct();
-        s.ScreenshotHotkey = s.ChatHotkey; // an old clash between two keys AI apps cannot change
+        s.SetKey(HotkeyAction.Screenshot, s.Key(HotkeyAction.Chat)); // an old clash between two keys AI apps cannot change
         Assert.NotNull(HotkeySlots.Check(s));
         Assert.Null(HotkeySlots.Check(s, focus: a => a.Action == HotkeyAction.Dictate));
-        s.DictateHotkey = s.ChatHotkey;
+        s.SetKey(HotkeyAction.Dictate, s.Key(HotkeyAction.Chat));
         Assert.NotNull(HotkeySlots.Check(s, focus: a => a.Action == HotkeyAction.Dictate));
     }
 
@@ -205,9 +204,9 @@ public class HotkeySlotsTests
     public void Assignments_AreWhatTheTrayRegisters()
     {
         var s = AllDistinct();
-        s.GlossaryHotkeyEnabled = false;
-        s.MeetingHotkey = "";
-        s.TemplateHotkey = "Ctrl+Shift+F40";
+        s.SetOn(HotkeyAction.Glossary, false);
+        s.SetKey(HotkeyAction.Meeting, "");
+        s.SetKey(HotkeyAction.TemplatePicker, "Ctrl+Shift+F40");
         s.Templates = new() { Template("Mail", "Ctrl+Shift+F41"), Template("Leer", "Ctrl+Shift+F42", instructions: "") };
         s.RightCtrlDictation = true;
         var all = HotkeySlots.Assignments(s).ToList();
@@ -215,8 +214,8 @@ public class HotkeySlotsTests
         // The tray registers the active keys of the app functions, in this order ...
         var expectedApp = new[]
         {
-            s.ActiveDictateHotkey, s.ActivePromptHotkey, s.ActiveScreenshotHotkey, s.ActiveReadAloudHotkey, s.ActiveGlossaryHotkey,
-            s.ActiveLiveDictateHotkey, s.ActiveChatHotkey, s.ActiveOpenSettingsHotkey, s.MeetingHotkey,
+            s.ActiveKey(HotkeyAction.Dictate), s.ActiveKey(HotkeyAction.Prompt), s.ActiveKey(HotkeyAction.Screenshot), s.ActiveKey(HotkeyAction.ReadAloud), s.ActiveKey(HotkeyAction.Glossary),
+            s.ActiveKey(HotkeyAction.LiveDictate), s.ActiveKey(HotkeyAction.Chat), s.ActiveKey(HotkeyAction.OpenSettings), s.Key(HotkeyAction.Meeting),
         }.Where(k => k.Length > 0).ToList();
         Assert.Equal(expectedApp, all.Where(a => a.Action is not (HotkeyAction.TemplatePicker or HotkeyAction.Template) && !a.IsRightCtrlSwitch)
             .Select(a => a.Key));
@@ -228,7 +227,7 @@ public class HotkeySlotsTests
         // Template registration (TemplateHotkeys) is fed from the same list and agrees.
         var apps = all.Where(a => a.Action is not (HotkeyAction.TemplatePicker or HotkeyAction.Template) && !a.IsRightCtrlSwitch)
             .Select(a => (a.Owner, a.Key)).ToList();
-        var bindings = TemplateHotkeys.ActiveBindings(s.Templates, apps, s.TemplateHotkey, HotkeySlots.Normalize);
+        var bindings = TemplateHotkeys.ActiveBindings(s.Templates, apps, s.Key(HotkeyAction.TemplatePicker), HotkeySlots.Normalize);
         Assert.Equal(new[] { "Ctrl+Shift+F41" }, bindings.Select(b => b.Hotkey));
     }
 
@@ -236,7 +235,7 @@ public class HotkeySlotsTests
     public void Assignments_ShadowedTemplateKey_IsListedButTheTrayDoesNotBindIt()
     {
         var s = AllDistinct();
-        s.Templates = new() { Template("Mail", s.PromptHotkey.ToLowerInvariant()) };
+        s.Templates = new() { Template("Mail", s.Key(HotkeyAction.Prompt).ToLowerInvariant()) };
         var apps = HotkeySlots.Assignments(s).Where(a => a.Action != HotkeyAction.Template && !a.IsRightCtrlSwitch)
             .Select(a => (a.Owner, a.Key)).ToList();
         Assert.Contains(HotkeySlots.Assignments(s), a => a.Action == HotkeyAction.Template);
@@ -249,9 +248,9 @@ public class HotkeySlotsTests
     {
         var s = AllDistinct();
         Assert.False(HotkeySlots.Clashes(s, HotkeyAction.Chat));
-        s.ChatHotkey = s.ReadAloudHotkey;
+        s.SetKey(HotkeyAction.Chat, s.Key(HotkeyAction.ReadAloud));
         Assert.True(HotkeySlots.Clashes(s, HotkeyAction.Chat));
-        s.ReadAloudHotkeyEnabled = false;
+        s.SetOn(HotkeyAction.ReadAloud, false);
         Assert.False(HotkeySlots.Clashes(s, HotkeyAction.Chat));
     }
 }

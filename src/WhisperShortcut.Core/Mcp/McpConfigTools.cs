@@ -226,12 +226,8 @@ public sealed class McpConfigTools(McpToolContext ctx) : IMcpToolProvider, IMcpR
             // Whether a key exists, never the key.
             ["api_keys_set"] = new JsonObject { ["gemini"] = !string.IsNullOrWhiteSpace(s.ApiKey), ["openai"] = !string.IsNullOrWhiteSpace(s.OpenAiKey) },
             ["offline_models"] = new JsonObject { ["speech_installed"] = ctx.Host.SpeechModelInstalled, ["llm_installed"] = ctx.Host.LocalLlmInstalled(llmId) },
-            ["hotkeys"] = new JsonObject
-            {
-                ["dictate"] = Key(s.ActiveDictateHotkey),
-                ["dictate_prompt"] = Key(s.ActivePromptHotkey),
-                ["add_to_glossary"] = Key(s.ActiveGlossaryHotkey),
-            },
+            // Read-only and complete: every row of HotkeySlots.All. (Which of them AI apps may change is McpId there, a per-row choice.)
+            ["hotkeys"] = new JsonObject(HotkeySlots.All.Select(x => KeyValuePair.Create(x.ConfigName, (JsonNode?)Key(s.ActiveKey(x.Action))))),
             ["system_prompts"] = new JsonObject
             {
                 ["dictation"] = PromptInfo("dictation", "Gemini speech recognition only (Parakeet and OpenAI take no instructions)"),
