@@ -1,4 +1,5 @@
-Neu in Version 0.7.16:
+Neu in Version 0.7.17:
 
-- **Update-Kanal wählbar:** In den Einstellungen gibt es jetzt „Update-Kanal“. Mit **Stabil** (Standard) kommen neue Versionen etwa eine Woche nach Erscheinen, wenn sie sich bewährt haben. Mit **Neueste** bekommst du jede Version am Tag ihres Erscheinens.
-- **Vorbereitung für eine Testversion:** WhisperShortcut kann jetzt neben einer separaten Entwicklerversion laufen, ohne dass sich beide in die Quere kommen. Für dich ändert sich dadurch nichts.
+- **Einfacheres „Problem melden“:** Das Fenster zum Melden von Problemen besteht jetzt aus einem einzigen Textfeld, in dem du direkt siehst, welche Diagnoseangaben mitgeschickt werden. Der Bericht wird nun als E-Mail-Text übergeben oder für neuere Mail-Programme automatisch in die Zwischenablage gelegt, sodass du ihn einfach mit Strg+V einfügen kannst.
+
+Alle Änderungen: https://github.com/mgsgde/whisper-shortcut-windows/compare/v0.7.16...v0.7.17
