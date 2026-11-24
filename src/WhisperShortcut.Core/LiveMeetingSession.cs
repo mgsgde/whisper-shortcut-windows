@@ -34,6 +34,13 @@ public sealed class LiveMeetingSession : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly Channel<MeetingAudioChunk> _channel = Channel.CreateUnbounded<MeetingAudioChunk>(
         new UnboundedChannelOptions { SingleReader = true });
+    // Capture only enqueues. The writer task owns the chunker, the partial and the pending WAVs.
+    private readonly Channel<short[]> _incoming = Channel.CreateBounded<short[]>(new BoundedChannelOptions(64)
+    {
+        SingleReader = true,
+        SingleWriter = false,
+        FullMode = BoundedChannelFullMode.Wait,
+    });
     private readonly object _audioGate = new();
     private readonly HashSet<long> _failed = new(); // start in ms of chunks that failed all attempts (worker thread only)
     private readonly object _memoryOnlyGate = new();
@@ -42,13 +49,16 @@ public sealed class LiveMeetingSession : IDisposable
     private MeetingInfo? _meeting;
     private MeetingChunker? _chunker;
     private Task? _worker;
+    private Task? _audioWriter;
+    private double _flushedElapsed;
+    private volatile bool _flushOnDrain;
     private FileStream? _partial;
     private double _partialStart;
     private long _fed;
     private int _partialSamples;
     private long _sinceFlush;
     private long _sinceDuration;
-    private bool _running;
+    private volatile bool _running;
     private bool _stopped;
     private int _transcribed;
     private int _pending;
@@ -112,24 +122,60 @@ public sealed class LiveMeetingSession : IDisposable
             if (_running || _stopped) throw new InvalidOperationException("The session was already started.");
             _meeting = _store.Create(_clock(), _audioMode);
             _chunker = new MeetingChunker(_sampleRate, _policy);
-            OpenPartial();
             _running = true;
             _worker = Task.Run(() => WorkerLoopAsync(_cts.Token));
+            _audioWriter = Task.Run(() => AudioWriterAsync());
         }
         Log.Info($"Meeting: started ({_audioMode})");
     }
 
     /// <summary>
-    /// Capture thread. Feeds the chunker and the raw partial (flushed at least every second of audio). A completed
+    /// Capture thread. Copies the samples into a bounded queue and returns. The writer task feeds the chunker,
+    /// the partial and the pending WAVs. A full queue waits, so audio is not dropped.
+    /// </summary>
+    public void WriteAudio(ReadOnlySpan<short> samples)
+    {
+        if (samples.Length == 0 || !_running) return;
+        var copy = new short[samples.Length];
+        samples.CopyTo(copy);
+        try
+        {
+            if (!_incoming.Writer.TryWrite(copy))
+                _incoming.Writer.WriteAsync(copy).AsTask().GetAwaiter().GetResult();
+        }
+        catch (ChannelClosedException) { }
+    }
+
+    private async Task AudioWriterAsync()
+    {
+        lock (_audioGate)
+        {
+            if (_chunker != null) OpenPartial();
+        }
+        try
+        {
+            await foreach (var samples in _incoming.Reader.ReadAllAsync().ConfigureAwait(false))
+                AcceptSamples(samples);
+        }
+        catch (ChannelClosedException) { }
+        if (_flushOnDrain) FlushTail();
+        else
+        {
+            lock (_audioGate) ClosePartial();
+        }
+    }
+
+    /// <summary>
+    /// Writer thread. Feeds the chunker and the raw partial (flushed at least every second of audio). A completed
     /// silent chunk is discarded without a request; any other is written to disk first (crash safety), then queued.
     /// About every 10 s of audio the stored duration is updated.
     /// </summary>
-    public void WriteAudio(ReadOnlySpan<short> samples)
+    private void AcceptSamples(short[] samples)
     {
         var queued = false;
         lock (_audioGate)
         {
-            if (!_running || _chunker == null || samples.Length == 0) return;
+            if (_chunker == null || samples.Length == 0) return;
             var chunks = _chunker.Write(samples);
             Interlocked.Add(ref _fed, samples.Length);
             var pos = 0;
@@ -175,24 +221,16 @@ public sealed class LiveMeetingSession : IDisposable
     {
         var meeting = Meeting;
         var id = meeting.Id;
-        double elapsed;
         lock (_audioGate)
         {
             if (_stopped) throw new InvalidOperationException("The session was already stopped.");
             _stopped = true;
             _running = false;
-            var last = _chunker!.Flush();
-            if (last != null)
-            {
-                CompleteChunk(last);
-            }
-            else
-            {
-                ClosePartial();
-                _store.DeletePartialAudio(id, _partialStart);
-            }
-            elapsed = _chunker.ElapsedSeconds;
+            _flushOnDrain = true;
         }
+        _incoming.Writer.TryComplete();
+        if (_audioWriter != null) await _audioWriter.ConfigureAwait(false);
+        var elapsed = _flushedElapsed;
         _channel.Writer.TryComplete();
 
         try
@@ -283,14 +321,31 @@ public sealed class LiveMeetingSession : IDisposable
     /// <summary>Cancels the worker. Never deletes audio, so a meeting that was not stopped can be recovered.</summary>
     public void Dispose()
     {
-        lock (_audioGate)
-        {
-            _running = false;
-            ClosePartial();
-        }
+        lock (_audioGate) _running = false;
+        _incoming.Writer.TryComplete();
+        try { _audioWriter?.Wait(TimeSpan.FromSeconds(2)); } catch (AggregateException) { }
+        lock (_audioGate) ClosePartial();
         try { _cts.Cancel(); } catch (ObjectDisposedException) { }
         _channel.Writer.TryComplete();
         try { _worker?.Wait(TimeSpan.FromSeconds(2)); } catch (AggregateException) { }
+    }
+
+    /// <summary>Stop asked the writer to finish the last chunk after the queue has drained.</summary>
+    private void FlushTail()
+    {
+        lock (_audioGate)
+        {
+            if (_chunker == null || _meeting == null) return;
+            var last = _chunker.Flush();
+            if (last != null) CompleteChunk(last);
+            else
+            {
+                ClosePartial();
+                try { _store.DeletePartialAudio(_meeting.Id, _partialStart); }
+                catch (Exception ex) { Log.Warn($"Meeting: partial audio not deleted ({ex.GetType().Name})"); }
+            }
+            _flushedElapsed = _chunker.ElapsedSeconds;
+        }
     }
 
     // ---------------------------------------------------------------- capture side (under _audioGate)
