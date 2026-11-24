@@ -75,10 +75,11 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly Toast _toast = new();
     private readonly UpdateService _updates;
     private readonly ToolStripMenuItem _updateItem;
-    // A found update waits for the end of a recording; the notice then comes a little later, so it does not
-    // replace a "Bitte prüfen" balloon that was just shown.
+    // A found update waits for the end of a recording; the update window then opens a little later, so it does
+    // not pop up the instant the app starts or jump in front of a result that was just shown.
     private readonly System.Windows.Forms.Timer _updateNoticeTimer = new() { Interval = 20_000 };
     private bool _updateNoticePending;
+    private string? _updateWindowShownFor; // version whose window opened by itself this run (not again after „Später“)
     private bool _glossaryBusy;
     private bool _globalHotkeysOn;
     private readonly Core.PromptConversationMemory _promptMemory = new();
@@ -254,7 +255,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _updateNoticeTimer.Tick += (_, _) =>
         {
             _updateNoticeTimer.Stop();
-            if (IsIdle) ShowUpdateNotice();
+            if (IsIdle) OpenUpdateWindowAutomatically();
             else _updateNoticePending = true;
         };
         // Test runs (VM loop) must not pop update notices into the screenshots.
@@ -2013,8 +2014,20 @@ internal sealed partial class TrayApp : ApplicationContext
         _updateItem.Visible = true;
         // Found from the settings window: it shows the news itself.
         if (_settingsForm != null) return;
-        if (IsIdle) ShowUpdateNotice();
+        if (IsIdle) OpenUpdateWindowAutomatically();
         else _updateNoticePending = true;
+    }
+
+    /// <summary>
+    /// Like Sparkle on the Mac: a version found by the automatic check opens the update window (release notes,
+    /// „Jetzt installieren“) instead of a balloon that disappears. Once per version and run; nothing is installed unasked.
+    /// </summary>
+    private void OpenUpdateWindowAutomatically()
+    {
+        var update = _updates.Available;
+        if (update == null || !Core.UpdatePrompt.ShouldOpen(update.Version, _updateWindowShownFor, manual: false)) return;
+        _updateWindowShownFor = update.Version;
+        _updates.ShowDialog();
     }
 
     /// <summary>Tray „Nach Updates suchen …“ (Mac #346 „Check for Updates…“): a found version opens the update window right away.</summary>
@@ -2038,15 +2051,6 @@ internal sealed partial class TrayApp : ApplicationContext
             Notify("Keine Verbindung zu GitHub", "Später noch einmal versuchen.", ToolTipIcon.Warning);
         }
         finally { _checkUpdatesItem.Enabled = true; }
-    }
-
-    private void ShowUpdateNotice()
-    {
-        var update = _updates.Available;
-        if (update == null) return;
-        Notify($"Version {update.Version} ist da",
-            "Sieh dir an, was neu ist, und installier es. Ohne Klick bleibt alles, wie es ist.",
-            ToolTipIcon.Info, _updates.ShowDialog, "Ansehen");
     }
 
     /// <summary>
