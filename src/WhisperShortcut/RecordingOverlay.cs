@@ -136,22 +136,22 @@ internal sealed class RecordingOverlay : OverlayForm
     /// <param name="quickActions">Dictate Prompt: the card's rows (Take.Card, at most three).</param>
     /// <param name="templateName">A template recording: the card names it, and no quick instructions are offered.</param>
     /// <param name="screenshot">A held screenshot is sent with this run: shown as its own line.</param>
-    public void ShowRecording(Mode mode, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar,
+    public void ShowRecording(Core.TakeProfile profile, string stopKey, TimeSpan limit, Func<float>? level, Func<float>? peakSoFar,
         IReadOnlyList<string>? quickActions = null, string? templateName = null, bool screenshot = false, string? title = null)
     {
         _phase = Phase.Recording;
-        _screenshot = screenshot && mode != Mode.Dictate;
+        _screenshot = screenshot && profile.TakesScreenshot;
         _templateName = templateName;
-        _card = mode != Mode.Dictate;
+        _card = profile.CopiesSelection;
         _title = templateName != null ? Core.UserCopy.OverlayTemplateTitle(templateName)
-            : mode == Mode.Dictate ? Core.UserCopy.OverlayDictateTitle : Core.UserCopy.OverlayPromptTitle;
+            : profile.Family == Core.HotkeyFamily.Dictate ? Core.UserCopy.OverlayDictateTitle : Core.UserCopy.OverlayPromptTitle;
         if (title != null) _title = title;
         _stopKey = stopKey;
         _hint = Core.UserCopy.OverlayStopHint(stopKey);
         // Dictate Prompt and templates: the selection is known only after Ctrl+C (up to 0.5 s), see SetSelection.
         _context = _card ? Context.Reading : Context.None;
         _selection = "";
-        _quick = mode == Mode.Prompt && templateName == null ? quickActions ?? Array.Empty<string>() : Array.Empty<string>();
+        _quick = profile.OffersQuickActions && templateName == null ? quickActions ?? Array.Empty<string>() : Array.Empty<string>();
         _hover = -1;
         _level = level;
         _peakSoFar = peakSoFar;

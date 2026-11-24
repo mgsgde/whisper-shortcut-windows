@@ -68,7 +68,7 @@ public sealed class TakeTests
         Assert.Equal(Core.RecordingKindName.Dictate, run.Kind);
         Assert.Equal("Ctrl+Shift+D", run.StopKey);
         Assert.Equal(new IntPtr(42), run.Target);
-        Assert.Equal(Mode.Dictate, take.Mode);
+        Assert.Equal(Core.HotkeyFamily.Dictate, take.Profile.Family);
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public sealed class TakeTests
         Assert.Equal("kürzen", replay.QuickAction);
         Assert.Same(template, replay.Template);
         Assert.True(replay.NoNewTextTemplate);
-        Assert.Equal(Mode.Template, replay.Mode);
+        Assert.Equal(Core.HotkeyFamily.Template, replay.Profile.Family);
         Assert.Equal("Template:t1", replay.CheckpointMode);
         Assert.Equal("Live", NewTake(Core.RecordingKindName.Live).CheckpointMode);
         Assert.Equal("Prompt", NewTake(Core.RecordingKindName.Prompt).CheckpointMode);

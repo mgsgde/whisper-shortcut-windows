@@ -12,10 +12,10 @@ namespace WhisperShortcut;
 internal sealed class MicAudioSource : Core.IAudioSource
 {
     /// <summary>Dictation can run this long; the recording is split into chunks before it is sent.</summary>
-    public static readonly TimeSpan DictateLimit = TimeSpan.FromMinutes(30);
+    public static readonly TimeSpan DictateLimit = Core.TakeProfile.DictateLimit;
 
     /// <summary>Dictate Prompt sends the audio inline in one request, so it stays at 5 minutes.</summary>
-    public static readonly TimeSpan PromptLimit = TimeSpan.FromMinutes(5);
+    public static readonly TimeSpan PromptLimit = Core.TakeProfile.PromptLimit;
 
     /// <summary>
     /// How long capture keeps running after Stop, so the last word is not cut off

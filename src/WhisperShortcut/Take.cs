@@ -34,25 +34,11 @@ internal sealed class Take : IDisposable
         _paster = paster;
     }
 
-    /// <summary>Live is its own kind, but the hotkeys treat it as part of Diktieren (<see cref="Mode"/>).</summary>
+    /// <summary>Live is its own kind, but the hotkeys treat it as part of Diktieren (<see cref="Core.TakeProfile.Family"/>).</summary>
     public Core.RecordingKindName Kind { get; }
 
-    /// <summary>The hotkey family: what the engines, the overlay and "same key stops" see. Live is Dictate.</summary>
-    public Mode Mode => ModeOf(Kind);
-
-    public static Mode ModeOf(Core.RecordingKindName kind) => kind switch
-    {
-        Core.RecordingKindName.Prompt => Mode.Prompt,
-        Core.RecordingKindName.Template => Mode.Template,
-        _ => Mode.Dictate,
-    };
-
-    public static Core.RecordingKindName KindOf(Mode mode) => mode switch
-    {
-        Mode.Prompt => Core.RecordingKindName.Prompt,
-        Mode.Template => Core.RecordingKindName.Template,
-        _ => Core.RecordingKindName.Dictate,
-    };
+    /// <summary>What this kind of take is and does (family, selection copy, limit, screenshot, quick actions). Live's family is Dictate.</summary>
+    public Core.TakeProfile Profile => Core.TakeProfile.Of(Kind);
 
     public TakePhase Phase { get; set; } = TakePhase.Recording;
 
