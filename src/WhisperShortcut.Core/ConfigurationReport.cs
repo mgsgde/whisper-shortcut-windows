@@ -40,6 +40,20 @@ public static class ConfigurationReport
             foreach (var s in group) lines.Add($"{s.Title}: {s.Label(s.Read())}");
         }
 
+        // Every other setting that has a report title in the descriptor table (meeting and chat models, screenshots, web search,
+        // the shortcuts AI apps cannot change ...): the report is not limited to what AI apps can change. A setting the catalog
+        // already lists is not repeated. Secrets have no title, so they cannot be listed.
+        var catalogIds = catalog.Select(c => c.Id).ToHashSet();
+        var others = Settings.Descriptors
+            .Where(d => d.ReportTitle != null && !d.Secret && !d.McpIds.Any(catalogIds.Contains))
+            .ToList();
+        if (others.Count > 0)
+        {
+            lines.Add("");
+            lines.Add("### other");
+            foreach (var d in others) lines.Add($"{d.ReportTitle}: {d.Show(settings)}");
+        }
+
         var dictation = Effective(settings.DictateSystemPrompt, Prompts.DefaultTranscriptionSystemPrompt, out var dictationCustom);
         var dictatePrompt = Effective(settings.PromptModeSystemPrompt, Prompts.DefaultPromptModeSystemPrompt, out var promptCustom);
         var template = settings.DictatePromptTemplate.Trim();

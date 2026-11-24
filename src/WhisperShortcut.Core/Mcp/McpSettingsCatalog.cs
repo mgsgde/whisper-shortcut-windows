@@ -118,9 +118,23 @@ public static class McpSettingsCatalog
     private static string SpeedToken(double speed) =>
         ReadAloud.NormalizeSpeed(speed).ToString("0.0#", CultureInfo.InvariantCulture);
 
-    private static McpSetting VoiceSetting(string id, string title, TtsProvider provider, Func<string> get, Action<string> set) => new()
+    /// <summary>
+    /// The descriptor (<see cref="Settings.Descriptors"/>) of the setting AI apps know as <paramref name="jsonKey"/>: its first
+    /// <see cref="SettingDescriptor.McpIds"/> entry is the id and its report title the title. The catalog's ids and titles are
+    /// declared in the table; what a setting offers and validates stays here.
+    /// </summary>
+    private static SettingDescriptor Row(string jsonKey)
     {
-        Id = id, Title = title, Category = "read_aloud", Type = McpSettingType.Enum,
+        var d = Settings.Descriptor(jsonKey);
+        return d.McpId != null && d.ReportTitle != null ? d : throw new InvalidOperationException($"{jsonKey} has no MCP id or title in the descriptor table");
+    }
+
+    /// <summary>The category of ids like "clipboard.auto_paste": the part before the dot.</summary>
+    private static string CategoryOf(string id) => id[..id.IndexOf('.')];
+
+    private static McpSetting VoiceSetting(string jsonKey, TtsProvider provider, Func<string> get, Action<string> set) => new()
+    {
+        Id = Row(jsonKey).McpId!, Title = Row(jsonKey).ReportTitle!, Category = "read_aloud", Type = McpSettingType.Enum,
         Description = $"The {(provider == TtsProvider.Gemini ? "Gemini" : "OpenAI")} voice Read Aloud speaks with. Only used when a model of that provider is selected.",
         Read = () => JsonValue.Create(get()),
         Options = () => ReadAloud.Voices(provider).Select(v => new McpSettingOption(v.Id, v.DisplayName, true, null)).ToList(),
@@ -155,10 +169,10 @@ public static class McpSettingsCatalog
     }
 
     /// <summary>An enum setting built from its choice table: tokens and labels are the Settings window's.</summary>
-    private static McpSetting ChoiceSetting<T>(string id, string title, string category, string description, ChoiceSet<T> set,
+    private static McpSetting ChoiceSetting<T>(string jsonKey, string category, string description, ChoiceSet<T> set,
         Func<T> get, Action<T> put) => new()
     {
-        Id = id, Title = title, Category = category, Type = McpSettingType.Enum, Description = description,
+        Id = Row(jsonKey).McpId!, Title = Row(jsonKey).ReportTitle!, Category = category, Type = McpSettingType.Enum, Description = description,
         Read = () => JsonValue.Create(set.Token(get())),
         Options = () => set.All.Select(c => new McpSettingOption(c.Token, c.Label, true, null)).ToList(),
         Write = v => put(set.Parse(Text(v))),
@@ -200,6 +214,13 @@ public static class McpSettingsCatalog
         Read = () => JsonValue.Create(get()),
         Write = v => set(v is JsonValue b && b.TryGetValue<bool>(out var on) && on),
     };
+
+    /// <summary>An on/off setting that the descriptor table fully declares: id, title, category (the id's prefix), read and write.</summary>
+    private static McpSetting DescribedBool(Settings settings, string jsonKey)
+    {
+        var d = Row(jsonKey);
+        return BoolSetting(d.McpId!, d.ReportTitle!, CategoryOf(d.McpId!), () => d.Get<bool>(settings), v => d.Set(settings, v));
+    }
 
     // Shortcuts with an on switch: off reads as "" (the stored key is only a suggestion);
     // Write("") switches off (needed by undo and the applier's rollback), a real key switches on.
@@ -257,15 +278,15 @@ public static class McpSettingsCatalog
                 }),
             GeminiModelSetting(dictate, "dictation.transcription_model", "Gemini-Modell Diktieren"),
             OpenAiModelSetting(dictate, "dictation.openai_transcription_model", "OpenAI-Modell Diktieren"),
-            ChoiceSetting("dictation.punctuation", "Satzzeichen (Offline-Spracherkennung)", "models",
+            ChoiceSetting("punctuationMode", "models",
                 "Offline speech recognition only (Parakeet on this PC). automatic: the model sets punctuation. spokenOnly: only spoken marks (Punkt, Komma, Fragezeichen, Ausrufezeichen, Doppelpunkt, Schrägstrich) are written and no final period is added. Cloud models and meetings always use automatic.",
                 Choices.Punctuation, () => settings.PunctuationMode, v => settings.PunctuationMode = v),
-            ChoiceSetting("dictation.mode", "Modus", "models",
+            ChoiceSetting("dictateMode", "models",
                 "What the Dictate shortcut and right Ctrl start. dictate: the text is inserted when the recording stops. live: Live diktieren, the text appears at the cursor after each pause (offline Parakeet only; without it the key starts nothing and says why). The Live diktieren shortcut always starts Live diktieren. During a live meeting the Dictate shortcut records a meeting segment either way.",
                 Choices.DictateMode, () => settings.DictateMode, v => settings.DictateMode = v),
             new()
             {
-                Id = "dictation.language", Title = "Sprache (OpenAI-Transkription)", Category = "models", Type = McpSettingType.Enum,
+                Id = Row("transcriptionLanguage").McpId!, Title = Row("transcriptionLanguage").ReportTitle!, Category = "models", Type = McpSettingType.Enum,
                 Description = "Spoken language for OpenAI transcription (ISO 639-1). auto lets the model detect it. Gemini and offline Parakeet ignore it.",
                 Read = () => JsonValue.Create(TranscriptionLanguages.Normalize(settings.TranscriptionLanguage)),
                 Options = () => TranscriptionLanguages.All.Select(l => new McpSettingOption(l.Code, l.Name, true, null)).ToList(),
@@ -273,7 +294,7 @@ public static class McpSettingsCatalog
             },
             new()
             {
-                Id = "dictation.temperature", Title = "Temperatur (Gemini-Transkription)", Category = "models", Type = McpSettingType.Enum,
+                Id = Row("transcriptionTemperature").McpId!, Title = Row("transcriptionTemperature").ReportTitle!, Category = "models", Type = McpSettingType.Enum,
                 Description = "Sampling temperature for Gemini transcription. 0.0 (default) reproduces what was said; higher values are the most likely source of invented or swapped words. OpenAI and Parakeet ignore it.",
                 Read = () => JsonValue.Create(TranscriptionTuning.Format(settings.TranscriptionTemperature)),
                 Options = () => TranscriptionTuning.Temperatures.Select(t => new McpSettingOption(TranscriptionTuning.Format(t.Value), t.Label, true, null)).ToList(),
@@ -283,7 +304,7 @@ public static class McpSettingsCatalog
             },
             new()
             {
-                Id = "dictation.thinking", Title = "Denkaufwand (Gemini-Transkription)", Category = "models", Type = McpSettingType.Enum,
+                Id = Row("transcriptionThinking").McpId!, Title = Row("transcriptionThinking").ReportTitle!, Category = "models", Type = McpSettingType.Enum,
                 Description = "Gemini thinking level before transcribing: minimal (default), low, medium, high. Models that reject minimal (3.7/3.8 Flash, Pro) run at low. OpenAI and Parakeet ignore it.",
                 Read = () => JsonValue.Create(TranscriptionTuning.NormalizeThinking(settings.TranscriptionThinking)),
                 Options = () => TranscriptionTuning.ThinkingLevels.Select(t => new McpSettingOption(t.Value, t.Label, true, null)).ToList(),
@@ -293,7 +314,7 @@ public static class McpSettingsCatalog
             OpenAiModelSetting(prompt, "dictate_prompt.openai_model", "OpenAI-Modell Text bearbeiten"),
             new()
             {
-                Id = "offline.llm", Title = "Offline-Sprachmodell", Category = "models", Type = McpSettingType.Enum,
+                Id = Row("offlineLlmId").McpId!, Title = Row("offlineLlmId").ReportTitle!, Category = "models", Type = McpSettingType.Enum,
                 Description = "The language model used for Dictate Prompt on this PC. If it is not downloaded yet, the user downloads it in WhisperShortcut Settings → Dictate Prompt.",
                 Read = () => JsonValue.Create(OfflineCatalog.LlmById(settings.OfflineLlmId).Id),
                 Options = () => OfflineCatalog.Llms.Select(l => new McpSettingOption(l.Id, l.DisplayName, true, null)).ToList(),
@@ -302,7 +323,7 @@ public static class McpSettingsCatalog
             ..HotkeySlots.All.Where(x => x.McpId != null).Select(x => HotkeySetting(settings, x)),
             new()
             {
-                Id = "read_aloud.model", Title = "Vorlesen: Modell", Category = "models", Type = McpSettingType.Enum,
+                Id = Row("readAloudModel").McpId!, Title = Row("readAloudModel").ReportTitle!, Category = "models", Type = McpSettingType.Enum,
                 Description = "The text-to-speech model Read Aloud uses. The selected text is sent to that provider.",
                 Read = () => JsonValue.Create(ReadAloud.NormalizeModel(settings.ReadAloudModel)),
                 Options = () => ReadAloud.Models.Select(m =>
@@ -312,25 +333,24 @@ public static class McpSettingsCatalog
                 }).ToList(),
                 Write = v => settings.ReadAloudModel = ReadAloud.NormalizeModel(Text(v)),
             },
-            VoiceSetting("read_aloud.voice.gemini", "Vorlesen: Gemini-Stimme", TtsProvider.Gemini,
+            VoiceSetting("readAloudVoiceGemini", TtsProvider.Gemini,
                 () => settings.ReadAloudVoiceFor(TtsProvider.Gemini), v => settings.ReadAloudVoiceGemini = v),
-            VoiceSetting("read_aloud.voice.openai", "Vorlesen: OpenAI-Stimme", TtsProvider.OpenAI,
+            VoiceSetting("readAloudVoiceOpenAi", TtsProvider.OpenAI,
                 () => settings.ReadAloudVoiceFor(TtsProvider.OpenAI), v => settings.ReadAloudVoiceOpenAi = v),
             new()
             {
-                Id = "read_aloud.speed", Title = "Vorlesen: Geschwindigkeit", Category = "read_aloud", Type = McpSettingType.Enum,
+                Id = Row("readAloudSpeed").McpId!, Title = Row("readAloudSpeed").ReportTitle!, Category = "read_aloud", Type = McpSettingType.Enum,
                 Description = "Playback speed of Read Aloud as a number string. The pitch of the voice stays the same.",
                 Read = () => JsonValue.Create(SpeedToken(settings.ReadAloudSpeed)),
                 Options = () => ReadAloud.Speeds.Select(x => new McpSettingOption(SpeedToken(x), ReadAloud.SpeedLabel(x), true, null)).ToList(),
                 Write = v => settings.ReadAloudSpeed = double.TryParse(Text(v), NumberStyles.Float, CultureInfo.InvariantCulture, out var x)
                     ? ReadAloud.NormalizeSpeed(x) : ReadAloud.DefaultSpeed,
             },
-            BoolSetting("read_aloud.smart_rewrite", "Vorlesen: intelligentes Umschreiben", "read_aloud",
-                () => settings.ReadAloudSmartRewrite, v => settings.ReadAloudSmartRewrite = v),
-            BoolSetting("clipboard.auto_paste", "Automatisch einfügen", "clipboard", () => settings.AutoPaste, v => settings.AutoPaste = v),
+            DescribedBool(settings, "readAloudSmartRewrite"),
+            DescribedBool(settings, "autoPaste"),
             new()
             {
-                Id = "clipboard.after_paste", Title = "Zwischenablage nach dem Einfügen", Category = "clipboard", Type = McpSettingType.Enum,
+                Id = Row("clipboardAfterPaste").McpId!, Title = Row("clipboardAfterPaste").ReportTitle!, Category = "clipboard", Type = McpSettingType.Enum,
                 Description = "What happens to the clipboard after auto-paste (no effect while clipboard.auto_paste is off). keep: the dictated text stays (default). restore: the previous clipboard comes back 3 s after pasting. clear: the clipboard is emptied 3 s after pasting, if it still holds the dictation.",
                 Read = () => JsonValue.Create(Choices.AfterPaste.Token(settings.ClipboardAfterPaste)),
                 Options = () => Choices.AfterPaste.All.Select(c => new McpSettingOption(c.Token, c.Label, true, null)).ToList(),
@@ -338,8 +358,8 @@ public static class McpSettingsCatalog
                     : throw new McpConfigException("Use keep, restore or clear."),
             },
             BoolSetting("clipboard.restore_after_paste", "Zwischenablage wiederherstellen (alt, siehe clipboard.after_paste)", "clipboard", () => settings.RestoreClipboard, v => settings.RestoreClipboard = v),
-            BoolSetting("general.sounds", "Signaltöne", "general", () => settings.Sounds, v => settings.Sounds = v),
-            BoolSetting("general.auto_update_check", "Automatisch nach Updates suchen", "general", () => settings.AutoUpdateCheck, v => settings.AutoUpdateCheck = v),
+            DescribedBool(settings, "sounds"),
+            DescribedBool(settings, "autoUpdateCheck"),
             new()
             {
                 Id = "general.launch_at_login", Title = "Mit Windows starten", Category = "general", Type = McpSettingType.Bool,
