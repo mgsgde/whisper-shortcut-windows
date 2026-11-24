@@ -129,10 +129,10 @@ public class TranscriptionPipelineTests
     [Fact]
     public async Task ProviderFailure_SurfacesWithoutASecondCall()
     {
-        var speech = new ScriptedSpeech { Throw = new GeminiException(GeminiErrorKind.Quota, "Kontingent erschöpft.") };
-        var ex = await Assert.ThrowsAsync<GeminiException>(() =>
+        var speech = new ScriptedSpeech { Throw = new CloudException(CloudErrorKind.Quota, "Kontingent erschöpft.") };
+        var ex = await Assert.ThrowsAsync<CloudException>(() =>
             TranscribeOnlineAsync(speech, TestWav.Speech(), Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Empty(speech.GlossaryCalls);
     }
 

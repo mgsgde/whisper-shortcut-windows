@@ -16,7 +16,7 @@ internal enum KeyHint
 
 /// <summary>
 /// The wire profile of one cloud provider: where it lives, how a request is authorized, how a failed answer maps to a
-/// <see cref="GeminiException"/> (German text, retry decision, wait hint) and how its key is checked. Dictation, chat and
+/// <see cref="CloudException"/> (German text, retry decision, wait hint) and how its key is checked. Dictation, chat and
 /// read aloud all talk to the same two providers, so this is the one place that knows the difference.
 /// </summary>
 internal sealed class CloudApi
@@ -37,7 +37,7 @@ internal sealed class CloudApi
         ApiBase = gemini ? Origin + "v1beta/models/" : Origin + "v1/";
     }
 
-    /// <summary>"Gemini" or "OpenAI": <see cref="GeminiException.Provider"/> and the name in user messages.</summary>
+    /// <summary>"Gemini" or "OpenAI": <see cref="CloudException.Provider"/> and the name in user messages.</summary>
     public string Name { get; }
 
     /// <summary>Scheme and host with a trailing slash (what the connection prewarm opens).</summary>
@@ -54,7 +54,7 @@ internal sealed class CloudApi
     }
 
     /// <summary>The "no key entered" failure, worded for the place that raised it.</summary>
-    public GeminiException NoKey(KeyHint hint) => new(Name, GeminiErrorKind.NoKey, hint switch
+    public CloudException NoKey(KeyHint hint) => new(Name, CloudErrorKind.NoKey, hint switch
     {
         KeyHint.Accounts => $"Kein {Name}-API-Schlüssel eingetragen. Bitte unter Einstellungen → Konten eintragen.",
         _ => _gemini
@@ -63,30 +63,30 @@ internal sealed class CloudApi
     });
 
     /// <summary>No answer in time. Retryable: the next try may be quicker.</summary>
-    public GeminiException Timeout() => new(Name, GeminiErrorKind.Timeout,
+    public CloudException Timeout() => new(Name, CloudErrorKind.Timeout,
         $"Zeitüberschreitung: {Name} hat nicht rechtzeitig geantwortet. Bitte Internetverbindung prüfen.")
     { Retryable = true };
 
     /// <summary>Host unreachable or the connection broke. Retryable.</summary>
-    public GeminiException Network(Exception inner) => new(Name, GeminiErrorKind.Network,
+    public CloudException Network(Exception inner) => new(Name, CloudErrorKind.Network,
         $"Kein Netz: {Name} ist nicht erreichbar. Bitte Internetverbindung prüfen.", inner)
     { Retryable = true };
 
     /// <summary>
-    /// Maps a non-2xx answer. <see cref="GeminiException.Retryable"/> is set for the statuses a second try can fix (429, 5xx),
-    /// except a spent daily quota or an empty account; <see cref="GeminiException.RetryAfter"/> carries the provider's own
+    /// Maps a non-2xx answer. <see cref="CloudException.Retryable"/> is set for the statuses a second try can fix (429, 5xx),
+    /// except a spent daily quota or an empty account; <see cref="CloudException.RetryAfter"/> carries the provider's own
     /// wait hint on a 429 (Gemini: RetryInfo in the body, OpenAI: Retry-After header).
     /// </summary>
     /// <param name="status">HTTP status (for an error object inside a 200 stream: its code).</param>
     /// <param name="body">Response body, or the stream object that held the error.</param>
     /// <param name="headers">Response headers; null when the error did not come with a response.</param>
-    public GeminiException MapHttpError(HttpStatusCode status, string body, HttpResponseHeaders? headers)
+    public CloudException MapHttpError(HttpStatusCode status, string body, HttpResponseHeaders? headers)
     {
         var code = (int)status;
         var ex = _gemini ? MapGemini(code, body) : MapOpenAi(code, OpenAiErrorCode(body));
         // A daily quota will not recover within seconds, an empty account (Billing) never within the hour.
         var daily = code == 429 && _gemini && IsDailyQuota(body);
-        ex.Retryable = HttpRetry.IsTransientStatus(code) && !daily && (ex.Kind is GeminiErrorKind.Quota or GeminiErrorKind.Server);
+        ex.Retryable = HttpRetry.IsTransientStatus(code) && !daily && (ex.Kind is CloudErrorKind.Quota or CloudErrorKind.Server);
         ex.ServerFault = code >= 500;
         if (code == 429) ex.RetryAfter = _gemini ? ParseRetryInfo(body) : headers == null ? null : ParseRetryAfter(headers);
         return ex;
@@ -107,7 +107,7 @@ internal sealed class CloudApi
     /// <param name="json">Its raw text (the error mapper reads the body).</param>
     /// <param name="logTag">Prefix of the log line, e.g. "Chat Gemini".</param>
     /// <param name="blockedWhat">What was rejected, for the message: "die Anfrage", "den Text zum Vorlesen".</param>
-    public GeminiException? StreamError(JsonElement root, string json, string logTag, string blockedWhat)
+    public CloudException? StreamError(JsonElement root, string json, string logTag, string blockedWhat)
     {
         if (!root.TryGetProperty("error", out var err)) err = default;
         if (_gemini)
@@ -122,7 +122,7 @@ internal sealed class CloudApi
             }
             if (root.TryGetProperty("promptFeedback", out var feedback) && feedback.ValueKind == JsonValueKind.Object
                 && feedback.TryGetProperty("blockReason", out var block) && block.ValueKind == JsonValueKind.String)
-                return new GeminiException(Name, GeminiErrorKind.Server, $"Gemini hat {blockedWhat} abgelehnt ({block.GetString()}).");
+                return new CloudException(Name, CloudErrorKind.Server, $"Gemini hat {blockedWhat} abgelehnt ({block.GetString()}).");
             return null;
         }
         if (err.ValueKind != JsonValueKind.Object) return null;
@@ -170,29 +170,29 @@ internal sealed class CloudApi
 
     // ---- Gemini ----
 
-    private static GeminiException MapGemini(int code, string body)
+    private static CloudException MapGemini(int code, string body)
     {
         if (body.Contains("SERVICE_DISABLED") || body.Contains("has not been used in project"))
-            return new GeminiException(GeminiErrorKind.InvalidKey,
+            return new CloudException(CloudErrorKind.InvalidKey,
                 "Die Gemini-API ist im Google-Projekt dieses Schlüssels nicht aktiviert (Generative Language API).");
         if (code == 400 && IsBillingProblem(body))
-            return new GeminiException("Gemini", GeminiErrorKind.Billing,
+            return new CloudException("Gemini", CloudErrorKind.Billing,
                 "Für diesen Gemini-Schlüssel ist keine Abrechnung eingerichtet.", "https://aistudio.google.com/app/apikey");
         if (body.Contains("BILLING", StringComparison.Ordinal))
-            return new GeminiException(GeminiErrorKind.InvalidKey,
+            return new CloudException(CloudErrorKind.InvalidKey,
                 "Für das Google-Projekt dieses Schlüssels ist keine Abrechnung eingerichtet.");
         if (code is 401 or 403 || (code == 400 &&
             (body.Contains("API_KEY_INVALID") || body.Contains("API key not valid", StringComparison.OrdinalIgnoreCase))))
-            return new GeminiException(GeminiErrorKind.InvalidKey,
+            return new CloudException(CloudErrorKind.InvalidKey,
                 "API-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
         if (code == 429)
             // Daily quota vs. a per-minute rate limit: only the second one passes by waiting a moment.
-            return new GeminiException(GeminiErrorKind.Quota, IsDailyQuota(body)
+            return new CloudException(CloudErrorKind.Quota, IsDailyQuota(body)
                 ? "Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen."
                 : "Gemini ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
         if (code == 404)
-            return new GeminiException(GeminiErrorKind.Server, UserCopy.ModelGone("Gemini"));
-        return new GeminiException(GeminiErrorKind.Server, UserCopy.ServerBusy("Gemini"));
+            return new CloudException(CloudErrorKind.Server, UserCopy.ModelGone("Gemini"));
+        return new CloudException(CloudErrorKind.Server, UserCopy.ServerBusy("Gemini"));
     }
 
     /// <summary>True when a 429 body says the per-day quota is used up (retrying within the minute is pointless).</summary>
@@ -266,22 +266,22 @@ internal sealed class CloudApi
 
     // ---- OpenAI ----
 
-    private static GeminiException MapOpenAi(int code, string errorCode)
+    private static CloudException MapOpenAi(int code, string errorCode)
     {
         if (code == 401)
-            return new GeminiException("OpenAI", GeminiErrorKind.InvalidKey, "OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
+            return new CloudException("OpenAI", CloudErrorKind.InvalidKey, "OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.");
         if (code == 403)
-            return new GeminiException("OpenAI", GeminiErrorKind.InvalidKey,
+            return new CloudException("OpenAI", CloudErrorKind.InvalidKey,
                 "Dieser OpenAI-Schlüssel darf das Modell nicht benutzen (Projekt- oder Organisationsrechte prüfen).");
         if (code == 429 && errorCode == "insufficient_quota")
-            return new GeminiException("OpenAI", GeminiErrorKind.Billing, "Das OpenAI-Konto hat kein Guthaben mehr.",
+            return new CloudException("OpenAI", CloudErrorKind.Billing, "Das OpenAI-Konto hat kein Guthaben mehr.",
                 "https://platform.openai.com/settings/organization/billing");
         if (code == 429)
-            return new GeminiException("OpenAI", GeminiErrorKind.Quota,
+            return new CloudException("OpenAI", CloudErrorKind.Quota,
                 "OpenAI ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.");
         if (code == 404)
-            return new GeminiException("OpenAI", GeminiErrorKind.Server, UserCopy.ModelGone("OpenAI"));
-        return new GeminiException("OpenAI", GeminiErrorKind.Server, UserCopy.ServerBusy("OpenAI"));
+            return new CloudException("OpenAI", CloudErrorKind.Server, UserCopy.ModelGone("OpenAI"));
+        return new CloudException("OpenAI", CloudErrorKind.Server, UserCopy.ServerBusy("OpenAI"));
     }
 
     /// <summary>error.code, else error.type, of an OpenAI error body ("insufficient_quota" wins if either has it); "" when absent. Never the message (it can quote content).</summary>
@@ -313,12 +313,48 @@ internal sealed class CloudApi
     }
 }
 
-/// <summary>Sends one request to a <see cref="CloudApi"/> and turns every way it can fail into a <see cref="GeminiException"/>.</summary>
+/// <summary>Sends one request to a <see cref="CloudApi"/> and turns every way it can fail into a <see cref="CloudException"/>.</summary>
 internal static class CloudHttp
 {
+    /// <summary>Time one attempt of a non-streaming call may take, before the upload allowance is added.</summary>
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>Upload floor (~40 kB/s, e.g. slow DSL): each started 40 kB adds a second to <see cref="RequestTimeout"/>.</summary>
+    public const double UploadBytesPerSecond = 40_000.0;
+
+    /// <summary>
+    /// One non-streaming call with the whole retry story: per-attempt timeout (<see cref="RequestTimeout"/> plus upload
+    /// allowance for <paramref name="size"/>), the body rebuilt per attempt (a multipart content cannot be sent twice),
+    /// <see cref="HttpRetry"/> per <paramref name="policy"/>, and <paramref name="parse"/> on the answer text. Dictation and
+    /// Dictate Prompt of both providers go through here.
+    /// </summary>
+    /// <param name="http">The client.</param>
+    /// <param name="api">The provider (URL scheme, auth header, error mapping).</param>
+    /// <param name="url">Absolute request URL.</param>
+    /// <param name="key">API key (already trimmed, non-empty).</param>
+    /// <param name="content">Builds the request body; called once per attempt.</param>
+    /// <param name="size">Request size in bytes, for the timeout allowance and the log.</param>
+    /// <param name="policy">Attempt counts and delays.</param>
+    /// <param name="logTag">Prefix of the log lines, e.g. "Gemini gemini-3.1-flash".</param>
+    /// <param name="parse">Turns the 2xx answer text into the result; may throw a <see cref="CloudException"/>.</param>
+    /// <param name="ct">The caller's token.</param>
+    public static Task<T> SendWithRetryAsync<T>(HttpClient http, CloudApi api, string url, string key, Func<HttpContent> content,
+        long size, RetryPolicy policy, string logTag, Func<string, T> parse, CancellationToken ct) =>
+        HttpRetry.RunAsync(async attempt =>
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(size / UploadBytesPerSecond));
+            return await SendAsync(http, api, url, key, content(), logTag, timeout.Token, ct, async response =>
+            {
+                var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+                Log.Info($"{logTag}: HTTP {(int)response.StatusCode}, request {size} bytes, answer {text.Length} bytes, attempt {attempt}");
+                return parse(text);
+            }).ConfigureAwait(false);
+        }, policy, logTag, ct);
+
     /// <summary>
     /// POSTs <paramref name="content"/> (ExpectContinue off, key set by the provider profile). A non-2xx answer is read, logged
-    /// (status word only) and thrown as the mapped <see cref="GeminiException"/>; otherwise <paramref name="onSuccess"/> reads
+    /// (status word only) and thrown as the mapped <see cref="CloudException"/>; otherwise <paramref name="onSuccess"/> reads
     /// the answer. Running it inside this guard means a stall or a dropped connection while reading maps like one on connect.
     /// </summary>
     /// <param name="http">The client.</param>

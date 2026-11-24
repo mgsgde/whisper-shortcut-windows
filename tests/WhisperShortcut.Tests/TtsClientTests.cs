@@ -113,20 +113,20 @@ public class TtsClientTests
     [Fact]
     public void ParseStreamObject_ErrorObject_ThrowsMappedException()
     {
-        var quota = Assert.Throws<GeminiException>(() => TtsClient.ParseGeminiStreamObject(
+        var quota = Assert.Throws<CloudException>(() => TtsClient.ParseGeminiStreamObject(
             "{\"error\":{\"code\":429,\"message\":\"slow down\",\"status\":\"RESOURCE_EXHAUSTED\"}}"));
-        Assert.Equal(GeminiErrorKind.Quota, quota.Kind);
-        var key = Assert.Throws<GeminiException>(() => TtsClient.ParseGeminiStreamObject(
+        Assert.Equal(CloudErrorKind.Quota, quota.Kind);
+        var key = Assert.Throws<CloudException>(() => TtsClient.ParseGeminiStreamObject(
             "{\"error\":{\"code\":403,\"status\":\"PERMISSION_DENIED\"}}"));
-        Assert.Equal(GeminiErrorKind.InvalidKey, key.Kind);
-        var other = Assert.Throws<GeminiException>(() => TtsClient.ParseGeminiStreamObject("{\"error\":{\"message\":\"boom\"}}"));
-        Assert.Equal(GeminiErrorKind.Server, other.Kind);
+        Assert.Equal(CloudErrorKind.InvalidKey, key.Kind);
+        var other = Assert.Throws<CloudException>(() => TtsClient.ParseGeminiStreamObject("{\"error\":{\"message\":\"boom\"}}"));
+        Assert.Equal(CloudErrorKind.Server, other.Kind);
     }
 
     [Fact]
     public void ParseStreamObject_BlockedPrompt_Throws()
     {
-        var ex = Assert.Throws<GeminiException>(() => TtsClient.ParseGeminiStreamObject("{\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}"));
+        var ex = Assert.Throws<CloudException>(() => TtsClient.ParseGeminiStreamObject("{\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}"));
         Assert.Contains("SAFETY", ex.Message);
     }
 
@@ -228,27 +228,27 @@ public class TtsClientTests
     public async Task MissingKey_ThrowsNoKey_WithoutARequest()
     {
         var h = new Handler((_, _, _, _) => Task_(Ok("")));
-        var g = await Assert.ThrowsAsync<GeminiException>(() => Client(h, gemini: " ").SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
-        Assert.Equal(GeminiErrorKind.NoKey, g.Kind);
+        var g = await Assert.ThrowsAsync<CloudException>(() => Client(h, gemini: " ").SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
+        Assert.Equal(CloudErrorKind.NoKey, g.Kind);
         Assert.Equal("Gemini", g.Provider);
         Assert.Equal("Kein Gemini-API-Schlüssel eingetragen. Bitte unter Einstellungen → Konten eintragen.", g.Message);
 
-        var o = await Assert.ThrowsAsync<GeminiException>(() => Client(h, openAi: null).SynthesizeChunkAsync(OpenAiModel, "alloy", "x", null, default));
-        Assert.Equal(GeminiErrorKind.NoKey, o.Kind);
+        var o = await Assert.ThrowsAsync<CloudException>(() => Client(h, openAi: null).SynthesizeChunkAsync(OpenAiModel, "alloy", "x", null, default));
+        Assert.Equal(CloudErrorKind.NoKey, o.Kind);
         Assert.Equal("OpenAI", o.Provider);
         Assert.Equal("Kein OpenAI-API-Schlüssel eingetragen. Bitte unter Einstellungen → Konten eintragen.", o.Message);
         Assert.Equal(0, h.CallCount);
     }
 
     [Theory]
-    [InlineData(401, GeminiErrorKind.InvalidKey)]
-    [InlineData(429, GeminiErrorKind.Quota)]
-    [InlineData(503, GeminiErrorKind.Server)]
-    public async Task Gemini_ErrorStatus_MapsLikeGeminiClient(int status, GeminiErrorKind kind)
+    [InlineData(401, CloudErrorKind.InvalidKey)]
+    [InlineData(429, CloudErrorKind.Quota)]
+    [InlineData(503, CloudErrorKind.Server)]
+    public async Task Gemini_ErrorStatus_MapsLikeGeminiClient(int status, CloudErrorKind kind)
     {
         var h = new Handler((_, _, _, _) => Task.FromResult(new HttpResponseMessage((HttpStatusCode)status)
             { Content = new StringContent("{\"error\":{\"status\":\"X\"}}") }));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
         Assert.Equal(kind, ex.Kind);
         Assert.Equal("Gemini", ex.Provider);
     }
@@ -258,8 +258,8 @@ public class TtsClientTests
     {
         var h = new Handler((_, _, _, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.TooManyRequests)
             { Content = new StringContent("{\"error\":{\"code\":\"insufficient_quota\"}}") }));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeChunkAsync(OpenAiModel, "alloy", "x", null, default));
-        Assert.Equal(GeminiErrorKind.Billing, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeChunkAsync(OpenAiModel, "alloy", "x", null, default));
+        Assert.Equal(CloudErrorKind.Billing, ex.Kind);
         Assert.Equal("OpenAI", ex.Provider);
     }
 
@@ -267,16 +267,16 @@ public class TtsClientTests
     public async Task Gemini_2xxWithoutAudio_IsAServerError()
     {
         var h = new Handler((_, _, _, _) => Task_(Ok("data: {\"usageMetadata\":{}}\r\n\r\n")));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
     }
 
     [Fact]
     public async Task NetworkFailure_IsMappedToNetwork()
     {
         var h = new Handler((_, _, _, _) => throw new HttpRequestException("offline"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
-        Assert.Equal(GeminiErrorKind.Network, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
+        Assert.Equal(CloudErrorKind.Network, ex.Kind);
     }
 
     /// <summary>Delivers a first block, then hangs until the token is cancelled.</summary>
@@ -316,8 +316,8 @@ public class TtsClientTests
         var h = new Handler((_, _, _, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new HangingStream(first)) }));
         var c = Client(h);
         c.StallTimeout = TimeSpan.FromMilliseconds(150);
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
-        Assert.Equal(GeminiErrorKind.Timeout, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
+        Assert.Equal(CloudErrorKind.Timeout, ex.Kind);
     }
 
     [Fact]
@@ -326,8 +326,8 @@ public class TtsClientTests
         var h = new Handler(async (_, _, _, ct) => { await Task.Delay(Timeout.Infinite, ct); return Ok(""); });
         var c = Client(h);
         c.FirstAudioTimeout = TimeSpan.FromMilliseconds(150);
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
-        Assert.Equal(GeminiErrorKind.Timeout, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.SynthesizeChunkAsync(GeminiModel, "Charon", "x", null, default));
+        Assert.Equal(CloudErrorKind.Timeout, ex.Kind);
     }
 
     [Fact]
@@ -357,8 +357,8 @@ public class TtsClientTests
     public async Task Synthesize_DoesNotRetryAnInvalidKey_AndThrowsWhenAllChunksFailed()
     {
         var h = new Handler((_, _, _, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent("{}") }));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
-        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(CloudErrorKind.InvalidKey, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -366,8 +366,8 @@ public class TtsClientTests
     public async Task Synthesize_GivesUpAfterTheMaxAttempts()
     {
         var h = new Handler((_, _, _, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") }));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Equal(HttpRetry.MaxAttempts, h.CallCount);
     }
 
@@ -375,7 +375,7 @@ public class TtsClientTests
     public async Task Synthesize_BlockedPrompt_IsNotRetried()
     {
         var h = new Handler((_, _, _, _) => Task_(Ok("data: {\"promptFeedback\":{\"blockReason\":\"OTHER\"}}\r\n\r\n")));
-        await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
         Assert.Equal(1, h.CallCount);
     }
 
@@ -390,8 +390,8 @@ public class TtsClientTests
         // Used to retry 5 times with backoff (about 22 s per chunk) although the quota is gone until tomorrow.
         var h = new Handler((_, _, _, _) => Task.FromResult(Quota429(
             "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"message\":\"Quota exceeded for metric ... PerDay ...\"}}")));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal("Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen.", ex.Message);
         Assert.Equal(1, h.CallCount);
     }
@@ -412,8 +412,8 @@ public class TtsClientTests
     {
         const string body = "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\",\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"100s\"}]}}";
         var h = new Handler((_, _, _, _) => Task.FromResult(Quota429(body)));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -436,8 +436,8 @@ public class TtsClientTests
             r.Headers.TryAddWithoutValidation("retry-after", "120");
             return Task.FromResult(r);
         });
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(OpenAiModel, "alloy", "Ein kurzer Satz.", _ => { }, default));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeAsync(OpenAiModel, "alloy", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -445,8 +445,8 @@ public class TtsClientTests
     public async Task Synthesize_DoesNotRetryAnEmptyOpenAiAccount()
     {
         var h = new Handler((_, _, _, _) => Task.FromResult(Quota429("{\"error\":{\"code\":\"insufficient_quota\"}}")));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(OpenAiModel, "alloy", "Ein kurzer Satz.", _ => { }, default));
-        Assert.Equal(GeminiErrorKind.Billing, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeAsync(OpenAiModel, "alloy", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(CloudErrorKind.Billing, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -463,8 +463,8 @@ public class TtsClientTests
     public async Task Synthesize_DoesNotRetryAGoneModel()
     {
         var h = new Handler((_, _, _, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.NotFound) { Content = new StringContent("{}") }));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(h).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -473,8 +473,8 @@ public class TtsClientTests
     {
         var daily = new Handler((_, _, _, _) => Task_(Ok(
             "data: {\"error\":{\"code\":429,\"message\":\"Quota ... per day ...\"}}\r\n\r\n")));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Client(daily).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Client(daily).SynthesizeAsync(GeminiModel, "Charon", "Ein kurzer Satz.", _ => { }, default));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal(1, daily.CallCount);
     }
 

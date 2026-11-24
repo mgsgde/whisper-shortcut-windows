@@ -518,7 +518,7 @@ internal sealed partial class ChatWindow : FastShowForm
         }
         catch (Exception e)
         {
-            if (e is Core.GeminiException g) Core.Log.Error($"Chat: {g.Provider} {g.Kind}");
+            if (e is Core.CloudException g) Core.Log.Error($"Chat: {g.Provider} {g.Kind}");
             else if (e is not (Core.OfflineNotReadyException or Core.LocalLlmException)) Core.Log.Error("Chat failed", e);
             if (IsDisposed) return;
             SetStatus(Core.RunOutcomes.ForFailure(e, audioKept: false, Core.FailureContext.Chat).Text, Tone.Bad);

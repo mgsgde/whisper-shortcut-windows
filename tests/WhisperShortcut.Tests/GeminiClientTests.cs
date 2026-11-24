@@ -167,13 +167,13 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, body));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Malformed, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.Malformed, ex.Kind);
         Assert.Equal("Gemini", ex.Provider);
         Assert.Contains("nicht lesen", ex.Message);
         h.Responses.Enqueue((HttpStatusCode.OK, body));
-        ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptAsync(Wav, "x", null));
-        Assert.Equal(GeminiErrorKind.Malformed, ex.Kind);
+        ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptAsync(Wav, "x", null));
+        Assert.Equal(CloudErrorKind.Malformed, ex.Kind);
     }
 
     [Fact]
@@ -186,9 +186,9 @@ public class GeminiClientTests
     public async Task EmptyKey_ThrowsGermanMessage_WithoutNetwork()
     {
         var (c, h) = Make("");
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
         Assert.Equal("Kein API-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.", ex.Message);
-        Assert.Equal(GeminiErrorKind.NoKey, ex.Kind);
+        Assert.Equal(CloudErrorKind.NoKey, ex.Kind);
         Assert.Empty(h.Calls);
     }
 
@@ -248,8 +248,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         for (var i = 0; i < 6; i++) h.Responses.Enqueue((HttpStatusCode.BadGateway, "{}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Equal(6, h.Calls.Count);
     }
 
@@ -268,8 +268,8 @@ public class GeminiClientTests
     public async Task PersistentNetworkError_ThrowsNetwork_After5Attempts()
     {
         var h = new ScriptHandler { Script = (_, _) => throw new HttpRequestException("down") };
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => MakeScripted(h).TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Network, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => MakeScripted(h).TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.Network, ex.Kind);
         Assert.Equal(5, h.Calls);
     }
 
@@ -289,8 +289,8 @@ public class GeminiClientTests
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.TooManyRequests,
             "{\"error\":{\"details\":[{\"@type\":\"type.googleapis.com/google.rpc.RetryInfo\",\"retryDelay\":\"120s\"}]}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Single(h.Calls);
     }
 
@@ -311,8 +311,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.BadRequest, "{\"error\":{\"message\":\"bad\"}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Single(h.Calls);
     }
 
@@ -321,8 +321,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         for (var i = 0; i < 5; i++) h.Responses.Enqueue((HttpStatusCode.TooManyRequests, "{}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptAsync(Wav, null, null));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptAsync(Wav, null, null));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal(5, h.Calls.Count);
     }
 
@@ -344,8 +344,8 @@ public class GeminiClientTests
     {
         // Handler reports a cancelled linked token although the caller did not cancel = per-attempt timeout.
         var h = new ScriptHandler { Script = (_, _) => throw new OperationCanceledException() };
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => MakeScripted(h).TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Timeout, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => MakeScripted(h).TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.Timeout, ex.Kind);
         Assert.Equal(5, h.Calls);
     }
 
@@ -354,8 +354,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         for (var i = 0; i < 5; i++) h.Responses.Enqueue((HttpStatusCode.TooManyRequests, PerMinute429));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal("Gemini ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.", ex.Message);
         Assert.Equal(5, h.Calls.Count);
     }
@@ -365,8 +365,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.TooManyRequests, PerDay429));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal("Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen.", ex.Message);
         Assert.Single(h.Calls);
     }
@@ -376,8 +376,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.BadRequest, "{\"error\":{\"message\":\"API key not valid.\",\"details\":[{\"reason\":\"API_KEY_INVALID\"}]}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.InvalidKey, ex.Kind);
         Assert.Single(h.Calls);
     }
 
@@ -390,8 +390,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.BadRequest, body));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.Billing, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.Billing, ex.Kind);
         Assert.Equal("Für diesen Gemini-Schlüssel ist keine Abrechnung eingerichtet.", ex.Message);
         Assert.Equal("https://aistudio.google.com/app/apikey", ex.BillingUrl);
         Assert.Single(h.Calls);
@@ -403,8 +403,8 @@ public class GeminiClientTests
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.BadRequest,
             "{\"error\":{\"code\":400,\"message\":\"User location is not supported for the API use.\",\"status\":\"FAILED_PRECONDITION\"}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.NotEqual(GeminiErrorKind.Billing, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.NotEqual(CloudErrorKind.Billing, ex.Kind);
         Assert.Null(ex.BillingUrl);
     }
 
@@ -414,7 +414,7 @@ public class GeminiClientTests
         var h = new FakeHandler();
         string key = "";
         var c = new GeminiClient(() => key, () => "m", () => "m", new HttpClient(h));
-        await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
         key = "later";
         h.Responses.Enqueue((HttpStatusCode.OK, Answer));
         await c.TranscribeAsync(Wav, Array.Empty<string>());
@@ -544,8 +544,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("Text", "Mach das freundlicher", null));
-        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("Text", "Mach das freundlicher", null));
+        Assert.Equal(CloudErrorKind.Truncated, ex.Kind);
         Assert.Contains("abgeschnitten", ex.Message);
         Assert.Single(h.Calls); // not retried
     }
@@ -555,8 +555,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptAsync(Wav, "Text", null));
-        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptAsync(Wav, "Text", null));
+        Assert.Equal(CloudErrorKind.Truncated, ex.Kind);
     }
 
     [Fact]
@@ -605,8 +605,8 @@ public class GeminiClientTests
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.Forbidden,
             "{\"error\":{\"message\":\"SERVICE_DISABLED: Gemini has not been used in project\"}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.InvalidKey, ex.Kind);
         Assert.Contains("nicht aktiviert", ex.Message);
         Assert.Single(h.Calls);
     }
@@ -616,8 +616,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.Forbidden, "{\"error\":{\"message\":\"BILLING_ACCOUNT_REQUIRED\"}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.InvalidKey, ex.Kind);
         Assert.Contains("keine Abrechnung", ex.Message);
         Assert.Single(h.Calls);
     }
@@ -653,8 +653,8 @@ public class GeminiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, Truncated));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.CompleteTextAsync("s", "u"));
-        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.CompleteTextAsync("s", "u"));
+        Assert.Equal(CloudErrorKind.Truncated, ex.Kind);
     }
 
     private static readonly ScreenshotImage Shot = new(new byte[] { 0x89, 0x50, 0x4E, 0x47, 9 }, "image/png");

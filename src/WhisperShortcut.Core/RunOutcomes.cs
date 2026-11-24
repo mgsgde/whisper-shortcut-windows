@@ -103,7 +103,7 @@ public static class RunOutcomes
             case EmptyModelReplyException: return "empty model reply";
             case PromptReplyRejectedException: return "prompt reply withheld";
             case InstructionNotUnderstoodException: return "instruction not understood";
-            case GeminiException g: return $"Gemini {g.Kind}";
+            case CloudException g: return $"Gemini {g.Kind}";
             case AudioSilentException or MicrophoneUnavailableException: return $"microphone problem {e.GetType().Name}";
             default: withException = true; return "unexpected error";
         }
@@ -132,19 +132,19 @@ public static class RunOutcomes
                 return Retryable(UserCopy.ReplyNotPastedTitle, e.Message);
             case InstructionNotUnderstoodException when context == FailureContext.Dictation:
                 return Toast(UserCopy.InstructionNotUnderstoodTitle, e.Message, Severity.Warning);
-            case GeminiException g when context == FailureContext.Dictation:
+            case CloudException g when context == FailureContext.Dictation:
             {
                 var title = UserCopy.ProviderErrorTitle(g.Kind, g.Provider, g.Message);
                 switch (g.Kind)
                 {
-                    case GeminiErrorKind.Billing:
+                    case CloudErrorKind.Billing:
                         // Retrying cannot fill an empty account, but the audio stays for "Letzte Aufnahme erneut verarbeiten" after topping up.
                         return g.BillingUrl is { } url
                             ? Toast(title, g.Message, Severity.Error, FollowUp.TopUp, url, keep: true)
                             : Toast(title, g.Message, Severity.Error, FollowUp.OpenSettings, keep: true);
-                    case GeminiErrorKind.NoKey or GeminiErrorKind.InvalidKey:
+                    case CloudErrorKind.NoKey or CloudErrorKind.InvalidKey:
                         return Toast(title, g.Message, Severity.Error, FollowUp.OpenAccounts);
-                    case GeminiErrorKind.Network or GeminiErrorKind.Timeout or GeminiErrorKind.Quota or GeminiErrorKind.Server:
+                    case CloudErrorKind.Network or CloudErrorKind.Timeout or CloudErrorKind.Quota or CloudErrorKind.Server:
                         return Retryable(title, g.Message);
                     default:
                         return Toast(title, g.Message, Severity.Error);
@@ -166,8 +166,8 @@ public static class RunOutcomes
             SelectionUnreadableException => new(PresentationKind.Toast, "Vorlesen",
                 "Markierter Text konnte nicht gelesen werden. Bitte noch einmal versuchen.", Severity.Warning, ErrorSound: true),
             // Only a missing or rejected key opens the settings; every other provider error is read, not acted on.
-            GeminiException g => new(PresentationKind.Toast, Title, g.Message, Severity.Error, ErrorSound: true,
-                g.Kind is GeminiErrorKind.NoKey or GeminiErrorKind.InvalidKey ? FollowUp.OpenAccounts : FollowUp.None),
+            CloudException g => new(PresentationKind.Toast, Title, g.Message, Severity.Error, ErrorSound: true,
+                g.Kind is CloudErrorKind.NoKey or CloudErrorKind.InvalidKey ? FollowUp.OpenAccounts : FollowUp.None),
             _ => new(PresentationKind.Toast, Title, "Der Text konnte nicht vorgelesen werden. Details stehen im Protokoll.",
                 Severity.Error, ErrorSound: true),
         };
@@ -175,7 +175,7 @@ public static class RunOutcomes
 
     private static Presentation ForChat(Exception e) => e switch
     {
-        GeminiException g => new(PresentationKind.Toast, "", g.Message, Severity.Error),
+        CloudException g => new(PresentationKind.Toast, "", g.Message, Severity.Error),
         OfflineNotReadyException or LocalLlmException => new(PresentationKind.Toast, "",
             e.Message + " Unter Einstellungen → Dictate Prompt lässt es sich laden.", Severity.Error),
         _ => new(PresentationKind.Toast, "", "Die Antwort konnte nicht geladen werden. Details stehen im Protokoll.", Severity.Error),

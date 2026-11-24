@@ -274,14 +274,14 @@ internal sealed partial class SettingsForm : FastShowForm
         AddDataSection(general);
 
         // ================= page: Konten (Mac Accounts: one section per provider key) =================
-        _geminiKey = new KeyField(settings.ApiKey ?? "", (k, ct) => _gemini.CheckKeyAsync(k, ct), GeminiKeyMessage, k => SaveCheckedKey(k, gemini: true));
+        _geminiKey = new KeyField(settings.ApiKey ?? "", (k, ct) => _gemini.CheckKeyAsync(k, ct), GeminiKeyMessage, k => SaveCheckedKey(k, Core.CloudProviders.Gemini));
         AddKeyCard(accounts, _geminiKey, "Google-API-Schlüssel", "Für Gemini: Diktieren und Dictate Prompt. Bitte einen Schlüssel aus einem "
             + "Google-Projekt mit Abrechnung verwenden: Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen.",
-            "Schlüssel in Google AI Studio erstellen", "https://aistudio.google.com/apikey");
-        _openAiKey = new KeyField(settings.OpenAiKey ?? "", (k, ct) => _openAi.CheckKeyAsync(k, ct), OpenAiKeyMessage, k => SaveCheckedKey(k, gemini: false));
+            "Schlüssel in Google AI Studio erstellen", Core.CloudProviders.Gemini.KeyUrl);
+        _openAiKey = new KeyField(settings.OpenAiKey ?? "", (k, ct) => _openAi.CheckKeyAsync(k, ct), OpenAiKeyMessage, k => SaveCheckedKey(k, Core.CloudProviders.OpenAi));
         AddKeyCard(accounts, _openAiKey, "OpenAI-API-Schlüssel", "Für die Transkriptions- und Textmodelle von OpenAI. Ein API-Schlüssel mit "
             + "Guthaben auf platform.openai.com; ein ChatGPT-Abo zählt dafür nicht.",
-            "Schlüssel bei OpenAI erstellen", "https://platform.openai.com/api-keys");
+            "Schlüssel bei OpenAI erstellen", Core.CloudProviders.OpenAi.KeyUrl);
 
         // ================= page: Diktieren =================
         // --- Modus (Mac SpeechToTextSettingsTab.dictateModeSection): above the model, because Live depends on it ---
@@ -1453,21 +1453,20 @@ internal sealed partial class SettingsForm : FastShowForm
     /// <summary>
     /// A key the check confirmed is saved right away, without waiting for the automatic apply. True when newly saved.
     /// </summary>
-    private bool SaveCheckedKey(string key, bool gemini)
+    private bool SaveCheckedKey(string key, Core.CloudProvider provider)
     {
-        var before = gemini ? _settings.ApiKey : _settings.OpenAiKey;
-        if (key == before || !_loaded) return false;
+        if (key == provider.GetKey(_settings) || !_loaded) return false;
         var snapshot = _settings.Capture();
-        if (gemini) _settings.ApiKey = key; else _settings.OpenAiKey = key;
+        provider.SetKey(_settings, key);
         if (!_settings.TrySave(out var error))
         {
             _settings.Restore(snapshot);
             Warn(error ?? Core.UserCopy.TechnicalFallback("Die Einstellungen konnten nicht gespeichert werden.", null));
             return false;
         }
-        Core.Log.Info($"{(gemini ? "Gemini" : "OpenAI")} key saved after a successful check");
+        Core.Log.Info($"{provider.Name} key saved after a successful check");
         // The key is no longer an unsaved change; everything else keeps its state.
-        (gemini ? _geminiKeyBinding : _openAiKeyBinding).Commit(_settings);
+        (provider.Engine == Core.Engine.Gemini ? _geminiKeyBinding : _openAiKeyBinding).Commit(_settings);
         _savedHintUntil = Environment.TickCount64 + 3000;
         UpdateSaveState();
         Saved?.Invoke();

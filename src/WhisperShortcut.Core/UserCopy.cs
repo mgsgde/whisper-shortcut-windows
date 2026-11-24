@@ -126,18 +126,18 @@ public static class UserCopy
     /// Popup title for a failed cloud call, Mac SpeechErrorFormatter.shortStatus where Windows has the same error.
     /// <paramref name="message"/> tells the two server cases apart (model gone vs. service busy).
     /// </summary>
-    public static string ProviderErrorTitle(GeminiErrorKind kind, string provider, string? message = null) => kind switch
+    public static string ProviderErrorTitle(CloudErrorKind kind, string provider, string? message = null) => kind switch
     {
-        GeminiErrorKind.NoKey => provider == "Gemini" ? "⚠️ Kein Google-API-Schlüssel" : $"⚠️ Kein {provider}-API-Schlüssel",
-        GeminiErrorKind.InvalidKey => "❌ Ungültiger API-Schlüssel",
-        GeminiErrorKind.Network => "⏰ Netzwerkfehler",
-        GeminiErrorKind.Timeout => "⏰ Zeitüberschreitung",
-        GeminiErrorKind.Quota => "⏳ Limit erreicht",
-        GeminiErrorKind.Billing => "💳 Abrechnung erforderlich",
-        GeminiErrorKind.Truncated => "⚠️ Antwort abgeschnitten",
-        GeminiErrorKind.Server when message == ModelGone(provider) => "❌ Modell nicht mehr verfügbar",
-        GeminiErrorKind.Server when message == ServerBusy(provider) => "🔄 Dienst nicht erreichbar",
-        GeminiErrorKind.Server => "❌ Serverfehler",
+        CloudErrorKind.NoKey => provider == "Gemini" ? "⚠️ Kein Google-API-Schlüssel" : $"⚠️ Kein {provider}-API-Schlüssel",
+        CloudErrorKind.InvalidKey => "❌ Ungültiger API-Schlüssel",
+        CloudErrorKind.Network => "⏰ Netzwerkfehler",
+        CloudErrorKind.Timeout => "⏰ Zeitüberschreitung",
+        CloudErrorKind.Quota => "⏳ Limit erreicht",
+        CloudErrorKind.Billing => "💳 Abrechnung erforderlich",
+        CloudErrorKind.Truncated => "⚠️ Antwort abgeschnitten",
+        CloudErrorKind.Server when message == ModelGone(provider) => "❌ Modell nicht mehr verfügbar",
+        CloudErrorKind.Server when message == ServerBusy(provider) => "🔄 Dienst nicht erreichbar",
+        CloudErrorKind.Server => "❌ Serverfehler",
         _ => ErrorTitle,
     };
 

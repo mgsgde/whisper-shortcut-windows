@@ -47,7 +47,7 @@ public sealed class ChatClient
     /// <summary>
     /// Sends the conversation and streams the answer. <paramref name="onDelta"/> gets each text piece as it arrives
     /// (on the HTTP thread). <paramref name="webSearch"/> turns on Google Search grounding (Gemini only).
-    /// Throws <see cref="GeminiException"/> for key, HTTP, network and empty-answer problems,
+    /// Throws <see cref="CloudException"/> for key, HTTP, network and empty-answer problems,
     /// <see cref="OperationCanceledException"/> on cancel, and <see cref="ArgumentException"/> for <see cref="Engine.Local"/>.
     /// </summary>
     public async Task<ChatReply> SendAsync(Engine engine, string model, string systemPrompt,
@@ -191,7 +191,7 @@ public sealed class ChatClient
                 if (reply.Length == 0)
                 {
                     Log.Error($"Chat Gemini {model}: 2xx without any text");
-                    throw new GeminiException(GeminiErrorKind.Server, "Gemini hat keine Antwort geliefert. Bitte noch einmal versuchen.");
+                    throw new CloudException(CloudErrorKind.Server, "Gemini hat keine Antwort geliefert. Bitte noch einmal versuchen.");
                 }
                 Log.Info($"Chat Gemini {model}: {reply.Length} chars, {sources.Count} sources");
                 return new ChatReply(reply.ToString(), sources);
@@ -271,7 +271,7 @@ public sealed class ChatClient
                 if (reply.Length == 0)
                 {
                     Log.Error($"Chat OpenAI {model}: 2xx without any text");
-                    throw new GeminiException("OpenAI", GeminiErrorKind.Server, "OpenAI hat keine Antwort geliefert. Bitte noch einmal versuchen.");
+                    throw new CloudException("OpenAI", CloudErrorKind.Server, "OpenAI hat keine Antwort geliefert. Bitte noch einmal versuchen.");
                 }
                 Log.Info($"Chat OpenAI {model}: {reply.Length} chars");
                 return new ChatReply(reply.ToString(), Array.Empty<ChatSource>());

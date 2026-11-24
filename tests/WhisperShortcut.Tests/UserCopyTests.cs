@@ -75,22 +75,22 @@ public class UserCopyTests
     }
 
     [Theory]
-    [InlineData(GeminiErrorKind.NoKey, "Gemini", "⚠️ Kein Google-API-Schlüssel")]
-    [InlineData(GeminiErrorKind.NoKey, "OpenAI", "⚠️ Kein OpenAI-API-Schlüssel")]
-    [InlineData(GeminiErrorKind.InvalidKey, "OpenAI", "❌ Ungültiger API-Schlüssel")]
-    [InlineData(GeminiErrorKind.Network, "Gemini", "⏰ Netzwerkfehler")]
-    [InlineData(GeminiErrorKind.Timeout, "Gemini", "⏰ Zeitüberschreitung")]
-    [InlineData(GeminiErrorKind.Quota, "Gemini", "⏳ Limit erreicht")]
-    [InlineData(GeminiErrorKind.Billing, "OpenAI", "💳 Abrechnung erforderlich")]
-    [InlineData(GeminiErrorKind.Server, "Gemini", "❌ Serverfehler")]
-    public void ProviderErrorTitle_UsesTheMacTitles(GeminiErrorKind kind, string provider, string title) =>
+    [InlineData(CloudErrorKind.NoKey, "Gemini", "⚠️ Kein Google-API-Schlüssel")]
+    [InlineData(CloudErrorKind.NoKey, "OpenAI", "⚠️ Kein OpenAI-API-Schlüssel")]
+    [InlineData(CloudErrorKind.InvalidKey, "OpenAI", "❌ Ungültiger API-Schlüssel")]
+    [InlineData(CloudErrorKind.Network, "Gemini", "⏰ Netzwerkfehler")]
+    [InlineData(CloudErrorKind.Timeout, "Gemini", "⏰ Zeitüberschreitung")]
+    [InlineData(CloudErrorKind.Quota, "Gemini", "⏳ Limit erreicht")]
+    [InlineData(CloudErrorKind.Billing, "OpenAI", "💳 Abrechnung erforderlich")]
+    [InlineData(CloudErrorKind.Server, "Gemini", "❌ Serverfehler")]
+    public void ProviderErrorTitle_UsesTheMacTitles(CloudErrorKind kind, string provider, string title) =>
         Assert.Equal(title, UserCopy.ProviderErrorTitle(kind, provider));
 
     [Fact]
     public void ProviderErrorTitle_TellsTheServerCasesApart()
     {
-        Assert.Equal("❌ Modell nicht mehr verfügbar", UserCopy.ProviderErrorTitle(GeminiErrorKind.Server, "OpenAI", UserCopy.ModelGone("OpenAI")));
-        Assert.Equal("🔄 Dienst nicht erreichbar", UserCopy.ProviderErrorTitle(GeminiErrorKind.Server, "Gemini", UserCopy.ServerBusy("Gemini")));
+        Assert.Equal("❌ Modell nicht mehr verfügbar", UserCopy.ProviderErrorTitle(CloudErrorKind.Server, "OpenAI", UserCopy.ModelGone("OpenAI")));
+        Assert.Equal("🔄 Dienst nicht erreichbar", UserCopy.ProviderErrorTitle(CloudErrorKind.Server, "Gemini", UserCopy.ServerBusy("Gemini")));
     }
 
     [Fact]

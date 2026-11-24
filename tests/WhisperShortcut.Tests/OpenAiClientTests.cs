@@ -162,8 +162,8 @@ public class OpenAiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"abc\"}}]}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(CloudErrorKind.Truncated, ex.Kind);
     }
 
     [Fact]
@@ -171,8 +171,8 @@ public class OpenAiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.Unauthorized, "{\"error\":{\"code\":\"invalid_api_key\"}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(CloudErrorKind.InvalidKey, ex.Kind);
         Assert.Equal("OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.", ex.Message);
         Assert.Single(h.Calls);
     }
@@ -182,8 +182,8 @@ public class OpenAiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.Forbidden, "{}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(CloudErrorKind.InvalidKey, ex.Kind);
         Assert.Contains("Projekt- oder Organisationsrechte", ex.Message);
         Assert.Single(h.Calls);
     }
@@ -195,8 +195,8 @@ public class OpenAiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue(((HttpStatusCode)429, body));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.Billing, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(CloudErrorKind.Billing, ex.Kind);
         Assert.Equal("Das OpenAI-Konto hat kein Guthaben mehr.", ex.Message);
         Assert.Equal("https://platform.openai.com/settings/organization/billing", ex.BillingUrl);
         Assert.Single(h.Calls);
@@ -208,8 +208,8 @@ public class OpenAiClientTests
         var (c, h) = Make();
         c.RetryDelay = TimeSpan.Zero;
         for (var i = 0; i < 10; i++) h.Responses.Enqueue(((HttpStatusCode)429, "{\"error\":{\"code\":\"rate_limit_exceeded\"}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Null(ex.BillingUrl);
     }
 
@@ -238,8 +238,8 @@ public class OpenAiClientTests
     {
         var (c, h) = Make();
         for (var i = 0; i < 10; i++) h.Responses.Enqueue((HttpStatusCode.InternalServerError, "{}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Equal(UserCopy.ServerBusy("OpenAI"), ex.Message);
         Assert.Equal(6, h.Calls.Count);
     }
@@ -249,8 +249,8 @@ public class OpenAiClientTests
     {
         var h = new HeaderHandler("retry-after", "120");
         var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Contains("ausgelastet", ex.Message);
         Assert.Equal(1, h.Count);
     }
@@ -268,8 +268,8 @@ public class OpenAiClientTests
     public async Task MissingKey_IsNoKey_WithoutRequest()
     {
         var (c, h) = Make(key: " ");
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
-        Assert.Equal(GeminiErrorKind.NoKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(CloudErrorKind.NoKey, ex.Kind);
         Assert.Equal("Kein OpenAI-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.", ex.Message);
         Assert.Empty(h.Calls);
     }
@@ -278,8 +278,8 @@ public class OpenAiClientTests
     public async Task NetworkError_IsNetwork_AfterRetries()
     {
         var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(new ThrowingHandler())) { RetryDelay = TimeSpan.Zero };
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.Network, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(CloudErrorKind.Network, ex.Kind);
         Assert.Contains("OpenAI", ex.Message);
     }
 
@@ -357,8 +357,8 @@ public class OpenAiClientTests
     [InlineData("{\"choices\":[{\"message\":{}}]}")]
     public void ExtractChatText_Malformed_Throws(string body)
     {
-        var ex = Assert.Throws<GeminiException>(() => OpenAiClient.ExtractChatText(body));
-        Assert.Equal(GeminiErrorKind.Malformed, ex.Kind);
+        var ex = Assert.Throws<CloudException>(() => OpenAiClient.ExtractChatText(body));
+        Assert.Equal(CloudErrorKind.Malformed, ex.Kind);
         Assert.Equal("OpenAI", ex.Provider);
         Assert.Contains("nicht lesen", ex.Message);
     }
@@ -374,8 +374,8 @@ public class OpenAiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, "not json"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", "Eigener Prompt"));
-        Assert.Equal(GeminiErrorKind.Malformed, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", "Eigener Prompt"));
+        Assert.Equal(CloudErrorKind.Malformed, ex.Kind);
     }
 
     [Fact]
@@ -383,8 +383,8 @@ public class OpenAiClientTests
     {
         var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(new CancelHandler()))
         { RetryDelay = TimeSpan.Zero };
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", null));
-        Assert.Equal(GeminiErrorKind.Timeout, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.PromptTextAsync("x", "y", null));
+        Assert.Equal(CloudErrorKind.Timeout, ex.Kind);
         Assert.Contains("Zeitüberschreitung", ex.Message);
     }
 
@@ -446,8 +446,8 @@ public class OpenAiClientTests
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, "{\"choices\":[{\"finish_reason\":\"length\",\"message\":{\"content\":\"abc\"}}]}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.CompleteTextAsync("s", "u"));
-        Assert.Equal(GeminiErrorKind.Truncated, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => c.CompleteTextAsync("s", "u"));
+        Assert.Equal(CloudErrorKind.Truncated, ex.Kind);
     }
 
     private static readonly ScreenshotImage Shot = new(new byte[] { 0x89, 0x50, 0x4E, 0x47, 9 }, "image/png");

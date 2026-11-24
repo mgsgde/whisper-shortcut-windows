@@ -422,7 +422,7 @@ internal sealed class MeetingController : IDisposable
         // One balloon per meeting: a dead network would otherwise bring one every minute.
         if (_failureShown) return;
         _failureShown = true;
-        string reason = e is Core.GeminiException g ? g.Message : "Details stehen im Protokoll.";
+        string reason = e is Core.CloudException g ? g.Message : "Details stehen im Protokoll.";
         _notify("Meeting: Abschnitt nicht transkribiert",
             audioKept
                 ? "Der Ton ist gespeichert und wird später erneut versucht. " + reason
@@ -565,7 +565,7 @@ internal sealed class MeetingController : IDisposable
         else if (announce || still > 0)
             _notify("Noch nicht alles transkribiert",
                 $"{Count(still)} weiterhin offen{(recovered > 0 ? $", {Count(recovered)} geschafft" : "")}. Der Ton bleibt gespeichert. "
-                + (error is Core.GeminiException g ? g.Message : ""),
+                + (error is Core.CloudException g ? g.Message : ""),
                 ToolTipIcon.Warning, null);
     }
 
