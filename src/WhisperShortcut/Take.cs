@@ -24,6 +24,9 @@ internal sealed class Take : IDisposable
     private CancellationTokenSource? _selectionCts;
     private bool _disposed;
 
+    /// <summary>This recording's own late-copy watch (a screenshot or another recording cannot cancel it).</summary>
+    public Core.LateCopyWatch LateWatch { get; } = new();
+
     public Take(Core.RecordingKindName kind, string stopKey, ClipboardPaster paster)
     {
         Kind = kind;
@@ -120,7 +123,7 @@ internal sealed class Take : IDisposable
     public void StartSelectionCopy()
     {
         _selectionCts = new CancellationTokenSource();
-        Selection = _paster.CopySelectionAsync(_selectionCts.Token);
+        Selection = _paster.CopySelectionAsync(_selectionCts.Token, LateWatch);
     }
 
     /// <summary>
@@ -140,7 +143,7 @@ internal sealed class Take : IDisposable
         _selectionCts?.Dispose();
         _selectionCts = null;
         Selection = null;
-        _paster.CancelLateWatch();
+        LateWatch.Cancel();
         Cts?.Cancel();
         Cts?.Dispose();
         Cts = null;

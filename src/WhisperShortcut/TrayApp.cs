@@ -1740,7 +1740,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private void ThrowIfLateCopy(string what, string? selection, bool isRetry)
     {
-        if (selection != null || isRetry || !_paster.LateCopyArrived) return;
+        if (selection != null || isRetry || _take?.LateWatch.Arrived != true) return;
         Core.Log.Info($"{what}: selection arrived after the deadline, not composing over it");
         throw new Core.SelectionUnreadableException();
     }
@@ -1905,7 +1905,7 @@ internal sealed partial class TrayApp : ApplicationContext
         try
         {
             string? selection = await _paster.CopySelectionAsync();
-            var result = Core.GlossaryEdit.TryAdd(_settings.Glossary, selection, out string term);
+            var result = _settings.TryAddGlossaryTerm(selection, out string term);
             Core.Log.Info($"Glossary add: {result} ({term.Length} chars)");
             switch (result)
             {

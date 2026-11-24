@@ -36,25 +36,17 @@ internal sealed class ClipboardPaster
     private uint _lastOwnWriteSequence;
 
     // Late-copy watch (see CopySelectionAsync). Only touched on the UI thread.
-    private CancellationTokenSource? _lateWatch;
-    private uint _lateBaseline;
-    private bool _lateCopyArrived;
+    // The watch of the latest selection copy; every recording passes in its own (Take.LateWatch).
+    private Core.LateCopyWatch _lateWatch = new();
+    private bool _snipping; // a screenshot is on the clipboard's way: its write is no late copy
 
     public ClipboardPaster(IntPtr clipboardOwner) => _owner = clipboardOwner;
 
     /// <summary>
-    /// True when a Ctrl+C that missed the 2 s deadline arrived afterwards: there is a selection the
-    /// recording never saw, so composing a new text over it would be wrong.
+    /// Stops the latest late-copy watch and clears its flag (paste, retry, our own clipboard write). A recording's
+    /// teardown cancels its own <see cref="Core.LateCopyWatch"/> instead; the screenshot path cancels nothing.
     /// </summary>
-    public bool LateCopyArrived => _lateCopyArrived;
-
-    /// <summary>Stops the late-copy watch and clears its flag (new recording, Esc, paste, retry).</summary>
-    public void CancelLateWatch()
-    {
-        _lateWatch?.Cancel();
-        _lateWatch = null;
-        _lateCopyArrived = false;
-    }
+    public void CancelLateWatch() => _lateWatch.Cancel();
 
     /// <summary>The top-level window in front right now (the paste target Mac keeps as the front app).</summary>
     public static IntPtr ForegroundRoot()
@@ -549,7 +541,7 @@ internal sealed class ClipboardPaster
             if (GetClipboardSequenceNumber() != ours) return;
             if (Clear()) Core.Log.Info("LIVE-DICTATE: cleared clipboard after last piece");
             // Our own clear is no late copy: move the watch's baseline along.
-            if (_lateWatch != null) _lateBaseline = GetClipboardSequenceNumber();
+            _lateWatch.Rebaseline(GetClipboardSequenceNumber());
         }
         catch (Exception e)
         {
@@ -570,7 +562,7 @@ internal sealed class ClipboardPaster
                 return;
             }
             Core.Log.Info(Clear() ? "Paste: cleared clipboard after pasting" : "Paste: clearing the clipboard failed");
-            if (_lateWatch != null) _lateBaseline = GetClipboardSequenceNumber();
+            _lateWatch.Rebaseline(GetClipboardSequenceNumber());
             _pendingOriginal = null; // nothing of ours is left on the clipboard to stand in for the user's
         }
         catch (Exception e)
@@ -598,7 +590,7 @@ internal sealed class ClipboardPaster
             }
             Core.Log.Info(Restore(previous) ? "Paste: restored previous clipboard" : "Paste: restore failed");
             // Our own restore is no late copy: move the watch's baseline along.
-            if (_lateWatch != null) _lateBaseline = GetClipboardSequenceNumber();
+            _lateWatch.Rebaseline(GetClipboardSequenceNumber());
         }
         finally
         {
@@ -616,9 +608,10 @@ internal sealed class ClipboardPaster
     /// when it comes before the keystroke, and puts the clipboard back when it comes after.
     /// After the deadline it keeps watching for 3 s (<see cref="LateCopyArrived"/>), like the Mac.
     /// </summary>
-    public async Task<string?> CopySelectionAsync(CancellationToken ct = default)
+    public async Task<string?> CopySelectionAsync(CancellationToken ct = default, Core.LateCopyWatch? watch = null)
     {
         CancelLateWatch(); // a watch from an earlier recording is obsolete
+        _lateWatch = watch ?? new Core.LateCopyWatch();
         if (!await WaitForModifiersReleasedAsync(ct)) return null;
         ct.ThrowIfCancellationRequested();
         if (ForegroundIsElevated())
@@ -681,10 +674,8 @@ internal sealed class ClipboardPaster
             throw;
         }
         Core.Log.Info("Copy: clipboard unchanged after 2000 ms, no selection");
-        var watch = new CancellationTokenSource();
-        _lateWatch = watch;
-        _lateBaseline = before;
-        _ = WatchLateCopyAsync(previous, watch);
+        var lateWatch = _lateWatch;
+        _ = WatchLateCopyAsync(previous, lateWatch, lateWatch.Start(before));
         return null;
     }
 
@@ -693,17 +684,18 @@ internal sealed class ClipboardPaster
     /// back (the copy is not wanted as clipboard content), and <see cref="LateCopyArrived"/> tells the
     /// caller not to compose over a selection it never saw.
     /// </summary>
-    private async Task WatchLateCopyAsync(ClipboardSnapshot? previous, CancellationTokenSource self)
+    private async Task WatchLateCopyAsync(ClipboardSnapshot? previous, Core.LateCopyWatch watch, CancellationToken token)
     {
         try
         {
             var end = DateTime.UtcNow + LateCopyWindow;
             while (DateTime.UtcNow < end)
             {
-                await Task.Delay(30, self.Token);
-                if (!Core.SelectionCopyPolicy.CopyChanged(_lateBaseline, GetClipboardSequenceNumber(), _lastOwnWriteSequence)) continue;
-                _lateCopyArrived = true;
-                await Task.Delay(LateCopySettle, self.Token);
+                await Task.Delay(30, token);
+                if (_snipping) continue;
+                if (!Core.SelectionCopyPolicy.CopyChanged(watch.Baseline, GetClipboardSequenceNumber(), _lastOwnWriteSequence)) continue;
+                watch.MarkArrived();
+                await Task.Delay(LateCopySettle, token);
                 if (previous == null)
                 {
                     Core.Log.Info("Copy: late clipboard change after deadline, nothing to restore");
@@ -716,11 +708,7 @@ internal sealed class ClipboardPaster
             }
         }
         catch (OperationCanceledException) { /* a new recording, Esc or a paste took over */ }
-        finally
-        {
-            if (_lateWatch == self) _lateWatch = null;
-            self.Dispose();
-        }
+        finally { watch.Finish(token); }
     }
 
     /// <summary>
@@ -732,7 +720,19 @@ internal sealed class ClipboardPaster
     /// </summary>
     public async Task<(byte[] Data, bool IsPng)?> CaptureSnipAsync(Func<bool> launch, Func<bool> snipUiRunning, CancellationToken ct)
     {
-        CancelLateWatch();
+        // No CancelLateWatch: a recording that is still running keeps its late-copy watch; the snip's own
+        // clipboard write is just not counted as a late copy.
+        _snipping = true;
+        try { return await CaptureSnipCoreAsync(launch, snipUiRunning, ct); }
+        finally
+        {
+            _snipping = false;
+            _lateWatch.Rebaseline(GetClipboardSequenceNumber());
+        }
+    }
+
+    private async Task<(byte[] Data, bool IsPng)?> CaptureSnipCoreAsync(Func<bool> launch, Func<bool> snipUiRunning, CancellationToken ct)
+    {
         // A paste restore still waiting: the clipboard holds our pasted text, the user's is the saved one.
         ClipboardSnapshot? previous = _pendingRestore != null && GetClipboardSequenceNumber() == _pendingSequence
             ? _pendingOriginal : TrySnapshot();
@@ -995,7 +995,6 @@ internal sealed class ClipboardPaster
     /// </summary>
     public bool PutImage(byte[] png, Bitmap image)
     {
-        CancelLateWatch();
         byte[] dib;
         using (var rgb = image.Clone(new Rectangle(Point.Empty, image.Size), System.Drawing.Imaging.PixelFormat.Format24bppRgb))
         using (var bmp = new MemoryStream())
@@ -1006,7 +1005,9 @@ internal sealed class ClipboardPaster
         var snap = new ClipboardSnapshot();
         snap.Items.Add((RegisterClipboardFormat("PNG"), png));
         snap.Items.Add((CF_DIB, dib));
-        return RestoreCore(snap);
+        bool ok = RestoreCore(snap);
+        _lateWatch.Rebaseline(GetClipboardSequenceNumber()); // the screenshot is no late copy of a running recording
+        return ok;
     }
 
     /// <summary>
