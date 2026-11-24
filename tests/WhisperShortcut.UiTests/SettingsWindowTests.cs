@@ -419,6 +419,22 @@ public sealed class SettingsWindowTests : IDisposable
         combo.SelectedItem = combo.Items.Cast<object>().First(i => Equals(i.GetType().GetProperty("Value")!.GetValue(i), value));
     }
 
+    /// <summary>W11: every control of the window is bound through a descriptor, and every descriptor that says it has a control has one.</summary>
+    [Fact]
+    public void EveryControlIsDrivenByADescriptor()
+    {
+        Sta.Run(() =>
+        {
+            using var form = OpenSettings();
+            var keys = form.BindingKeysForTests;
+            Assert.Equal(keys.Count, keys.Distinct().Count());
+            var expected = Core.Settings.Descriptors.Where(d => d.Control != Core.ControlKind.None).Select(d => d.JsonKey)
+                .Order(StringComparer.Ordinal).ToList();
+            Assert.Equal(expected, keys.Order(StringComparer.Ordinal).ToList());
+            Assert.Equal(1, form.ExternalBindingCountForTests); // the Windows autostart lives in the registry
+        });
+    }
+
     private SettingsForm OpenSettings() => OpenSettings(out _);
 
     private SettingsForm OpenSettings(out Core.Settings settings)

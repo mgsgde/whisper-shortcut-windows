@@ -3,6 +3,9 @@ namespace WhisperShortcut;
 /// <summary>What the settings window needs from one setting (or group of controls that is saved together).</summary>
 internal interface IBinding
 {
+    /// <summary>The JSON key of the setting's descriptor; null for a control that is not a persisted setting (the Windows autostart).</summary>
+    string? Key { get; }
+
     /// <summary>The control shows something other than what it was loaded or last synced with.</summary>
     bool Edited { get; }
 
@@ -45,6 +48,9 @@ internal sealed class Binding<T>(Func<Core.Settings, T> get, Action<Core.Setting
     IEqualityComparer<T>? eq = null, Func<T, T, T, T>? merge = null, Func<bool>? gate = null, bool gateApply = true) : IBinding
 {
     private readonly IEqualityComparer<T> _eq = eq ?? EqualityComparer<T>.Default;
+
+    public string? Key { get; init; }
+
     private T _baseline = default!; // what the control showed when loaded / last synced
     private T _known = default!;    // what the settings held when we last looked
     private T _seen = default!;     // what the control showed at the last Poll

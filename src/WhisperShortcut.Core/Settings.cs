@@ -65,12 +65,14 @@ public sealed partial class Settings
     private string? _retainedApiKeyBlob;
     private string? _retainedOpenAiKeyBlob;
 
+#pragma warning disable CS8618 // the properties are set by ApplyDefaults from the descriptor table
     private Settings(string path, ISecretProtector protector)
     {
         _path = path;
         _protector = protector;
-        HotkeySlots.ApplyDefaults(this);
+        ApplyDefaults(); // Settings.Fields.cs: the descriptor table is the one place that states a default
     }
+#pragma warning restore CS8618
 
     /// <summary>Default location: %APPDATA%\WhisperShortcut\settings.json.</summary>
     public static string DefaultPath => AppIdentity.Current.SettingsPath; // Dev: "WhisperShortcut Dev"
@@ -90,34 +92,34 @@ public sealed partial class Settings
     }
 
     /// <summary>Provider and models of speech recognition (Dictate). Use <see cref="EffectiveSpeechEngine"/> to decide where it runs.</summary>
-    public ModelSelection Dictate { get; set; } = ModelSelection.Default(ModelStep.Transcription);
+    public ModelSelection Dictate { get; set; }
 
     /// <summary>Provider and models of text processing (Dictate Prompt). Use <see cref="EffectiveTextEngine"/> to decide where it runs.</summary>
-    public ModelSelection Prompt { get; set; } = ModelSelection.Default(ModelStep.Text);
+    public ModelSelection Prompt { get; set; }
 
     /// <summary>
     /// "Only when spoken": offline dictation writes punctuation only where it is spoken ("Punkt", "Komma").
     /// Use <see cref="PunctuationModes.Effective"/> to decide; cloud models and meetings ignore it.
     /// </summary>
-    public PunctuationMode PunctuationMode { get; set; } = PunctuationMode.Automatic;
+    public PunctuationMode PunctuationMode { get; set; }
 
     /// <summary>
     /// What the Diktieren shortcut and right Ctrl start (Mac Settings → Dictate → Mode, <c>DictateMode</c>):
     /// a normal Diktat (default; also for old files without the key) or Live diktieren. The Live shortcut always starts Live.
     /// </summary>
-    public DictateMode DictateMode { get; set; } = DictateMode.Dictate;
+    public DictateMode DictateMode { get; set; }
 
     /// <summary>
     /// Spoken language for OpenAI transcription (ISO 639-1, or "auto"). Gemini and Parakeet ignore it.
     /// See <see cref="TranscriptionLanguages"/>.
     /// </summary>
-    public string TranscriptionLanguage { get; set; } = TranscriptionLanguages.Auto;
+    public string TranscriptionLanguage { get; set; }
 
     /// <summary>Gemini transcription temperature (Diktieren → Erweitert); see <see cref="TranscriptionTuning"/>.</summary>
-    public double TranscriptionTemperature { get; set; } = TranscriptionTuning.DefaultTemperature;
+    public double TranscriptionTemperature { get; set; }
 
     /// <summary>Gemini transcription thinking level: minimal, low, medium or high; see <see cref="TranscriptionTuning"/>.</summary>
-    public string TranscriptionThinking { get; set; } = TranscriptionTuning.DefaultThinking;
+    public string TranscriptionThinking { get; set; }
 
     /// <summary>
     /// The speech engine actually used. <see cref="OfflineMode"/> is the tray's "nothing leaves this PC"
@@ -140,7 +142,7 @@ public sealed partial class Settings
     public string? MissingKeyProvider(Engine engine) =>
         CloudProviders.For(engine) is { } p && !p.HasKey(this) ? p.Name : null;
 
-    private volatile List<string> _glossary = new();
+    private volatile List<string> _glossary = null!; // set by ApplyDefaults
 
     /// <summary>
     /// Vocabulary terms that bias transcription spelling. Copy-on-write: a published list is never mutated, every
@@ -163,40 +165,40 @@ public sealed partial class Settings
     /// when nothing is selected. Empty = no template. JSON key "dictatePromptTemplate"; files before 0.5.3 used
     /// "promptSystemPrompt", still read on load.
     /// </summary>
-    public string DictatePromptTemplate { get; set; } = "";
+    public string DictatePromptTemplate { get; set; }
 
     /// <summary>
     /// The user's own transcription instruction for Dictate (Gemini only; offline speech recognition takes no prompt).
     /// Empty = Prompts.DefaultTranscriptionSystemPrompt.
     /// </summary>
-    public string DictateSystemPrompt { get; set; } = "";
+    public string DictateSystemPrompt { get; set; }
 
     /// <summary>
     /// The user's own editing instruction for Dictate Prompt (online and offline).
     /// Empty = Prompts.DefaultPromptModeSystemPrompt. The template for new texts (DictatePromptTemplate) is appended to it.
     /// </summary>
-    public string PromptModeSystemPrompt { get; set; } = "";
+    public string PromptModeSystemPrompt { get; set; }
 
     /// <summary>Product name of the microphone to record from; "" = the Windows default device.</summary>
-    public string Microphone { get; set; } = "";
+    public string Microphone { get; set; }
 
     // Key defaults, legacy keys and the on switches live in HotkeySlots (one table); the constructor applies the new-install
     // values, Load pins the legacy ones for a file that predates the Mac digits.
 
     /// <summary>Read Aloud model id (see <see cref="Core.ReadAloud.Models"/>); unknown ids fall back to the default on load.</summary>
-    public string ReadAloudModel { get; set; } = ReadAloud.DefaultModel;
+    public string ReadAloudModel { get; set; }
 
     /// <summary>Chosen Gemini voice for Read Aloud (a <see cref="Core.ReadAloud.Voices"/> id).</summary>
-    public string ReadAloudVoiceGemini { get; set; } = ReadAloud.DefaultVoice(TtsProvider.Gemini);
+    public string ReadAloudVoiceGemini { get; set; }
 
     /// <summary>Chosen OpenAI voice for Read Aloud (a <see cref="Core.ReadAloud.Voices"/> id).</summary>
-    public string ReadAloudVoiceOpenAi { get; set; } = ReadAloud.DefaultVoice(TtsProvider.OpenAI);
+    public string ReadAloudVoiceOpenAi { get; set; }
 
     /// <summary>Read Aloud playback speed, one of <see cref="Core.ReadAloud.Speeds"/>.</summary>
-    public double ReadAloudSpeed { get; set; } = ReadAloud.DefaultSpeed;
+    public double ReadAloudSpeed { get; set; }
 
     /// <summary>Let the model rewrite code, logs and Markdown into something speakable before reading (Mac: Smart Rewrite).</summary>
-    public bool ReadAloudSmartRewrite { get; set; } = true;
+    public bool ReadAloudSmartRewrite { get; set; }
 
     /// <summary>The selected Read Aloud model.</summary>
     [JsonIgnore]
@@ -214,53 +216,53 @@ public sealed partial class Settings
     /// The right Ctrl key alone toggles dictation, the Windows stand-in for the Mac's Fn key. On by default like the Mac.
     /// The keyboard hook that reads it comes separately.
     /// </summary>
-    public bool RightCtrlDictation { get; set; } = true;
+    public bool RightCtrlDictation { get; set; }
 
     /// <summary>Dictation templates ("Vorlagen"), in the order the user arranged them.</summary>
-    public List<DictationTemplate> Templates { get; set; } = new();
+    public List<DictationTemplate> Templates { get; set; }
 
     /// <summary>
     /// Send a screenshot taken with the Screenshot hotkey along with the next Dictate Prompt or template request.
     /// On for new installs, like the Mac (screenshot works out of the box there). Installs from before the Mac
     /// defaults keep it off when the field is missing: screens of practice software show patient data.
     /// </summary>
-    public bool SendScreenshots { get; set; } = true;
+    public bool SendScreenshots { get; set; }
 
     /// <summary>Id of the template the generic hotkey applied last; "" = none yet.</summary>
-    public string LastTemplateId { get; set; } = "";
+    public string LastTemplateId { get; set; }
 
     /// <summary>Which audio a Live Meeting records: "auto", "mic" or "mix" (see <see cref="MeetingAudioRouting"/>).</summary>
-    public string MeetingAudioMode { get; set; } = "auto";
+    public string MeetingAudioMode { get; set; }
 
     /// <summary>Write a summary when a Live Meeting ends.</summary>
-    public bool MeetingSummary { get; set; } = true;
+    public bool MeetingSummary { get; set; }
 
     /// <summary>Offline mode: dictation and Dictate Prompt run on this PC (Parakeet + local LLM).</summary>
     public bool OfflineMode { get; set; }
 
     /// <summary>Id of the chosen local LLM (see <see cref="OfflineCatalog"/>); empty = recommended for this PC.</summary>
-    public string OfflineLlmId { get; set; } = "";
+    public string OfflineLlmId { get; set; }
 
     /// <summary>Quick instructions offered while recording (see <see cref="QuickActionList"/>).</summary>
-    public List<string> QuickActions { get; set; } = new(QuickActionList.Defaults);
+    public List<string> QuickActions { get; set; }
 
     /// <summary>Paste the result at the cursor with Ctrl+V. Off = the text only goes to the clipboard.</summary>
-    public bool AutoPaste { get; set; } = true;
+    public bool AutoPaste { get; set; }
 
     /// <summary>Play the short start/stop/error tones. Off for new installs (the Mac has none); older files without the field keep them.</summary>
     public bool Sounds { get; set; }
 
     /// <summary>Look for a new version at start and once a day; only shows a notice, installs nothing by itself.</summary>
-    public bool AutoUpdateCheck { get; set; } = true;
+    public bool AutoUpdateCheck { get; set; }
 
     /// <summary>Stable (promoted releases only, default) or Latest (every release at once). No downgrade either way.</summary>
-    public UpdateChannel UpdateChannel { get; set; } = UpdateChannel.Stable;
+    public UpdateChannel UpdateChannel { get; set; }
 
     /// <summary>
     /// What happens to the clipboard after auto-paste (ignored when <see cref="AutoPaste"/> is off). New installs leave
     /// the dictation there like the Mac; older files map their "restoreClipboard" switch (see <see cref="Choices.AfterPasteFromFile"/>).
     /// </summary>
-    public ClipboardAfterPaste ClipboardAfterPaste { get; set; } = ClipboardAfterPaste.KeepDictation;
+    public ClipboardAfterPaste ClipboardAfterPaste { get; set; }
 
     /// <summary>
     /// The old switch, kept as a view of <see cref="ClipboardAfterPaste"/>: true = restore the previous clipboard.
@@ -284,7 +286,7 @@ public sealed partial class Settings
     public bool WelcomeCompleted { get; set; }
 
     /// <summary>Exe paths for which the user declined "an seinen festen Platz legen": asked once per path.</summary>
-    public List<string> MoveOfferDismissed { get; set; } = new();
+    public List<string> MoveOfferDismissed { get; set; }
 
     /// <summary>The tour step the user last reached, so the next start resumes there (Mac onboardingCurrentStep).</summary>
     public int WelcomeStep { get; set; }
