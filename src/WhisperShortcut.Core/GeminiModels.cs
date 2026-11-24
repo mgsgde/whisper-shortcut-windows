@@ -23,7 +23,7 @@ public static class GeminiModels
 
     private static readonly HashSet<string> RejectsMinimalIds = new(StringComparer.OrdinalIgnoreCase)
     {
-        "gemini-4-hydrogen", "gemini-4-neon", "gemini-3.1-pro", "gemini-3.8-flash",
+        "gemini-4-hydrogen", "gemini-4-neon", "gemini-3.8-flash",
     };
 
     /// <summary>True when <paramref name="id"/> answers HTTP 400 to thinkingLevel "minimal" (the caller then sends "low").</summary>
@@ -42,7 +42,6 @@ public static class GeminiModels
     {
         "gemini-4-neon" => "medium",
         "gemini-4-hydrogen" => "low",
-        "gemini-3.1-pro" => "high",
         "gemini-3.8-flash" => "low",
         "gemini-3.1-flash-lite" or "gemini-3.5-flash-lite" => "minimal",
         _ => "low",

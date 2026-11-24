@@ -24,7 +24,6 @@ public class ChatThinkingTests
     [Theory]
     [InlineData("gemini-4-neon", null, "medium")]
     [InlineData("gemini-4-hydrogen", null, "low")]
-    [InlineData("gemini-3.1-pro", "default", "high")]
     [InlineData("gemini-3.8-flash", "", "low")]
     [InlineData("gemini-3.1-flash-lite", null, "minimal")]
     [InlineData("gemini-3.5-flash-lite", "default", "minimal")]
