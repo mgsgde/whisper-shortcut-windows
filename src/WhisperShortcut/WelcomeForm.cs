@@ -184,20 +184,20 @@ internal sealed class WelcomeForm : FastShowForm
         // Cloud: the Google key first, OpenAI folded away (Mac: OpenRouter, Google; others in a disclosure).
         var cloudCard = new Card { Anchor = AnchorStyles.Left | AnchorStyles.Right };
         _googleKey = new SettingsForm.KeyField(settings.ApiKey, (k, ct) => gemini.CheckKeyAsync(k, ct), SettingsForm.GeminiKeyMessage,
-            k => SaveKey(k, gemini: true));
+            k => SaveKey(k, Core.CloudProviders.Gemini));
         cloudCard.AddRow(KeyBlock(_googleKey, "Google-API-Schlüssel (Gemini)",
             "Du hast schon einen Schlüssel aus Google AI Studio? Hier einfügen. Am besten aus einem Projekt mit Abrechnung: "
             + "Im kostenlosen Kontingent darf Google die Aufnahmen zum Training nutzen.",
-            "Schlüssel in Google AI Studio erstellen", "https://aistudio.google.com/apikey"));
+            "Schlüssel in Google AI Studio erstellen", Core.CloudProviders.Gemini.KeyUrl));
         _openAiKey = new SettingsForm.KeyField(settings.OpenAiKey, (k, ct) => openAi.CheckKeyAsync(k, ct), SettingsForm.OpenAiKeyMessage,
-            k => SaveKey(k, gemini: false));
+            k => SaveKey(k, Core.CloudProviders.OpenAi));
         var otherBlock = Block();
         _otherProviders = new LinkLabel { Text = "▸ Weitere Anbieter – OpenAI", AutoSize = true, Margin = new Padding(0) };
         otherBlock.Controls.Add(_otherProviders);
         cloudCard.AddRow(otherBlock);
         _openAiBlock = KeyBlock(_openAiKey, "OpenAI-API-Schlüssel",
             "Ein API-Schlüssel mit Guthaben auf platform.openai.com; ein ChatGPT-Abo zählt dafür nicht.",
-            "Schlüssel bei OpenAI erstellen", "https://platform.openai.com/api-keys");
+            "Schlüssel bei OpenAI erstellen", Core.CloudProviders.OpenAi.KeyUrl);
         _openAiBlock.Visible = settings.OpenAiKey.Length > 0;
         cloudCard.AddRow(_openAiBlock);
         _otherProviders.LinkClicked += (_, _) =>
@@ -488,12 +488,11 @@ internal sealed class WelcomeForm : FastShowForm
     }
 
     /// <summary>Saves a key the check confirmed (same rule as the settings window); true when it was new.</summary>
-    private bool SaveKey(string key, bool gemini)
+    private bool SaveKey(string key, Core.CloudProvider provider)
     {
-        var before = gemini ? _settings.ApiKey : _settings.OpenAiKey;
-        if (key == before) return false;
+        if (key == provider.GetKey(_settings)) return false;
         var snapshot = _settings.Capture();
-        if (gemini) _settings.ApiKey = key; else _settings.OpenAiKey = key;
+        provider.SetKey(_settings, key);
         Core.WelcomeTour.ChooseCloud(_settings);
         if (!_settings.TrySave(out var error))
         {
@@ -502,7 +501,7 @@ internal sealed class WelcomeForm : FastShowForm
                 Core.AppIdentity.Current.DisplayName, MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return false;
         }
-        Core.Log.Info($"Welcome: {(gemini ? "Gemini" : "OpenAI")} key saved after a successful check");
+        Core.Log.Info($"Welcome: {provider.Name} key saved after a successful check");
         Saved?.Invoke();
         if (_offlineMode.Checked) _offlineMode.Checked = false;
         UpdateSetup();

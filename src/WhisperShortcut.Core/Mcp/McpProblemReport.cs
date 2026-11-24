@@ -34,7 +34,7 @@ public static class McpProblemReport
         return name.Length == 0 ? "Problem" : name;
     }
 
-    private static string EngineName(Engine e) => e switch { Engine.Local => "lokal", Engine.OpenAI => "OpenAI", _ => "Gemini" };
+    private static string EngineName(Engine e) => CloudProviders.For(e)?.Name ?? "lokal";
 
     /// <summary>
     /// Writes "&lt;yyyy-MM-dd_HH-mm-ss&gt; &lt;safe title&gt;.md" into <paramref name="directory"/> and returns its path. Every

@@ -114,8 +114,6 @@ public static class McpSettingsCatalog
 
     private const string NoSpeechModel = "The offline speech model is not downloaded. The user downloads it in WhisperShortcut Settings → Diktieren (speech) or Dictate Prompt (language model).";
     private const string NoLlm = "The offline language model is not downloaded. The user downloads it in WhisperShortcut Settings → Diktieren (speech) or Dictate Prompt (language model).";
-    private const string NoGeminiKey = "No Gemini API key in WhisperShortcut. The user enters it in Settings → Allgemein; AI apps cannot set keys.";
-    private const string NoOpenAiKey = "No OpenAI API key in WhisperShortcut. The user enters it in Settings → Allgemein; AI apps cannot set keys.";
 
     private static string SpeedToken(double speed) =>
         ReadAloud.NormalizeSpeed(speed).ToString("0.0#", CultureInfo.InvariantCulture);
@@ -231,7 +229,7 @@ public static class McpSettingsCatalog
         {
             var missing = settings.MissingKeyProvider(e) != null;
             return new McpSettingOption(Choices.Engine.Token(e), Choices.Engine.Label(e), !missing,
-                missing ? (e == Engine.Gemini ? NoGeminiKey : NoOpenAiKey) : null);
+                missing ? CloudProviders.For(e)!.MissingKeyText : null);
         }
 
         var dictate = new Step(ModelStep.Transcription, () => settings.Dictate, v => settings.Dictate = v);
@@ -310,7 +308,7 @@ public static class McpSettingsCatalog
                 Options = () => ReadAloud.Models.Select(m =>
                 {
                     var needsKey = m.Provider == TtsProvider.OpenAI && settings.MissingKeyProvider(Engine.OpenAI) != null;
-                    return new McpSettingOption(m.Id, m.Name, !needsKey, needsKey ? NoOpenAiKey : null);
+                    return new McpSettingOption(m.Id, m.Name, !needsKey, needsKey ? CloudProviders.OpenAi.MissingKeyText : null);
                 }).ToList(),
                 Write = v => settings.ReadAloudModel = ReadAloud.NormalizeModel(Text(v)),
             },

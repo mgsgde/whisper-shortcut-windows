@@ -160,7 +160,7 @@ public sealed class McpConfigTools(McpToolContext ctx) : IMcpToolProvider, IMcpR
 
     private static string Norm(string? s) => (s ?? "").Replace("\r\n", "\n").Replace('\r', '\n').Trim();
 
-    private static string EngineName(Engine e) => e switch { Engine.Local => "local", Engine.OpenAI => "openai", _ => "gemini" };
+    private static string EngineName(Engine e) => Choices.Engine.Token(e);
 
     private static string DefaultFor(string section) =>
         section == "dictation" ? Prompts.DefaultTranscriptionSystemPrompt : Prompts.DefaultPromptModeSystemPrompt;

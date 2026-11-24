@@ -137,12 +137,8 @@ public sealed partial class Settings
     /// The provider whose API key <paramref name="engine"/> needs but lacks: "Gemini", "OpenAI", or null when the key is there
     /// or the engine runs on this PC (needs none). The one place that knows which key belongs to which engine.
     /// </summary>
-    public string? MissingKeyProvider(Engine engine) => engine switch
-    {
-        Engine.Gemini when string.IsNullOrWhiteSpace(ApiKey) => "Gemini",
-        Engine.OpenAI when string.IsNullOrWhiteSpace(OpenAiKey) => "OpenAI",
-        _ => null,
-    };
+    public string? MissingKeyProvider(Engine engine) =>
+        CloudProviders.For(engine) is { } p && !p.HasKey(this) ? p.Name : null;
 
     /// <summary>Vocabulary terms that bias transcription spelling.</summary>
     public List<string> Glossary { get; set; } = new();

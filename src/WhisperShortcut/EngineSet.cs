@@ -124,10 +124,10 @@ internal sealed class EngineSet
         if (checkKeys)
         {
             // Gemini's key is reported first when both are missing.
-            foreach (var engine in new[] { Core.Engine.Gemini, Core.Engine.OpenAI })
+            foreach (var provider in Core.CloudProviders.All)
             {
-                if (speech != engine && text != engine) continue;
-                missingKey = _settings.MissingKeyProvider(engine);
+                if (speech != provider.Engine && text != provider.Engine) continue;
+                missingKey = _settings.MissingKeyProvider(provider.Engine);
                 if (missingKey != null) break;
             }
         }
