@@ -4,7 +4,7 @@ namespace WhisperShortcut;
 /// Every value the user can change in this window, bound to its control in one list (<see cref="BuildBindings"/>). The window
 /// saves only the bindings that were edited (<see cref="TrySave"/>), so a setting changed from outside while the window is open is
 /// never overwritten by a stale control, and <see cref="Pull()"/> shows such a change in every control the user did not touch.
-/// A new setting is one line here (plus its field in Core.Settings).
+/// A new setting is its descriptor row in Core (Settings.Fields.cs) plus one line here.
 /// </summary>
 internal sealed partial class SettingsForm
 {
@@ -39,25 +39,46 @@ internal sealed partial class SettingsForm
         return edited;
     }
 
-    private Binding<T> Bind<T>(Func<Core.Settings, T> get, Action<Core.Settings, T> set, Func<T> read, Action<T> show,
+    /// <summary>
+    /// One setting of the window. <paramref name="key"/> is its descriptor (<see cref="Core.Settings.Descriptors"/>): an unknown key
+    /// throws when the window is built, so a control cannot exist without its descriptor. <paramref name="get"/> / <paramref name="set"/>
+    /// are the descriptor's own unless the control needs another view of the value.
+    /// </summary>
+    private Binding<T> Bind<T>(string key, Func<T> read, Action<T> show, Func<Core.Settings, T>? get = null, Action<Core.Settings, T>? set = null,
         IEqualityComparer<T>? eq = null, Func<T, T, T, T>? merge = null, Func<bool>? gate = null, bool gateApply = true)
     {
-        var binding = new Binding<T>(get, set, read, show, eq, merge, gate, gateApply);
+        var d = Core.Settings.Descriptor(key);
+        if (d.Control == Core.ControlKind.None) throw new InvalidOperationException($"{key}: the descriptor says this setting has no control");
+        return Add(new Binding<T>(get ?? (s => d.Get<T>(s)), set ?? ((s, v) => d.Set(s, v)), read, show, eq, merge, gate, gateApply) { Key = key });
+    }
+
+    /// <summary>A control for something that is not in settings.json (the Windows autostart lives in the registry).</summary>
+    private Binding<T> BindExternal<T>(Func<Core.Settings, T> get, Func<T> read, Action<T> show) =>
+        Add(new Binding<T>(get, (_, _) => { }, read, show));
+
+    private Binding<T> Add<T>(Binding<T> binding)
+    {
         _bindings.Add(binding);
         return binding;
     }
 
-    private Binding<bool> BindToggle(ToggleSwitch toggle, Func<Core.Settings, bool> get, Action<Core.Settings, bool> set) =>
-        Bind(get, set, () => toggle.Checked, v => toggle.Checked = v);
+    /// <summary>The descriptor keys of the window's bindings (a binding without one is <see cref="BindExternal{T}"/>).</summary>
+    internal IReadOnlyList<string> BindingKeysForTests => _bindings.Select(b => b.Key).OfType<string>().ToList();
+
+    /// <summary>Bindings that are not a persisted setting.</summary>
+    internal int ExternalBindingCountForTests => _bindings.Count(b => b.Key == null);
+
+    private Binding<bool> BindToggle(ToggleSwitch toggle, string key) =>
+        Bind(key, () => toggle.Checked, v => toggle.Checked = v);
 
     /// <summary>A combo filled with <see cref="ChoiceItem{T}"/>s.</summary>
-    private Binding<T> BindChoice<T>(FluentCombo combo, Func<Core.Settings, T> get, Action<Core.Settings, T> set) =>
-        Bind(get, set, () => ((ChoiceItem<T>)combo.SelectedItem!).Value, v => ShowChoice(combo, v));
+    private Binding<T> BindChoice<T>(FluentCombo combo, string key, Func<Core.Settings, T>? get = null) =>
+        Bind(key, () => ((ChoiceItem<T>)combo.SelectedItem!).Value, v => ShowChoice(combo, v), get);
 
     /// <summary>One model step (provider and its models) is one value.</summary>
-    private Binding<Core.ModelSelection> BindStep(ModelStepControls step, Func<Core.Settings, Core.ModelSelection> get,
-        Action<Core.Settings, Core.ModelSelection> set) =>
-        Bind(get, set, () => step.Selected, step.Show);
+    private Binding<Core.ModelSelection> BindStep(ModelStepControls step, string key,
+        Func<Core.Settings, Core.ModelSelection>? get = null, Action<Core.Settings, Core.ModelSelection>? set = null) =>
+        Bind(key, () => step.Selected, step.Show, get, set);
 
     private static void ShowChoice<T>(FluentCombo combo, T value)
     {
@@ -127,92 +148,92 @@ internal sealed partial class SettingsForm
         if (_readAloudVoiceProvider == provider) FillReadAloudVoices();
     }
 
-    /// <summary>The one list of what the window saves: setting, control, and how a value goes from one to the other.</summary>
+    /// <summary>The one list of what the window saves: setting (by descriptor key), control, and how a value goes from one to the other.</summary>
     private void BuildBindings()
     {
         // ---- Datenschutz, Konten, Mikrofon
-        Bind(s => s.OfflineMode, (s, v) => s.OfflineMode = v, () => _offlineMode.Checked, v => (v ? _offlineMode : _onlineMode).Checked = true);
-        Bind(s => s.OfflineLlmId, (s, v) => s.OfflineLlmId = v, () => SelectedLlmChoice.Id,
+        Bind("offlineMode", () => _offlineMode.Checked, v => (v ? _offlineMode : _onlineMode).Checked = true);
+        Bind("offlineLlmId", () => SelectedLlmChoice.Id,
             v => _llmChoice.SelectedItem = _llmChoice.Items.Cast<LlmItem>().First(i => i.Llm.Id == Core.OfflineCatalog.LlmById(v).Id));
-        _geminiKeyBinding = Bind(s => s.ApiKey, (s, v) => s.ApiKey = v, () => _geminiKey.Value, v => _geminiKey.Box.Text = v);
-        _openAiKeyBinding = Bind(s => s.OpenAiKey, (s, v) => s.OpenAiKey = v, () => _openAiKey.Value, v => _openAiKey.Box.Text = v);
-        Bind(s => s.Microphone, (s, v) => s.Microphone = v, () => SelectedMicrophone, ShowMicrophone);
+        _geminiKeyBinding = Bind("apiKeyProtected", () => _geminiKey.Value, v => _geminiKey.Box.Text = v);
+        _openAiKeyBinding = Bind("openAiKeyProtected", () => _openAiKey.Value, v => _openAiKey.Box.Text = v);
+        Bind("microphone", () => SelectedMicrophone, ShowMicrophone);
         // Windows autostart lives in the registry, not in the settings: the binding only tells that the switch was edited (TrySave acts).
-        _autoStartBinding = Bind(_ => AutoStart.IsEnabled, (_, _) => { }, () => _autoStart.Checked, v => _autoStart.Checked = v);
+        _autoStartBinding = BindExternal(_ => AutoStart.IsEnabled, () => _autoStart.Checked, v => _autoStart.Checked = v);
 
         // ---- Allgemein: shortcuts. All or none: with a shortcut refused (invalid, taken twice) these keep their edit.
         foreach (var slot in Core.HotkeySlots.All)
         {
             if (BoxOf(slot) is not { } box) continue;
             var key = slot;
-            Bind(s => key.Active(s), (s, v) => StoreKey(s, key, v), () => box.Value, v => box.SetValue(v, notify: true), gate: () => _keysOk);
+            Bind(key.JsonKey, () => box.Value, v => box.SetValue(v, notify: true), get: s => key.Active(s), set: (s, v) => StoreKey(s, key, v),
+                gate: () => _keysOk);
         }
-        BindToggle(_rightCtrl, s => s.RightCtrlDictation, (s, v) => s.RightCtrlDictation = v);
-        BindChoice<Core.UpdateChannel>(_updateChannel, s => s.UpdateChannel, (s, v) => s.UpdateChannel = v);
-        BindToggle(_autoUpdate, s => s.AutoUpdateCheck, (s, v) => s.AutoUpdateCheck = v);
-        BindToggle(_autoPaste, s => s.AutoPaste, (s, v) => s.AutoPaste = v);
-        BindChoice<Core.ClipboardAfterPaste>(_afterPaste, s => s.ClipboardAfterPaste, (s, v) => s.ClipboardAfterPaste = v);
-        BindToggle(_sounds, s => s.Sounds, (s, v) => s.Sounds = v);
+        BindToggle(_rightCtrl, "rightCtrlDictation");
+        BindChoice<Core.UpdateChannel>(_updateChannel, "updateChannel");
+        BindToggle(_autoUpdate, "autoUpdateCheck");
+        BindToggle(_autoPaste, "autoPaste");
+        BindChoice<Core.ClipboardAfterPaste>(_afterPaste, "clipboardAfterPaste");
+        BindToggle(_sounds, "sounds");
 
         // ---- Diktieren
-        BindChoice<Core.DictateMode>(_dictateMode, s => s.DictateMode, (s, v) => s.DictateMode = v);
-        BindStep(_dictateStep, s => s.Dictate, (s, v) => s.Dictate = v);
-        BindChoice<Core.PunctuationMode>(_punctuation, s => s.PunctuationMode, (s, v) => s.PunctuationMode = v);
-        BindChoice<string>(_language, s => Core.TranscriptionLanguages.Normalize(s.TranscriptionLanguage), (s, v) => s.TranscriptionLanguage = v);
-        Bind(s => string.Join("\r\n", s.Glossary), (s, v) => s.Glossary = v.Split(LineBreaks, StringSplitOptions.None)
-                .Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList(),
-            () => _glossary.Text, v => _glossary.Text = v, merge: MergeGlossary);
-        Bind(s => s.DictateSystemPrompt, (s, v) => s.DictateSystemPrompt = v, () => _dictatePrompt.Value,
-            v => { _dictatePrompt.Show(v); _openedPrompts.Dictate = v; });
-        BindChoice<double>(_temperature, s => Core.TranscriptionTuning.NormalizeTemperature(s.TranscriptionTemperature), (s, v) => s.TranscriptionTemperature = v);
-        BindChoice<string>(_thinking, s => Core.TranscriptionTuning.NormalizeThinking(s.TranscriptionThinking), (s, v) => s.TranscriptionThinking = v);
+        BindChoice<Core.DictateMode>(_dictateMode, "dictateMode");
+        BindStep(_dictateStep, "speechEngine");
+        BindChoice<Core.PunctuationMode>(_punctuation, "punctuationMode");
+        BindChoice<string>(_language, "transcriptionLanguage", s => Core.TranscriptionLanguages.Normalize(s.TranscriptionLanguage));
+        Bind("glossary", () => _glossary.Text, v => _glossary.Text = v, s => string.Join("\r\n", s.Glossary),
+            (s, v) => s.Glossary = v.Split(LineBreaks, StringSplitOptions.None).Select(l => l.Trim()).Where(l => l.Length > 0).Distinct().ToList(),
+            merge: MergeGlossary);
+        Bind("dictateSystemPrompt", () => _dictatePrompt.Value, v => { _dictatePrompt.Show(v); _openedPrompts.Dictate = v; });
+        BindChoice<double>(_temperature, "transcriptionTemperature", s => Core.TranscriptionTuning.NormalizeTemperature(s.TranscriptionTemperature));
+        BindChoice<string>(_thinking, "transcriptionThinking", s => Core.TranscriptionTuning.NormalizeThinking(s.TranscriptionThinking));
 
         // ---- Dictate Prompt
-        BindStep(_promptStep, s => s.Prompt, (s, v) => s.Prompt = v);
-        BindToggle(_sendScreenshots, s => s.SendScreenshots, (s, v) => s.SendScreenshots = v);
-        Bind<IReadOnlyList<string>>(s => Enumerable.Range(0, _quick.Length).Select(i => i < s.QuickActions.Count ? s.QuickActions[i] : "").ToList(),
-            (s, v) => s.QuickActions = Core.QuickActionList.Clean(v), () => _quick.Select(q => q.Text).ToList(),
-            v => { for (int i = 0; i < _quick.Length; i++) _quick[i].Text = v[i]; }, Strings);
-        Bind(s => (s.DictatePromptTemplate ?? "").ReplaceLineEndings("\r\n"),
-            (s, v) => s.DictatePromptTemplate = v.Trim().Length == 0 ? "" : v.ReplaceLineEndings("\n").Trim(),
-            () => _template.Text, v => { _template.Text = v; _openedPrompts.Template = v.ReplaceLineEndings("\n").Trim(); });
-        Bind(s => s.PromptModeSystemPrompt, (s, v) => s.PromptModeSystemPrompt = v, () => _promptPrompt.Value,
-            v => { _promptPrompt.Show(v); _openedPrompts.PromptMode = v; });
+        BindStep(_promptStep, "textEngine");
+        BindToggle(_sendScreenshots, "sendScreenshots");
+        Bind<IReadOnlyList<string>>("quickActions", () => _quick.Select(q => q.Text).ToList(),
+            v => { for (int i = 0; i < _quick.Length; i++) _quick[i].Text = v[i]; },
+            s => Enumerable.Range(0, _quick.Length).Select(i => i < s.QuickActions.Count ? s.QuickActions[i] : "").ToList(),
+            (s, v) => s.QuickActions = Core.QuickActionList.Clean(v), Strings);
+        Bind("dictatePromptTemplate", () => _template.Text, v => { _template.Text = v; _openedPrompts.Template = v.ReplaceLineEndings("\n").Trim(); },
+            s => (s.DictatePromptTemplate ?? "").ReplaceLineEndings("\r\n"),
+            (s, v) => s.DictatePromptTemplate = v.Trim().Length == 0 ? "" : v.ReplaceLineEndings("\n").Trim());
+        Bind("promptModeSystemPrompt", () => _promptPrompt.Value, v => { _promptPrompt.Show(v); _openedPrompts.PromptMode = v; });
 
         // ---- Vorlagen: names, instructions and the list are saved even with a refused shortcut; their keys wait (TemplateSave).
-        Bind<IReadOnlyList<Core.DictationTemplate>>(s => CloneAll(s.Templates),
-            (s, v) => s.Templates = Core.TemplateSave.Build(v, s.Templates, _keysOk, Core.HotkeySlots.Normalize),
-            () => CloneAll(_templates), ShowTemplates, TemplateLists, gate: () => _keysOk, gateApply: false);
+        Bind<IReadOnlyList<Core.DictationTemplate>>("templates", () => CloneAll(_templates), ShowTemplates,
+            s => CloneAll(s.Templates), (s, v) => s.Templates = Core.TemplateSave.Build(v, s.Templates, _keysOk, Core.HotkeySlots.Normalize),
+            TemplateLists, gate: () => _keysOk, gateApply: false);
 
         // ---- Vorlesen
-        Bind(s => s.ReadAloudModel, (s, v) => s.ReadAloudModel = v, () => SelectedModel(_readAloudModel),
+        Bind("readAloudModel", () => SelectedModel(_readAloudModel),
             v => _readAloudModel.SelectedItem = _readAloudModel.Items.Cast<ModelItem>().FirstOrDefault(i => i.Model.Id == v) ?? _readAloudModel.SelectedItem);
-        Bind(s => s.ReadAloudVoiceFor(Core.TtsProvider.Gemini), (s, v) => s.ReadAloudVoiceGemini = v, () => _readAloudVoiceGemini,
-            v => ShowReadAloudVoice(Core.TtsProvider.Gemini, v));
-        Bind(s => s.ReadAloudVoiceFor(Core.TtsProvider.OpenAI), (s, v) => s.ReadAloudVoiceOpenAi = v, () => _readAloudVoiceOpenAi,
-            v => ShowReadAloudVoice(Core.TtsProvider.OpenAI, v));
-        Bind(s => s.ReadAloudVoiceFor(Core.TtsProvider.System), (s, v) => s.ReadAloudVoiceSystem = v, () => _readAloudVoiceSystem,
-            v => ShowReadAloudVoice(Core.TtsProvider.System, v));
+        Bind("readAloudVoiceGemini", () => _readAloudVoiceGemini, v => ShowReadAloudVoice(Core.TtsProvider.Gemini, v),
+            s => s.ReadAloudVoiceFor(Core.TtsProvider.Gemini));
+        Bind("readAloudVoiceOpenAi", () => _readAloudVoiceOpenAi, v => ShowReadAloudVoice(Core.TtsProvider.OpenAI, v),
+            s => s.ReadAloudVoiceFor(Core.TtsProvider.OpenAI));
+        Bind("readAloudVoiceSystem", () => _readAloudVoiceSystem, v => ShowReadAloudVoice(Core.TtsProvider.System, v),
+            s => s.ReadAloudVoiceFor(Core.TtsProvider.System));
         // The playback bar changes the speed while the window is open: it flows in through Pull, an untouched box never writes it back.
-        Bind(s => Core.ReadAloud.NormalizeSpeed(s.ReadAloudSpeed), (s, v) => s.ReadAloudSpeed = v, () => SelectedReadAloudSpeed, SelectReadAloudSpeed);
-        BindToggle(_readAloudRewrite, s => s.ReadAloudSmartRewrite, (s, v) => s.ReadAloudSmartRewrite = v);
-        Bind(s => s.ReadAloudRewritePrompt, (s, v) => s.ReadAloudRewritePrompt = v, () => _readAloudPrompt.Value, _readAloudPrompt.Show);
+        Bind("readAloudSpeed", () => SelectedReadAloudSpeed, SelectReadAloudSpeed, s => Core.ReadAloud.NormalizeSpeed(s.ReadAloudSpeed));
+        BindToggle(_readAloudRewrite, "readAloudSmartRewrite");
+        Bind("readAloudRewritePrompt", () => _readAloudPrompt.Value, _readAloudPrompt.Show);
 
         // ---- Chat
-        BindStep(_chatStep, s => s.Chat, (s, v) => s.Chat = v);
-        BindToggle(_chatWebSearch, s => s.ChatWebSearch, (s, v) => s.ChatWebSearch = v);
-        BindToggle(_chatCloseOnFocusLoss, s => s.ChatCloseOnFocusLoss, (s, v) => s.ChatCloseOnFocusLoss = v);
-        Bind(s => s.ChatSystemPrompt, (s, v) => s.ChatSystemPrompt = v, () => _chatPrompt.Value, _chatPrompt.Show);
+        BindStep(_chatStep, "chatEngine");
+        BindToggle(_chatWebSearch, "chatWebSearch");
+        BindToggle(_chatCloseOnFocusLoss, "chatCloseOnFocusLoss");
+        Bind("chatSystemPrompt", () => _chatPrompt.Value, _chatPrompt.Show);
 
         // ---- Meetings. Until the engine was picked here, meetings follow Diktieren; a different engine makes the pick explicit.
         Binding<Core.ModelSelection>? speech = null;
-        speech = BindStep(_meetingSpeechStep, s => s.MeetingTranscription with { Engine = s.ConfiguredMeetingSpeechEngine }, (s, v) =>
+        speech = BindStep(_meetingSpeechStep, "meetingSpeechEngine", s => s.MeetingTranscription with { Engine = s.ConfiguredMeetingSpeechEngine }, (s, v) =>
         {
             if (v.Engine != speech!.Baseline.Engine) s.MeetingSpeechEngineExplicit = true;
             s.MeetingTranscription = s.MeetingSpeechEngineExplicit ? v : v with { Engine = s.MeetingTranscription.Engine };
         });
-        BindStep(_meetingTextStep, s => s.MeetingText, (s, v) => s.MeetingText = v);
-        Bind(s => s.MeetingChunkSeconds, (s, v) => s.MeetingChunkSeconds = v, () => SelectedChoice(_meetingChunk), v => SelectChoice(_meetingChunk, v));
-        Bind(s => s.MeetingSafeguardMinutes, (s, v) => s.MeetingSafeguardMinutes = v, () => SelectedChoice(_meetingSafeguard), v => SelectChoice(_meetingSafeguard, v));
+        BindStep(_meetingTextStep, "meetingTextEngine");
+        Bind("meetingChunkSeconds", () => SelectedChoice(_meetingChunk), v => SelectChoice(_meetingChunk, v));
+        Bind("meetingSafeguardMinutes", () => SelectedChoice(_meetingSafeguard), v => SelectChoice(_meetingSafeguard, v));
     }
 }
