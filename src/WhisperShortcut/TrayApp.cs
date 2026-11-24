@@ -100,6 +100,9 @@ internal sealed partial class TrayApp : ApplicationContext
     private readonly ToolStripMenuItem _checkUpdatesItem;
     private readonly ToolStripMenuItem _switchVersionItem;
     private CancellationTokenSource? _snipCts;
+    // The live-dictation drift measurement. Cancelled when another recording starts, so it does not
+    // keep the offline model busy (and so it is not tied to CancellationToken.None).
+    private CancellationTokenSource? _driftCts;
     private readonly MeetingController _meeting;
     private readonly McpService _mcp;
     private readonly ReadAloudController _readAloud;
@@ -938,6 +941,7 @@ internal sealed partial class TrayApp : ApplicationContext
         long micMs = feedback.ElapsedMilliseconds - beforeMic;
         Sounds.Start();
         take.Serial = ++_recordingSerial;
+        CancelDriftMeasurement();
         // Mac: the three most used of the user's quick instructions, in their Settings order; set before RefreshStatus registers Ctrl+1–3.
         if (mode == Mode.Prompt) take.Card = Core.QuickActionCard.Select(_settings.QuickActions, _quickUsage.Counts(DateTime.UtcNow));
         _take = take;
@@ -1119,7 +1123,12 @@ internal sealed partial class TrayApp : ApplicationContext
                 if (!keepCheckpoint) Core.RecordingCheckpoint.DiscardAll();
 
                 if (outcome.FailedPieces == 0 && outcome.Text.Length > 0 && !_fakeGemini)
-                    _ = MeasureLiveDriftAsync(outcome.Text, wav);
+                {
+                    var drift = new CancellationTokenSource();
+                    var previous = Interlocked.Exchange(ref _driftCts, drift);
+                    try { previous?.Cancel(); } catch (ObjectDisposedException) { }
+                    _ = MeasureLiveDriftAsync(outcome.Text, wav, drift);
+                }
                 return shown;
             });
     }
@@ -1128,23 +1137,38 @@ internal sealed partial class TrayApp : ApplicationContext
     /// Accuracy measurement for the Mac's falsifier: how far the piecewise text is from one decode of the whole
     /// recording. Counts only, never words. Skipped when the app is busy again.
     /// </summary>
-    private async Task MeasureLiveDriftAsync(string inserted, byte[] wav)
+    private void CancelDriftMeasurement()
+    {
+        try { _driftCts?.Cancel(); }
+        catch (ObjectDisposedException) { }
+    }
+
+    private async Task MeasureLiveDriftAsync(string inserted, byte[] wav, CancellationTokenSource owned)
     {
         try
         {
-            await Task.Delay(TimeSpan.FromSeconds(10));
+            await Task.Delay(TimeSpan.FromSeconds(10), owned.Token);
             if (!IsIdle)
             {
                 Core.Log.Info("LIVE-DICTATE: drift measurement skipped, the app is busy");
                 return;
             }
-            var whole = await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, CancellationToken.None);
+            var whole = await _engines.Local.TranscribeAsync(wav, Core.PunctuationMode.Automatic, owned.Token);
             var (insertedWords, wholeWords, distance) = Core.LiveDictation.Drift(inserted, whole);
             Core.Log.Info($"LIVE-DICTATE: drift insertedWords={insertedWords} wholeFileWords={wholeWords} wordEditDistance={distance}");
+        }
+        catch (OperationCanceledException)
+        {
+            Core.Log.Info("LIVE-DICTATE: drift measurement cancelled");
         }
         catch (Exception e)
         {
             Core.Log.Info($"LIVE-DICTATE: drift measurement failed ({e.GetType().Name})");
+        }
+        finally
+        {
+            if (ReferenceEquals(_driftCts, owned)) _driftCts = null;
+            owned.Dispose();
         }
     }
 
@@ -1198,6 +1222,7 @@ internal sealed partial class TrayApp : ApplicationContext
     {
         // The screenshot may be switched off or offline since. Nothing of the old recording is left to clean up: every
         // take ends in Dispose, which also drops its late-copy watch.
+        CancelDriftMeasurement();
         var take = _take = Take.Replay(run, _paster, Core.ScreenshotPolicy.Allowed(_settings));
         _ = ProcessAsync(take, run);
     }
@@ -2417,6 +2442,7 @@ internal sealed partial class TrayApp : ApplicationContext
         _templateReplay.Clear();
         _replayExpiry.Dispose();
         _snipCts?.Cancel();
+        CancelDriftMeasurement();
         _shotExpiry.Dispose();
         _updateNoticeTimer.Dispose();
         _updates.Dispose();
