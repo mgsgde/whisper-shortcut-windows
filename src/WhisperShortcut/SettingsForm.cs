@@ -767,11 +767,10 @@ internal sealed partial class SettingsForm : FastShowForm
         // Any edit is written once it held still for ApplyDelayMs (Mac: no Speichern, keys 500 ms after the last keystroke).
         var dirtyTimer = _applyTimer;
         // WHY skipped while a combo is open: Win32 reports the hot-tracked item as the selection, so hovering would apply it.
-        var combos = new[] { _mic, _llmChoice, _templateChoice, _punctuation, _dictateMode, _afterPaste, _updateChannel, _language, _temperature, _thinking }
-            .Concat(_dictateStep.Combos).Concat(_promptStep.Combos).ToArray();
+        // Every FluentCombo, not a hand-written list: Read Aloud and Meetings were missing from that list.
         dirtyTimer.Tick += (_, _) =>
         {
-            if (!_loaded || combos.Any(c => c.DroppedDown)) return;
+            if (!_loaded || AnyComboDropped(this)) return;
             bool edited = PollBindings(out bool moved);
             if (!edited) _holdSave = false;
             else if (moved) (_holdSave, _pendingSince) = (false, Environment.TickCount64);
@@ -804,6 +803,17 @@ internal sealed partial class SettingsForm : FastShowForm
             _meterTimer.Dispose();
             _sampleMenu.Dispose();
         };
+    }
+
+    /// <summary>True when any drop-down on the form is open. Walks every <see cref="FluentCombo"/>, including ones on a page built later.</summary>
+    private static bool AnyComboDropped(Control root)
+    {
+        foreach (Control child in root.Controls)
+        {
+            if (child is FluentCombo combo && combo.IsHandleCreated && combo.DroppedDown) return true;
+            if (AnyComboDropped(child)) return true;
+        }
+        return false;
     }
 
     protected override void OnHandleCreated(EventArgs e)
