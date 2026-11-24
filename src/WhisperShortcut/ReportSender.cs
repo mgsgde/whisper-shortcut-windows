@@ -4,12 +4,10 @@ using Microsoft.Win32;
 namespace WhisperShortcut;
 
 /// <summary>
-/// Hands a report file to the user's mail program (Mac ReportSender). The Mac attaches the file through Apple Mail's
-/// compose service and otherwise opens <c>mailto:</c> and shows the file selected in Finder. Windows does the same with
-/// Simple MAPI, which classic Outlook, Thunderbird and most desktop mail programs offer: a compose window with the file
-/// attached. When the program that opens mail links is not that MAPI client (the new Outlook, Gmail in the browser, no
-/// mail program at all), Windows falls back like the Mac: <c>mailto:</c>, the file selected in Explorer and on the
-/// clipboard, so Strg+V in the mail attaches it.
+/// Hands the report text to the user's mail program (Mac ReportSender). Simple MAPI, which classic Outlook, Thunderbird
+/// and most desktop mail programs offer, opens a compose window with the whole report as the mail's text. When the
+/// program that opens mail links is not that MAPI client (the new Outlook, Gmail in the browser, no mail program at all),
+/// the report goes on the clipboard and <c>mailto:</c> opens a mail that says to paste it with Strg+V.
 /// </summary>
 internal static class ReportSender
 {
@@ -26,12 +24,12 @@ internal static class ReportSender
 
     /// <summary>
     /// Asks the mail program for a compose window to <see cref="Core.FeedbackLinks.SupportEmail"/> with <paramref name="body"/>
-    /// and the file attached. Never blocks the caller: the UI thread carries the app's keyboard hook, and Windows drops a
+    /// as its text. Never blocks the caller: the UI thread carries the app's keyboard hook, and Windows drops a
     /// hook that does not answer. MAPI runs on its own STA thread; some clients (classic Outlook) keep the call open until
     /// their compose window closes, so after a short wait the answer is <see cref="ComposeOutcome.Pending"/>. Should the call
     /// later end in an error, <paramref name="lateFailure"/> runs (on the MAPI thread) so the caller can still fall back.
     /// </summary>
-    public static async Task<ComposeOutcome> ComposeWithAttachmentAsync(string subject, string body, string file, Action lateFailure)
+    public static async Task<ComposeOutcome> ComposeAsync(string subject, string body, Action lateFailure)
     {
         var client = await Task.Run(() =>
         {
@@ -59,7 +57,7 @@ internal static class ReportSender
         var thread = new Thread(() =>
         {
             uint result;
-            try { result = SendMail(subject, body, file); }
+            try { result = SendMail(subject, body); }
             catch (Exception e) { Core.Log.Warn($"REPORT: MAPI call failed ({e.GetType().Name})"); result = MapiFailure; }
             Core.Log.Info($"REPORT: MAPI returned {result}");
             bool late;
@@ -70,7 +68,7 @@ internal static class ReportSender
         thread.SetApartmentState(ApartmentState.STA);
         thread.Start();
 
-        // An error comes back within a moment (no profile, no attachment support); an open compose window keeps waiting.
+        // An error comes back within a moment (no profile); an open compose window keeps waiting.
         var first = await Task.WhenAny(done.Task, Task.Delay(TimeSpan.FromSeconds(4)));
         lock (gate)
         {
@@ -100,31 +98,25 @@ internal static class ReportSender
         }
     }
 
-    /// <summary>Puts the file itself on the clipboard, as Explorer's Copy does: Strg+V in a mail or chat attaches it.</summary>
-    public static bool CopyFileToClipboard(string file)
+    /// <summary>
+    /// Puts the report on the clipboard for Strg+V in the mail. Marked so Windows keeps it out of the clipboard history
+    /// (Win+V) and the cloud clipboard: a report can quote a dictation with a patient's name.
+    /// </summary>
+    public static bool CopyText(string text)
     {
         try
         {
-            Clipboard.SetFileDropList(new System.Collections.Specialized.StringCollection { file });
+            var data = new DataObject();
+            data.SetText(text.Replace("\r\n", "\n").Replace("\n", "\r\n"), TextDataFormat.UnicodeText);
+            data.SetData("CanIncludeInClipboardHistory", new MemoryStream(BitConverter.GetBytes(0)));
+            data.SetData("CanUploadToCloudClipboard", new MemoryStream(BitConverter.GetBytes(0)));
+            Clipboard.SetDataObject(data, copy: true, retryTimes: 5, retryDelay: 100);
             return true;
         }
         catch (Exception e)
         {
-            Core.Log.Warn($"REPORT: file not on the clipboard ({e.GetType().Name})");
+            Core.Log.Warn($"REPORT: text not on the clipboard ({e.GetType().Name})");
             return false;
-        }
-    }
-
-    /// <summary>An Explorer window on the report folder with the file selected.</summary>
-    public static void RevealInExplorer(string file)
-    {
-        try
-        {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("explorer.exe", $"/select,\"{file}\"") { UseShellExecute = false });
-        }
-        catch (Exception e)
-        {
-            Core.Log.Warn($"REPORT: Explorer did not open ({e.GetType().Name})");
         }
     }
 
@@ -182,7 +174,7 @@ internal static class ReportSender
     private const uint MapiLogonUi = 0x1, MapiDialog = 0x8, MapiTo = 1;
     private const uint AssocfIsProtocol = 0x1000, AssocstrExecutable = 2;
 
-    private static uint SendMail(string subject, string body, string file)
+    private static uint SendMail(string subject, string body)
     {
         var allocated = new List<IntPtr>();
         IntPtr Str(string s) { var p = Marshal.StringToHGlobalUni(s); allocated.Add(p); return p; }
@@ -194,26 +186,15 @@ internal static class ReportSender
                 lpszName = Str(Core.FeedbackLinks.SupportEmail),
                 lpszAddress = Str("SMTP:" + Core.FeedbackLinks.SupportEmail),
             };
-            var attach = new MapiFileDescW
-            {
-                nPosition = uint.MaxValue,
-                lpszPathName = Str(file),
-                lpszFileName = Str(Path.GetFileName(file)),
-            };
             var recipPtr = Marshal.AllocHGlobal(Marshal.SizeOf<MapiRecipDescW>());
             allocated.Add(recipPtr);
             Marshal.StructureToPtr(recip, recipPtr, false);
-            var filePtr = Marshal.AllocHGlobal(Marshal.SizeOf<MapiFileDescW>());
-            allocated.Add(filePtr);
-            Marshal.StructureToPtr(attach, filePtr, false);
             var message = new MapiMessageW
             {
                 lpszSubject = Str(subject),
                 lpszNoteText = Str(body.Replace("\r\n", "\n").Replace("\n", "\r\n")),
                 nRecipCount = 1,
                 lpRecips = recipPtr,
-                nFileCount = 1,
-                lpFiles = filePtr,
             };
             return MAPISendMailW(IntPtr.Zero, IntPtr.Zero, ref message, MapiLogonUi | MapiDialog, 0);
         }
@@ -243,13 +224,6 @@ internal static class ReportSender
         public IntPtr lpszName, lpszAddress;
         public uint ulEIDSize;
         public IntPtr lpEntryID;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct MapiFileDescW
-    {
-        public uint ulReserved, flFlags, nPosition;
-        public IntPtr lpszPathName, lpszFileName, lpFileType;
     }
 
     [DllImport("mapi32.dll", ExactSpelling = true)]

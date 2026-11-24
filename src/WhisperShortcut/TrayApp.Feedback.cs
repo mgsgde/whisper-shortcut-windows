@@ -4,7 +4,7 @@ namespace WhisperShortcut;
 /// „Problem melden …“ (Mac #549: one feedback path). The tray row, Einstellungen → Über, the error popups, the chat's
 /// /feedback and MCP's report_problem all open <see cref="ProblemReportWindow"/>. This part keeps the results the window
 /// offers (in memory only, like the recent texts: a dictation must not linger in a file) and builds the configuration
-/// section of the report file.
+/// section of the report.
 /// </summary>
 internal sealed partial class TrayApp
 {

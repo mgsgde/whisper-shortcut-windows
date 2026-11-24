@@ -9,17 +9,6 @@ public class ReportAttachmentTests : IDisposable
     public void Dispose() { try { Directory.Delete(_dir, true); } catch { } }
 
     [Fact]
-    public void Write_names_the_file_and_writes_bom_and_crlf()
-    {
-        var now = new DateTime(2026, 11, 4, 9, 5, 7);
-        var path = ReportAttachment.Write("Grüße\nzwei\r\ndrei", now, _dir);
-        Assert.Equal("WhisperShortcut-Report-2026-11-04-090507.txt", Path.GetFileName(path));
-        var bytes = File.ReadAllBytes(path);
-        Assert.Equal(new byte[] { 0xEF, 0xBB, 0xBF }, bytes[..3]);
-        Assert.Equal("Grüße\r\nzwei\r\ndrei", System.Text.Encoding.UTF8.GetString(bytes[3..]));
-    }
-
-    [Fact]
     public void PruneOld_deletes_only_files_older_than_one_day()
     {
         Directory.CreateDirectory(_dir);
@@ -36,14 +25,9 @@ public class ReportAttachmentTests : IDisposable
     }
 
     [Fact]
-    public void Write_prunes_first_and_PruneOld_ignores_a_missing_folder()
+    public void PruneOld_ignores_a_missing_folder()
     {
         ReportAttachment.PruneOld(DateTime.Now, Path.Combine(_dir, "nope"));
-        Directory.CreateDirectory(_dir);
-        var old = Path.Combine(_dir, "old.txt");
-        File.WriteAllText(old, "x");
-        File.SetLastWriteTime(old, DateTime.Now.AddDays(-30));
-        ReportAttachment.Write("a", DateTime.Now, _dir);
-        Assert.False(File.Exists(old));
+        Assert.False(Directory.Exists(Path.Combine(_dir, "nope")));
     }
 }

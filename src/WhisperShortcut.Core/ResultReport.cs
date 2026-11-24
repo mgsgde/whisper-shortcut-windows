@@ -5,9 +5,9 @@ namespace WhisperShortcut.Core;
 /// <summary>What a report is about.</summary>
 public enum ResultKind { Dictation, Prompt, ReadAloud, General }
 
-/// <summary>One row of the report window: a result that can be reported, with its editable details.</summary>
-/// <param name="Technical">Glossary-echo lines. They go in the report file, not in the editable details.</param>
-/// <param name="MenuLabel">Replaces the kind name in the list: a template's own name.</param>
+/// <summary>A result that can be reported, with its details.</summary>
+/// <param name="Technical">Glossary-echo lines, shown under the details.</param>
+/// <param name="MenuLabel">Replaces the kind name in the section heading: a template's own name.</param>
 public sealed record ResultCandidate(string Id, ResultKind Kind, DateTime Ts, string Preview, string Details,
     string Technical, string? MenuLabel);
 
@@ -43,8 +43,8 @@ public static class ResultReport
                 Preview(readAloud.Text), ReadAloudBody(readAloud), "", null));
 
         var sorted = list.OrderByDescending(c => c.Ts).ToList();
-        sorted.Add(new ResultCandidate(GeneralId, ResultKind.General, now, "",
-            offlineMode ? "Offline-Modus: an" : "Offline-Modus: aus", "", null));
+        // No details of its own: offline mode and the versions are in the configuration section.
+        sorted.Add(new ResultCandidate(GeneralId, ResultKind.General, now, "", "", "", null));
         return sorted;
     }
 
@@ -75,7 +75,7 @@ public static class ResultReport
         return string.Join("\n", lines);
     }
 
-    /// <summary>Glossary-echo line; it goes in the report file, not in the editable details. "" when unknown.</summary>
+    /// <summary>Glossary-echo line, shown under the dictation's details. "" when unknown.</summary>
     public static string TechnicalLines(DictationResult e)
     {
         if (e.GlossaryEchoRemoved is not { } removed) return "";
@@ -135,89 +135,50 @@ public static class ResultReport
         }).ToList();
     }
 
-    /// <summary>The row the window selects: general when asked (and present), else the first (newest) row.</summary>
+    /// <summary>The result the report is about: general when asked (and present), else the newest.</summary>
     public static string InitialSelection(IReadOnlyList<ResultCandidate> list, bool startOnGeneral)
     {
         if (startOnGeneral && list.Any(c => c.Id == GeneralId)) return GeneralId;
         return list.Count > 0 ? list[0].Id : "";
     }
 
-    /// <summary>Name of a kind in the list.</summary>
+    /// <summary>The line that separates the user's message from what the report carries along.</summary>
+    public const string AttachedMarker = "──────── Wird mitgeschickt ────────";
+
+    /// <summary>
+    /// The whole report as one editable text: the user's <paramref name="message"/> on top (blank lines to type into
+    /// when empty), then <see cref="AttachedMarker"/>, the result's section and the <paramref name="configuration"/>.
+    /// Keys are redacted before the text is ever shown. What the user leaves in it is exactly what is sent.
+    /// </summary>
+    public static string Draft(string? message, ResultCandidate? result, string? configuration)
+    {
+        var parts = new List<string>();
+        if (result != null && SectionFor(result) is { Length: > 0 } section) parts.Add(section);
+        if (!string.IsNullOrWhiteSpace(configuration)) parts.Add(configuration.Trim());
+        var note = (message ?? "").Trim();
+        var text = note + "\n\n\n" + AttachedMarker;
+        if (parts.Count > 0) text += "\n\n" + string.Join("\n\n", parts);
+        return SecretRedactor.Redact(text);
+    }
+
+    /// <summary>„## Diktat · 14:32“ and the details (technical lines below); "" for general feedback without details.</summary>
+    public static string SectionFor(ResultCandidate c)
+    {
+        var body = string.Join("\n", new[] { c.Details.Trim(), c.Technical.Trim() }.Where(p => p.Length > 0));
+        if (body.Length == 0) return "";
+        if (c.Kind == ResultKind.General) return "## Kontext\n" + body;
+        var time = LocalTime(c.Ts).ToString("HH:mm", CultureInfo.InvariantCulture);
+        return $"## {c.MenuLabel ?? KindLabel(c.Kind)} · {time}\n{body}";
+    }
+
+    /// <summary>Name of a result kind in its section heading.</summary>
     public static string KindLabel(ResultKind kind) => kind switch
     {
         ResultKind.Dictation => "Diktat",
         ResultKind.Prompt => "Prompt-Antwort",
         ResultKind.ReadAloud => "Vorlesen",
-        _ => "Allgemeines Feedback (kein bestimmtes Ergebnis)",
+        _ => "Kontext",
     };
-
-    /// <summary>The list entry: kind (or template name), time and a preview.</summary>
-    public static string MenuTitle(ResultCandidate c)
-    {
-        if (c.Kind == ResultKind.General) return KindLabel(ResultKind.General);
-        var time = LocalTime(c.Ts).ToString("HH:mm", CultureInfo.InvariantCulture);
-        return $"{c.MenuLabel ?? KindLabel(c.Kind)} · {time} · {FeedbackLinks.Truncated(c.Preview, 48)}";
-    }
-
-    /// <summary>The report text from the user's message and the (edited) details.</summary>
-    public static string Context(ResultKind kind, string message, string details)
-    {
-        var note = message.Trim();
-        var body = details.Trim();
-        if (note.Length == 0) return body;
-        return (kind == ResultKind.General ? "Nachricht: " : "Was ist schiefgelaufen: ") + note + "\n\n" + body;
-    }
-
-    /// <summary>The report file: the message body, technical lines, configuration; blank parts dropped.</summary>
-    public static string FileText(string messageBody, string technical, string? configuration)
-    {
-        var parts = new[] { messageBody, technical, configuration ?? "" }
-            .Select(p => p.Trim())
-            .Where(p => p.Length > 0);
-        // Last line of defence: a key pasted into the message, the details, a prompt or a log line never leaves.
-        return SecretRedactor.Redact(string.Join("\n\n", parts));
-    }
-
-    /// <summary>
-    /// The context with a pointer to the report file, so the developer notices when it was not pasted. First, not last
-    /// as on the Mac: a mailto: link that is too long loses its end, and this line must arrive.
-    /// </summary>
-    public static string WithFileNote(string context, string fileName) =>
-        "Bericht als Datei: " + fileName + "\n\n" + context;
-
-    /// <summary>Label above the message box.</summary>
-    public static string MessageLabel(ResultKind kind) =>
-        kind == ResultKind.General ? "Deine Nachricht" : "Was ist schiefgelaufen?";
-
-    /// <summary>Placeholder of the message box.</summary>
-    public static string Placeholder(ResultKind kind) => kind switch
-    {
-        ResultKind.Dictation => "Zum Beispiel: Am Ende stand ein Wort, das ich nicht gesagt habe",
-        ResultKind.Prompt => "Zum Beispiel: Die Antwort hat meine Anweisung ignoriert",
-        ResultKind.ReadAloud => "Zum Beispiel: Ein Wort wurde falsch ausgesprochen",
-        _ => "Zum Beispiel: eine Idee, eine Frage oder was nicht funktioniert hat",
-    };
-
-    /// <summary>What the report contains, for the line under the buttons.</summary>
-    public static string PrivacyNote(ResultKind kind, bool includeConfiguration)
-    {
-        if (includeConfiguration)
-        {
-            return kind switch
-            {
-                ResultKind.General => "Enthält deine Nachricht, deine Konfiguration samt Glossar und die letzten Zeilen des Protokolls.",
-                ResultKind.Dictation => "Enthält deinen diktierten Text, deine Konfiguration samt Glossar und die letzten Zeilen des Protokolls. Namen im Text kannst du unter „Details“ entfernen.",
-                _ => "Enthält den Text dieses Ergebnisses, deine Konfiguration samt Glossar und die letzten Zeilen des Protokolls. Namen im Text kannst du unter „Details“ entfernen.",
-            };
-        }
-        return kind switch
-        {
-            ResultKind.General => "Enthält nur deine Nachricht, die App-Version und die Windows-Version.",
-            ResultKind.Dictation => "Enthält deinen diktierten Text. Entferne Namen und alles andere Private, bevor du ihn sendest.",
-            ResultKind.Prompt => "Enthält deine Anweisung, einen Auszug des markierten Texts und die Antwort. Entferne Namen und alles andere Private, bevor du sie sendest.",
-            _ => "Enthält den vorgelesenen Text. Entferne Namen und alles andere Private, bevor du ihn sendest.",
-        };
-    }
 
     private static string GlossarySummary(IReadOnlyList<string> terms, string text)
     {

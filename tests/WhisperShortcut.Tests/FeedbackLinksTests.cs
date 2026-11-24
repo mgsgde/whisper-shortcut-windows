@@ -9,35 +9,20 @@ public class FeedbackLinksTests
     private static ChatMessage M(string t) => new(ChatRole.Model, t, T0);
 
     [Fact]
-    public void MessageBody_without_context()
-    {
-        Assert.Equal("Hallo, ich habe Feedback zu WhisperShortcut:\n\n---\nApp-Version: 0.6.0\nWindows: 11 (26100)",
-            FeedbackLinks.MessageBody("  ", "0.6.0", "11 (26100)"));
-        Assert.Equal(FeedbackLinks.MessageBody(null, "1", "2"), FeedbackLinks.MessageBody("", "1", "2"));
-    }
-
-    [Fact]
-    public void MessageBody_with_context_is_trimmed()
-    {
-        Assert.Equal("Hallo, ich habe Feedback zu WhisperShortcut:\n\nKontext\n\n---\nApp-Version: 1\nWindows: 2",
-            FeedbackLinks.MessageBody("  Kontext \n", "1", "2"));
-    }
-
-    [Fact]
     public void EmailSubject_names_the_version()
     {
         Assert.Equal("Feedback zu WhisperShortcut (0.6.0)", FeedbackLinks.EmailSubject("0.6.0"));
     }
 
     [Fact]
-    public void MailtoUrl_escapes_ampersand_and_plus_in_the_body()
+    public void MailtoUrl_carries_subject_and_the_paste_hint_and_stays_short()
     {
-        var mail = FeedbackLinks.MailtoUrl("a & b + c", "0.6.0", "W").OriginalString;
-        var body = Uri.EscapeDataString(FeedbackLinks.MessageBody("a & b + c", "0.6.0", "W"));
-        Assert.StartsWith("mailto:mgsgde@gmail.com?subject=" + Uri.EscapeDataString("Feedback zu WhisperShortcut (0.6.0)") + "&body=", mail);
-        Assert.EndsWith(body, mail);
-        Assert.Contains("a%20%26%20b%20%2B%20c", mail);
+        var mail = FeedbackLinks.MailtoUrl("0.6.0 & co").OriginalString;
+        Assert.StartsWith("mailto:mgsgde@gmail.com?subject=" + Uri.EscapeDataString("Feedback zu WhisperShortcut (0.6.0 & co)") + "&body=", mail);
+        Assert.EndsWith(Uri.EscapeDataString(FeedbackLinks.PasteHint), mail);
+        Assert.Contains("Strg+V", FeedbackLinks.PasteHint);
         Assert.Equal(1, mail.Count(c => c == '&'));
+        Assert.True(mail.Length < 1900, $"{mail.Length} chars"); // Outlook cuts links around 2,000 characters
     }
 
     [Theory]

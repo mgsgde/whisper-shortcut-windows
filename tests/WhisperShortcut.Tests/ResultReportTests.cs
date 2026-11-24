@@ -24,7 +24,7 @@ public class ResultReportTests
         Assert.Equal(new[] { ResultKind.ReadAloud, ResultKind.Dictation, ResultKind.Prompt, ResultKind.Dictation, ResultKind.General },
             list.Select(c => c.Kind));
         Assert.Equal("general", list[^1].Id);
-        Assert.Equal("Offline-Modus: aus", list[^1].Details);
+        Assert.Equal("", list[^1].Details);
         Assert.Equal("", list[^1].Preview);
         Assert.EndsWith("|dictation|0", list[1].Id);
         Assert.EndsWith("|prompt", list[2].Id);
@@ -38,7 +38,7 @@ public class ResultReportTests
         Assert.Equal(11, ResultReport.Candidates(many, NoTerms, true, null, null, null, T0).Count);
         var t = ResultReport.Candidates(new[] { D("x", template: "Brief", mode: "Template") }, NoTerms, true, null, null, null, T0);
         Assert.Equal("Brief", t[0].MenuLabel);
-        Assert.Equal("Offline-Modus: an", t[^1].Details);
+        Assert.Equal("", t[^1].Details);
         Assert.Null(ResultReport.Candidates(new[] { D("x", template: "Brief") }, NoTerms, true, null, null, null, T0)[0].MenuLabel);
     }
 
@@ -120,7 +120,7 @@ public class ResultReportTests
     {
         var list = ResultReport.Candidates(new[] { D("x") }, NoTerms, false, null, null, null, T0);
         var applied = ResultReport.ApplyingExtraDetails("  Chat  ", list);
-        Assert.Equal("Chat\n\nOffline-Modus: aus", applied[^1].Details);
+        Assert.Equal("Chat", applied[^1].Details);
         Assert.Equal(list[0], applied[0]);
         Assert.Same(list, ResultReport.ApplyingExtraDetails(" ", list));
         Assert.Equal(list[0].Id, ResultReport.InitialSelection(list, false));
@@ -129,49 +129,28 @@ public class ResultReportTests
     }
 
     [Fact]
-    public void Labels_and_menu_title()
+    public void SectionFor_names_the_result_and_puts_technical_lines_below()
     {
-        var list = ResultReport.Candidates(new[] { D(new string('w', 100), template: "Brief", mode: "Template") }, NoTerms, false, null, null, null, T0);
-        Assert.Equal("Brief · 10:00 · " + new string('w', 40) + "…", ResultReport.MenuTitle(list[0]));
-        Assert.Equal("Allgemeines Feedback (kein bestimmtes Ergebnis)", ResultReport.MenuTitle(list[1]));
+        var list = ResultReport.Candidates(new[] { D("Hallo", template: "Brief", mode: "Template", echo: new[] { "Mia" }) },
+            NoTerms, false, null, null, null, T0);
+        var section = ResultReport.SectionFor(list[0]);
+        Assert.StartsWith("## Brief · 10:00\nEingefügter Text:\nHallo\n", section);
+        Assert.EndsWith("\nEntferntes Glossar-Echo: \"Mia\"", section);
+        Assert.Equal("", ResultReport.SectionFor(list[1])); // general feedback has nothing of its own
+        Assert.Equal("## Kontext\nChat", ResultReport.SectionFor(ResultReport.ApplyingExtraDetails("Chat", list)[1]));
         Assert.Equal("Diktat", ResultReport.KindLabel(ResultKind.Dictation));
-        Assert.Equal("Deine Nachricht", ResultReport.MessageLabel(ResultKind.General));
-        Assert.Equal("Was ist schiefgelaufen?", ResultReport.MessageLabel(ResultKind.Prompt));
-        Assert.Contains("Ein Wort wurde falsch ausgesprochen", ResultReport.Placeholder(ResultKind.ReadAloud));
-        Assert.StartsWith("Enthält nur deine Nachricht", ResultReport.PrivacyNote(ResultKind.General, false));
-        Assert.StartsWith("Enthält den Text dieses Ergebnisses", ResultReport.PrivacyNote(ResultKind.Prompt, true));
-        Assert.StartsWith("Enthält den vorgelesenen Text", ResultReport.PrivacyNote(ResultKind.ReadAloud, false));
     }
 
     [Fact]
-    public void Context_cases()
+    public void Draft_puts_the_message_on_top_and_everything_sent_below_the_marker()
     {
-        Assert.Equal("details", ResultReport.Context(ResultKind.Dictation, "  ", " details "));
-        Assert.Equal("Was ist schiefgelaufen: kaputt\n\ndetails", ResultReport.Context(ResultKind.Dictation, " kaputt ", "details"));
-        Assert.Equal("Nachricht: idee\n\nOffline-Modus: aus", ResultReport.Context(ResultKind.General, "idee", "Offline-Modus: aus"));
-    }
-
-    [Fact]
-    public void FileText_drops_blank_parts()
-    {
-        Assert.Equal("body\n\ntech\n\nconfig", ResultReport.FileText("body", " tech ", "config\n"));
-        Assert.Equal("body\n\nconfig", ResultReport.FileText("body", "", "config"));
-        Assert.Equal("body", ResultReport.FileText("body", "  ", null));
-        Assert.Equal("Bericht als Datei: r.txt\n\nctx", ResultReport.WithFileNote("ctx", "r.txt"));
-    }
-
-    [Fact]
-    public void MailtoUrlWithin_keeps_the_link_short_and_the_start_of_the_text()
-    {
-        var context = ResultReport.WithFileNote(string.Concat(Enumerable.Repeat("Größe über Ärztin\n", 400)), "r.txt");
-        var url = FeedbackLinks.MailtoUrlWithin(context, "1.0", "10.0").OriginalString;
-        Assert.True(url.Length <= FeedbackLinks.MaxMailtoLength, $"{url.Length} chars");
-        var body = Uri.UnescapeDataString(url[(url.IndexOf("&body=") + 6)..]);
-        Assert.Contains("Bericht als Datei: r.txt", body); // the line that must arrive comes first
-        Assert.Contains("…", body);
-        Assert.EndsWith("App-Version: 1.0\nWindows: 10.0", body);
-        // A short text is not touched.
-        Assert.Equal(FeedbackLinks.MailtoUrl("kurz", "1", "2"), FeedbackLinks.MailtoUrlWithin("kurz", "1", "2"));
+        var general = ResultReport.Candidates(Array.Empty<DictationResult>(), NoTerms, false, null, null, null, T0)[0];
+        Assert.Equal("\n\n\n" + ResultReport.AttachedMarker + "\n\nconfig", ResultReport.Draft(null, general, " config\n"));
+        Assert.Equal("idee\n\n\n" + ResultReport.AttachedMarker, ResultReport.Draft("  idee ", null, null));
+        var dictation = ResultReport.Candidates(new[] { D("Hallo") }, NoTerms, false, null, null, null, T0)[0];
+        var draft = ResultReport.Draft("falsch", dictation, "config");
+        Assert.StartsWith("falsch\n\n\n" + ResultReport.AttachedMarker + "\n\n## Diktat · 10:00\n", draft);
+        Assert.EndsWith("\n\nconfig", draft);
     }
 
     [Theory]
@@ -230,21 +209,17 @@ public class ResultReportTests
     }
 
     [Fact]
-    public void Keys_never_reach_the_report_file_or_the_mail_body()
+    public void Keys_never_reach_the_text_the_window_shows()
     {
         const string gemini = "AIzaSyD-1234567890abcdefghijklmnopqrstu";
         const string openAi = "sk-proj-abcdefghijklmnopqrstuvwxyz0123456789";
-        var context = ResultReport.Context(ResultKind.General, $"mein Schlüssel {gemini}", $"Details {openAi}");
-        var body = FeedbackLinks.MessageBody(context, "1.0", "10.0");
-        var file = ResultReport.FileText(body, $"Bearer {openAi}", $"## Log\nx-goog-api-key {gemini}\nprompt: {gemini}");
-        foreach (var text in new[] { body, file, FeedbackLinks.MailtoUrl(context, "1.0", "10.0").OriginalString })
-        {
-            Assert.DoesNotContain(gemini, text);
-            Assert.DoesNotContain(openAi, text);
-            Assert.DoesNotContain(Uri.EscapeDataString(gemini), text);
-        }
+        var general = ResultReport.ApplyingExtraDetails($"Details {openAi}",
+            ResultReport.Candidates(Array.Empty<DictationResult>(), NoTerms, false, null, null, null, T0))[0];
+        var draft = ResultReport.Draft($"mein Schlüssel {gemini}", general, $"## Log\nx-goog-api-key {gemini}\nBearer {openAi}");
+        Assert.DoesNotContain(gemini, draft);
+        Assert.DoesNotContain(openAi, draft);
         // The rest of the report is still there.
-        Assert.Contains("mein Schlüssel AIza…", file);
-        Assert.Contains("Details sk-…", file);
+        Assert.Contains("mein Schlüssel AIza…", draft);
+        Assert.Contains("Details sk-…", draft);
     }
 }
