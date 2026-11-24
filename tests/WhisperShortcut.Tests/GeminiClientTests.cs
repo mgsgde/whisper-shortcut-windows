@@ -163,13 +163,23 @@ public class GeminiClientTests
     [InlineData("{\"candidates\":[{\"finishReason\":\"STOP\",\"content\":{\"parts\":[]}}]}")]
     [InlineData("{\"candidates\":[{\"content\":{\"role\":\"model\"}}]}")]
     [InlineData("not json")]
-    public async Task EmptyResponse_ReturnsEmptyString(string body)
+    public async Task MalformedResponse_ThrowsInsteadOfLookingLikeSilence(string body)
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, body));
-        Assert.Equal("", await c.TranscribeAsync(Wav, Array.Empty<string>()));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.TranscribeAsync(Wav, Array.Empty<string>()));
+        Assert.Equal(GeminiErrorKind.Malformed, ex.Kind);
+        Assert.Equal("Gemini", ex.Provider);
+        Assert.Contains("nicht lesen", ex.Message);
         h.Responses.Enqueue((HttpStatusCode.OK, body));
-        Assert.Equal("", await c.PromptAsync(Wav, "x", null));
+        ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptAsync(Wav, "x", null));
+        Assert.Equal(GeminiErrorKind.Malformed, ex.Kind);
+    }
+
+    [Fact]
+    public void ExtractText_EmptyTextPart_StaysEmpty()
+    {
+        Assert.Equal("", GeminiClient.ExtractText("{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"\"}]}}]}"));
     }
 
     [Fact]

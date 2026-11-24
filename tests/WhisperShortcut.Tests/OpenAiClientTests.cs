@@ -350,12 +350,32 @@ public class OpenAiClientTests
         Assert.Equal("", await c.TranscribeAsync(Wav, Array.Empty<string>()));
     }
 
+    [Theory]
+    [InlineData("not json")]
+    [InlineData("{}")]
+    [InlineData("{\"choices\":[]}")]
+    [InlineData("{\"choices\":[{\"message\":{}}]}")]
+    public void ExtractChatText_Malformed_Throws(string body)
+    {
+        var ex = Assert.Throws<GeminiException>(() => OpenAiClient.ExtractChatText(body));
+        Assert.Equal(GeminiErrorKind.Malformed, ex.Kind);
+        Assert.Equal("OpenAI", ex.Provider);
+        Assert.Contains("nicht lesen", ex.Message);
+    }
+
     [Fact]
-    public async Task PromptText_UnreadableJson_IsEmpty()
+    public void ExtractChatText_EmptyContent_StaysEmpty()
+    {
+        Assert.Equal("", OpenAiClient.ExtractChatText("{\"choices\":[{\"message\":{\"content\":\"\"}}]}"));
+    }
+
+    [Fact]
+    public async Task PromptText_UnreadableJson_ThrowsMalformed()
     {
         var (c, h) = Make();
         h.Responses.Enqueue((HttpStatusCode.OK, "not json"));
-        Assert.Equal("", await c.PromptTextAsync("x", "y", "Eigener Prompt"));
+        var ex = await Assert.ThrowsAsync<GeminiException>(() => c.PromptTextAsync("x", "y", "Eigener Prompt"));
+        Assert.Equal(GeminiErrorKind.Malformed, ex.Kind);
     }
 
     [Fact]
@@ -437,6 +457,7 @@ public class OpenAiClientTests
     {
         var h = new FakeHandler();
         var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        h.Responses.Enqueue((HttpStatusCode.OK, Chat));
         await c.PromptTextAsync("Text", "Kürzen", null, Shot);
 
         var content = h.Json(0)["messages"]![1]!["content"]!.AsArray();
@@ -454,6 +475,7 @@ public class OpenAiClientTests
     {
         var h = new FakeHandler();
         var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        h.Responses.Enqueue((HttpStatusCode.OK, Chat));
         await c.CompleteTextAsync("System", "User", Shot);
 
         var content = h.Json(0)["messages"]![1]!["content"]!.AsArray();
@@ -465,6 +487,7 @@ public class OpenAiClientTests
     {
         var h = new FakeHandler();
         var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        h.Responses.Enqueue((HttpStatusCode.OK, Chat));
         var history = new[] { new PromptTurn("Lang", "kürzer", "Kurz", DateTime.UtcNow) };
         await c.PromptTextAsync("Text", "Kürzen", null, default, history, Shot);
 
@@ -480,6 +503,10 @@ public class OpenAiClientTests
     {
         var h = new FakeHandler();
         var c = new OpenAiClient(() => "k", () => "m", () => "m", new HttpClient(h)) { RetryDelay = TimeSpan.Zero };
+        h.Responses.Enqueue((HttpStatusCode.OK, Chat));
+        h.Responses.Enqueue((HttpStatusCode.OK, Chat));
+        h.Responses.Enqueue((HttpStatusCode.OK, Chat));
+        h.Responses.Enqueue((HttpStatusCode.OK, Chat));
         await c.PromptTextAsync("Text", "Kürzen", null);
         await c.PromptTextAsync("Text", "Kürzen", null, null);
         await c.CompleteTextAsync("System", "User");
