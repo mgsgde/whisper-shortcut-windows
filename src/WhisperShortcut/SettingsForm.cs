@@ -915,8 +915,8 @@ internal sealed partial class SettingsForm : FastShowForm
         report.Click += (_, _) => ProblemReportWindow.Open(startOnGeneral: true);
         links.AddRow(SettingRow("Problem melden", "Schick dem Entwickler ein Problem, eine Idee oder eine Frage, samt deiner Konfiguration. "
             + $"Du siehst alles, bevor es gesendet wird. Oder schreib an {Core.FeedbackLinks.SupportEmail}.", report, ButtonWidth + 40, out _));
-        links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/mgsgde/whisper-shortcut-windows",
-            LinkButton("GitHub", "https://github.com/mgsgde/whisper-shortcut-windows"), ButtonWidth, out _));
+        links.AddRow(SettingRow("Entwickelt von Magnus Goedde", "github.com/" + Core.AppIdentity.GitHubRepo,
+            LinkButton("GitHub", "https://github.com/" + Core.AppIdentity.GitHubRepo), ButtonWidth, out _));
         info.Controls.Add(links);
 
         info.Controls.Add(Section("Lizenz"));

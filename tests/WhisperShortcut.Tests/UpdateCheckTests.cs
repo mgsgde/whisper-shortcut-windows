@@ -6,6 +6,15 @@ namespace WhisperShortcut.Tests;
 public class UpdateCheckTests
 {
     [Fact]
+    public void ReleaseUrls_UseTheRepoSlug()
+    {
+        Assert.Equal("mgsgde/whisper-shortcut-windows", AppIdentity.GitHubRepo);
+        Assert.Contains("/repos/" + AppIdentity.GitHubRepo + "/releases/latest", UpdateCheck.LatestReleaseApi);
+        Assert.Contains("/repos/" + AppIdentity.GitHubRepo + "/releases?per_page=30", UpdateCheck.ReleaseListApi);
+        Assert.Contains("/" + AppIdentity.GitHubRepo + "/releases/latest", UpdateCheck.ReleasesPage);
+    }
+
+    [Fact]
     public void Parse_ReadsTagAndUrl()
     {
         var info = UpdateCheck.Parse("""{"tag_name":"v0.2.0","html_url":"https://github.com/x/y/releases/tag/v0.2.0"}""");

@@ -5,9 +5,6 @@ namespace WhisperShortcut.Tests;
 
 public class PromptsTests
 {
-    private static string Swift(string file, int from, int to) =>
-        string.Join("\n", File.ReadAllLines(Paths.SwiftFile(file)).Skip(from - 1).Take(to - from + 1));
-
     private static string Multi(string t, string name) =>
         Regex.Match(t, "static let " + name + @" =\n\s*""""""\n(.*?)\n""""""", RegexOptions.Singleline).Groups[1].Value;
 
@@ -22,9 +19,8 @@ public class PromptsTests
     [SwiftSourceFact]
     public void PromptsEqualSwiftSource()
     {
-        // Mac #468 inserted the additions helpers above these constants, so they no longer
-        // fit in lines 7–90. The names are unchanged; the fixed-core architecture is not ported.
-        var t = Swift("AppConstants.swift", 7, 120);
+        // Match by symbol name. A fixed line range broke when Mac #468 inserted helpers above the constants.
+        var t = File.ReadAllText(Paths.SwiftFile("AppConstants.swift"));
         Assert.Equal(Prompts.DefaultTranscriptionSystemPrompt, Multi(t, "defaultTranscriptionSystemPrompt"));
         Assert.Equal(Prompts.DefaultPromptModeSystemPrompt, Multi(t, "defaultPromptModeSystemPrompt"));
         Assert.Equal(Prompts.PromptModeOutputRule, Single(t, "promptModeOutputRule"));
