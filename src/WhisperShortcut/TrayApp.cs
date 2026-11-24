@@ -1740,7 +1740,7 @@ internal sealed partial class TrayApp : ApplicationContext
     /// </summary>
     private void ThrowIfLateCopy(string what, string? selection, bool isRetry)
     {
-        if (selection != null || isRetry || !_paster.LateCopyArrived) return;
+        if (selection != null || isRetry || _take?.LateWatch.Arrived != true) return;
         Core.Log.Info($"{what}: selection arrived after the deadline, not composing over it");
         throw new Core.SelectionUnreadableException();
     }
