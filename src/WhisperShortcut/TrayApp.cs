@@ -983,7 +983,6 @@ internal sealed partial class TrayApp : ApplicationContext
         Core.Log.Info(caret != readCaret
             ? $"LIVE-DICTATE: caret context from last dictation ({caret.LogKind})"
             : $"LIVE-DICTATE: caret context {caret.LogKind}");
-        _lastLive.Forget(null); // the new session records its own ending; the old memory is spent either way
         // Like Diktieren: "Nur gesprochen" applies offline, outside meetings (Live never runs in a meeting).
         var punctuation = Core.PunctuationModes.Effective(_settings.PunctuationMode, isOffline: true, duringMeeting: false);
         // The session exists before the recording starts, so a failed start (Take.Dispose) finds it and discards it.
@@ -995,6 +994,7 @@ internal sealed partial class TrayApp : ApplicationContext
             live.Dispose(); // refused before the take existed; no clipboard change yet: BeginLive was not called
             return;
         }
+        _lastLive.Forget(null); // only once the new session has started; a refusal keeps the previous ending
         live.Target = _take!.PasteTarget;
         _paster.BeginLive(_settings.RestoreClipboard);
         live.StartRetryTimer();
