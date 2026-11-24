@@ -404,12 +404,14 @@ public sealed class TtsClient
         Log.Info($"TTS {model.Id}: {text!.Length} chars in {chunks.Count} chunks, voice {voice}");
 
         var gate = new PlaybackOrderGate(chunks.Count, onAudio);
+        // At most three chunk requests run ahead of the order gate. The rest wait; cancellation releases them.
+        using var inflight = new SemaphoreSlim(3, 3);
         var started = Stopwatch.StartNew();
         var tasks = new Task<Exception?>[chunks.Count];
         for (var i = 0; i < chunks.Count; i++)
         {
             var index = i;
-            tasks[i] = Task.Run(() => RunChunkAsync(model, voice, chunks[index], index, chunks.Count, gate, ct), CancellationToken.None);
+            tasks[i] = RunChunkLimitedAsync(model, voice, chunks[index], index, chunks.Count, gate, inflight, ct);
         }
         var errors = await Task.WhenAll(tasks).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
@@ -418,6 +420,20 @@ public sealed class TtsClient
         Log.Info($"TTS {model.Id}: done after {started.ElapsedMilliseconds} ms, {failed} of {chunks.Count} chunks failed");
         if (failed == chunks.Count) ExceptionDispatchInfo.Capture(errors[0]!).Throw();
         return failed;
+    }
+
+    private async Task<Exception?> RunChunkLimitedAsync(TtsModel model, string voice, string text, int index, int total,
+        PlaybackOrderGate gate, SemaphoreSlim inflight, CancellationToken ct)
+    {
+        await inflight.WaitAsync(ct).ConfigureAwait(false);
+        try
+        {
+            return await RunChunkAsync(model, voice, text, index, total, gate, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            inflight.Release();
+        }
     }
 
     // One chunk with retries. Returns null on success, else the exception it failed with.

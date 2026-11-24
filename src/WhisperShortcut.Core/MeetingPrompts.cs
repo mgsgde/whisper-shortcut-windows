@@ -25,14 +25,34 @@ public static class MeetingPrompts
     /// <summary>The instruction that goes with the transcript.</summary>
     public const string SummaryInstruction = "Summarize this meeting transcript.";
 
-    /// <summary>Longest transcript sent for a summary, like the Mac (60 000 characters).</summary>
+    /// <summary>Longest transcript sent to a cloud model, like the Mac (60 000 characters).</summary>
     public const int MaxTranscriptChars = 60_000;
 
-    /// <summary>Returns the transcript, or its last <see cref="MaxTranscriptChars"/> characters when longer: the end holds the outcome of a meeting.</summary>
-    public static string Clip(string transcript)
+    /// <summary>German text is about this many characters per token.</summary>
+    public const int GermanCharsPerToken = 3;
+
+    /// <summary>Tokens left free for the summary answer, so the transcript cannot fill <see cref="LocalLlm.ContextTokens"/>.</summary>
+    public const int SummaryAnswerTokens = 4096;
+
+    /// <summary>
+    /// Longest transcript sent to the local model: the context window minus <see cref="SummaryAnswerTokens"/>,
+    /// times <see cref="GermanCharsPerToken"/>.
+    /// </summary>
+    public static int LocalTranscriptChars =>
+        (LocalLlm.ContextTokens - SummaryAnswerTokens) * GermanCharsPerToken;
+
+    /// <summary>Character budget for <paramref name="engine"/>. Cloud stays at <see cref="MaxTranscriptChars"/>.</summary>
+    public static int BudgetChars(Engine engine) =>
+        engine == Engine.Local ? LocalTranscriptChars : MaxTranscriptChars;
+
+    /// <summary>
+    /// Returns the transcript, or its last <see cref="BudgetChars"/> characters when longer: the end holds the outcome of a meeting.
+    /// </summary>
+    public static string Clip(string transcript, Engine engine)
     {
-        if (transcript.Length <= MaxTranscriptChars) return transcript;
-        var start = transcript.Length - MaxTranscriptChars;
+        var budget = BudgetChars(engine);
+        if (transcript.Length <= budget) return transcript;
+        var start = transcript.Length - budget;
         // Do not start in the middle of a surrogate pair.
         if (char.IsLowSurrogate(transcript[start])) start++;
         return transcript[start..];

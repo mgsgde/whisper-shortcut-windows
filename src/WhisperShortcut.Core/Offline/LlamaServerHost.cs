@@ -20,9 +20,11 @@ public sealed class LlamaServerHost : IDisposable
     private readonly Queue<string> _ring = new();
     private readonly HttpClient _health = NetworkPolicy.CreateApiClient(TimeSpan.FromSeconds(2));
 
+    private enum StartResult { Ready, Replaced, Stopped }
+
     private Process? _process;
     private Uri? _baseUrl;
-    private Task? _startTask;
+    private Task<StartResult>? _startTask;
     private bool _ready;
     private long _lastUseTicks = Environment.TickCount64;
 
@@ -67,25 +69,31 @@ public sealed class LlamaServerHost : IDisposable
     }
 
     /// <summary>Starts the server if needed and waits until it is healthy. Concurrent callers share one start.</summary>
-    public Task EnsureStartedAsync(CancellationToken ct)
+    public async Task EnsureStartedAsync(CancellationToken ct)
     {
-        // A caller that wants the server counts as use: the idle timer must not kill it before the request arrives.
-        MarkUsed();
-        Task start;
-        Process? stale = null;
-        lock (_gate)
+        while (true)
         {
-            if (IsRunningLocked) return Task.CompletedTask;
-            if (_startTask == null || _startTask.IsCompleted || (_process?.HasExited ?? false))
+            // A caller that wants the server counts as use: the idle timer must not kill it before the request arrives.
+            MarkUsed();
+            Task<StartResult> start;
+            Process? stale = null;
+            lock (_gate)
             {
-                stale = DetachLocked();
-                _startTask = StartAsync();
+                if (IsRunningLocked) return;
+                if (_startTask == null || _startTask.IsCompleted || (_process is { } running && Exited(running)))
+                {
+                    stale = DetachLocked();
+                    _startTask = StartAsync();
+                }
+                start = _startTask;
             }
-            start = _startTask;
+            Kill(stale, wait: false);
+            // The start itself is not tied to one caller's token: others may still wait for it.
+            var result = await start.WaitAsync(ct).ConfigureAwait(false);
+            if (result == StartResult.Ready) return;
+            if (result == StartResult.Stopped) throw new ObjectDisposedException(nameof(LlamaServerHost));
+            // Replaced: the process this wait followed is gone and another start owns the host.
         }
-        Kill(stale, wait: false);
-        // The start itself is not tied to one caller's token: others may still wait for it.
-        return start.WaitAsync(ct);
     }
 
     /// <summary>Records a use, which postpones <see cref="StopIfIdle"/>.</summary>
@@ -141,7 +149,7 @@ public sealed class LlamaServerHost : IDisposable
         p.Dispose();
     }
 
-    private async Task StartAsync()
+    private async Task<StartResult> StartAsync()
     {
         int port;
         var listener = new TcpListener(IPAddress.Loopback, 0);
@@ -157,7 +165,8 @@ public sealed class LlamaServerHost : IDisposable
             RedirectStandardError = true,
         };
         foreach (var a in new[] { "-m", _modelPath, "--host", "127.0.0.1", "--port", port.ToString(),
-                     "-c", "16384", "--jinja", "--no-webui", "-ngl", "99" })
+                     "-c", LocalLlm.ContextTokens.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                     "--jinja", "--no-webui", "-ngl", "99" })
             psi.ArgumentList.Add(a);
 
         Process p;
@@ -176,10 +185,11 @@ public sealed class LlamaServerHost : IDisposable
         }
         p.BeginOutputReadLine();
         p.BeginErrorReadLine();
+        var url = new Uri($"http://127.0.0.1:{port}/");
         lock (_gate)
         {
             _process = p;
-            _baseUrl = new Uri($"http://127.0.0.1:{port}/");
+            _baseUrl = url;
         }
         try { _onStarted?.Invoke(p); }
         catch (Exception ex) { Log.Error("llama-server onStarted failed", ex); }
@@ -187,18 +197,30 @@ public sealed class LlamaServerHost : IDisposable
         var sw = Stopwatch.StartNew();
         while (sw.Elapsed < StartTimeout)
         {
+            if (Superseded(p) is { } gone) return gone;
             // 0xC0000135 = a DLL is missing (e.g. the VC++ runtime): the loader fails before any output.
-            if (Exited(p)) Fail($"llama-server exited (code 0x{ExitCode(p):X8})", ExitCode(p) == IllegalInstruction);
+            if (Exited(p)) return Fail(p, $"llama-server exited (code 0x{ExitCode(p):X8})", ExitCode(p) == IllegalInstruction);
             try
             {
-                using var resp = await _health.GetAsync(new Uri(_baseUrl!, "health")).ConfigureAwait(false);
+                using var resp = await _health.GetAsync(new Uri(url, "health")).ConfigureAwait(false);
                 if (resp.StatusCode == HttpStatusCode.OK)
                 {
-                    lock (_gate) _ready = ReferenceEquals(_process, p);
+                    lock (_gate)
+                    {
+                        if (!ReferenceEquals(_process, p))
+                            return _process != null ? StartResult.Replaced : StartResult.Stopped;
+                        _ready = true;
+                    }
                     MarkUsed();
                     Log.Info($"llama-server ready on port {port} after {sw.Elapsed.TotalSeconds:F1} s");
-                    return;
+                    return StartResult.Ready;
                 }
+            }
+            catch (ObjectDisposedException)
+            {
+                // Stop/Dispose closed the health client or the process while this start was polling.
+                Log.Info("llama-server start stopped");
+                return Superseded(p) ?? StartResult.Stopped;
             }
             catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
             {
@@ -209,14 +231,24 @@ public sealed class LlamaServerHost : IDisposable
             var delay = sw.Elapsed < TimeSpan.FromSeconds(10) ? 50 : 250;
             await Task.Delay(delay).ConfigureAwait(false);
         }
-        Fail("llama-server did not become healthy in time");
+        return Fail(p, "llama-server did not become healthy in time");
+    }
+
+    /// <summary>Null while <paramref name="p"/> is still the process this host is starting.</summary>
+    private StartResult? Superseded(Process p)
+    {
+        lock (_gate)
+        {
+            if (ReferenceEquals(_process, p)) return null;
+            return _process != null ? StartResult.Replaced : StartResult.Stopped;
+        }
     }
 
     // Stop() from another thread disposes the process; that counts as exited.
     private static bool Exited(Process p)
     {
         try { return p.HasExited; }
-        catch (InvalidOperationException) { return true; }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { return true; }
     }
 
     private static int ExitCode(Process p)
@@ -225,12 +257,23 @@ public sealed class LlamaServerHost : IDisposable
         catch (InvalidOperationException) { return 0; }
     }
 
-    private void Fail(string why, bool unsupportedCpu = false)
+    /// <summary>Kills only <paramref name="p"/>. A newer process on this host is left running and reported as replaced.</summary>
+    private StartResult Fail(Process p, string why, bool unsupportedCpu = false)
     {
         string[] lines;
         lock (_gate) lines = _ring.ToArray();
         Log.Error($"{why}; last output: {string.Join(" | ", lines)}");
-        Stop();
+        bool ours;
+        bool replaced;
+        lock (_gate)
+        {
+            ours = ReferenceEquals(_process, p);
+            replaced = !ours && _process != null;
+            if (ours) DetachLocked();
+        }
+        Kill(p, wait: true);
+        if (replaced) return StartResult.Replaced;
+        if (!ours) return StartResult.Stopped;
         if (unsupportedCpu) throw new UnsupportedCpuException(UnsupportedCpuMessage);
         throw new LocalLlmException("Das lokale Sprachmodell ließ sich nicht starten. Details im Protokoll.");
     }

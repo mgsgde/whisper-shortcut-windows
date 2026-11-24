@@ -42,6 +42,21 @@ public class MeetingStoreTests : IDisposable
     }
 
     [Fact]
+    public void Create_and_MarkEnded_raise_Changed_and_Live_follows()
+    {
+        var n = 0;
+        _store.Changed += () => n++;
+        var m = _store.Create(T0, "mic");
+        Assert.Equal(1, n);
+        Assert.Equal(m.Id, _store.Live()!.Id);
+        _store.SetDuration(m.Id, 3);
+        Assert.Equal(1, n);
+        _store.MarkEnded(m.Id, T0.AddMinutes(1));
+        Assert.Equal(2, n);
+        Assert.Null(_store.Live());
+    }
+
+    [Fact]
     public void AppendChunk_in_order_appends_and_keeps_the_revision()
     {
         var m = _store.Create(T0, "mic");
@@ -76,11 +91,25 @@ public class MeetingStoreTests : IDisposable
         Assert.Contains("[01:00] zwei", after.Text);
         Assert.Contains("[00:00] eins", after.Text);
 
-        // A same-second late chunk goes before the existing one.
-        _store.AppendChunk(m.Id, 60, "zwei-b");
+        // A later chunk in the same second (different millisecond) goes before the existing one.
+        _store.AppendChunk(m.Id, 60.4, "zwei-b");
         var texts = _store.ReadChunks(m.Id).Select(c => c.Text).ToList();
         Assert.True(texts.IndexOf("zwei-b") < texts.IndexOf("zwei"));
         Assert.Equal(2, _store.Get(m.Id)!.TranscriptRevision);
+    }
+
+    [Fact]
+    public void AppendChunk_same_start_millisecond_is_written_once()
+    {
+        var m = _store.Create(T0, "mic");
+        _store.AppendChunk(m.Id, 12.345, "einmal");
+        _store.AppendChunk(m.Id, 12.3454, "nochmal");
+        var again = new MeetingStore(_root);
+        again.AppendChunk(m.Id, 12.345, "von vorn");
+
+        Assert.Equal(new[] { "einmal" }, again.ReadChunks(m.Id).Select(c => c.Text));
+        Assert.Equal(0, again.Get(m.Id)!.TranscriptRevision);
+        Assert.Equal(MeetingStore.ChunkKey(12.345), MeetingStore.ChunkKey(12.3454));
     }
 
     [Fact]

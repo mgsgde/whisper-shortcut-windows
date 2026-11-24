@@ -48,6 +48,7 @@ internal sealed class MeetingController : IDisposable
     private bool _retrying;
     private bool _recoveringSummaries;
     private bool _failureShown;
+    private bool _shutDown;
     private string? _lastFolder;
 
     /// <param name="transcribe">One chunk WAV → cleaned transcript text ("" when nothing was said); throws on failure.</param>
@@ -99,6 +100,9 @@ internal sealed class MeetingController : IDisposable
 
     /// <summary>A meeting records or is finishing.</summary>
     public bool IsActive => _session != null;
+
+    /// <summary>The one meeting store. The chat window reads the same instance and listens for <see cref="Core.MeetingStore.Changed"/>.</summary>
+    public Core.MeetingStore Store => _store;
 
     /// <summary>Hotkey and "Meeting starten / beenden".</summary>
     public void Toggle()
@@ -209,7 +213,7 @@ internal sealed class MeetingController : IDisposable
         _lastFolder = session.Meeting.Folder;
         _failureShown = false;
         session.Changed += () => _ui.Post(_ => UpdateStatus(), null);
-        session.ChunkFailed += e => _ui.Post(_ => OnChunkFailed(e), null);
+        session.ChunkFailed += (e, audioKept) => _ui.Post(_ => OnChunkFailed(e, audioKept), null);
         _startedUtc = DateTime.UtcNow;
         Core.AppIdentity.Current.WriteLiveMeetingMarker(Environment.ProcessId, _startedUtc); // the Dev update script waits while this pid lives
         StartSafeguard();
@@ -265,7 +269,9 @@ internal sealed class MeetingController : IDisposable
         }
         else if (result.PendingChunks > 0)
         {
-            text = $"{Count(result.PendingChunks)} noch nicht transkribiert, der Ton ist gespeichert. Erneut versuchen: Symbol → Meeting.";
+            text = result.PendingAudioKept
+                ? $"{Count(result.PendingChunks)} noch nicht transkribiert, der Ton ist gespeichert. Erneut versuchen: Symbol → Meeting."
+                : $"{Count(result.PendingChunks)} noch nicht transkribiert. Der Ton konnte nicht vollständig gespeichert werden.";
             icon = ToolTipIcon.Warning;
         }
         else if (result.TranscribedChunks == 0)
@@ -350,7 +356,10 @@ internal sealed class MeetingController : IDisposable
     /// </summary>
     public void Shutdown()
     {
+        if (_shutDown) return;
+        _shutDown = true;
         var session = _session;
+        _session = null;
         StopAudio();
         Core.AppIdentity.Current.DeleteLiveMeetingMarker();
         if (session == null) return;
@@ -389,7 +398,6 @@ internal sealed class MeetingController : IDisposable
             Core.Log.Error("Meeting: stop at quit failed", e);
         }
         session.Dispose();
-        _session = null;
     }
 
     // ---------------- status ----------------
@@ -408,7 +416,7 @@ internal sealed class MeetingController : IDisposable
         _overlay.SetStatus($"{mode} · {done}");
     }
 
-    private void OnChunkFailed(Exception e)
+    private void OnChunkFailed(Exception e, bool audioKept)
     {
         UpdateStatus();
         // One balloon per meeting: a dead network would otherwise bring one every minute.
@@ -416,7 +424,10 @@ internal sealed class MeetingController : IDisposable
         _failureShown = true;
         string reason = e is Core.GeminiException g ? g.Message : "Details stehen im Protokoll.";
         _notify("Meeting: Abschnitt nicht transkribiert",
-            "Der Ton ist gespeichert und wird später erneut versucht. " + reason, ToolTipIcon.Warning, null);
+            audioKept
+                ? "Der Ton ist gespeichert und wird später erneut versucht. " + reason
+                : "Der Ton konnte nicht gespeichert werden. " + reason,
+            ToolTipIcon.Warning, null);
     }
 
     private static string Count(int chunks) => chunks == 1 ? "1 Abschnitt" : $"{chunks} Abschnitte";

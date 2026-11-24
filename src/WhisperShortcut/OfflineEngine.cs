@@ -25,8 +25,10 @@ internal sealed class OfflineEngine : IDisposable
     private int _hotwordsLoads;
     private int _reloadRequested;
     private int _reloadRunning;
+    private readonly object _llmGate = new();
     private Core.LlamaServerHost? _server;
     private string? _serverModelId;
+    private Task? _llmStart;
     private Download? _download;
 
     public OfflineEngine(Core.Settings settings)
@@ -34,7 +36,12 @@ internal sealed class OfflineEngine : IDisposable
         _settings = settings;
         _downloader = new Core.ModelDownloader(_http);
         _llm = new Core.LocalLlmClient(_llmHttp);
-        _idleTimer.Tick += (_, _) => _server?.StopIfIdle(LlmIdleTimeout);
+        _idleTimer.Tick += (_, _) =>
+        {
+            Core.LlamaServerHost? server;
+            lock (_llmGate) server = _server;
+            server?.StopIfIdle(LlmIdleTimeout);
+        };
         _idleTimer.Start();
     }
 
@@ -141,8 +148,13 @@ internal sealed class OfflineEngine : IDisposable
         if (Core.AppIdentity.Current.IsDev) throw new InvalidOperationException(Core.AppIdentity.OfflineDeleteLockedReason); // before unloading anything
         if (component == Core.OfflineCatalog.Parakeet)
         {
-            _parakeet?.Dispose();
-            _parakeet = null;
+            _parakeetLock.Wait();
+            try
+            {
+                _parakeet?.Dispose();
+                _parakeet = null;
+            }
+            finally { _parakeetLock.Release(); }
         }
         else
         {
@@ -186,18 +198,8 @@ internal sealed class OfflineEngine : IDisposable
     public async Task<string> TranscribeAsync(byte[] wav, CancellationToken ct)
     {
         if (!SpeechInstalled) throw new Core.OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
-        var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
         // Decoding cannot be interrupted; a cancel just drops the result (a minute of audio takes ~1 s).
-        var text = await Task.Run(async () =>
-        {
-            try { return parakeet.Transcribe(wav); }
-            catch (ObjectDisposedException)
-            {
-                // A Glossary reload swapped the instance between fetching and calling: use the new one.
-                var current = await LoadParakeetAsync().ConfigureAwait(false);
-                return current.Transcribe(wav);
-            }
-        }, CancellationToken.None).ConfigureAwait(false);
+        var text = await WithParakeetAsync(parakeet => parakeet.Transcribe(wav)).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         // Parakeet sometimes glues a comma to the next word; the Mac spaces it in every output.
         return Core.ParakeetPunctuationTiming.SpacingGluedCommas(text);
@@ -211,29 +213,19 @@ internal sealed class OfflineEngine : IDisposable
     public async Task<(string Text, bool Timed)> TranscribeSpokenMarksAsync(byte[] wav, CancellationToken ct)
     {
         if (!SpeechInstalled) throw new Core.OfflineNotReadyException("Die Offline-Spracherkennung ist noch nicht geladen.");
-        var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
-        var decode = await Task.Run(async () =>
-        {
-            try { return parakeet.TranscribeDetailed(wav); }
-            catch (ObjectDisposedException)
-            {
-                // A Glossary reload swapped the instance between fetching and calling: use the new one.
-                var current = await LoadParakeetAsync().ConfigureAwait(false);
-                return current.TranscribeDetailed(wav);
-            }
-        }, CancellationToken.None).ConfigureAwait(false);
+        var decode = await WithParakeetAsync(parakeet => parakeet.TranscribeDetailed(wav)).ConfigureAwait(false);
         ct.ThrowIfCancellationRequested();
         var text = Core.ParakeetPunctuationTiming.KeepSpokenMarks(decode.Text, decode.Tokens, decode.AudioSeconds, out var timed);
         return (text, timed);
     }
 
     /// <summary>Selection + spoken instruction (already transcribed) to the local language model.</summary>
-    public Task<string> PromptAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct) =>
+    public Task<string> PromptAsync(string? selection, string instruction, string? customSystemPrompt, CancellationToken ct, TimeSpan? deadline = null) =>
         CompleteAsync(Core.DictatePromptText.SystemPrompt(customSystemPrompt),
-            Core.DictatePromptText.LocalUserTurn(selection, instruction), 4096, ct);
+            Core.DictatePromptText.LocalUserTurn(selection, instruction), 4096, ct, deadline);
 
     /// <summary>A complete system prompt and user turn to the local language model, answer limited to <paramref name="maxTokens"/>.</summary>
-    public async Task<string> CompleteAsync(string systemPrompt, string userText, int maxTokens, CancellationToken ct)
+    public async Task<string> CompleteAsync(string systemPrompt, string userText, int maxTokens, CancellationToken ct, TimeSpan? deadline = null)
     {
         if (!LlmInstalled(SelectedLlm)) throw new Core.OfflineNotReadyException("Das Offline-Sprachmodell ist noch nicht geladen.");
         if (LlmUnsupportedCpu) throw new Core.LocalLlmException(Core.LlamaServerHost.UnsupportedCpuMessage);
@@ -248,7 +240,7 @@ internal sealed class OfflineEngine : IDisposable
         }
         try
         {
-            var answer = await _llm.CompleteAsync(baseUrl, systemPrompt, userText, ct, maxTokens).ConfigureAwait(false);
+            var answer = await _llm.CompleteAsync(baseUrl, systemPrompt, userText, ct, maxTokens, deadline).ConfigureAwait(false);
             server.MarkUsed();
             return answer;
         }
@@ -269,6 +261,32 @@ internal sealed class OfflineEngine : IDisposable
         catch (Exception m) { Core.Log.Error("Could not write the unsupported-CPU marker", m); }
     }
 
+    /// <summary>Model folder and thread count shared by the first load and a glossary reload.</summary>
+    private readonly record struct ParakeetLoadSpec(string Directory, int Threads);
+
+    private static ParakeetLoadSpec ParakeetSpec() => new(
+        Path.Combine(Core.OfflineCatalog.Root, Core.OfflineCatalog.Parakeet.Directory),
+        // Half the cores: decoding stays fast and Word keeps responding while it runs.
+        Math.Clamp(Environment.ProcessorCount / 2, 1, 8));
+
+    /// <summary>
+    /// Runs <paramref name="work"/> on the loaded model. A glossary reload may dispose the instance
+    /// between the fetch and the call; the disposed one is tried again on the instance that replaced it.
+    /// </summary>
+    private async Task<T> WithParakeetAsync<T>(Func<Core.ParakeetTranscriber, T> work)
+    {
+        var parakeet = await LoadParakeetAsync().ConfigureAwait(false);
+        return await Task.Run(async () =>
+        {
+            try { return work(parakeet); }
+            catch (ObjectDisposedException)
+            {
+                var current = await LoadParakeetAsync().ConfigureAwait(false);
+                return work(current);
+            }
+        }, CancellationToken.None).ConfigureAwait(false);
+    }
+
     private async Task<Core.ParakeetTranscriber> LoadParakeetAsync()
     {
         if (_parakeet != null) return _parakeet;
@@ -277,13 +295,11 @@ internal sealed class OfflineEngine : IDisposable
         {
             if (_parakeet != null) return _parakeet;
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var dir = Path.Combine(Core.OfflineCatalog.Root, Core.OfflineCatalog.Parakeet.Directory);
-            // Half the cores: decoding stays fast and Word keeps responding while it runs.
-            int threads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
+            var spec = ParakeetSpec();
             var terms = Core.ParakeetHotwords.FromGlossary(_settings.Glossary);
-            var loaded = await Task.Run(() => LoadWithHotwords(dir, threads, terms)).ConfigureAwait(false);
+            var loaded = await Task.Run(() => LoadWithHotwords(spec.Directory, spec.Threads, terms)).ConfigureAwait(false);
             _parakeet = loaded;
-            Core.Log.Info($"Parakeet loaded in {sw.ElapsedMilliseconds} ms ({threads} threads, {terms.Count} glossary terms)");
+            Core.Log.Info($"Parakeet loaded in {sw.ElapsedMilliseconds} ms ({spec.Threads} threads, {terms.Count} glossary terms)");
             return loaded;
         }
         finally { _parakeetLock.Release(); }
@@ -347,9 +363,8 @@ internal sealed class OfflineEngine : IDisposable
                 var terms = Core.ParakeetHotwords.FromGlossary(_settings.Glossary);
                 if (old.Hotwords.SequenceEqual(terms, StringComparer.Ordinal)) return;
                 var sw = System.Diagnostics.Stopwatch.StartNew();
-                var dir = Path.Combine(Core.OfflineCatalog.Root, Core.OfflineCatalog.Parakeet.Directory);
-                int threads = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
-                var fresh = await Task.Run(() => LoadWithHotwords(dir, threads, terms)).ConfigureAwait(false);
+                var spec = ParakeetSpec();
+                var fresh = await Task.Run(() => LoadWithHotwords(spec.Directory, spec.Threads, terms)).ConfigureAwait(false);
                 _parakeet = fresh;
                 old.Dispose(); // waits for a running Transcribe; later callers retry on the new instance
                 Core.Log.Info($"Parakeet reloaded for glossary ({terms.Count} terms) in {sw.ElapsedMilliseconds} ms");
@@ -361,23 +376,94 @@ internal sealed class OfflineEngine : IDisposable
 
     private async Task<Core.LlamaServerHost> EnsureServerAsync(CancellationToken ct)
     {
-        var llm = SelectedLlm;
-        if (_server != null && _serverModelId != llm.Id) StopServer(); // model switched in the settings
-        var exe = Core.OfflineCatalog.LlamaServerExe(Arch);
-        if (_server == null) PlaceVcRuntime(Path.GetDirectoryName(exe)!);
-        _server ??= new Core.LlamaServerHost(exe, llm.GgufPath, _job.Assign);
-        _serverModelId = llm.Id;
-        var sw = System.Diagnostics.Stopwatch.StartNew();
-        bool wasRunning = _server.IsRunning;
-        try { await _server.EnsureStartedAsync(ct).ConfigureAwait(false); }
-        catch (Core.UnsupportedCpuException)
+        while (true)
         {
-            // Crashed while loading, before any request: remember it too, so the next try fails at once.
-            RememberUnsupportedCpu();
-            throw;
+            Core.LlamaServerHost? retiring = null;
+            Task? retiringStart = null;
+            lock (_llmGate)
+            {
+                var llm = SelectedLlm;
+                if (_server != null && _serverModelId != llm.Id)
+                {
+                    retiring = _server;
+                    retiringStart = _llmStart;
+                    _server = null;
+                    _serverModelId = null;
+                    _llmStart = null;
+                }
+            }
+            if (retiring != null)
+            {
+                await FinishStart(retiringStart).ConfigureAwait(false);
+                DisposeHost(retiring);
+                continue;
+            }
+
+            Core.LlamaServerHost server;
+            lock (_llmGate)
+            {
+                var llm = SelectedLlm;
+                if (_server != null && _serverModelId != llm.Id) continue;
+                if (_server == null)
+                {
+                    var exe = Core.OfflineCatalog.LlamaServerExe(Arch);
+                    PlaceVcRuntime(Path.GetDirectoryName(exe)!);
+                    _server = new Core.LlamaServerHost(exe, llm.GgufPath, _job.Assign);
+                    _serverModelId = llm.Id;
+                }
+                server = _server;
+            }
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            bool wasRunning = server.IsRunning;
+            Task start;
+            lock (_llmGate)
+            {
+                if (!ReferenceEquals(_server, server)) continue;
+                start = server.EnsureStartedAsync(ct);
+                _llmStart = start;
+            }
+            var started = false;
+            try
+            {
+                await start.ConfigureAwait(false);
+                started = true;
+            }
+            catch (Core.UnsupportedCpuException)
+            {
+                // Crashed while loading, before any request: remember it too, so the next try fails at once.
+                RememberUnsupportedCpu();
+                throw;
+            }
+            catch (ObjectDisposedException)
+            {
+                // Stop disposed the host, or an idle stop ended this start, while the poll loop was running.
+            }
+            lock (_llmGate)
+            {
+                if (started && ReferenceEquals(_server, server) && _serverModelId == SelectedLlm.Id)
+                {
+                    if (!wasRunning) Core.Log.Info($"llama-server ready with {_serverModelId} after {sw.ElapsedMilliseconds} ms");
+                    return server;
+                }
+                // Cleared by Stop/Delete: do not start another host in this call.
+                if (_server == null)
+                    throw new Core.LocalLlmException("Das Sprachmodell wurde beendet. Bitte noch einmal versuchen.");
+            }
         }
-        if (!wasRunning) Core.Log.Info($"llama-server ready with {llm.Id} after {sw.ElapsedMilliseconds} ms");
-        return _server;
+    }
+
+    private static async Task FinishStart(Task? start)
+    {
+        if (start == null) return;
+        try { await start.ConfigureAwait(false); }
+        catch (Exception) { /* failed, replaced, or stopped: the host is disposed next either way */ }
+    }
+
+    private static void DisposeHost(Core.LlamaServerHost host)
+    {
+        try { host.Dispose(); }
+        catch (ObjectDisposedException) { }
     }
 
     /// <summary>
@@ -406,14 +492,32 @@ internal sealed class OfflineEngine : IDisposable
     }
 
     /// <summary>True while the language model is loaded, so the tray can say "Sprachmodell wird geladen" only when it is not.</summary>
-    public bool LlmReady => _server?.IsRunning == true && _serverModelId == SelectedLlm.Id;
+    public bool LlmReady
+    {
+        get { lock (_llmGate) return _server?.IsRunning == true && _serverModelId == SelectedLlm.Id; }
+    }
 
     private void StopServer()
     {
-        _server?.Stop();
-        _server?.Dispose();
-        _server = null;
-        _serverModelId = null;
+        Core.LlamaServerHost? old;
+        Task? start;
+        lock (_llmGate)
+        {
+            old = _server;
+            start = _llmStart;
+            _server = null;
+            _serverModelId = null;
+            _llmStart = null;
+        }
+        if (old == null) return;
+        // The start task may still be polling. Dispose (which kills the process) only after it has finished.
+        if (start != null && !start.IsCompleted)
+        {
+            _ = start.ContinueWith(_ => DisposeHost(old), CancellationToken.None,
+                TaskContinuationOptions.None, TaskScheduler.Default);
+            return;
+        }
+        DisposeHost(old);
     }
 
     public void Dispose()

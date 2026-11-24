@@ -69,7 +69,8 @@ public sealed class ChatWindowTests : IDisposable
     private ChatWindow NewChat()
     {
         var settings = Core.Settings.Load(Path.Combine(_dir, "settings.json"), new Core.PlainSecretProtector());
-        return new ChatWindow(settings, new Core.ChatClient(() => "", () => ""), new OfflineEngine(settings), () => { }, () => false, () => { }, () => { })
+        return new ChatWindow(settings, new Core.ChatClient(() => "", () => ""), new OfflineEngine(settings),
+            new Core.MeetingStore(Path.Combine(_dir, "meetings")), () => { }, () => false, () => { }, () => { })
         {
             ShowInTaskbar = false,
         };

@@ -8,7 +8,7 @@ namespace WhisperShortcut;
 /// </summary>
 internal sealed partial class ChatWindow
 {
-    private readonly Core.MeetingStore _meetingStore = new(Core.MeetingStore.DefaultRoot);
+    private readonly Core.MeetingStore _meetingStore;
     private readonly Core.UserCommandStore _commandStore = new(Core.UserCommandStore.DefaultRoot);
     private IReadOnlyList<Core.UserCommand> _userCommands = Array.Empty<Core.UserCommand>();
     private readonly LinkLabel _meetingLink = new() { AutoSize = true, Margin = new Padding(0, 4, 12, 4), Visible = false };
@@ -19,7 +19,6 @@ internal sealed partial class ChatWindow
         AutoSize = true, WrapContents = true, Dock = DockStyle.Top, Margin = new Padding(0, 6, 0, 0), Visible = false,
         AccessibleName = "Befehle für dieses Meeting",
     };
-    private readonly System.Windows.Forms.Timer _meetingPoll = new() { Interval = 3000 };
     // One for all meeting buttons: a new ToolTip per button was never disposed when the buttons were rebuilt.
     private readonly ToolTip _meetingTips = new();
 
@@ -34,10 +33,27 @@ internal sealed partial class ChatWindow
             UpdateMeetingUi();
             _input.Focus();
         };
-        // A meeting started or stopped from the tray shows up here while the window is open.
-        _meetingPoll.Tick += (_, _) => { if (Visible) UpdateMeetingUi(); };
-        VisibleChanged += (_, _) => { if (Visible) _meetingPoll.Start(); else _meetingPoll.Stop(); };
-        Disposed += (_, _) => { _meetingPoll.Dispose(); _meetingTips.Dispose(); };
+        // A meeting started or stopped from the tray raises MeetingStore.Changed; no timer on the UI thread.
+        _meetingStore.Changed += OnMeetingsChanged;
+        VisibleChanged += (_, _) => { if (Visible) UpdateMeetingUi(); };
+        Disposed += (_, _) =>
+        {
+            _meetingStore.Changed -= OnMeetingsChanged;
+            _meetingTips.Dispose();
+            _attachmentTips.Dispose();
+        };
+    }
+
+    private void OnMeetingsChanged()
+    {
+        if (IsDisposed) return;
+        try
+        {
+            if (!IsHandleCreated) return;
+            if (InvokeRequired) BeginInvoke(UpdateMeetingUi);
+            else UpdateMeetingUi();
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ObjectDisposedException) { }
     }
 
     private void UpdateHeaderExtras()

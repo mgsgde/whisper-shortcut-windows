@@ -10,8 +10,13 @@ internal sealed partial class TrayApp
     /// <summary>The summary with the meeting summary model; offline with the local language model.</summary>
     private Task<string> SummarizeMeetingWithModelAsync(string text, CancellationToken ct)
     {
-        if (_engines.TextEngine(EngineStep.Meeting) == Core.Engine.Local && !OfflineEngine.LlmInstalled(_offline.SelectedLlm))
-            throw new InvalidOperationException("The offline language model is not installed.");
+        if (_engines.TextEngine(EngineStep.Meeting) == Core.Engine.Local)
+        {
+            if (!OfflineEngine.LlmInstalled(_offline.SelectedLlm))
+                throw new InvalidOperationException("The offline language model is not installed.");
+            // Not streamed: the whole summary has one deadline, long enough for a full transcript on CPU.
+            return _offline.PromptAsync(text, Core.MeetingPrompts.SummaryInstruction, Core.MeetingPrompts.SummarySystemPrompt, ct, Core.LocalLlmClient.SummaryDeadline);
+        }
         return _engines.Text(EngineStep.Meeting)!.PromptTextAsync(text, Core.MeetingPrompts.SummaryInstruction, Core.MeetingPrompts.SummarySystemPrompt, ct);
     }
 }

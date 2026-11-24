@@ -114,11 +114,16 @@ public sealed class ModelDownloader
                     File.Delete(zip);
                     throw new OfflineDownloadException("Download beschädigt, bitte noch einmal versuchen.", ex);
                 }
-                File.Delete(zip);
             }
         }
 
+        // Marker before the zip is removed: a crash after the delete used to leave a model that had to be downloaded again.
         File.WriteAllText(Path.Combine(dir, Marker), DateTime.UtcNow.ToString("O"));
+        if (c.ExtractZip)
+        {
+            foreach (var file in c.Files)
+                File.Delete(SafeCombine(dir, file.RelativePath));
+        }
         progress?.Report(1.0);
         Log.Info($"offline download done: {c.Id}, {SizeOnDisk(c)} bytes on disk");
     }

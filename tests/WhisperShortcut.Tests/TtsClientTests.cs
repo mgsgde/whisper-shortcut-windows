@@ -722,4 +722,38 @@ public class TtsClientTests
         Assert.False(overlapped);
         Assert.Equal(150, total);
     }
+
+    [Fact]
+    public async Task Synthesize_keeps_at_most_three_chunk_requests_in_flight()
+    {
+        var text = string.Join(" ", Enumerable.Repeat("Dies ist ein Satz.", 80));
+        Assert.True(TtsTextChunker.Split(text, ReadAloud.ChunkSizeFor(GeminiModel.Provider)).Count > 3);
+
+        var current = 0;
+        var max = 0;
+        var reached = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var handler = new Handler(async (_, _, _, ct) =>
+        {
+            var now = Interlocked.Increment(ref current);
+            int seen;
+            do { seen = Volatile.Read(ref max); }
+            while (now > seen && Interlocked.CompareExchange(ref max, now, seen) != seen);
+            if (now >= 3) reached.TrySetResult();
+            try { await release.Task.WaitAsync(ct); }
+            finally { Interlocked.Decrement(ref current); }
+            return Ok(Sse(Pcm(4, 1)));
+        });
+
+        var run = Client(handler).SynthesizeAsync(GeminiModel, "Charon", text, _ => { }, CancellationToken.None);
+        try
+        {
+            var arrived = await Task.WhenAny(reached.Task, Task.Delay(TimeSpan.FromSeconds(5)));
+            Assert.Same(reached.Task, arrived);
+            await Task.Delay(100);
+            Assert.Equal(3, Volatile.Read(ref max));
+        }
+        finally { release.TrySetResult(); }
+        Assert.Equal(0, await run);
+    }
 }
