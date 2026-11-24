@@ -13,7 +13,7 @@ internal sealed record RetryPolicy(int MaxAttempts, int MaxServerErrorAttempts, 
 }
 
 /// <summary>
-/// The one retry loop of all cloud clients. <see cref="GeminiException.Retryable"/> (set where the failure is mapped)
+/// The one retry loop of all cloud clients. <see cref="CloudException.Retryable"/> (set where the failure is mapped)
 /// says whether a second try can help; the attempt counts, transient-status list and backoff formula live here
 /// so the clients cannot drift.
 /// </summary>
@@ -46,8 +46,8 @@ internal static class HttpRetry
             retryDelay.Ticks * Math.Pow(2, attempt - 1), MaxBackoff.Ticks));
 
     /// <summary>
-    /// Runs <paramref name="attempt"/> (1-based) until it returns or fails for good. Only a <see cref="GeminiException"/>
-    /// with <see cref="GeminiException.Retryable"/> is retried; anything else, and the caller's cancellation, passes through.
+    /// Runs <paramref name="attempt"/> (1-based) until it returns or fails for good. Only a <see cref="CloudException"/>
+    /// with <see cref="CloudException.Retryable"/> is retried; anything else, and the caller's cancellation, passes through.
     /// The wait is the provider's own hint (plus the policy buffer; a hint longer than <see cref="MaxWait"/> is not worth
     /// waiting for) or the exponential backoff.
     /// </summary>
@@ -63,12 +63,12 @@ internal static class HttpRetry
         for (var n = 1; ; n++)
         {
             ct.ThrowIfCancellationRequested();
-            GeminiException failure;
+            CloudException failure;
             try
             {
                 return await attempt(n).ConfigureAwait(false);
             }
-            catch (GeminiException ex) when (ex.Retryable)
+            catch (CloudException ex) when (ex.Retryable)
             {
                 failure = ex;
             }

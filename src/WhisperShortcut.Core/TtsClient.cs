@@ -232,7 +232,7 @@ public sealed class TtsClient
 
     /// <summary>
     /// One <c>streamGenerateContent</c> SSE object: the decoded PCM of every <c>inlineData</c> part (null when it has none) and
-    /// the finish reason. Throws <see cref="GeminiException"/> for a top-level <c>error</c> and for a blocked prompt.
+    /// the finish reason. Throws <see cref="CloudException"/> for a top-level <c>error</c> and for a blocked prompt.
     /// Unparseable text counts as "no audio": the caller only hands over one <c>data:</c> line.
     /// </summary>
     internal static (byte[]? Audio, string? FinishReason) ParseGeminiStreamObject(string json)
@@ -332,7 +332,7 @@ public sealed class TtsClient
                 if (audio.Length == 0)
                 {
                     Log.Error($"TTS {model.Id}: 2xx without any audio (objects {objects})");
-                    throw new GeminiException(api.Name, GeminiErrorKind.Server, "Gemini hat kein Audio zum Vorlesen geliefert.")
+                    throw new CloudException(api.Name, CloudErrorKind.Server, "Gemini hat kein Audio zum Vorlesen geliefert.")
                         { Retryable = true }; // a new request may well deliver audio
                 }
                 return EvenLength(audio.ToArray());
@@ -380,7 +380,7 @@ public sealed class TtsClient
                 if (audio.Length == 0)
                 {
                     Log.Error($"TTS {model.Id}: 2xx without any audio");
-                    throw new GeminiException(api.Name, GeminiErrorKind.Server, "OpenAI hat kein Audio zum Vorlesen geliefert.")
+                    throw new CloudException(api.Name, CloudErrorKind.Server, "OpenAI hat kein Audio zum Vorlesen geliefert.")
                         { Retryable = true };
                 }
                 return EvenLength(audio.ToArray());
@@ -392,7 +392,7 @@ public sealed class TtsClient
 
     /// <summary>
     /// Synthesizes the whole text: split by <see cref="TtsTextChunker"/> for the model's provider, all chunks started at once,
-    /// each retried on its own (<see cref="GeminiException.Retryable"/> failures, <see cref="HttpRetry.MaxAttempts"/> attempts). <paramref name="onAudio"/>
+    /// each retried on its own (<see cref="CloudException.Retryable"/> failures, <see cref="HttpRetry.MaxAttempts"/> attempts). <paramref name="onAudio"/>
     /// receives PCM strictly in playback order, may be called from any thread, never concurrently. Returns how many chunks failed
     /// for good (0 = all fine; the rest plays with a gap). If every chunk failed, the first chunk's exception is thrown.
     /// Cancellation throws <see cref="OperationCanceledException"/>.

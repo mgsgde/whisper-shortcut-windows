@@ -10,7 +10,7 @@ namespace WhisperShortcut.Core;
 /// <summary>
 /// OpenAI client for dictation (audio/transcriptions) and Dictate Prompt (chat/completions). Key and model
 /// ids are read at call time. Results are raw model text: run <see cref="TextCleanup"/> on them. Errors reuse
-/// <see cref="GeminiException"/>. Transient failures (429, 500, 502, 503, 504, network errors, per-attempt
+/// <see cref="CloudException"/>. Transient failures (429, 500, 502, 503, 504, network errors, per-attempt
 /// timeouts) are retried like in <see cref="GeminiClient"/>: up to 5 attempts (6 for 5xx), exponential backoff.
 /// </summary>
 public sealed class OpenAiClient : ISpeechProvider, ITextProvider
@@ -140,7 +140,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
     /// <summary>
     /// Text-only call with a complete <paramref name="systemPrompt"/> and a complete <paramref name="userText"/>
     /// (nothing from <see cref="DictatePromptText"/> is added). Same model, reasoning effort and output limit as
-    /// <see cref="PromptTextAsync"/>; a cut-off reply (finish_reason "length") throws <see cref="GeminiErrorKind.Truncated"/>.
+    /// <see cref="PromptTextAsync"/>; a cut-off reply (finish_reason "length") throws <see cref="CloudErrorKind.Truncated"/>.
     /// </summary>
     /// <param name="systemPrompt">The whole system message.</param>
     /// <param name="userText">The whole user message.</param>
@@ -250,7 +250,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
 
     /// <summary>
     /// choices[0].message.content. A "length" finish throws, so a cut-off rewrite is never pasted over the selection.
-    /// A 200 that is not this shape throws <see cref="GeminiErrorKind.Malformed"/> instead of looking like silence.
+    /// A 200 that is not this shape throws <see cref="CloudErrorKind.Malformed"/> instead of looking like silence.
     /// An empty <c>content</c> string is a real empty reply and stays "".
     /// </summary>
     internal static string ExtractChatText(string responseJson)
@@ -266,7 +266,7 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
                 && fr.ValueKind == JsonValueKind.String && fr.GetString() == "length")
             {
                 Log.Error("OpenAI: finish_reason length, reply is cut off");
-                throw new GeminiException("OpenAI", GeminiErrorKind.Truncated,
+                throw new CloudException("OpenAI", CloudErrorKind.Truncated,
                     "Die Antwort ist zu lang geworden und wurde abgeschnitten. Bitte einen kleineren Teil markieren.");
             }
             if (!choice.TryGetProperty("message", out var msg)
@@ -280,6 +280,6 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         }
     }
 
-    private static GeminiException MalformedResponse() =>
-        new("OpenAI", GeminiErrorKind.Malformed, "Die Antwort ließ sich nicht lesen. Bitte noch einmal versuchen.");
+    private static CloudException MalformedResponse() =>
+        new("OpenAI", CloudErrorKind.Malformed, "Die Antwort ließ sich nicht lesen. Bitte noch einmal versuchen.");
 }

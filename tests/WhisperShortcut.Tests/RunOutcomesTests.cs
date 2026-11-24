@@ -66,16 +66,16 @@ public class RunOutcomesTests
     }
 
     [Theory]
-    [InlineData(GeminiErrorKind.NoKey, "⚠️ Kein Google-API-Schlüssel", FollowUp.OpenAccounts)]
-    [InlineData(GeminiErrorKind.InvalidKey, "❌ Ungültiger API-Schlüssel", FollowUp.OpenAccounts)]
-    [InlineData(GeminiErrorKind.Network, "⏰ Netzwerkfehler", FollowUp.Retry)]
-    [InlineData(GeminiErrorKind.Timeout, "⏰ Zeitüberschreitung", FollowUp.Retry)]
-    [InlineData(GeminiErrorKind.Quota, "⏳ Limit erreicht", FollowUp.Retry)]
-    [InlineData(GeminiErrorKind.Server, "❌ Serverfehler", FollowUp.Retry)]
-    [InlineData(GeminiErrorKind.Truncated, "⚠️ Antwort abgeschnitten", FollowUp.None)]
-    public void ForFailure_Gemini_ByKind(GeminiErrorKind kind, string title, FollowUp action)
+    [InlineData(CloudErrorKind.NoKey, "⚠️ Kein Google-API-Schlüssel", FollowUp.OpenAccounts)]
+    [InlineData(CloudErrorKind.InvalidKey, "❌ Ungültiger API-Schlüssel", FollowUp.OpenAccounts)]
+    [InlineData(CloudErrorKind.Network, "⏰ Netzwerkfehler", FollowUp.Retry)]
+    [InlineData(CloudErrorKind.Timeout, "⏰ Zeitüberschreitung", FollowUp.Retry)]
+    [InlineData(CloudErrorKind.Quota, "⏳ Limit erreicht", FollowUp.Retry)]
+    [InlineData(CloudErrorKind.Server, "❌ Serverfehler", FollowUp.Retry)]
+    [InlineData(CloudErrorKind.Truncated, "⚠️ Antwort abgeschnitten", FollowUp.None)]
+    public void ForFailure_Gemini_ByKind(CloudErrorKind kind, string title, FollowUp action)
     {
-        var p = RunOutcomes.ForFailure(new GeminiException(kind, "Text"), audioKept: true);
+        var p = RunOutcomes.ForFailure(new CloudException(kind, "Text"), audioKept: true);
         Assert.Equal(PresentationKind.Toast, p.Kind);
         Assert.Equal(title, p.Title);
         Assert.Equal("Text", p.Text);
@@ -86,13 +86,13 @@ public class RunOutcomesTests
     }
 
     [Theory]
-    [InlineData(GeminiErrorKind.Network)]
-    [InlineData(GeminiErrorKind.Timeout)]
-    [InlineData(GeminiErrorKind.Quota)]
-    [InlineData(GeminiErrorKind.Server)]
-    public void ForFailure_RetryableKinds_OfferNothingWhenTheAudioIsLost(GeminiErrorKind kind)
+    [InlineData(CloudErrorKind.Network)]
+    [InlineData(CloudErrorKind.Timeout)]
+    [InlineData(CloudErrorKind.Quota)]
+    [InlineData(CloudErrorKind.Server)]
+    public void ForFailure_RetryableKinds_OfferNothingWhenTheAudioIsLost(CloudErrorKind kind)
     {
-        var p = RunOutcomes.ForFailure(new GeminiException(kind, "Text"), audioKept: false);
+        var p = RunOutcomes.ForFailure(new CloudException(kind, "Text"), audioKept: false);
         Assert.Equal(FollowUp.None, p.Action);
         Assert.False(p.KeepAudio);
     }
@@ -100,14 +100,14 @@ public class RunOutcomesTests
     [Fact]
     public void ForFailure_Billing_TopsUpAndKeepsTheAudioWithoutRetry()
     {
-        var withUrl = RunOutcomes.ForFailure(new GeminiException("OpenAI", GeminiErrorKind.Billing, "Kein Guthaben", "https://x.test/b"), audioKept: true);
+        var withUrl = RunOutcomes.ForFailure(new CloudException("OpenAI", CloudErrorKind.Billing, "Kein Guthaben", "https://x.test/b"), audioKept: true);
         Assert.Equal("💳 Abrechnung erforderlich", withUrl.Title);
         Assert.Equal(FollowUp.TopUp, withUrl.Action);
         Assert.Equal("https://x.test/b", withUrl.Url);
         Assert.True(withUrl.KeepAudio);
         Assert.Equal(Severity.Error, withUrl.Icon);
 
-        var noUrl = RunOutcomes.ForFailure(new GeminiException(GeminiErrorKind.Billing, "Kein Guthaben"), audioKept: false);
+        var noUrl = RunOutcomes.ForFailure(new CloudException(CloudErrorKind.Billing, "Kein Guthaben"), audioKept: false);
         Assert.Equal(FollowUp.OpenSettings, noUrl.Action);
         Assert.Null(noUrl.Url);
         Assert.True(noUrl.KeepAudio); // today: _lastFailed = Failed(), whatever it is
@@ -117,9 +117,9 @@ public class RunOutcomesTests
     public void ForFailure_ServerTitleFollowsTheMessage_AndOtherProviderIsNamed()
     {
         Assert.Equal("🔄 Dienst nicht erreichbar",
-            RunOutcomes.ForFailure(new GeminiException(GeminiErrorKind.Server, UserCopy.ServerBusy("Gemini")), true).Title);
+            RunOutcomes.ForFailure(new CloudException(CloudErrorKind.Server, UserCopy.ServerBusy("Gemini")), true).Title);
         Assert.Equal("⚠️ Kein OpenAI-API-Schlüssel",
-            RunOutcomes.ForFailure(new GeminiException("OpenAI", GeminiErrorKind.NoKey, "x"), true).Title);
+            RunOutcomes.ForFailure(new CloudException("OpenAI", CloudErrorKind.NoKey, "x"), true).Title);
     }
 
     [Fact]
@@ -175,20 +175,20 @@ public class RunOutcomesTests
     public void ForFailure_Live_TreatsEverythingButMicrophoneAsUnexpected()
     {
         // The live path never had the provider ladder: a stray Gemini error keeps the generic live toast.
-        var p = RunOutcomes.ForFailure(new GeminiException(GeminiErrorKind.Quota, "x"), true, FailureContext.Live);
+        var p = RunOutcomes.ForFailure(new CloudException(CloudErrorKind.Quota, "x"), true, FailureContext.Live);
         Assert.Equal("❌ Fehler", p.Title);
         Assert.Equal("Problem mit dem Mikrofon", RunOutcomes.ForFailure(new AudioSilentException(), true, FailureContext.Live).Title);
     }
 
     [Theory]
-    [InlineData(GeminiErrorKind.NoKey, FollowUp.OpenAccounts)]
-    [InlineData(GeminiErrorKind.InvalidKey, FollowUp.OpenAccounts)]
-    [InlineData(GeminiErrorKind.Billing, FollowUp.None)]
-    [InlineData(GeminiErrorKind.Quota, FollowUp.None)]
-    [InlineData(GeminiErrorKind.Network, FollowUp.None)]
-    public void ForFailure_ReadAloud_OnlyKeyProblemsOpenSettings(GeminiErrorKind kind, FollowUp action)
+    [InlineData(CloudErrorKind.NoKey, FollowUp.OpenAccounts)]
+    [InlineData(CloudErrorKind.InvalidKey, FollowUp.OpenAccounts)]
+    [InlineData(CloudErrorKind.Billing, FollowUp.None)]
+    [InlineData(CloudErrorKind.Quota, FollowUp.None)]
+    [InlineData(CloudErrorKind.Network, FollowUp.None)]
+    public void ForFailure_ReadAloud_OnlyKeyProblemsOpenSettings(CloudErrorKind kind, FollowUp action)
     {
-        var p = RunOutcomes.ForFailure(new GeminiException(kind, "Meldung"), audioKept: false, FailureContext.ReadAloud);
+        var p = RunOutcomes.ForFailure(new CloudException(kind, "Meldung"), audioKept: false, FailureContext.ReadAloud);
         Assert.Equal(new Presentation(PresentationKind.Toast, "Vorlesen fehlgeschlagen", "Meldung", Severity.Error, ErrorSound: true, action), p);
     }
 
@@ -206,7 +206,7 @@ public class RunOutcomesTests
     [Fact]
     public void ForFailure_Chat_IsOnlyAStatusText()
     {
-        Assert.Equal("Meldung", RunOutcomes.ForFailure(new GeminiException(GeminiErrorKind.Billing, "Meldung"), false, FailureContext.Chat).Text);
+        Assert.Equal("Meldung", RunOutcomes.ForFailure(new CloudException(CloudErrorKind.Billing, "Meldung"), false, FailureContext.Chat).Text);
         Assert.Equal("Fehlt. Unter Einstellungen → Dictate Prompt lässt es sich laden.",
             RunOutcomes.ForFailure(new OfflineNotReadyException("Fehlt."), false, FailureContext.Chat).Text);
         Assert.Equal("Kaputt. Unter Einstellungen → Dictate Prompt lässt es sich laden.",
@@ -220,7 +220,7 @@ public class RunOutcomesTests
     [Fact]
     public void LogLine_NamesTheFailure()
     {
-        Assert.Equal("Gemini Quota", RunOutcomes.LogLine(new GeminiException(GeminiErrorKind.Quota, "x"), out var w));
+        Assert.Equal("Gemini Quota", RunOutcomes.LogLine(new CloudException(CloudErrorKind.Quota, "x"), out var w));
         Assert.False(w);
         Assert.Equal("unexpected error", RunOutcomes.LogLine(new InvalidOperationException(), out w));
         Assert.True(w);

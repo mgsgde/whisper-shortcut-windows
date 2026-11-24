@@ -7,8 +7,8 @@ public class HttpRetryTests
 {
     private static readonly RetryPolicy Fast = RetryPolicy.OneShot(TimeSpan.Zero, TimeSpan.Zero);
 
-    private static GeminiException Failure(bool retryable, bool serverFault = false, TimeSpan? retryAfter = null) =>
-        new(GeminiErrorKind.Server, "x") { Retryable = retryable, ServerFault = serverFault, RetryAfter = retryAfter };
+    private static CloudException Failure(bool retryable, bool serverFault = false, TimeSpan? retryAfter = null) =>
+        new(CloudErrorKind.Server, "x") { Retryable = retryable, ServerFault = serverFault, RetryAfter = retryAfter };
 
     private static async Task<int> Calls(Func<int, Task<int>> attempt, RetryPolicy policy, Func<bool>? mayRetry = null, Action<int>? before = null)
     {
@@ -17,7 +17,7 @@ public class HttpRetryTests
         {
             await HttpRetry.RunAsync(i => { n++; return attempt(i); }, policy, "T", default, mayRetry, before);
         }
-        catch (GeminiException) { }
+        catch (CloudException) { }
         return n;
     }
 

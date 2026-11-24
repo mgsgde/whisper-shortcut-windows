@@ -875,7 +875,7 @@ internal sealed partial class TrayApp : ApplicationContext
         {
             Core.Log.Info($"Hotkey pressed but no {provider} key (Schlüssel fehlt)");
             Sounds.Error();
-            Notify(Core.UserCopy.ProviderErrorTitle(Core.GeminiErrorKind.NoKey, provider), $"Noch kein {provider}-Schlüssel eingetragen. Du trägst ihn in den Einstellungen unter „Konten“ ein.",
+            Notify(Core.UserCopy.ProviderErrorTitle(Core.CloudErrorKind.NoKey, provider), $"Noch kein {provider}-Schlüssel eingetragen. Du trägst ihn in den Einstellungen unter „Konten“ ein.",
                 ToolTipIcon.Warning, () => ShowSettingsPage(SettingsForm.AccountsPage), Core.UserCopy.ActionOpenSettings);
             return;
         }

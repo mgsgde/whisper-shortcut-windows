@@ -182,7 +182,7 @@ internal sealed class ReadAloudController : IDisposable
         catch (Exception e)
         {
             if (run != _run) return;
-            if (e is Core.GeminiException g) Core.Log.Error($"Read aloud: {g.Provider} {g.Kind}");
+            if (e is Core.CloudException g) Core.Log.Error($"Read aloud: {g.Provider} {g.Kind}");
             else if (e is not Core.SelectionUnreadableException) Core.Log.Error("Read aloud failed", e);
             var shown = Core.RunOutcomes.ForFailure(e, audioKept: false, Core.FailureContext.ReadAloud);
             Stop();

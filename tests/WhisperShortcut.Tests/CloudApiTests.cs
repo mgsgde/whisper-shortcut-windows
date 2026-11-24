@@ -17,7 +17,7 @@ public class CloudApiTests
         Assert.All(new[] { CloudApi.Gemini, CloudApi.OpenAi }, api =>
         {
             var ex = api.NoKey(KeyHint.Settings);
-            Assert.Equal(GeminiErrorKind.NoKey, ex.Kind);
+            Assert.Equal(CloudErrorKind.NoKey, ex.Kind);
             Assert.Equal(api.Name, ex.Provider);
             Assert.False(ex.Retryable);
         });
@@ -27,8 +27,8 @@ public class CloudApiTests
     public async Task NoKey_InChat_UsesTheSettingsWording()
     {
         var chat = new ChatClient(() => null, () => " ");
-        var g = await Assert.ThrowsAsync<GeminiException>(() => chat.SendAsync(Engine.Gemini, "m", "s", Array.Empty<ChatMessage>(), null, false, default));
-        var o = await Assert.ThrowsAsync<GeminiException>(() => chat.SendAsync(Engine.OpenAI, "m", "s", Array.Empty<ChatMessage>(), null, false, default));
+        var g = await Assert.ThrowsAsync<CloudException>(() => chat.SendAsync(Engine.Gemini, "m", "s", Array.Empty<ChatMessage>(), null, false, default));
+        var o = await Assert.ThrowsAsync<CloudException>(() => chat.SendAsync(Engine.OpenAI, "m", "s", Array.Empty<ChatMessage>(), null, false, default));
         Assert.Equal("Kein API-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.", g.Message);
         Assert.Equal("Kein OpenAI-Schlüssel eingetragen. Bitte in den Einstellungen eintragen.", o.Message);
         Assert.Equal("Gemini", g.Provider);
@@ -45,8 +45,8 @@ public class CloudApiTests
         Assert.Equal("Kein Netz: Gemini ist nicht erreichbar. Bitte Internetverbindung prüfen.", g.Message);
         Assert.Equal("Kein Netz: OpenAI ist nicht erreichbar. Bitte Internetverbindung prüfen.", CloudApi.OpenAi.Network(inner).Message);
         Assert.Same(inner, g.InnerException);
-        Assert.Equal(GeminiErrorKind.Network, g.Kind);
-        Assert.Equal(GeminiErrorKind.Timeout, CloudApi.OpenAi.Timeout().Kind);
+        Assert.Equal(CloudErrorKind.Network, g.Kind);
+        Assert.Equal(CloudErrorKind.Timeout, CloudApi.OpenAi.Timeout().Kind);
         Assert.True(g.Retryable);
         Assert.True(CloudApi.OpenAi.Timeout().Retryable);
         Assert.False(g.ServerFault);
@@ -75,11 +75,11 @@ public class CloudApiTests
     }
 
     [Theory]
-    [InlineData(401, "{}", GeminiErrorKind.InvalidKey, "API-Schlüssel ungültig. Bitte in den Einstellungen prüfen.")]
-    [InlineData(403, "{}", GeminiErrorKind.InvalidKey, "API-Schlüssel ungültig. Bitte in den Einstellungen prüfen.")]
-    [InlineData(429, "{}", GeminiErrorKind.Quota, "Gemini ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.")]
-    [InlineData(429, "{\"error\":{\"message\":\"Quota exceeded for ...PerDay...\"}}", GeminiErrorKind.Quota, "Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen.")]
-    public void Gemini_StatusMapping_Texts(int status, string body, GeminiErrorKind kind, string message)
+    [InlineData(401, "{}", CloudErrorKind.InvalidKey, "API-Schlüssel ungültig. Bitte in den Einstellungen prüfen.")]
+    [InlineData(403, "{}", CloudErrorKind.InvalidKey, "API-Schlüssel ungültig. Bitte in den Einstellungen prüfen.")]
+    [InlineData(429, "{}", CloudErrorKind.Quota, "Gemini ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.")]
+    [InlineData(429, "{\"error\":{\"message\":\"Quota exceeded for ...PerDay...\"}}", CloudErrorKind.Quota, "Kontingent erschöpft. Bitte später erneut versuchen oder das Google-Konto prüfen.")]
+    public void Gemini_StatusMapping_Texts(int status, string body, CloudErrorKind kind, string message)
     {
         var ex = CloudApi.Gemini.MapHttpError((HttpStatusCode)status, body, null);
         Assert.Equal(kind, ex.Kind);
@@ -88,11 +88,11 @@ public class CloudApiTests
     }
 
     [Theory]
-    [InlineData(401, "", GeminiErrorKind.InvalidKey, "OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.")]
-    [InlineData(403, "", GeminiErrorKind.InvalidKey, "Dieser OpenAI-Schlüssel darf das Modell nicht benutzen (Projekt- oder Organisationsrechte prüfen).")]
-    [InlineData(429, "{\"error\":{\"type\":\"insufficient_quota\"}}", GeminiErrorKind.Billing, "Das OpenAI-Konto hat kein Guthaben mehr.")]
-    [InlineData(429, "{}", GeminiErrorKind.Quota, "OpenAI ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.")]
-    public void OpenAi_StatusMapping_Texts(int status, string body, GeminiErrorKind kind, string message)
+    [InlineData(401, "", CloudErrorKind.InvalidKey, "OpenAI-Schlüssel ungültig. Bitte in den Einstellungen prüfen.")]
+    [InlineData(403, "", CloudErrorKind.InvalidKey, "Dieser OpenAI-Schlüssel darf das Modell nicht benutzen (Projekt- oder Organisationsrechte prüfen).")]
+    [InlineData(429, "{\"error\":{\"type\":\"insufficient_quota\"}}", CloudErrorKind.Billing, "Das OpenAI-Konto hat kein Guthaben mehr.")]
+    [InlineData(429, "{}", CloudErrorKind.Quota, "OpenAI ist gerade ausgelastet (zu viele Anfragen). Bitte in einer Minute noch einmal versuchen.")]
+    public void OpenAi_StatusMapping_Texts(int status, string body, CloudErrorKind kind, string message)
     {
         var ex = CloudApi.OpenAi.MapHttpError((HttpStatusCode)status, body, null);
         Assert.Equal(kind, ex.Kind);
@@ -153,7 +153,7 @@ public class CloudApiTests
         Assert.Equal("insufficient_quota", CloudApi.OpenAi.LogStatus("{\"error\":{\"code\":\"x\",\"type\":\"insufficient_quota\"}}"));
     }
 
-    private static GeminiException? Stream(CloudApi api, string json, string what = "die Anfrage")
+    private static CloudException? Stream(CloudApi api, string json, string what = "die Anfrage")
     {
         using var doc = JsonDocument.Parse(json);
         return api.StreamError(doc.RootElement.Clone(), json, "Test", what);
@@ -163,10 +163,10 @@ public class CloudApiTests
     public void StreamError_Gemini_ErrorObjectAndBlockedPrompt()
     {
         var quota = Stream(CloudApi.Gemini, "{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\"}}")!;
-        Assert.Equal(GeminiErrorKind.Quota, quota.Kind);
+        Assert.Equal(CloudErrorKind.Quota, quota.Kind);
         Assert.True(quota.Retryable);
         var odd = Stream(CloudApi.Gemini, "{\"error\":{\"code\":200}}")!;
-        Assert.Equal(GeminiErrorKind.Server, odd.Kind);
+        Assert.Equal(CloudErrorKind.Server, odd.Kind);
         Assert.True(odd.Retryable);   // an out-of-range code counts as 500
         var chat = Stream(CloudApi.Gemini, "{\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}")!;
         Assert.Equal("Gemini hat die Anfrage abgelehnt (SAFETY).", chat.Message);
@@ -182,7 +182,7 @@ public class CloudApiTests
     public void StreamError_OpenAi_OnlyAnErrorObject()
     {
         var ex = Stream(CloudApi.OpenAi, "{\"error\":{\"message\":\"boom\"}}")!;
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Equal("OpenAI", ex.Provider);
         Assert.True(ex.Retryable);
         Assert.Null(Stream(CloudApi.OpenAi, "{\"error\":\"text\"}"));
@@ -203,9 +203,9 @@ public class CloudApiTests
             seen = r;
             return Task.FromResult(new HttpResponseMessage(HttpStatusCode.Unauthorized) { Content = new StringContent("{}") });
         }));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => CloudHttp.SendAsync(http, CloudApi.OpenAi, "https://example.test/x", "k",
+        var ex = await Assert.ThrowsAsync<CloudException>(() => CloudHttp.SendAsync(http, CloudApi.OpenAi, "https://example.test/x", "k",
             new StringContent("{}"), "T", default, default, _ => Task.FromResult(1)));
-        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        Assert.Equal(CloudErrorKind.InvalidKey, ex.Kind);
         Assert.Equal("Bearer k", seen!.Headers.Authorization!.ToString());
         Assert.False(seen.Headers.ExpectContinue ?? false);
     }
@@ -214,15 +214,15 @@ public class CloudApiTests
     public async Task CloudHttp_Send_MapsTransportErrors_ButNotTheCallersCancel()
     {
         var offline = new HttpClient(new Handler(_ => throw new HttpRequestException("offline")));
-        var net = await Assert.ThrowsAsync<GeminiException>(() => CloudHttp.SendAsync(offline, CloudApi.Gemini, "https://example.test/x", "k",
+        var net = await Assert.ThrowsAsync<CloudException>(() => CloudHttp.SendAsync(offline, CloudApi.Gemini, "https://example.test/x", "k",
             new StringContent("{}"), "T", default, default, _ => Task.FromResult(1)));
-        Assert.Equal(GeminiErrorKind.Network, net.Kind);
+        Assert.Equal(CloudErrorKind.Network, net.Kind);
 
         using var watchdog = new CancellationTokenSource(50);
         var slow = new HttpClient(new Handler(async _ => { await Task.Delay(Timeout.Infinite, watchdog.Token); return null!; }));
-        var timeout = await Assert.ThrowsAsync<GeminiException>(() => CloudHttp.SendAsync(slow, CloudApi.Gemini, "https://example.test/x", "k",
+        var timeout = await Assert.ThrowsAsync<CloudException>(() => CloudHttp.SendAsync(slow, CloudApi.Gemini, "https://example.test/x", "k",
             new StringContent("{}"), "T", watchdog.Token, default, _ => Task.FromResult(1)));
-        Assert.Equal(GeminiErrorKind.Timeout, timeout.Kind);
+        Assert.Equal(CloudErrorKind.Timeout, timeout.Kind);
 
         using var cancelled = new CancellationTokenSource();
         cancelled.Cancel();
@@ -258,11 +258,11 @@ public class CloudApiTests
     {
         Assert.Equal(TimeSpan.FromSeconds(60), CloudHttp.RequestTimeout);
 
-        async Task<int> Calls(Func<HttpRequestMessage, Task<HttpResponseMessage>> answer, bool openAi, GeminiErrorKind expected)
+        async Task<int> Calls(Func<HttpRequestMessage, Task<HttpResponseMessage>> answer, bool openAi, CloudErrorKind expected)
         {
             var n = 0;
             var http = new HttpClient(new Handler(r => { n++; return answer(r); }));
-            var ex = await Assert.ThrowsAsync<GeminiException>(() => openAi
+            var ex = await Assert.ThrowsAsync<CloudException>(() => openAi
                 ? new OpenAiClient(() => "k", () => "m", () => "m", http) { RetryDelay = TimeSpan.Zero }.CompleteTextAsync("s", "u")
                 : new GeminiClient(() => "k", () => "m", () => "m", http) { RetryDelay = TimeSpan.Zero, RetryInfoBuffer = TimeSpan.Zero }.CompleteTextAsync("s", "u"));
             Assert.Equal(expected, ex.Kind);
@@ -273,9 +273,9 @@ public class CloudApiTests
             Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") });
         Task<HttpResponseMessage> Timeout(HttpRequestMessage _) => throw new OperationCanceledException();
 
-        Assert.Equal(HttpRetry.MaxServerErrorAttempts, await Calls(Busy, openAi: false, GeminiErrorKind.Server));
-        Assert.Equal(HttpRetry.MaxServerErrorAttempts, await Calls(Busy, openAi: true, GeminiErrorKind.Server));
-        Assert.Equal(HttpRetry.MaxAttempts, await Calls(Timeout, openAi: false, GeminiErrorKind.Timeout));
-        Assert.Equal(HttpRetry.MaxAttempts, await Calls(Timeout, openAi: true, GeminiErrorKind.Timeout));
+        Assert.Equal(HttpRetry.MaxServerErrorAttempts, await Calls(Busy, openAi: false, CloudErrorKind.Server));
+        Assert.Equal(HttpRetry.MaxServerErrorAttempts, await Calls(Busy, openAi: true, CloudErrorKind.Server));
+        Assert.Equal(HttpRetry.MaxAttempts, await Calls(Timeout, openAi: false, CloudErrorKind.Timeout));
+        Assert.Equal(HttpRetry.MaxAttempts, await Calls(Timeout, openAi: true, CloudErrorKind.Timeout));
     }
 }

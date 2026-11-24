@@ -7,7 +7,7 @@ using System.Text.Json;
 namespace WhisperShortcut.Core;
 
 /// <summary>What went wrong, for UI decisions.</summary>
-public enum GeminiErrorKind
+public enum CloudErrorKind
 {
     /// <summary>No key entered.</summary>
     NoKey,
@@ -25,30 +25,30 @@ public enum GeminiErrorKind
     Truncated,
     /// <summary>HTTP 200 whose body is not the expected reply. Shown as an error, not as "no speech".</summary>
     Malformed,
-    /// <summary>The provider account has no credit / billing set up; retrying cannot help. See <see cref="GeminiException.BillingUrl"/>.</summary>
+    /// <summary>The provider account has no credit / billing set up; retrying cannot help. See <see cref="CloudException.BillingUrl"/>.</summary>
     Billing,
 }
 
 /// <summary>Gemini (or OpenAI) call failed. <see cref="Exception.Message"/> is a German text fit for the user.</summary>
-public sealed class GeminiException : Exception
+public sealed class CloudException : Exception
 {
     /// <summary>Creates the exception for a Gemini call.</summary>
-    public GeminiException(GeminiErrorKind kind, string userMessage, Exception? inner = null)
+    public CloudException(CloudErrorKind kind, string userMessage, Exception? inner = null)
         : this("Gemini", kind, userMessage, inner) { }
 
     /// <summary>Creates the exception for the named provider ("OpenAI").</summary>
-    public GeminiException(string provider, GeminiErrorKind kind, string userMessage, Exception? inner = null)
+    public CloudException(string provider, CloudErrorKind kind, string userMessage, Exception? inner = null)
         : base(userMessage, inner) => (Provider, Kind) = (provider, kind);
 
-    /// <summary>Creates a <see cref="GeminiErrorKind.Billing"/> exception that carries the page where the user can fix it.</summary>
-    public GeminiException(string provider, GeminiErrorKind kind, string userMessage, string? billingUrl, Exception? inner = null)
+    /// <summary>Creates a <see cref="CloudErrorKind.Billing"/> exception that carries the page where the user can fix it.</summary>
+    public CloudException(string provider, CloudErrorKind kind, string userMessage, string? billingUrl, Exception? inner = null)
         : this(provider, kind, userMessage, inner) => BillingUrl = billingUrl;
 
-    /// <summary>Where to top up / enable billing (only for <see cref="GeminiErrorKind.Billing"/>), else null.</summary>
+    /// <summary>Where to top up / enable billing (only for <see cref="CloudErrorKind.Billing"/>), else null.</summary>
     public string? BillingUrl { get; }
 
     /// <summary>The error category.</summary>
-    public GeminiErrorKind Kind { get; }
+    public CloudErrorKind Kind { get; }
 
     /// <summary>"Gemini" or "OpenAI", for the notification title.</summary>
     public string Provider { get; }
@@ -237,7 +237,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// <summary>
     /// Text-only call with a complete <paramref name="systemPrompt"/> and a complete <paramref name="userText"/>
     /// (nothing from <see cref="DictatePromptText"/> is added). Same model, thinking level and output limit as
-    /// <see cref="PromptTextAsync"/>; a cut-off reply throws <see cref="GeminiErrorKind.Truncated"/>. Returns the raw model text.
+    /// <see cref="PromptTextAsync"/>; a cut-off reply throws <see cref="CloudErrorKind.Truncated"/>. Returns the raw model text.
     /// </summary>
     /// <param name="systemPrompt">The whole system instruction.</param>
     /// <param name="userText">The whole user turn.</param>
@@ -498,7 +498,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
     /// With <paramref name="rejectTruncated"/> a MAX_TOKENS finish throws, so a cut-off rewrite is
     /// never pasted over the selection. A leaked <c>start_thought</c> marker inside a visible part
     /// is removed later by <see cref="TextCleanup.NormalizeReply"/>.
-    /// A 200 that is not this shape throws <see cref="GeminiErrorKind.Malformed"/> instead of looking like silence.
+    /// A 200 that is not this shape throws <see cref="CloudErrorKind.Malformed"/> instead of looking like silence.
     /// </summary>
     internal static string ExtractText(string responseJson, bool rejectTruncated = false)
     {
@@ -512,7 +512,7 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
                 && fr.ValueKind == JsonValueKind.String && fr.GetString() == "MAX_TOKENS")
             {
                 Log.Error("Gemini: finishReason MAX_TOKENS, reply is cut off");
-                throw new GeminiException(GeminiErrorKind.Truncated,
+                throw new CloudException(CloudErrorKind.Truncated,
                     "Die Antwort ist zu lang geworden und wurde abgeschnitten. Bitte einen kleineren Teil markieren.");
             }
             if (!cands[0].TryGetProperty("content", out var content)
@@ -536,6 +536,6 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         }
     }
 
-    private static GeminiException MalformedResponse(string provider) =>
-        new(provider, GeminiErrorKind.Malformed, "Die Antwort ließ sich nicht lesen. Bitte noch einmal versuchen.");
+    private static CloudException MalformedResponse(string provider) =>
+        new(provider, CloudErrorKind.Malformed, "Die Antwort ließ sich nicht lesen. Bitte noch einmal versuchen.");
 }

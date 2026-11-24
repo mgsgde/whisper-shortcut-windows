@@ -173,8 +173,8 @@ public class ChatClientTests
     public async Task Gemini_empty_answer_throws_server_error_without_retry()
     {
         var h = new Handler((_, _, _, _) => Sse(GeminiObject(null, finish: "STOP")));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h)));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(h)));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -182,20 +182,20 @@ public class ChatClientTests
     public async Task Gemini_blocked_prompt_throws_server_error()
     {
         var h = new Handler((_, _, _, _) => Sse("data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}\r\n\r\n"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h)));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(h)));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Contains("SAFETY", ex.Message);
         Assert.Equal(1, h.CallCount);
     }
 
     [Theory]
-    [InlineData(HttpStatusCode.Unauthorized, GeminiErrorKind.InvalidKey)]
-    [InlineData(HttpStatusCode.Forbidden, GeminiErrorKind.InvalidKey)]
-    [InlineData(HttpStatusCode.NotFound, GeminiErrorKind.Server)]
-    public async Task Gemini_permanent_http_errors_are_mapped_and_not_retried(HttpStatusCode code, GeminiErrorKind kind)
+    [InlineData(HttpStatusCode.Unauthorized, CloudErrorKind.InvalidKey)]
+    [InlineData(HttpStatusCode.Forbidden, CloudErrorKind.InvalidKey)]
+    [InlineData(HttpStatusCode.NotFound, CloudErrorKind.Server)]
+    public async Task Gemini_permanent_http_errors_are_mapped_and_not_retried(HttpStatusCode code, CloudErrorKind kind)
     {
         var h = new Handler((_, _, _, _) => Status(code));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h)));
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(h)));
         Assert.Equal(kind, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
@@ -204,8 +204,8 @@ public class ChatClientTests
     public async Task Gemini_daily_quota_is_not_retried()
     {
         var h = new Handler((_, _, _, _) => Status((HttpStatusCode)429, "{\"error\":{\"message\":\"PerDay limit\"}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h)));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(h)));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -249,8 +249,8 @@ public class ChatClientTests
     public async Task OpenAi_empty_answer_throws_server_error()
     {
         var h = new Handler((_, _, _, _) => Sse(OpenAiObject(null, "stop") + "data: [DONE]\n\n"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(h)));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => OpenAi(Client(h)));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Equal("OpenAI", ex.Provider);
     }
 
@@ -258,12 +258,12 @@ public class ChatClientTests
     public async Task OpenAi_invalid_key_and_empty_account_are_mapped()
     {
         var h = new Handler((_, _, _, _) => Status(HttpStatusCode.Unauthorized));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(h)));
-        Assert.Equal(GeminiErrorKind.InvalidKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => OpenAi(Client(h)));
+        Assert.Equal(CloudErrorKind.InvalidKey, ex.Kind);
 
         var h2 = new Handler((_, _, _, _) => Status((HttpStatusCode)429, "{\"error\":{\"code\":\"insufficient_quota\"}}"));
-        var ex2 = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(h2)));
-        Assert.Equal(GeminiErrorKind.Billing, ex2.Kind);
+        var ex2 = await Assert.ThrowsAsync<CloudException>(() => OpenAi(Client(h2)));
+        Assert.Equal(CloudErrorKind.Billing, ex2.Kind);
         Assert.Equal(1, h2.CallCount);
     }
 
@@ -287,8 +287,8 @@ public class ChatClientTests
     public async Task Retries_network_errors_and_gives_up_after_two_extra_tries()
     {
         var h = new Handler((_, _, _, _) => throw new HttpRequestException("offline"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(h)));
-        Assert.Equal(GeminiErrorKind.Network, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => OpenAi(Client(h)));
+        Assert.Equal(CloudErrorKind.Network, ex.Kind);
         Assert.Equal(3, h.CallCount);
     }
 
@@ -296,8 +296,8 @@ public class ChatClientTests
     public async Task Gives_up_with_the_mapped_error_when_the_server_keeps_failing()
     {
         var h = new Handler((_, _, _, _) => Status(HttpStatusCode.BadGateway));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h)));
-        Assert.Equal(GeminiErrorKind.Server, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(h)));
+        Assert.Equal(CloudErrorKind.Server, ex.Kind);
         Assert.Equal(3, h.CallCount);
     }
 
@@ -306,8 +306,8 @@ public class ChatClientTests
     {
         var h = new Handler((_, _, _, _) => Dropping(GeminiObject("Anfang")));
         var deltas = new List<string>();
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h), deltas));
-        Assert.Equal(GeminiErrorKind.Network, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(h), deltas));
+        Assert.Equal(CloudErrorKind.Network, ex.Kind);
         Assert.Equal(1, h.CallCount);
         Assert.Equal(new[] { "Anfang" }, deltas);
     }
@@ -316,8 +316,8 @@ public class ChatClientTests
     public async Task OpenAi_does_not_retry_after_the_first_delta_either()
     {
         var h = new Handler((_, _, _, _) => Dropping(OpenAiObject("Anfang")));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(h)));
-        Assert.Equal(GeminiErrorKind.Network, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => OpenAi(Client(h)));
+        Assert.Equal(CloudErrorKind.Network, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -335,8 +335,8 @@ public class ChatClientTests
         var h = new Handler(async (_, _, _, ct) => { await Task.Delay(Timeout.Infinite, ct); return null!; });
         var client = Client(h);
         client.IdleTimeout = TimeSpan.FromMilliseconds(50);
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(client));
-        Assert.Equal(GeminiErrorKind.Timeout, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(client));
+        Assert.Equal(CloudErrorKind.Timeout, ex.Kind);
         Assert.Equal(3, h.CallCount);
     }
 
@@ -349,8 +349,8 @@ public class ChatClientTests
     public async Task Missing_gemini_key_throws_NoKey_without_a_request(string? key)
     {
         var h = new Handler((_, _, _, _) => Sse(GeminiObject("x")));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h, gemini: key)));
-        Assert.Equal(GeminiErrorKind.NoKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(h, gemini: key)));
+        Assert.Equal(CloudErrorKind.NoKey, ex.Kind);
         Assert.Equal("Gemini", ex.Provider);
         Assert.Equal(0, h.CallCount);
     }
@@ -359,8 +359,8 @@ public class ChatClientTests
     public async Task Missing_openai_key_throws_NoKey_without_a_request()
     {
         var h = new Handler((_, _, _, _) => Sse(OpenAiObject("x")));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(h, openAi: null)));
-        Assert.Equal(GeminiErrorKind.NoKey, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => OpenAi(Client(h, openAi: null)));
+        Assert.Equal(CloudErrorKind.NoKey, ex.Kind);
         Assert.Equal("OpenAI", ex.Provider);
         Assert.Equal(0, h.CallCount);
     }
@@ -510,8 +510,8 @@ public class ChatClientTests
     public async Task Gemini_gives_up_at_once_when_RetryInfo_asks_for_longer_than_a_minute()
     {
         var h = new Handler((_, _, _, _) => Status((HttpStatusCode)429, RetryInfo100s));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h)));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(h)));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -527,8 +527,8 @@ public class ChatClientTests
     public async Task Gemini_does_not_retry_a_daily_quota()
     {
         var h = new Handler((_, _, _, _) => Status((HttpStatusCode)429, "{\"error\":{\"message\":\"Quota exceeded ... PerDay ...\"}}"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(h)));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(h)));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -541,8 +541,8 @@ public class ChatClientTests
             r.Headers.TryAddWithoutValidation("retry-after", "120");
             return Task.FromResult(r);
         });
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(h)));
-        Assert.Equal(GeminiErrorKind.Quota, ex.Kind);
+        var ex = await Assert.ThrowsAsync<CloudException>(() => OpenAi(Client(h)));
+        Assert.Equal(CloudErrorKind.Quota, ex.Kind);
         Assert.Equal(1, h.CallCount);
     }
 
@@ -564,12 +564,12 @@ public class ChatClientTests
     public async Task A_blocked_prompt_and_an_empty_answer_are_not_retried()
     {
         var blocked = new Handler((_, _, _, _) => Sse("data: {\"promptFeedback\":{\"blockReason\":\"SAFETY\"}}\r\n\r\n"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(blocked)));
+        var ex = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(blocked)));
         Assert.Equal("Gemini hat die Anfrage abgelehnt (SAFETY).", ex.Message);
         Assert.Equal(1, blocked.CallCount);
 
         var empty = new Handler((_, _, _, _) => Sse(": nothing\r\n\r\n"));
-        var ex2 = await Assert.ThrowsAsync<GeminiException>(() => Gemini(Client(empty)));
+        var ex2 = await Assert.ThrowsAsync<CloudException>(() => Gemini(Client(empty)));
         Assert.Equal("Gemini hat keine Antwort geliefert. Bitte noch einmal versuchen.", ex2.Message);
         Assert.Equal(1, empty.CallCount);
     }
@@ -578,7 +578,7 @@ public class ChatClientTests
     public async Task OpenAi_empty_answer_message_is_pinned()
     {
         var empty = new Handler((_, _, _, _) => Sse("data: [DONE]\r\n\r\n"));
-        var ex = await Assert.ThrowsAsync<GeminiException>(() => OpenAi(Client(empty)));
+        var ex = await Assert.ThrowsAsync<CloudException>(() => OpenAi(Client(empty)));
         Assert.Equal("OpenAI hat keine Antwort geliefert. Bitte noch einmal versuchen.", ex.Message);
         Assert.Equal(1, empty.CallCount);
     }
