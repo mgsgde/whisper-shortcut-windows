@@ -9,7 +9,8 @@ namespace WhisperShortcut.Core;
 /// <param name="PendingChunks">Chunks whose audio is kept because transcription never succeeded.</param>
 /// <param name="SummarySaved">summary.md was written.</param>
 /// <param name="SummaryError">Why the summary failed, if it did; never thrown.</param>
-public sealed record MeetingStopResult(MeetingInfo Meeting, int TranscribedChunks, int PendingChunks, bool SummarySaved, Exception? SummaryError);
+/// <param name="PendingAudioKept">Every chunk that is still pending has its WAV on disk.</param>
+public sealed record MeetingStopResult(MeetingInfo Meeting, int TranscribedChunks, int PendingChunks, bool SummarySaved, Exception? SummaryError, bool PendingAudioKept = true);
 
 /// <summary>Outcome of <see cref="LiveMeetingSession.RetryPendingAsync"/>.</summary>
 /// <param name="Recovered">Chunks that went through (including ones with nothing said).</param>
@@ -35,6 +36,8 @@ public sealed class LiveMeetingSession : IDisposable
         new UnboundedChannelOptions { SingleReader = true });
     private readonly object _audioGate = new();
     private readonly HashSet<long> _failed = new(); // start in ms of chunks that failed all attempts (worker thread only)
+    private readonly object _memoryOnlyGate = new();
+    private readonly HashSet<long> _memoryOnly = new(); // start in ms whose WAV could not be written; the partial stays
 
     private MeetingInfo? _meeting;
     private MeetingChunker? _chunker;
@@ -51,6 +54,7 @@ public sealed class LiveMeetingSession : IDisposable
     private int _pending;
     private int _queued;
     private volatile Exception? _lastError;
+    private int _unsaved;
 
     /// <summary>
     /// <paramref name="transcribe"/> turns a WAV chunk into cleaned text ("" = nothing said) and throws on failure
@@ -94,8 +98,11 @@ public sealed class LiveMeetingSession : IDisposable
     /// <summary>Any counter changed. Raised on the worker thread, or on the capture thread when a chunk is queued.</summary>
     public event Action? Changed;
 
-    /// <summary>A chunk failed all attempts and its audio is kept. Raised on the worker thread.</summary>
-    public event Action<Exception>? ChunkFailed;
+    /// <summary>
+    /// A chunk failed all attempts. The bool is false when its audio could not be written (the partial is kept,
+    /// and the in-memory WAV was tried once more). Raised on the worker thread.
+    /// </summary>
+    public event Action<Exception, bool>? ChunkFailed;
 
     /// <summary>Creates the meeting in the store and starts the single worker.</summary>
     public void Start()
@@ -257,9 +264,11 @@ public sealed class LiveMeetingSession : IDisposable
         }
 
         var info = _store.Get(id) ?? meeting;
-        Log.Info($"Meeting: stopped after {elapsed:0} s, {TranscribedChunks} chunk(s) transcribed, {info.PendingAudioChunks} pending, summary {(summarySaved ? "saved" : "none")}");
+        var unsaved = Volatile.Read(ref _unsaved);
+        var pending = info.PendingAudioChunks + unsaved;
+        Log.Info($"Meeting: stopped after {elapsed:0} s, {TranscribedChunks} chunk(s) transcribed, {pending} pending, summary {(summarySaved ? "saved" : "none")}");
         Raise();
-        return new MeetingStopResult(info, TranscribedChunks, info.PendingAudioChunks, summarySaved, summaryError);
+        return new MeetingStopResult(info, TranscribedChunks, pending, summarySaved, summaryError, unsaved == 0);
     }
 
     /// <summary>
@@ -340,12 +349,29 @@ public sealed class LiveMeetingSession : IDisposable
             SafeDeletePartial(id, chunk.StartSeconds);
             return false;
         }
-        try { _store.KeepPendingAudio(id, chunk.StartSeconds, chunk.Wav); }
-        catch (Exception ex) { Log.Error("Meeting: chunk audio could not be saved, transcribing from memory only", ex); }
-        SafeDeletePartial(id, chunk.StartSeconds);
+        if (TryKeepPending(id, chunk)) SafeDeletePartial(id, chunk.StartSeconds);
+        else
+        {
+            // The partial is the crash copy. The WAV in the chunk stays for transcription and for one last save.
+            lock (_memoryOnlyGate) _memoryOnly.Add(MillisOf(chunk.StartSeconds));
+        }
         Interlocked.Increment(ref _queued);
         _channel.Writer.TryWrite(chunk);
         return true;
+    }
+
+    private bool TryKeepPending(string id, MeetingAudioChunk chunk)
+    {
+        try
+        {
+            _store.KeepPendingAudio(id, chunk.StartSeconds, chunk.Wav);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error("Meeting: chunk audio could not be saved, transcribing from memory only", ex);
+            return false;
+        }
     }
 
     private void SafeDeletePartial(string id, double start)
@@ -390,6 +416,7 @@ public sealed class LiveMeetingSession : IDisposable
                     Interlocked.Increment(ref _transcribed);
                 }
                 _store.RemovePendingAudio(id, chunk.StartSeconds);
+                ForgetMemoryOnly(id, chunk.StartSeconds);
                 Log.Info($"Meeting: chunk at {chunk.StartSeconds:0} s ({chunk.DurationSeconds:0.#} s audio) done, {text.Length} chars");
                 stored = true;
             }
@@ -411,12 +438,31 @@ public sealed class LiveMeetingSession : IDisposable
             return;
         }
 
-        _failed.Add(MillisOf(chunk.StartSeconds));
+        var ms = MillisOf(chunk.StartSeconds);
+        _failed.Add(ms);
         Interlocked.Increment(ref _pending);
         _lastError = error;
-        Log.Error($"Meeting: chunk at {chunk.StartSeconds:0} s kept as audio after {RetryDelays.Length + 1} attempts", error);
-        try { ChunkFailed?.Invoke(error!); }
+        var audioKept = true;
+        lock (_memoryOnlyGate) audioKept = !_memoryOnly.Contains(ms);
+        if (!audioKept && TryKeepPending(id, chunk))
+        {
+            audioKept = true;
+            ForgetMemoryOnly(id, chunk.StartSeconds);
+        }
+        if (!audioKept) Interlocked.Increment(ref _unsaved);
+        Log.Error(audioKept
+            ? $"Meeting: chunk at {chunk.StartSeconds:0} s kept as audio after {RetryDelays.Length + 1} attempts"
+            : $"Meeting: chunk at {chunk.StartSeconds:0} s could not be saved after {RetryDelays.Length + 1} attempts", error);
+        try { ChunkFailed?.Invoke(error!, audioKept); }
         catch (Exception ex) { Log.Warn($"Meeting: ChunkFailed handler threw ({ex.GetType().Name})"); }
+    }
+
+    /// <summary>The text is stored, so the partial kept for a failed WAV write can go.</summary>
+    private void ForgetMemoryOnly(string id, double startSeconds)
+    {
+        bool wasMemory;
+        lock (_memoryOnlyGate) wasMemory = _memoryOnly.Remove(MillisOf(startSeconds));
+        if (wasMemory) SafeDeletePartial(id, startSeconds);
     }
 
     /// <summary>After a success: one try for the chunks that failed earlier, so a network hiccup heals during the meeting.</summary>
@@ -433,7 +479,7 @@ public sealed class LiveMeetingSession : IDisposable
             }, ct).ConfigureAwait(false);
     }
 
-    private static long MillisOf(double seconds) => (long)Math.Round(seconds * 1000);
+    private static long MillisOf(double seconds) => MeetingStore.ChunkKey(seconds);
 
     /// <summary>One attempt per pending chunk of a meeting; <paramref name="filter"/> limits which ones.</summary>
     private static async Task<MeetingRetryResult> RetryCoreAsync(MeetingStore store, string id,

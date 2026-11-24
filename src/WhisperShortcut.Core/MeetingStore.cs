@@ -325,18 +325,28 @@ public sealed class MeetingStore
         }
     }
 
+    /// <summary>Start of a chunk in milliseconds. <see cref="AppendChunk"/> treats one key as one block.</summary>
+    public static long ChunkKey(double startSeconds) =>
+        (long)Math.Round(Math.Max(0, startSeconds) * 1000.0);
+
     /// <summary>
     /// Adds a block. At or after the last block's start it is appended; otherwise it is inserted in time order
     /// (before an existing block of the same second), transcript.md is rewritten atomically and the revision grows.
-    /// Blank text does nothing.
+    /// Blank text does nothing. A second call with the same <see cref="ChunkKey"/> does nothing: a pending WAV that
+    /// could not be deleted must not land in the transcript twice.
     /// </summary>
     public void AppendChunk(string id, double startSeconds, string text)
     {
         if (string.IsNullOrWhiteSpace(text)) return;
         var folder = FolderOf(id);
+        var ms = ChunkKey(startSeconds);
         var block = FormatTimestamp(startSeconds) + " " + text.Trim() + "\n\n";
         lock (_gate)
         {
+            var dto = ReadDto(folder) ?? throw new FileNotFoundException("Unknown meeting " + id);
+            var seen = dto.AppendedChunkMillis ??= new List<long>();
+            if (seen.Contains(ms)) return;
+
             var path = Path.Combine(folder, TranscriptFile);
             var existing = ReadText(path) ?? "";
             var chunks = ParseTranscript(existing);
@@ -348,6 +358,8 @@ public sealed class MeetingStore
                 using var fs = new FileStream(path, FileMode.Append, FileAccess.Write, Share);
                 var bytes = Utf8.GetBytes(prefix + block);
                 fs.Write(bytes, 0, bytes.Length);
+                seen.Add(ms);
+                WriteDto(folder, dto);
                 return;
             }
 
@@ -366,8 +378,11 @@ public sealed class MeetingStore
             foreach (var c in list) sb.Append(FormatTimestamp(c.StartSeconds)).Append(' ').Append(c.Text).Append("\n\n");
 
             // Revision first: a reader holding the old one then restarts (harmless) instead of reading new text at an old offset.
-            Update(id, d => d.TranscriptRevision++);
+            dto.TranscriptRevision++;
+            WriteDto(folder, dto);
             WriteTextAtomic(path, sb.ToString());
+            seen.Add(ms);
+            WriteDto(folder, dto);
         }
     }
 
@@ -578,7 +593,7 @@ public sealed class MeetingStore
 
     /// <summary>File name of a kept chunk: "chunk-" and the start in milliseconds, 10 digits, ".wav".</summary>
     public static string PendingFileName(double startSeconds) =>
-        string.Create(CultureInfo.InvariantCulture, $"chunk-{(long)Math.Round(Math.Max(0, startSeconds) * 1000):D10}.wav");
+        string.Create(CultureInfo.InvariantCulture, $"chunk-{ChunkKey(startSeconds):D10}.wav");
 
     /// <summary>Inverse of <see cref="PendingFileName"/>; null for any other name.</summary>
     public static double? StartSecondsFromFileName(string name)
@@ -754,5 +769,7 @@ public sealed class MeetingStore
         [JsonPropertyName("audioMode")] public string? AudioMode { get; set; }
         [JsonPropertyName("durationSeconds")] public double DurationSeconds { get; set; }
         [JsonPropertyName("transcriptRevision")] public int TranscriptRevision { get; set; }
+        // Millisecond starts already written into the transcript. A retried chunk (its WAV could not be deleted) hits the same key.
+        [JsonPropertyName("appendedChunkMillis")] public List<long>? AppendedChunkMillis { get; set; }
     }
 }

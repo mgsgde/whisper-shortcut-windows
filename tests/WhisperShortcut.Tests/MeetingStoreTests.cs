@@ -76,11 +76,25 @@ public class MeetingStoreTests : IDisposable
         Assert.Contains("[01:00] zwei", after.Text);
         Assert.Contains("[00:00] eins", after.Text);
 
-        // A same-second late chunk goes before the existing one.
-        _store.AppendChunk(m.Id, 60, "zwei-b");
+        // A later chunk in the same second (different millisecond) goes before the existing one.
+        _store.AppendChunk(m.Id, 60.4, "zwei-b");
         var texts = _store.ReadChunks(m.Id).Select(c => c.Text).ToList();
         Assert.True(texts.IndexOf("zwei-b") < texts.IndexOf("zwei"));
         Assert.Equal(2, _store.Get(m.Id)!.TranscriptRevision);
+    }
+
+    [Fact]
+    public void AppendChunk_same_start_millisecond_is_written_once()
+    {
+        var m = _store.Create(T0, "mic");
+        _store.AppendChunk(m.Id, 12.345, "einmal");
+        _store.AppendChunk(m.Id, 12.3454, "nochmal");
+        var again = new MeetingStore(_root);
+        again.AppendChunk(m.Id, 12.345, "von vorn");
+
+        Assert.Equal(new[] { "einmal" }, again.ReadChunks(m.Id).Select(c => c.Text));
+        Assert.Equal(0, again.Get(m.Id)!.TranscriptRevision);
+        Assert.Equal(MeetingStore.ChunkKey(12.345), MeetingStore.ChunkKey(12.3454));
     }
 
     [Fact]

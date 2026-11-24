@@ -117,7 +117,7 @@ public class LiveMeetingSessionTests : IDisposable
     {
         var failed = 0;
         using var s = NewSession((_, _) => throw new HttpRequestException("offline"));
-        s.ChunkFailed += _ => Interlocked.Increment(ref failed);
+        s.ChunkFailed += (_, _) => Interlocked.Increment(ref failed);
         s.Start();
         Feed(s, Synth.Speech(4.5)); // two full chunks, 0.5 s left
         await WaitUntil(() => s.PendingChunks == 2);
@@ -130,7 +130,59 @@ public class LiveMeetingSessionTests : IDisposable
         Assert.True(failed >= 2);
         Assert.IsType<HttpRequestException>(s.LastError);
         Assert.Equal(MeetingStatus.Ended, result.Meeting.Status);
+        Assert.True(result.PendingAudioKept);
     }
+
+    [Fact]
+    public async Task Failed_wav_write_keeps_the_partial_until_the_text_is_stored()
+    {
+        string? pcmDuring = null;
+        string? folder = null;
+        using var s = NewSession((_, _) =>
+        {
+            pcmDuring = Directory.EnumerateFiles(Path.Combine(folder!, "audio-pending"), "*.pcm").FirstOrDefault();
+            return Task.FromResult("aus dem Speicher");
+        });
+        s.Start();
+        folder = s.Meeting.Folder;
+        BlockPendingWav(s, 0);
+        Feed(s, Synth.Speech(1.5));
+        var result = await s.StopAsync(null, CancellationToken.None);
+
+        Assert.False(string.IsNullOrEmpty(pcmDuring));
+        Assert.Equal(new[] { "aus dem Speicher" }, _store.ReadChunks(s.Meeting.Id).Select(c => c.Text));
+        Assert.Equal(0, result.PendingChunks);
+        Assert.True(result.PendingAudioKept);
+        Assert.Empty(_store.ListPendingAudio(s.Meeting.Id));
+    }
+
+    [Fact]
+    public async Task Failed_wav_write_and_failed_transcription_does_not_drop_the_partial()
+    {
+        bool? kept = null;
+        using var s = NewSession((_, _) => throw new HttpRequestException("offline"));
+        s.ChunkFailed += (_, audioKept) => kept = audioKept;
+        s.Start();
+        BlockPendingWav(s, 0);
+        Feed(s, Synth.Speech(1.5));
+        var result = await s.StopAsync(null, CancellationToken.None);
+
+        Assert.Equal(false, kept);
+        Assert.False(result.PendingAudioKept);
+        Assert.Equal(1, result.PendingChunks);
+        Assert.True(File.Exists(PartialPath(s, 0)));
+        Assert.Empty(_store.ListPendingAudio(s.Meeting.Id));
+        Assert.Empty(_store.ReadChunks(s.Meeting.Id));
+    }
+
+    private static string PendingDir(LiveMeetingSession s) => Path.Combine(s.Meeting.Folder, "audio-pending");
+
+    private static string PartialPath(LiveMeetingSession s, double startSeconds) =>
+        Path.Combine(PendingDir(s), Path.ChangeExtension(MeetingStore.PendingFileName(startSeconds), ".pcm"));
+
+    /// <summary>A directory where the WAV should be, so the atomic move fails on every OS.</summary>
+    private static void BlockPendingWav(LiveMeetingSession s, double startSeconds) =>
+        Directory.CreateDirectory(Path.Combine(PendingDir(s), MeetingStore.PendingFileName(startSeconds)));
 
     [Fact]
     public async Task A_later_success_splices_the_earlier_failed_chunk_in_at_its_timestamp()

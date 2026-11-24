@@ -209,7 +209,7 @@ internal sealed class MeetingController : IDisposable
         _lastFolder = session.Meeting.Folder;
         _failureShown = false;
         session.Changed += () => _ui.Post(_ => UpdateStatus(), null);
-        session.ChunkFailed += e => _ui.Post(_ => OnChunkFailed(e), null);
+        session.ChunkFailed += (e, audioKept) => _ui.Post(_ => OnChunkFailed(e, audioKept), null);
         _startedUtc = DateTime.UtcNow;
         Core.AppIdentity.Current.WriteLiveMeetingMarker(Environment.ProcessId, _startedUtc); // the Dev update script waits while this pid lives
         StartSafeguard();
@@ -265,7 +265,9 @@ internal sealed class MeetingController : IDisposable
         }
         else if (result.PendingChunks > 0)
         {
-            text = $"{Count(result.PendingChunks)} noch nicht transkribiert, der Ton ist gespeichert. Erneut versuchen: Symbol → Meeting.";
+            text = result.PendingAudioKept
+                ? $"{Count(result.PendingChunks)} noch nicht transkribiert, der Ton ist gespeichert. Erneut versuchen: Symbol → Meeting."
+                : $"{Count(result.PendingChunks)} noch nicht transkribiert. Der Ton konnte nicht vollständig gespeichert werden.";
             icon = ToolTipIcon.Warning;
         }
         else if (result.TranscribedChunks == 0)
@@ -408,7 +410,7 @@ internal sealed class MeetingController : IDisposable
         _overlay.SetStatus($"{mode} · {done}");
     }
 
-    private void OnChunkFailed(Exception e)
+    private void OnChunkFailed(Exception e, bool audioKept)
     {
         UpdateStatus();
         // One balloon per meeting: a dead network would otherwise bring one every minute.
@@ -416,7 +418,10 @@ internal sealed class MeetingController : IDisposable
         _failureShown = true;
         string reason = e is Core.GeminiException g ? g.Message : "Details stehen im Protokoll.";
         _notify("Meeting: Abschnitt nicht transkribiert",
-            "Der Ton ist gespeichert und wird später erneut versucht. " + reason, ToolTipIcon.Warning, null);
+            audioKept
+                ? "Der Ton ist gespeichert und wird später erneut versucht. " + reason
+                : "Der Ton konnte nicht gespeichert werden. " + reason,
+            ToolTipIcon.Warning, null);
     }
 
     private static string Count(int chunks) => chunks == 1 ? "1 Abschnitt" : $"{chunks} Abschnitte";
