@@ -48,6 +48,7 @@ internal sealed class MeetingController : IDisposable
     private bool _retrying;
     private bool _recoveringSummaries;
     private bool _failureShown;
+    private bool _shutDown;
     private string? _lastFolder;
 
     /// <param name="transcribe">One chunk WAV → cleaned transcript text ("" when nothing was said); throws on failure.</param>
@@ -352,7 +353,10 @@ internal sealed class MeetingController : IDisposable
     /// </summary>
     public void Shutdown()
     {
+        if (_shutDown) return;
+        _shutDown = true;
         var session = _session;
+        _session = null;
         StopAudio();
         Core.AppIdentity.Current.DeleteLiveMeetingMarker();
         if (session == null) return;
@@ -391,7 +395,6 @@ internal sealed class MeetingController : IDisposable
             Core.Log.Error("Meeting: stop at quit failed", e);
         }
         session.Dispose();
-        _session = null;
     }
 
     // ---------------- status ----------------
