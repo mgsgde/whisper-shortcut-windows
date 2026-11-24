@@ -419,6 +419,31 @@ public sealed class SettingsWindowTests : IDisposable
         combo.SelectedItem = combo.Items.Cast<object>().First(i => Equals(i.GetType().GetProperty("Value")!.GetValue(i), value));
     }
 
+    /// <summary>A known update shows as a link in the footer (opens the update window); without one the footer stays plain.</summary>
+    [Fact]
+    public void Footer_LinksToAvailableUpdate()
+    {
+        Sta.Run(() =>
+        {
+            var settings = Core.Settings.Load(Path.Combine(_dir, "settings.json"), new Core.PlainSecretProtector());
+            var updates = new UpdateService(settings, () => true, () => { });
+            using (var plain = new SettingsForm(settings, new OfflineEngine(settings), new Core.GeminiClient(settings), new Core.OpenAiClient(settings), updates))
+                Assert.False(plain.FooterUpdateLink.Visible);
+
+            updates.Available = new Core.UpdateInfo("99.0.0", "https://example.invalid/release");
+            using var form = new SettingsForm(settings, new OfflineEngine(settings), new Core.GeminiClient(settings), new Core.OpenAiClient(settings), updates)
+            {
+                ShowInTaskbar = false, StartPosition = FormStartPosition.Manual, Location = new System.Drawing.Point(-3000, -3000),
+            };
+            form.Show();
+            Application.DoEvents();
+            Assert.True(form.FooterUpdateLink.Visible);
+            Assert.Contains("ist da", form.FooterUpdateLink.Text);
+            Assert.Contains("99.0.0", form.FooterUpdateLink.Text);
+            Assert.Equal("Update installieren", form.FooterUpdateLink.AccessibleName);
+        });
+    }
+
     private SettingsForm OpenSettings() => OpenSettings(out _);
 
     private SettingsForm OpenSettings(out Core.Settings settings)

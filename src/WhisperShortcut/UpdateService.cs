@@ -41,7 +41,7 @@ internal sealed class UpdateService : IDisposable
     public static string CurrentVersion => Application.ProductVersion.Split('+')[0];
 
     /// <summary>The newer release found by the last check, or null.</summary>
-    public Core.UpdateInfo? Available { get; private set; }
+    public Core.UpdateInfo? Available { get; internal set; }
 
     /// <summary>A check found a version that was not known before (once per version and run).</summary>
     public event Action? Found;

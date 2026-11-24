@@ -55,6 +55,8 @@ internal sealed partial class SettingsForm : FastShowForm
     private ThemedLabel _updateStatus = null!;
     private FluentButton _updateButton = null!;
     private readonly UpdateService _updates;
+    private ThemedLabel _footerVersion = null!;
+    private LinkLabel? _footerUpdate;
     private ToggleSwitch _autoUpdate = null!;
     private readonly TextBox _glossary;
     private readonly ThemedLabel _glossaryCount;
@@ -133,6 +135,8 @@ internal sealed partial class SettingsForm : FastShowForm
     // Inset (96 dpi) of a description inside a card row with a control of this width on the right.
     private const int RowPadding = 16, RowGap = 24;
     private const int KeyWidth = 200, ComboWidth = 300, ToggleWidth = 88, ButtonWidth = 120;
+
+    internal LinkLabel FooterUpdateLink => _footerUpdate!;
 
     public SettingsForm(Core.Settings settings, OfflineEngine offline, Core.GeminiClient gemini, Core.OpenAiClient openAi, UpdateService updates, McpService? mcp = null)
     {
@@ -725,6 +729,20 @@ internal sealed partial class SettingsForm : FastShowForm
         buttons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
         buttons.Controls.Add(_dirty, 0, 0);
         buttons.Controls.Add(version, 1, 0);
+        // Update known (found by a check, here or in the background): a link next to the version opens the update window.
+        _footerVersion = version;
+        _footerUpdate = new LinkLabel
+        {
+            Text = "", AutoSize = true, Visible = false, Font = Theme.Small, Anchor = AnchorStyles.Right,
+            Margin = new Padding(12, 0, 0, 0), Cursor = Cursors.Hand, AccessibleName = "Update installieren",
+        };
+        _footerUpdate.LinkClicked += (_, _) => _updates.ShowDialog();
+        buttons.ColumnCount = 3;
+        buttons.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+        buttons.Controls.Add(_footerUpdate, 2, 0);
+        UpdateFooter();
+        VisibleChanged += (_, _) => { if (Visible) UpdateFooter(); };
+        _updates.Found += UpdateFooter;
 
         var content = new Panel { Dock = DockStyle.Fill };
         // Docking runs in reverse order of adding: buttons take the bottom, the page the rest.
@@ -797,6 +815,7 @@ internal sealed partial class SettingsForm : FastShowForm
         Disposed += (_, _) =>
         {
             Microsoft.Win32.SystemEvents.UserPreferenceChanged -= OnUserPreferenceChanged;
+            _updates.Found -= UpdateFooter;
             dirtyTimer.Dispose();
             _geminiKey.Dispose();
             _openAiKey.Dispose();
@@ -1032,8 +1051,20 @@ internal sealed partial class SettingsForm : FastShowForm
         if (!IsDisposed) _updateButton.Enabled = true;
     }
 
+    /// <summary>Footer: the plain installed version, plus „Version x ist da – installieren“ while an update is known.</summary>
+    private void UpdateFooter()
+    {
+        if (IsDisposed || _footerUpdate == null) return; // the pages are built before the footer; it calls this itself
+        var found = _updates.Available;
+        _footerUpdate.Visible = found != null;
+        if (found == null) return;
+        _footerUpdate.Text = $"Version {found.Version} ist da – installieren";
+        _footerVersion.Text = $"Version {AppVersion} ·";
+    }
+
     private void ShowUpdateFound(Core.UpdateInfo update)
     {
+        UpdateFooter();
         _updateStatus.Text = $"Version {update.Version} ist da. „Installieren“ zeigt, was neu ist.";
         _updateStatus.Tone = Tone.Accent;
         _updateButton.Text = "Installieren …";
