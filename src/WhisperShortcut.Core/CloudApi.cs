@@ -316,6 +316,42 @@ internal sealed class CloudApi
 /// <summary>Sends one request to a <see cref="CloudApi"/> and turns every way it can fail into a <see cref="GeminiException"/>.</summary>
 internal static class CloudHttp
 {
+    /// <summary>Time one attempt of a non-streaming call may take, before the upload allowance is added.</summary>
+    public static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
+
+    /// <summary>Upload floor (~40 kB/s, e.g. slow DSL): each started 40 kB adds a second to <see cref="RequestTimeout"/>.</summary>
+    public const double UploadBytesPerSecond = 40_000.0;
+
+    /// <summary>
+    /// One non-streaming call with the whole retry story: per-attempt timeout (<see cref="RequestTimeout"/> plus upload
+    /// allowance for <paramref name="size"/>), the body rebuilt per attempt (a multipart content cannot be sent twice),
+    /// <see cref="HttpRetry"/> per <paramref name="policy"/>, and <paramref name="parse"/> on the answer text. Dictation and
+    /// Dictate Prompt of both providers go through here.
+    /// </summary>
+    /// <param name="http">The client.</param>
+    /// <param name="api">The provider (URL scheme, auth header, error mapping).</param>
+    /// <param name="url">Absolute request URL.</param>
+    /// <param name="key">API key (already trimmed, non-empty).</param>
+    /// <param name="content">Builds the request body; called once per attempt.</param>
+    /// <param name="size">Request size in bytes, for the timeout allowance and the log.</param>
+    /// <param name="policy">Attempt counts and delays.</param>
+    /// <param name="logTag">Prefix of the log lines, e.g. "Gemini gemini-3.1-flash".</param>
+    /// <param name="parse">Turns the 2xx answer text into the result; may throw a <see cref="GeminiException"/>.</param>
+    /// <param name="ct">The caller's token.</param>
+    public static Task<T> SendWithRetryAsync<T>(HttpClient http, CloudApi api, string url, string key, Func<HttpContent> content,
+        long size, RetryPolicy policy, string logTag, Func<string, T> parse, CancellationToken ct) =>
+        HttpRetry.RunAsync(async attempt =>
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(size / UploadBytesPerSecond));
+            return await SendAsync(http, api, url, key, content(), logTag, timeout.Token, ct, async response =>
+            {
+                var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
+                Log.Info($"{logTag}: HTTP {(int)response.StatusCode}, request {size} bytes, answer {text.Length} bytes, attempt {attempt}");
+                return parse(text);
+            }).ConfigureAwait(false);
+        }, policy, logTag, ct);
+
     /// <summary>
     /// POSTs <paramref name="content"/> (ExpectContinue off, key set by the provider profile). A non-2xx answer is read, logged
     /// (status word only) and thrown as the mapped <see cref="GeminiException"/>; otherwise <paramref name="onSuccess"/> reads

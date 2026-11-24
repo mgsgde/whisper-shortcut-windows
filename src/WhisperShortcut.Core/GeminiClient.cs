@@ -87,8 +87,6 @@ public enum KeyCheck
 /// </summary>
 public sealed class GeminiClient : ISpeechProvider, ITextProvider
 {
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
-
     private readonly HttpClient _http;
     private readonly Func<string?> _apiKey;
     private readonly Func<string> _transcriptionModel;
@@ -486,20 +484,9 @@ public sealed class GeminiClient : ISpeechProvider, ITextProvider
         var key = _apiKey()?.Trim();
         if (string.IsNullOrEmpty(key)) throw CloudApi.Gemini.NoKey(KeyHint.Settings);
 
-        var url = $"{CloudApi.Gemini.ApiBase}{model}:generateContent";
-        return await HttpRetry.RunAsync(async attempt =>
-        {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            // Upload time scales with the body (~40 kB/s floor, e.g. slow DSL).
-            timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(json.Length / 40_000.0));
-            return await CloudHttp.SendAsync(_http, CloudApi.Gemini, url, key, JsonUtf8Content(json), $"Gemini {model}",
-                timeout.Token, ct, async response =>
-                {
-                    var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-                    Log.Info($"Gemini {model}: HTTP {(int)response.StatusCode}, request {json.Length} bytes, answer {text.Length} bytes, attempt {attempt}");
-                    return ExtractText(text, rejectTruncated);
-                }).ConfigureAwait(false);
-        }, RetryPolicy.OneShot(RetryDelay, RetryInfoBuffer), $"Gemini {model}", ct).ConfigureAwait(false);
+        return await CloudHttp.SendWithRetryAsync(_http, CloudApi.Gemini, $"{CloudApi.Gemini.ApiBase}{model}:generateContent", key,
+            () => JsonUtf8Content(json), json.Length, RetryPolicy.OneShot(RetryDelay, RetryInfoBuffer), $"Gemini {model}",
+            text => ExtractText(text, rejectTruncated), ct).ConfigureAwait(false);
     }
 
     /// <summary>The delay from a Google RetryInfo detail ("55s", "1.5s"), or null when absent.</summary>

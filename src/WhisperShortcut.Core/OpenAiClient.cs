@@ -15,8 +15,6 @@ namespace WhisperShortcut.Core;
 /// </summary>
 public sealed class OpenAiClient : ISpeechProvider, ITextProvider
 {
-    private static readonly TimeSpan RequestTimeout = TimeSpan.FromSeconds(60);
-
     /// <summary>Output-token ceiling for edit calls, so a long selection gets room and a cut-off reply is detectable.</summary>
     internal const int MaxCompletionTokens = 32000;
 
@@ -235,19 +233,8 @@ public sealed class OpenAiClient : ISpeechProvider, ITextProvider
         var key = _apiKey()?.Trim();
         if (string.IsNullOrEmpty(key)) throw CloudApi.OpenAi.NoKey(KeyHint.Settings);
 
-        return await HttpRetry.RunAsync(async attempt =>
-        {
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            // Upload time scales with the body (~40 kB/s floor, e.g. slow DSL).
-            timeout.CancelAfter(RequestTimeout + TimeSpan.FromSeconds(size / 40_000.0));
-            return await CloudHttp.SendAsync(_http, CloudApi.OpenAi, CloudApi.OpenAi.ApiBase + path, key, buildContent(), $"OpenAI {model}",
-                timeout.Token, ct, async response =>
-                {
-                    var text = await response.Content.ReadAsStringAsync(timeout.Token).ConfigureAwait(false);
-                    Log.Info($"OpenAI {model}: HTTP {(int)response.StatusCode}, request {size} bytes, answer {text.Length} bytes, attempt {attempt}");
-                    return text;
-                }).ConfigureAwait(false);
-        }, RetryPolicy.OneShot(RetryDelay, TimeSpan.Zero), $"OpenAI {model}", ct).ConfigureAwait(false);
+        return await CloudHttp.SendWithRetryAsync(_http, CloudApi.OpenAi, CloudApi.OpenAi.ApiBase + path, key, buildContent, size,
+            RetryPolicy.OneShot(RetryDelay, TimeSpan.Zero), $"OpenAI {model}", text => text, ct).ConfigureAwait(false);
     }
 
     internal static string ExtractTranscript(string responseJson)

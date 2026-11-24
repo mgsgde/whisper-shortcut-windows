@@ -250,4 +250,32 @@ public class CloudApiTests
             "https://api.openai.com/v1/models",
         }, urls);
     }
+
+    // Both clients send through CloudHttp.SendWithRetryAsync: same attempt counts for a failing server and for a timeout,
+    // same per-attempt timeout (one constant, not one per client).
+    [Fact]
+    public async Task BothClients_ShareRetryCountsAndTimeout_ThroughCloudHttp()
+    {
+        Assert.Equal(TimeSpan.FromSeconds(60), CloudHttp.RequestTimeout);
+
+        async Task<int> Calls(Func<HttpRequestMessage, Task<HttpResponseMessage>> answer, bool openAi, GeminiErrorKind expected)
+        {
+            var n = 0;
+            var http = new HttpClient(new Handler(r => { n++; return answer(r); }));
+            var ex = await Assert.ThrowsAsync<GeminiException>(() => openAi
+                ? new OpenAiClient(() => "k", () => "m", () => "m", http) { RetryDelay = TimeSpan.Zero }.CompleteTextAsync("s", "u")
+                : new GeminiClient(() => "k", () => "m", () => "m", http) { RetryDelay = TimeSpan.Zero, RetryInfoBuffer = TimeSpan.Zero }.CompleteTextAsync("s", "u"));
+            Assert.Equal(expected, ex.Kind);
+            return n;
+        }
+
+        Task<HttpResponseMessage> Busy(HttpRequestMessage _) =>
+            Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable) { Content = new StringContent("{}") });
+        Task<HttpResponseMessage> Timeout(HttpRequestMessage _) => throw new OperationCanceledException();
+
+        Assert.Equal(HttpRetry.MaxServerErrorAttempts, await Calls(Busy, openAi: false, GeminiErrorKind.Server));
+        Assert.Equal(HttpRetry.MaxServerErrorAttempts, await Calls(Busy, openAi: true, GeminiErrorKind.Server));
+        Assert.Equal(HttpRetry.MaxAttempts, await Calls(Timeout, openAi: false, GeminiErrorKind.Timeout));
+        Assert.Equal(HttpRetry.MaxAttempts, await Calls(Timeout, openAi: true, GeminiErrorKind.Timeout));
+    }
 }
